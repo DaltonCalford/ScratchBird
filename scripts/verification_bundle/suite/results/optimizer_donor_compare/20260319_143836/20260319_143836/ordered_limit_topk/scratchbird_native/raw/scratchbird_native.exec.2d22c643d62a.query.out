@@ -1,0 +1,9 @@
++-------------------------------------+
+| expr1                               |
++-------------------------------------+
+| ASSERT|ordered_limit_topk|id=3|k=10 |
+| ASSERT|ordered_limit_topk|id=5|k=10 |
+| ASSERT|ordered_limit_topk|id=8|k=10 |
+| ASSERT|ordered_limit_topk|id=4|k=20 |
++-------------------------------------+
+(4 rows)

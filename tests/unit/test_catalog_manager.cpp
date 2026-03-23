@@ -12,6 +12,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include <algorithm>
 #include <cstdio>
 #include <iostream>
 #include <string>
@@ -110,6 +111,43 @@ TEST_F(CatalogManagerTest, InitializeCatalog)
 
     // Should have initial [sys] schema
     EXPECT_GT(catalog->schemaCount(), 0);
+}
+
+TEST_F(CatalogManagerTest, NativeSessionCanonicalizesUsersPublicToPublicRoot)
+{
+    CreateAndOpenDatabase();
+    ErrorContext ctx;
+
+    CatalogManager *catalog = db->catalog_manager();
+    ASSERT_NE(catalog, nullptr);
+
+    CatalogManager::UserInfo user_info;
+    ASSERT_EQ(catalog->getUserByName("test_user", user_info, &ctx), Status::OK)
+        << ctx.message;
+
+    CatalogManager::SchemaInfo users_public_schema;
+    ASSERT_EQ(catalog->getSchema("users.public", users_public_schema, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(user_info.default_schema_id, users_public_schema.schema_id);
+
+    CatalogManager::SchemaInfo public_schema;
+    ASSERT_EQ(catalog->getSchema("public", public_schema, &ctx), Status::OK)
+        << ctx.message;
+
+    CatalogManager::SessionInfo session_info;
+    ASSERT_EQ(catalog->createSession(user_info.user_id,
+                                     ID{},
+                                     "native",
+                                     session_info,
+                                     &ctx),
+              Status::OK)
+        << ctx.message;
+
+    EXPECT_EQ(session_info.home_schema_id, public_schema.schema_id);
+    EXPECT_EQ(session_info.current_schema_id, public_schema.schema_id);
+    ASSERT_FALSE(session_info.search_path.empty());
+    ASSERT_FALSE(session_info.search_path_schema_ids.empty());
+    EXPECT_EQ(session_info.search_path_schema_ids.front(), public_schema.schema_id);
 }
 
 TEST_F(CatalogManagerTest, CreateAndGetSchema)

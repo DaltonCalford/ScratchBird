@@ -793,16 +793,27 @@ CardinalityFeedbackSignal QueryProfiler::recordCardinalityFeedback(
     signal.last_actual_rows = actual_rows;
     signal.estimation_error_ratio = estimationErrorRatio(estimated_rows, actual_rows);
     signal.correction_factor = correctionFactor(estimated_rows, actual_rows);
-    signal.cost_reweight_factor = 1.0;
+    signal.cost_reweight_factor = state.active_cost_reweight_factor;
     signal.observation_count += 1;
     signal.last_plan_hash = std::string(plan_hash);
     signal.stats_refresh_applied = false;
     signal.replan_suppressed = false;
     signal.calibration_bundle_proposed = false;
-    signal.calibration_profile_version = 0;
-    signal.calibration_profile_id.clear();
-    signal.calibration_profile_delta_id.clear();
-    signal.calibration_evidence_id.clear();
+    signal.calibration_store_contract_id =
+        kRuntimeLearningCalibrationStoreContractId;
+    signal.calibration_store_state =
+        state.active_calibration_profile_version > 0 ? "ACTIVE" : "EMPTY";
+    signal.calibration_fail_closed = true;
+    signal.calibration_applied =
+        state.active_calibration_profile_version > 0;
+    signal.correction_applied = signal.calibration_applied;
+    signal.calibration_profile_version =
+        state.active_calibration_profile_version;
+    signal.calibration_profile_id = state.active_calibration_profile_id;
+    signal.calibration_profile_delta_id =
+        state.active_calibration_profile_delta_id;
+    signal.calibration_evidence_id =
+        state.active_calibration_evidence_id;
     signal.guardrail_reason.clear();
 
     const bool mismatch_exceeds_threshold =
@@ -833,6 +844,9 @@ CardinalityFeedbackSignal QueryProfiler::recordCardinalityFeedback(
         state.calibration_bundle_version =
             std::max<uint32_t>(1, state.calibration_bundle_version + 1);
         signal.calibration_bundle_proposed = true;
+        signal.calibration_applied = false;
+        signal.correction_applied = false;
+        signal.calibration_store_state = "PROPOSED";
         signal.calibration_profile_version = state.calibration_bundle_version;
         signal.calibration_profile_id =
             "sb_cost_calibration/runtime_feedback/" + std::string(feedback_key) +
@@ -888,14 +902,43 @@ std::optional<CardinalityFeedbackSignal> QueryProfiler::acknowledgeCardinalityFe
         state.signal.observation_count > state.last_consumed_observation) {
         state.last_consumed_observation = state.signal.observation_count;
         state.signal.replan_required = false;
+        state.signal.replan_suppressed = false;
         state.signal.stats_refresh_requested = false;
         state.signal.stats_refresh_applied = stats_refresh_applied;
         state.signal.calibration_bundle_proposed = false;
-        state.signal.calibration_profile_version = 0;
-        state.signal.calibration_profile_id.clear();
-        state.signal.calibration_profile_delta_id.clear();
-        state.signal.calibration_evidence_id.clear();
-        state.signal.cost_reweight_factor = 1.0;
+        state.signal.calibration_store_contract_id =
+            kRuntimeLearningCalibrationStoreContractId;
+        state.signal.calibration_fail_closed = true;
+        if (stats_refresh_applied &&
+            state.signal.calibration_profile_version > 0 &&
+            !state.signal.calibration_profile_id.empty())
+        {
+            state.active_calibration_profile_version =
+                state.signal.calibration_profile_version;
+            state.active_calibration_profile_id =
+                state.signal.calibration_profile_id;
+            state.active_calibration_profile_delta_id =
+                state.signal.calibration_profile_delta_id;
+            state.active_calibration_evidence_id =
+                state.signal.calibration_evidence_id;
+            state.active_cost_reweight_factor =
+                state.signal.cost_reweight_factor;
+        }
+        state.signal.calibration_applied =
+            state.active_calibration_profile_version > 0;
+        state.signal.correction_applied = state.signal.calibration_applied;
+        state.signal.calibration_store_state =
+            state.active_calibration_profile_version > 0 ? "ACTIVE" : "EMPTY";
+        state.signal.calibration_profile_version =
+            state.active_calibration_profile_version;
+        state.signal.calibration_profile_id =
+            state.active_calibration_profile_id;
+        state.signal.calibration_profile_delta_id =
+            state.active_calibration_profile_delta_id;
+        state.signal.calibration_evidence_id =
+            state.active_calibration_evidence_id;
+        state.signal.cost_reweight_factor =
+            state.active_cost_reweight_factor;
         state.signal.replan_action_count += 1;
         if (!state.signal.last_plan_hash.empty())
         {

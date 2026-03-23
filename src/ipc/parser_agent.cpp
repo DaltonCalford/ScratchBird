@@ -7,11 +7,6 @@
 
 #include "scratchbird/ipc/parser_agent.h"
 
-// Parser agent implementations for factory
-#include "scratchbird/ipc/postgresql_parser_agent.h"
-#include "scratchbird/ipc/mysql_parser_agent.h"
-#include "scratchbird/ipc/firebird_parser_agent.h"
-
 #include <cstring>
 #include <chrono>
 
@@ -35,6 +30,17 @@
 namespace scratchbird {
 namespace ipc {
 
+namespace {
+
+std::string deriveParserIpcEndpoint(const std::string& engine_endpoint) {
+    if (engine_endpoint.empty()) {
+        return std::string();
+    }
+    return engine_endpoint + ".parser_v1";
+}
+
+}
+
 // ============================================================================
 // ParserAgent Base Class Implementation
 // ============================================================================
@@ -45,6 +51,10 @@ ParserAgent::ParserAgent(const ParserAgentConfig& config)
 
 ParserAgent::~ParserAgent() {
     stop();
+}
+
+core::Status ParserAgent::runAcceptedClient(int client_fd, core::ErrorContext* ctx) {
+    return handleClient(client_fd, ctx);
 }
 
 core::Status ParserAgent::start(core::ErrorContext* ctx) {
@@ -274,17 +284,25 @@ void ParserAgent::ioLoop() {
 }
 
 void ParserAgent::disconnectClient(uint32_t client_id) {
-    std::unique_lock<std::shared_mutex> lock(connections_mutex_);
-    auto it = connections_.find(client_id);
-    if (it != connections_.end()) {
+    std::unique_ptr<IPCChannel> ipc_channel;
+    {
+        std::unique_lock<std::shared_mutex> lock(connections_mutex_);
+        auto it = connections_.find(client_id);
+        if (it != connections_.end()) {
 #if defined(__linux__) || defined(__APPLE__)
-        if (it->second->socket_fd >= 0) {
-            ::close(it->second->socket_fd);
-        }
+            if (it->second->socket_fd >= 0) {
+                ::close(it->second->socket_fd);
+            }
 #endif
-        connections_.erase(it);
+            ipc_channel = std::move(it->second->ipc_channel);
+            connections_.erase(it);
+        }
     }
-    
+
+    if (ipc_channel) {
+        releaseIPCChannel(std::move(ipc_channel));
+    }
+
     updateStats([](Stats& s) {
         s.connections_closed++;
         s.active_connections--;
@@ -315,6 +333,67 @@ core::Status ParserAgent::sendToEngine(uint32_t client_id, const IPCMessage& msg
     
     // Use IPCChannel API directly
     return client->ipc_channel->send(msg, ctx);
+}
+
+core::Status ParserAgent::sendCompiledQueryToEngine(uint32_t client_id,
+                                                    uint32_t request_id,
+                                                    const std::vector<uint8_t>& bytecode,
+                                                    const std::string& original_sql,
+                                                    core::ErrorContext* ctx) {
+    IPCMessage msg;
+    msg.setType(IPCMessageType::COMPILED_QUERY);
+    msg.header.request_id = request_id;
+
+    IPCCompiledQueryPayload payload{};
+    payload.original_sql_length = static_cast<uint32_t>(original_sql.size());
+    payload.bytecode_length = static_cast<uint32_t>(bytecode.size());
+
+    msg.payload.resize(sizeof(payload) + original_sql.size() + bytecode.size());
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    if (!original_sql.empty()) {
+        std::memcpy(msg.payload.data() + sizeof(payload),
+                    original_sql.data(),
+                    original_sql.size());
+    }
+    if (!bytecode.empty()) {
+        std::memcpy(msg.payload.data() + sizeof(payload) + original_sql.size(),
+                    bytecode.data(),
+                    bytecode.size());
+    }
+
+    return sendToEngine(client_id, msg, ctx);
+}
+
+core::Status ParserAgent::sendCompiledParseToEngine(uint32_t client_id,
+                                                    uint32_t request_id,
+                                                    const std::string& stmt_name,
+                                                    const std::vector<uint8_t>& bytecode,
+                                                    const std::string& original_sql,
+                                                    core::ErrorContext* ctx) {
+    IPCMessage msg;
+    msg.setType(IPCMessageType::COMPILED_PARSE);
+    msg.header.request_id = request_id;
+
+    IPCCompiledParsePayload payload{};
+    std::strncpy(payload.stmt_name, stmt_name.c_str(), sizeof(payload.stmt_name) - 1);
+    payload.stmt_name[sizeof(payload.stmt_name) - 1] = '\0';
+    payload.original_sql_length = static_cast<uint32_t>(original_sql.size());
+    payload.bytecode_length = static_cast<uint32_t>(bytecode.size());
+
+    msg.payload.resize(sizeof(payload) + original_sql.size() + bytecode.size());
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    if (!original_sql.empty()) {
+        std::memcpy(msg.payload.data() + sizeof(payload),
+                    original_sql.data(),
+                    original_sql.size());
+    }
+    if (!bytecode.empty()) {
+        std::memcpy(msg.payload.data() + sizeof(payload) + original_sql.size(),
+                    bytecode.data(),
+                    bytecode.size());
+    }
+
+    return sendToEngine(client_id, msg, ctx);
 }
 
 core::Status ParserAgent::receiveFromEngine(uint32_t client_id, IPCMessage& msg,
@@ -354,7 +433,29 @@ std::unique_ptr<IPCChannel> ParserAgent::acquireIPCChannel() {
         ipc_channels_.pop_back();
         return channel;
     }
-    return nullptr;
+
+    if (config_.ipc_endpoint.empty()) {
+        return nullptr;
+    }
+
+    auto channel = IPCChannelFactory::createDefault();
+    if (!channel) {
+        return nullptr;
+    }
+
+    core::ErrorContext ctx;
+    const std::string parser_endpoint = deriveParserIpcEndpoint(config_.ipc_endpoint);
+    if (!parser_endpoint.empty() &&
+        channel->connect(parser_endpoint, &ctx) == core::Status::OK) {
+        return channel;
+    }
+
+    core::ErrorContext fallback_ctx;
+    if (channel->connect(config_.ipc_endpoint, &fallback_ctx) != core::Status::OK) {
+        return nullptr;
+    }
+
+    return channel;
 }
 
 void ParserAgent::releaseIPCChannel(std::unique_ptr<IPCChannel> channel) {
@@ -372,33 +473,6 @@ uint64_t ParserAgent::getCurrentTimeMs() const {
 void ParserAgent::updateStats(const std::function<void(Stats&)>& updater) {
     std::lock_guard<std::mutex> lock(stats_mutex_);
     updater(stats_);
-}
-
-// ============================================================================
-// ParserAgentFactory Implementation
-// ============================================================================
-
-std::unique_ptr<ParserAgent> ParserAgentFactory::create(const ParserAgentConfig& config) {
-    if (config.protocol == "native" || config.protocol == "scratchbird") {
-        return std::make_unique<NativeSBParserAgent>(config);
-    } else if (config.protocol == "postgresql") {
-        return std::make_unique<PostgreSQLParserAgent>(config);
-    } else if (config.protocol == "mysql") {
-        return std::make_unique<MySQLParserAgent>(config);
-    } else if (config.protocol == "firebird") {
-        return std::make_unique<FirebirdParserAgent>(config);
-    }
-    return nullptr;
-}
-
-std::unique_ptr<ParserAgent> ParserAgentFactory::create(const std::string& protocol,
-                                                       const std::string& listen_endpoint,
-                                                       const std::string& ipc_endpoint) {
-    ParserAgentConfig config;
-    config.protocol = protocol;
-    config.listen_endpoint = listen_endpoint;
-    config.ipc_endpoint = ipc_endpoint;
-    return create(config);
 }
 
 // ============================================================================

@@ -1,0 +1,65 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\nRows affected: 0\nRows affected: 0\nRows affected: 0\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 388,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_native/raw/scratchbird_native.setup.96b374872860.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_native/raw/scratchbird_native.setup.96b374872860.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n\nError: V3 EXPLAIN plan payload invalid\nStopping due to error (SET BAIL is ON)\n",
+    "stderr": "",
+    "elapsed_ms": 282,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_native/raw/scratchbird_native.plan.01c155f6560b.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_native/raw/scratchbird_native.plan.01c155f6560b.stderr.txt",
+    "plan_lines": [
+      "PLAN|Error: V3 EXPLAIN plan payload invalid",
+      "PLAN|Stopping due to error (SET BAIL is ON)"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "+------------------------------------------------+\n| expr1                                          |\n+------------------------------------------------+\n| ASSERT|merge_join_presorted|k=10|a=m10a|b=m10b |\n| ASSERT|merge_join_presorted|k=20|a=m20a|b=m20b |\n| ASSERT|merge_join_presorted|k=30|a=m30a|b=m30b |\n+------------------------------------------------+\n(3 rows)\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 400,
+    "assert_lines": [
+      "ASSERT|merge_join_presorted|k=10|a=m10a|b=m10b",
+      "ASSERT|merge_join_presorted|k=20|a=m20a|b=m20b",
+      "ASSERT|merge_join_presorted|k=30|a=m30a|b=m30b"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_native/raw/scratchbird_native.exec.e53294af602b.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_native/raw/scratchbird_native.exec.e53294af602b.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 331,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_native/raw/scratchbird_native.teardown.6e102dba1653.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_native/raw/scratchbird_native.teardown.6e102dba1653.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

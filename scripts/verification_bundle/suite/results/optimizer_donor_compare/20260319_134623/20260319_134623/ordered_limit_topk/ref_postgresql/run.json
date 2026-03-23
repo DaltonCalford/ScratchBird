@@ -1,0 +1,60 @@
+{
+  "setup": {
+    "status": "error",
+    "returncode": 2,
+    "sqlstate": "FATAL",
+    "message": "connection to server at \"127.0.0.1\", port 5432 failed: FATAL:  password authentication failed for user \"postgres\"",
+    "stdout": "\npsql: error: connection to server at \"127.0.0.1\", port 5432 failed: FATAL:  password authentication failed for user \"postgres\"\nconnection to server at \"127.0.0.1\", port 5432 failed: FATAL:  password authentication failed for user \"postgres\"\n",
+    "stderr": "",
+    "elapsed_ms": 21,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_postgresql/raw/ref_postgresql.setup.be36158c9e76.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_postgresql/raw/ref_postgresql.setup.be36158c9e76.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 2,
+    "sqlstate": "FATAL",
+    "message": "connection to server at \"127.0.0.1\", port 5432 failed: FATAL:  password authentication failed for user \"postgres\"",
+    "stdout": "\npsql: error: connection to server at \"127.0.0.1\", port 5432 failed: FATAL:  password authentication failed for user \"postgres\"\nconnection to server at \"127.0.0.1\", port 5432 failed: FATAL:  password authentication failed for user \"postgres\"\n",
+    "stderr": "",
+    "elapsed_ms": 17,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_postgresql/raw/ref_postgresql.plan.fe145427af14.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_postgresql/raw/ref_postgresql.plan.fe145427af14.stderr.txt",
+    "plan_lines": [
+      "PLAN|connection to server at \"127.0.0.1\", port 5432 failed: FATAL:  password authentication failed for user \"postgres\""
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 2,
+    "sqlstate": "FATAL",
+    "message": "connection to server at \"127.0.0.1\", port 5432 failed: FATAL:  password authentication failed for user \"postgres\"",
+    "stdout": "\npsql: error: connection to server at \"127.0.0.1\", port 5432 failed: FATAL:  password authentication failed for user \"postgres\"\nconnection to server at \"127.0.0.1\", port 5432 failed: FATAL:  password authentication failed for user \"postgres\"\n",
+    "stderr": "",
+    "elapsed_ms": 20,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_postgresql/raw/ref_postgresql.exec.52cf8c0eea4a.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_postgresql/raw/ref_postgresql.exec.52cf8c0eea4a.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "error",
+    "returncode": 2,
+    "sqlstate": "FATAL",
+    "message": "connection to server at \"127.0.0.1\", port 5432 failed: FATAL:  password authentication failed for user \"postgres\"",
+    "stdout": "\npsql: error: connection to server at \"127.0.0.1\", port 5432 failed: FATAL:  password authentication failed for user \"postgres\"\nconnection to server at \"127.0.0.1\", port 5432 failed: FATAL:  password authentication failed for user \"postgres\"\n",
+    "stderr": "",
+    "elapsed_ms": 20,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_postgresql/raw/ref_postgresql.teardown.67cf5454ea45.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_postgresql/raw/ref_postgresql.teardown.67cf5454ea45.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

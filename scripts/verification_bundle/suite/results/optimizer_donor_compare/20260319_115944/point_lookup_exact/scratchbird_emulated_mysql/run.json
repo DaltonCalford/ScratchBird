@@ -1,0 +1,62 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 390,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.setup.9c8b3433c144.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.setup.9c8b3433c144.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "HY000",
+    "message": "ERROR 5002 (HY000) at line 1: V3 EXPLAIN plan payload invalid",
+    "stdout": "\nERROR 5002 (HY000) at line 1: V3 EXPLAIN plan payload invalid\n",
+    "stderr": "",
+    "elapsed_ms": 56,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.plan.f9930066d696.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.plan.f9930066d696.stderr.txt",
+    "plan_lines": [
+      "PLAN|ERROR 5002 (HY000) at line 1: V3 EXPLAIN plan payload invalid"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "ASSERT|point_lookup_exact|count=1|payload=p073\n\n",
+    "stderr": "",
+    "elapsed_ms": 136,
+    "assert_lines": [
+      "ASSERT|point_lookup_exact|count=1|payload=p073"
+    ],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.exec.e4ef5f4135c4.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.exec.e4ef5f4135c4.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 99,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.teardown.9adfe69ba075.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.teardown.9adfe69ba075.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

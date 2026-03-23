@@ -1,0 +1,69 @@
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 5 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 6 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 7 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 8 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 9 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 10 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 11 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 12 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 13 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 14 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 15 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 16 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 17 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 18 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 19 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 20 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 21 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 22 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 23 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 24 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 25 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+After line 26 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql

@@ -115,15 +115,6 @@ public:
     static const char* MYSQL_SHOW_CREATE_TABLE;
     
     // ========================================================================
-    // Firebird RDB$ Views
-    // ========================================================================
-    
-    static const char* FB_RDB_RELATIONS;
-    static const char* FB_RDB_RELATION_FIELDS;
-    static const char* FB_RDB_FIELDS;
-    static const char* FB_RDB_INDICES;
-    
-    // ========================================================================
     // Initialization
     // ========================================================================
     
@@ -136,11 +127,6 @@ public:
      * Initialize mysql schema for MySQL compatibility
      */
     static void initializeMySQL(core::Database* db);
-    
-    /**
-     * Initialize RDB$ system tables for Firebird compatibility
-     */
-    static void initializeFirebird(core::Database* db);
     
     // ========================================================================
     // Query Methods

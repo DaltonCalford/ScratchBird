@@ -1,0 +1,5 @@
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+-SQL error code = -104
+-Name longer than database column size
+After line 5 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.setup.sql

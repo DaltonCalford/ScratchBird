@@ -1,0 +1,67 @@
+{
+  "setup": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "42000",
+    "message": "After line 5 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.setup.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\n-SQL error code = -104\n-Name longer than database column size\nAfter line 5 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.setup.sql\n",
+    "stderr": "",
+    "elapsed_ms": 250,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/expression_lookup/ref_firebird/raw/ref_firebird.setup.97d99ae95182.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/expression_lookup/ref_firebird/raw/ref_firebird.setup.97d99ae95182.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\nPLAN (AVP_EXPRESSION_LOOKUP NATURAL)\n\n          ID PAYLOAD                          \n============ ================================ \n           3 charlie-a                        \n           4 charlie-b                        \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 108,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/expression_lookup/ref_firebird/raw/ref_firebird.plan.82074b6fe7f5.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/expression_lookup/ref_firebird/raw/ref_firebird.plan.82074b6fe7f5.stderr.txt",
+    "plan_lines": [
+      "PLAN|PLAN (AVP_EXPRESSION_LOOKUP NATURAL)",
+      "PLAN|ID PAYLOAD",
+      "PLAN|============ ================================",
+      "PLAN|3 charlie-a",
+      "PLAN|4 charlie-b"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\nCONCATENATION                                                                             \n=============================================================================== \nASSERT|expression_lookup|id=3|payload=charlie-a                                           \nASSERT|expression_lookup|id=4|payload=charlie-b                                           \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 78,
+    "assert_lines": [
+      "ASSERT|expression_lookup|id=3|payload=charlie-a",
+      "ASSERT|expression_lookup|id=4|payload=charlie-b"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/expression_lookup/ref_firebird/raw/ref_firebird.exec.6063c0a86bf9.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/expression_lookup/ref_firebird/raw/ref_firebird.exec.6063c0a86bf9.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 75,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/expression_lookup/ref_firebird/raw/ref_firebird.teardown.e0ea54aa87e2.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/expression_lookup/ref_firebird/raw/ref_firebird.teardown.e0ea54aa87e2.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

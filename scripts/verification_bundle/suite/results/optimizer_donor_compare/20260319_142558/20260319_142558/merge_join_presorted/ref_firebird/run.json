@@ -1,0 +1,69 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 300,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/merge_join_presorted/ref_firebird/raw/ref_firebird.setup.d143d86db247.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/merge_join_presorted/ref_firebird/raw/ref_firebird.setup.d143d86db247.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "INDEX",
+    "message": "",
+    "stdout": "\nPLAN SORT (JOIN (A NATURAL, B INDEX (RDB$PRIMARY9)))\n\n           K PAYLOAD                          PAYLOAD                          \n============ ================================ ================================ \n          10 m10a                             m10b                             \n          20 m20a                             m20b                             \n          30 m30a                             m30b                             \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 103,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/merge_join_presorted/ref_firebird/raw/ref_firebird.plan.583419d0e3ed.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/merge_join_presorted/ref_firebird/raw/ref_firebird.plan.583419d0e3ed.stderr.txt",
+    "plan_lines": [
+      "PLAN|PLAN SORT (JOIN (A NATURAL, B INDEX (RDB$PRIMARY9)))",
+      "PLAN|K PAYLOAD                          PAYLOAD",
+      "PLAN|============ ================================ ================================",
+      "PLAN|10 m10a                             m10b",
+      "PLAN|20 m20a                             m20b",
+      "PLAN|30 m30a                             m30b"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\nCONCATENATION                                                                                                            \n=============================================================================== \nASSERT|merge_join_presorted|k=10|a=m10a|b=m10b                                                                           \nASSERT|merge_join_presorted|k=20|a=m20a|b=m20b                                                                           \nASSERT|merge_join_presorted|k=30|a=m30a|b=m30b                                                                           \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 78,
+    "assert_lines": [
+      "ASSERT|merge_join_presorted|k=10|a=m10a|b=m10b",
+      "ASSERT|merge_join_presorted|k=20|a=m20a|b=m20b",
+      "ASSERT|merge_join_presorted|k=30|a=m30a|b=m30b"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/merge_join_presorted/ref_firebird/raw/ref_firebird.exec.1d1342161f13.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/merge_join_presorted/ref_firebird/raw/ref_firebird.exec.1d1342161f13.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 77,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/merge_join_presorted/ref_firebird/raw/ref_firebird.teardown.ba489d621f11.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/merge_join_presorted/ref_firebird/raw/ref_firebird.teardown.ba489d621f11.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 337,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_firebird/raw/ref_firebird.setup.df79c921ec97.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_firebird/raw/ref_firebird.setup.df79c921ec97.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\nPLAN SORT (AVP_ORDERED_LIMIT_TOPK NATURAL)\n\n          ID            K \n============ ============ \n           3           10 \n           5           10 \n           8           10 \n           4           20 \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 107,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_firebird/raw/ref_firebird.plan.24b6ab1dda7d.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_firebird/raw/ref_firebird.plan.24b6ab1dda7d.stderr.txt",
+    "plan_lines": [
+      "PLAN|PLAN SORT (AVP_ORDERED_LIMIT_TOPK NATURAL)",
+      "PLAN|ID            K",
+      "PLAN|============ ============",
+      "PLAN|3           10",
+      "PLAN|5           10",
+      "PLAN|8           10",
+      "PLAN|4           20"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\nCONCATENATION                                                            \n======================================================================== \nASSERT|ordered_limit_topk|id=3|k=10                                      \nASSERT|ordered_limit_topk|id=5|k=10                                      \nASSERT|ordered_limit_topk|id=8|k=10                                      \nASSERT|ordered_limit_topk|id=4|k=20                                      \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 81,
+    "assert_lines": [
+      "ASSERT|ordered_limit_topk|id=3|k=10",
+      "ASSERT|ordered_limit_topk|id=5|k=10",
+      "ASSERT|ordered_limit_topk|id=8|k=10",
+      "ASSERT|ordered_limit_topk|id=4|k=20"
+    ],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_firebird/raw/ref_firebird.exec.96fcc50dd247.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_firebird/raw/ref_firebird.exec.96fcc50dd247.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 80,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_firebird/raw/ref_firebird.teardown.d4fa32ffcd40.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_firebird/raw/ref_firebird.teardown.d4fa32ffcd40.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

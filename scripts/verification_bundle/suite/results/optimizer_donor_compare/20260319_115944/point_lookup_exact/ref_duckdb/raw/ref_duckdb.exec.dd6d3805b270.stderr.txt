@@ -1,0 +1,5 @@
+Catalog Error: Table with name avp_point_lookup_exact does not exist!
+Did you mean "pg_tablespace"?
+
+LINE 2: FROM avp_point_lookup_exact
+             ^

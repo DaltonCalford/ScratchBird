@@ -1,0 +1,62 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\npsql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/merge_join_presorted.setup.sql:1: NOTICE:  table \"avp_merge_join_presorted\" does not exist, skipping\n",
+    "stderr": "",
+    "elapsed_ms": 311,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.setup.1e03c93db3fb.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.setup.1e03c93db3fb.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 3,
+    "sqlstate": "ERROR",
+    "message": "psql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/merge_join_presorted.plan.sql:6: ERROR:  V3 EXPLAIN plan payload invalid",
+    "stdout": "\npsql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/merge_join_presorted.plan.sql:6: ERROR:  V3 EXPLAIN plan payload invalid\n",
+    "stderr": "",
+    "elapsed_ms": 100,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.plan.199795e8ed59.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.plan.199795e8ed59.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "ASSERT|merge_join_presorted|k=10|a=m10a|b=m10b\nASSERT|merge_join_presorted|k=20|a=m20a|b=m20b\nASSERT|merge_join_presorted|k=30|a=m30a|b=m30b\n\n",
+    "stderr": "",
+    "elapsed_ms": 155,
+    "assert_lines": [
+      "ASSERT|merge_join_presorted|k=10|a=m10a|b=m10b",
+      "ASSERT|merge_join_presorted|k=20|a=m20a|b=m20b",
+      "ASSERT|merge_join_presorted|k=30|a=m30a|b=m30b"
+    ],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.exec.ac71587dd895.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.exec.ac71587dd895.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 166,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.teardown.94b782a98665.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.teardown.94b782a98665.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

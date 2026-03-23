@@ -41,6 +41,9 @@ namespace scratchbird::optimizer {
 // Forward declarations
 class PlanNode;
 
+inline constexpr const char *kRuntimeLearningCalibrationStoreContractId =
+    "sb_runtime_learning_calibration_store/v1";
+
 enum class RegressionSeverity {
     NONE,
     MINOR,
@@ -80,6 +83,8 @@ struct CardinalityFeedbackSignal {
     bool stats_refresh_requested = false;
     bool stats_refresh_applied = false;
     bool calibration_bundle_proposed = false;
+    bool correction_applied = false;
+    bool calibration_applied = false;
     uint64_t last_estimated_rows = 0;
     uint64_t last_actual_rows = 0;
     double estimation_error_ratio = 1.0;
@@ -87,6 +92,10 @@ struct CardinalityFeedbackSignal {
     double cost_reweight_factor = 1.0;
     uint64_t observation_count = 0;
     uint64_t replan_action_count = 0;
+    std::string calibration_store_contract_id =
+        kRuntimeLearningCalibrationStoreContractId;
+    std::string calibration_store_state = "EMPTY";
+    bool calibration_fail_closed = true;
     uint32_t calibration_profile_version = 0;
     std::string last_plan_hash;
     std::string calibration_profile_id;
@@ -358,6 +367,11 @@ private:
         CardinalityFeedbackSignal signal;
         uint64_t last_consumed_observation = 0;
         uint32_t calibration_bundle_version = 0;
+        uint32_t active_calibration_profile_version = 0;
+        std::string active_calibration_profile_id;
+        std::string active_calibration_profile_delta_id;
+        std::string active_calibration_evidence_id;
+        double active_cost_reweight_factor = 1.0;
         std::unordered_map<std::string, uint64_t> replan_actions_by_plan_hash;
     };
     std::unordered_map<std::string, CardinalityFeedbackState> cardinality_feedback_;

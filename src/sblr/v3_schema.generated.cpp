@@ -271,6 +271,7 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"from", FieldType::OPT, "TABLE_REF"},
         FieldDef{"joins", FieldType::LIST, "JOIN"},
         FieldDef{"where", FieldType::OPT, "expr"},
+        FieldDef{"ignore_errors", FieldType::OPT, "bool"},
         FieldDef{"returning", FieldType::LIST, "expr"},
     }}},
     {"SCHEMA_DELETE", SchemaDef{"SCHEMA_DELETE", {
@@ -394,6 +395,7 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"return_type", FieldType::OPT, "TYPE_SPEC"},
         FieldDef{"language", FieldType::IDENT, ""},
         FieldDef{"body", FieldType::BYTES, ""},
+        FieldDef{"body_bytecode", FieldType::OPT, "bytes"},
         FieldDef{"options", FieldType::SCHEMA, "OPTION_KV"},
     }}},
     {"SCHEMA_DDL_CREATE_PROCEDURE", SchemaDef{"SCHEMA_DDL_CREATE_PROCEDURE", {
@@ -402,6 +404,7 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"return_type", FieldType::OPT, "TYPE_SPEC"},
         FieldDef{"language", FieldType::IDENT, ""},
         FieldDef{"body", FieldType::BYTES, ""},
+        FieldDef{"body_bytecode", FieldType::OPT, "bytes"},
         FieldDef{"options", FieldType::SCHEMA, "OPTION_KV"},
     }}},
     {"PARAM_DEF", SchemaDef{"PARAM_DEF", {
@@ -416,8 +419,11 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"timing", FieldType::U8, ""},
         FieldDef{"event_mask", FieldType::U32, ""},
         FieldDef{"for_each_row", FieldType::BOOL, ""},
+        FieldDef{"is_database_trigger", FieldType::OPT, "bool"},
+        FieldDef{"sql_security", FieldType::OPT, "u8"},
         FieldDef{"when", FieldType::OPT, "expr"},
         FieldDef{"body", FieldType::BYTES, ""},
+        FieldDef{"body_bytecode", FieldType::OPT, "bytes"},
     }}},
     {"SCHEMA_DDL_CREATE_PACKAGE", SchemaDef{"SCHEMA_DDL_CREATE_PACKAGE", {
         FieldDef{"name", FieldType::IDENT, ""},
@@ -429,6 +435,10 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"message", FieldType::STRING, ""},
     }}},
     {"SCHEMA_DDL_CREATE_USER", SchemaDef{"SCHEMA_DDL_CREATE_USER", {
+        FieldDef{"name", FieldType::IDENT, ""},
+        FieldDef{"options", FieldType::SCHEMA, "OPTION_KV"},
+    }}},
+    {"SCHEMA_DDL_ALTER_USER", SchemaDef{"SCHEMA_DDL_ALTER_USER", {
         FieldDef{"name", FieldType::IDENT, ""},
         FieldDef{"options", FieldType::SCHEMA, "OPTION_KV"},
     }}},
@@ -479,6 +489,18 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"server", FieldType::IDENT, ""},
         FieldDef{"user", FieldType::IDENT, ""},
         FieldDef{"options", FieldType::SCHEMA, "OPTION_KV"},
+    }}},
+    {"SCHEMA_PREPARE_STMT", SchemaDef{"SCHEMA_PREPARE_STMT", {
+        FieldDef{"name", FieldType::IDENT, ""},
+        FieldDef{"sql", FieldType::EXPR, ""},
+    }}},
+    {"SCHEMA_EXECUTE_PREPARED", SchemaDef{"SCHEMA_EXECUTE_PREPARED", {
+        FieldDef{"name", FieldType::IDENT, ""},
+        FieldDef{"params", FieldType::LIST, "expr"},
+    }}},
+    {"SCHEMA_DEALLOCATE_PREPARED", SchemaDef{"SCHEMA_DEALLOCATE_PREPARED", {
+        FieldDef{"all", FieldType::BOOL, ""},
+        FieldDef{"name", FieldType::OPT, "ident"},
     }}},
     {"SCHEMA_DDL_CREATE_SYNONYM", SchemaDef{"SCHEMA_DDL_CREATE_SYNONYM", {
         FieldDef{"name", FieldType::SCHEMA_PATH, ""},
@@ -712,6 +734,7 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"recursive", FieldType::OPT, "bool"},
         FieldDef{"max_depth", FieldType::OPT, "u64"},
         FieldDef{"describe_mode", FieldType::OPT, "u8"},
+        FieldDef{"values", FieldType::OPT, "list<expr>"},
     }}},
     {"SCHEMA_EXPLAIN", SchemaDef{"SCHEMA_EXPLAIN", {
         FieldDef{"analyze", FieldType::BOOL, ""},

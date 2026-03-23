@@ -1,0 +1,63 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 18,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_duckdb/raw/ref_duckdb.setup.4ae56fb687f3.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_duckdb/raw/ref_duckdb.setup.4ae56fb687f3.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "WHERE",
+    "message": "                               ^",
+    "stdout": "\nCatalog Error: Table with name avp_range_selectivity does not exist!\nDid you mean \"pg_prepared_statements\"?\n\nLINE 1: EXPLAIN SELECT id FROM avp_range_selectivity WHERE k BETWEEN 25 AND 75;\n                               ^\n",
+    "stderr": "",
+    "elapsed_ms": 17,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_duckdb/raw/ref_duckdb.plan.e4262242f471.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_duckdb/raw/ref_duckdb.plan.e4262242f471.stderr.txt",
+    "plan_lines": [
+      "PLAN|Catalog Error: Table with name avp_range_selectivity does not exist!",
+      "PLAN|Did you mean \"pg_prepared_statements\"?",
+      "PLAN|LINE 1: EXPLAIN SELECT id FROM avp_range_selectivity WHERE k BETWEEN 25 AND 75;",
+      "PLAN|^"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "00000",
+    "message": "             ^",
+    "stdout": "\nCatalog Error: Table with name avp_range_selectivity does not exist!\nDid you mean \"pg_prepared_statements\"?\n\nLINE 2: FROM avp_range_selectivity\n             ^\n",
+    "stderr": "",
+    "elapsed_ms": 18,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_duckdb/raw/ref_duckdb.exec.339ac33e40b7.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_duckdb/raw/ref_duckdb.exec.339ac33e40b7.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 14,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_duckdb/raw/ref_duckdb.teardown.c8da8ca77af1.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_duckdb/raw/ref_duckdb.teardown.c8da8ca77af1.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

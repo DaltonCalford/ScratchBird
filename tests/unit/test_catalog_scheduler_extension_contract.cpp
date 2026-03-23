@@ -20,6 +20,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/parser/v3_compiler.h"
 
 using namespace scratchbird::core;
 
@@ -66,6 +67,7 @@ protected:
 TEST_F(CatalogSchedulerExtensionContractTest, SchedulerExtensionCatalogContracts)
 {
     ErrorContext ctx;
+    scratchbird::parser::v3::Compiler compiler;
 
     CatalogManager::JobTypeCatalogInfo job_type{};
     job_type.job_type_id = generateUuidV7();
@@ -108,11 +110,21 @@ TEST_F(CatalogSchedulerExtensionContractTest, SchedulerExtensionCatalogContracts
     job.job_name = "nightly_etl";
     job.job_type = CatalogManager::JobType::SQL;
     job.job_sql = "select 1";
+    auto compiled = compiler.compile(job.job_sql);
+    ASSERT_TRUE(compiled.ok) << compiled.error;
+    job.bytecode = compiled.bytecode;
+    job.source_dialect = "scratchbird_v3";
     job.state = CatalogManager::JobState::ENABLED;
     job.schedule_kind = CatalogManager::ScheduleKind::AT;
     job.created_by_user_uuid = catalog_->getSystemUserId(&ctx);
     ID job_id{};
     ASSERT_EQ(catalog_->createJob(job, job_id, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::JobInfo loaded_job{};
+    ASSERT_EQ(catalog_->getJob(job_id, loaded_job, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(loaded_job.job_sql, job.job_sql);
+    EXPECT_EQ(loaded_job.bytecode, job.bytecode);
+    EXPECT_EQ(loaded_job.source_dialect, job.source_dialect);
 
     CatalogManager::JobParamCatalogInfo job_param{};
     job_param.param_id = generateUuidV7();

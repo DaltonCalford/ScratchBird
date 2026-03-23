@@ -17,7 +17,7 @@
  */
 
 #include "scratchbird/sblr/postgresql_query_compiler.h"
-#include "scratchbird/parser/v3_emitter.h"
+#include "scratchbird/sblr/ast_sblr_lowerer.h"
 #include "scratchbird/sblr/v3_container.h"
 #include <chrono>
 
@@ -28,9 +28,7 @@ namespace sblr {
 namespace pg = parser::postgresql;
 
 PostgreSQLQueryCompiler::PostgreSQLQueryCompiler(core::Database* db)
-    : db_(db)
-    , catalog_(db ? db->catalog_manager() : nullptr)
-{
+    : db_(db) {
     // Default schema/search path are intentionally left unset here.
     // The adapter/session must set them to the selected emulated DB schema root.
 }
@@ -74,7 +72,7 @@ PostgreSQLCompilationResult PostgreSQLQueryCompiler::compileInternal(const std::
     // =========================================================================
 
     if (parse_result.statement() != nullptr) {
-        parser::v3::V3Emitter emitter(parse_result.stringPool());
+        parser::v3::AstSblrLowerer emitter(parse_result.stringPool());
         sblr::v3::Container container;
         std::string emit_err;
         if (!emitter.emitStatementToContainer(parse_result.statement(), container, emit_err)) {
@@ -82,14 +80,15 @@ PostgreSQLCompilationResult PostgreSQLQueryCompiler::compileInternal(const std::
             return result;
         }
         container.metadata.module_name = "postgresql_emulation";
-
-        std::vector<uint8_t> encoded;
-        std::string encode_err;
-        if (!sblr::v3::encodeContainer(container, encoded, encode_err)) {
-            result.addError("V3 container encode failed: " + encode_err);
+        std::string encode_error;
+        std::vector<uint8_t> raw_bytecode;
+        if (!sblr::v3::encodeContainer(container, raw_bytecode, encode_error)) {
+            result.addError("V3 container encode failed: " +
+                            (encode_error.empty() ? std::string("unknown error")
+                                                  : encode_error));
             return result;
         }
-        result.setBytecode(std::move(encoded));
+        result.setBytecode(std::move(raw_bytecode));
     } else {
         result.addError("V3 AST not available for PostgreSQL statement");
         return result;

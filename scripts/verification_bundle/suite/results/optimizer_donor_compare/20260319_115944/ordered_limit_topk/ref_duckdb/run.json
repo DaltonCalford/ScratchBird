@@ -1,0 +1,63 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 22,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.setup.5fb3fceb1ef9.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.setup.5fb3fceb1ef9.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "ORDER",
+    "message": "                                  ^",
+    "stdout": "\nCatalog Error: Table with name avp_ordered_limit_topk does not exist!\nDid you mean \"pg_depend\"?\n\nLINE 1: EXPLAIN SELECT id, k FROM avp_ordered_limit_topk ORDER BY k, id LIMIT 4;\n                                  ^\n",
+    "stderr": "",
+    "elapsed_ms": 16,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.plan.5f0013fddac4.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.plan.5f0013fddac4.stderr.txt",
+    "plan_lines": [
+      "PLAN|Catalog Error: Table with name avp_ordered_limit_topk does not exist!",
+      "PLAN|Did you mean \"pg_depend\"?",
+      "PLAN|LINE 1: EXPLAIN SELECT id, k FROM avp_ordered_limit_topk ORDER BY k, id LIMIT 4;",
+      "PLAN|^"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "00000",
+    "message": "             ^",
+    "stdout": "\nCatalog Error: Table with name avp_ordered_limit_topk does not exist!\nDid you mean \"pg_depend\"?\n\nLINE 2: FROM avp_ordered_limit_topk\n             ^\n",
+    "stderr": "",
+    "elapsed_ms": 17,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.exec.2a6109718a55.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.exec.2a6109718a55.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 19,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.teardown.9e678b16a43b.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.teardown.9e678b16a43b.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

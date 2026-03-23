@@ -12,10 +12,10 @@ INSERT INTO v3inet.v3_misc_table (id, payload) VALUES
   (2, 'm2'),
   (3, 'm3');
 
-SET search_path TO v3inet, public;
+SET search_path TO v3inet, users.public;
 SHOW search_path;
 SHOW server_version;
-SHOW TABLE v3_misc_table;
+SHOW TABLE v3inet.v3_misc_table;
 
 EXPLAIN SELECT id, payload FROM v3inet.v3_misc_table WHERE id > 1;
 

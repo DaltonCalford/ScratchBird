@@ -2284,12 +2284,11 @@ namespace scratchbird::optimizer
                                              output_rows);
         }
 
-        // For hash join, we only evaluate join condition for matching hash buckets
-        // (much cheaper than nested loop which evaluates for all combinations)
-        // Estimate: evaluate for ~10% of combinations (hash collisions + matches)
-        double join_qual_cost = static_cast<double>(outer_rows) *
-                               static_cast<double>(inner_rows) *
-                               selectivity * 10.0 *  // hash collision factor
+        // Hash join probe work is already captured above. Residual join-condition
+        // evaluation only applies to tuples that survive bucket probing and reach a
+        // candidate match, so it should scale with produced matches rather than the
+        // cartesian product.
+        double join_qual_cost = static_cast<double>(output_rows) *
                                params_.cpu_operator_cost;
 
         // Cost of materializing output tuples
@@ -2310,8 +2309,7 @@ namespace scratchbird::optimizer
         appendFormulaTerm(cost,
                           "run.join_qual",
                           params_.cpu_operator_cost,
-                          static_cast<double>(outer_rows) *
-                              static_cast<double>(inner_rows) * selectivity * 10.0,
+                          static_cast<double>(output_rows),
                           join_qual_cost,
                           "cost");
         appendFormulaTerm(cost,
@@ -2450,6 +2448,18 @@ namespace scratchbird::optimizer
                               inner_sort_cost.total_cost,
                               "cost");
         }
+        // Merge join still needs merge-state/mark-restore setup even when the
+        // input streams are tiny. Model a small fixed startup charge so simple
+        // unordered equi-joins do not look cheaper than hash join purely
+        // because the sort formula has almost no startup floor.
+        const double merge_state_setup_cost = params_.cpu_tuple_cost * 8.0;
+        cost.startup_cost += merge_state_setup_cost;
+        appendFormulaTerm(cost,
+                          "startup.merge_state_setup",
+                          params_.cpu_tuple_cost,
+                          8.0,
+                          merge_state_setup_cost,
+                          "cost");
 
         uint64_t output_rows = 0;
         if (join_type == parser::JoinType::CROSS)
@@ -2487,6 +2497,12 @@ namespace scratchbird::optimizer
             static_cast<double>(outer_rows + inner_rows) *
             params_.cpu_operator_cost *
             MERGE_COMPARE_FACTOR;
+        // Merge join still evaluates the join predicate across matched groups.
+        // Without this term, duplicate-heavy equi-joins are materially under-costed
+        // relative to hash join and can incorrectly win even when both inputs
+        // require explicit sorting.
+        double join_qual_cost =
+            static_cast<double>(output_rows) * params_.cpu_operator_cost;
         double output_cost = static_cast<double>(output_rows) * params_.cpu_tuple_cost;
 
         const uint64_t merge_buffer_bytes =
@@ -2507,6 +2523,12 @@ namespace scratchbird::optimizer
                           params_.cpu_operator_cost * MERGE_COMPARE_FACTOR,
                           static_cast<double>(outer_rows + inner_rows),
                           merge_compare_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.join_qual",
+                          params_.cpu_operator_cost,
+                          static_cast<double>(output_rows),
+                          join_qual_cost,
                           "cost");
         appendFormulaTerm(cost,
                           "run.output_materialization",
@@ -2532,7 +2554,7 @@ namespace scratchbird::optimizer
                               merge_buffer.cpu_cost,
                               "cost");
         }
-        cost.run_cost = merge_compare_cost + output_cost +
+        cost.run_cost = merge_compare_cost + join_qual_cost + output_cost +
                         merge_buffer.io_cost + merge_buffer.cpu_cost;
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = output_rows;
@@ -2565,6 +2587,7 @@ namespace scratchbird::optimizer
                      " (outer_sort=" + std::to_string(outer_sort_cost.total_cost) +
                      ", inner_sort=" + std::to_string(inner_sort_cost.total_cost) +
                      ", merge_compare=" + std::to_string(merge_compare_cost) +
+                     ", join_qual=" + std::to_string(join_qual_cost) +
                      ", spill=" + std::to_string(cost.spill_expected ? 1 : 0) + ")");
 
         return cost;

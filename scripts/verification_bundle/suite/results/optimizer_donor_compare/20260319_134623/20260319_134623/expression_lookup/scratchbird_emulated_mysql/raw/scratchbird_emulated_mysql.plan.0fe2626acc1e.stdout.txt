@@ -1,0 +1,1 @@
+1	SIMPLE	avp_expression_lookup	NULL	ALL	NULL	NULL	NULL	NULL	1000	100.00	ScratchBird scan_family=SEQ_SCAN; capability=EXACT; lookup=COVERING_ONLY

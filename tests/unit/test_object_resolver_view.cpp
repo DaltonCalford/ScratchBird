@@ -15,6 +15,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/query_compiler_v3.h"
+#include "test_helpers.h"
 #include "unit/test_user_helpers.h"
 
 #include <chrono>
@@ -172,6 +173,8 @@ protected:
         info.deterministic = false;
         info.sql_security = core::CatalogManager::FunctionInfo::SqlSecurity::DEFINER;
         info.source_text = "return 1;";
+        info.source_dialect = "scratchbird_v3";
+        info.bytecode = scratchbird::testing::minimalCompiledStoredCodeBytecode(name);
         info.created_time = 0;
         info.modified_time = 0;
 
@@ -190,6 +193,8 @@ protected:
         info.or_replace = false;
         info.sql_security = core::CatalogManager::ProcedureInfo::SqlSecurity::DEFINER;
         info.source_text = "begin end";
+        info.source_dialect = "scratchbird_v3";
+        info.bytecode = scratchbird::testing::minimalCompiledStoredCodeBytecode(name);
         info.created_time = 0;
         info.modified_time = 0;
 

@@ -102,6 +102,8 @@ protected:
         info.deterministic = false;
         info.sql_security = CatalogManager::FunctionInfo::SqlSecurity::DEFINER;
         info.source_text = body;
+        info.source_dialect = "scratchbird_v3";
+        info.bytecode = scratchbird::testing::minimalCompiledStoredCodeBytecode(func_name);
         info.created_time = info.modified_time = 0;
         info.referenced_objects = dependencies;
 
@@ -128,6 +130,8 @@ protected:
         info.or_replace = false;
         info.sql_security = CatalogManager::ProcedureInfo::SqlSecurity::DEFINER;
         info.source_text = body;
+        info.source_dialect = "scratchbird_v3";
+        info.bytecode = scratchbird::testing::minimalCompiledStoredCodeBytecode(proc_name);
         info.created_time = info.modified_time = 0;
         info.referenced_objects = dependencies;
 
@@ -499,6 +503,8 @@ TEST_F(StoredCodeDependencyTest, DropPackageFailsIfDependentExists)
     func.owner_id = system_user_id_;
     func.return_type = DataType::INT32;
     func.source_text = "select 1";
+    func.source_dialect = "scratchbird_v3";
+    func.bytecode = scratchbird::testing::minimalCompiledStoredCodeBytecode("pkg_func");
     ASSERT_EQ(catalog->registerFunction(func, &ctx), Status::OK);
 
     ID dep_id;
@@ -528,6 +534,8 @@ TEST_F(StoredCodeDependencyTest, DropUDRFailsIfDependentExists)
     proc.name = "proc_udr";
     proc.owner_id = system_user_id_;
     proc.source_text = "select 1";
+    proc.source_dialect = "scratchbird_v3";
+    proc.bytecode = scratchbird::testing::minimalCompiledStoredCodeBytecode("proc_udr");
     ASSERT_EQ(catalog->registerProcedure(proc, &ctx), Status::OK);
 
     ID dep_id;

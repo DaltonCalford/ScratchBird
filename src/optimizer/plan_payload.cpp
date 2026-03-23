@@ -78,6 +78,7 @@ namespace scratchbird::optimizer
             out["locator_granularity"] = relation.locator_granularity;
             out["family_capability_contract_id"] =
                 relation.family_capability_contract_id;
+            out["capability_tier"] = relation.capability_tier;
             out["publication_model"] = relation.publication_model;
             out["mga_certification_class"] =
                 relation.mga_certification_class;
@@ -388,7 +389,9 @@ namespace scratchbird::optimizer
                                   relation_out.visibility_enforcement)));
             relation_out.family_capability_contract_id =
                 json_in.value("family_capability_contract_id",
-                              std::string("sb_index_family_capability/v1"));
+                              std::string(kIndexFamilyCapabilityContractId));
+            relation_out.capability_tier =
+                json_in.value("capability_tier", std::string());
             relation_out.publication_model =
                 json_in.value("publication_model",
                               std::string(accessPathPublicationModelName(
@@ -484,6 +487,37 @@ namespace scratchbird::optimizer
                     "supports_specialized_collector_modes",
                     accessPathSupportsSpecializedCollectorModes(
                         relation_out.collector_specialization_id));
+            const auto capability = buildAccessPathFamilyCapability(
+                relation_out.scan_family_kind,
+                relation_out.exactness_class,
+                relation_out.visibility_enforcement,
+                relation_out.requires_recheck,
+                relation_out.ordered_output,
+                relation_out.covering_index,
+                relation_out.collector_specialization_id);
+            relation_out.native_trust_class = capability.native_trust_class;
+            relation_out.locator_granularity =
+                capability.locator_granularity;
+            relation_out.family_capability_contract_id =
+                capability.contract_id;
+            relation_out.capability_tier = capability.capability_tier;
+            relation_out.publication_model =
+                capability.publication_model;
+            relation_out.mga_certification_class =
+                capability.mga_certification_class;
+            relation_out.supports_exact = capability.supports_exact;
+            relation_out.supports_ordered_output =
+                capability.supports_ordered_output;
+            relation_out.supports_covering_payload =
+                capability.supports_covering_payload;
+            relation_out.supports_late_materialization =
+                capability.supports_late_materialization;
+            relation_out.supports_bulk_filter =
+                capability.supports_bulk_filter;
+            relation_out.supports_parallel_merge =
+                capability.supports_parallel_merge;
+            relation_out.supports_specialized_collector_modes =
+                capability.supports_specialized_collector_modes;
             relation_out.required_outer_relation_indexes.clear();
             const auto required_outer_relation_indexes_it =
                 json_in.find("required_outer_relation_indexes");
@@ -1360,6 +1394,11 @@ namespace scratchbird::optimizer
             out["estimation_error_ratio"] = feedback.estimation_error_ratio;
             out["correction_factor"] = feedback.correction_factor;
             out["cost_reweight_factor"] = feedback.cost_reweight_factor;
+            out["calibration_store_contract_id"] =
+                feedback.calibration_store_contract_id;
+            out["calibration_store_state"] = feedback.calibration_store_state;
+            out["calibration_fail_closed"] =
+                feedback.calibration_fail_closed;
             out["calibration_profile_version"] =
                 feedback.calibration_profile_version;
             out["last_plan_hash"] = feedback.last_plan_hash;
@@ -1410,6 +1449,15 @@ namespace scratchbird::optimizer
                 json_in.value("correction_factor", 1.0);
             feedback_out.cost_reweight_factor =
                 json_in.value("cost_reweight_factor", 1.0);
+            feedback_out.calibration_store_contract_id =
+                json_in.value("calibration_store_contract_id",
+                              std::string(
+                                  kAdaptiveFeedbackCalibrationStoreContractId));
+            feedback_out.calibration_store_state =
+                json_in.value("calibration_store_state",
+                              std::string("EMPTY"));
+            feedback_out.calibration_fail_closed =
+                json_in.value("calibration_fail_closed", true);
             feedback_out.calibration_profile_version =
                 json_in.value("calibration_profile_version", 0U);
             feedback_out.last_plan_hash =
@@ -1774,6 +1822,14 @@ namespace scratchbird::optimizer
                 plan.join_search_owner_pass_id;
             root["result_shape_finalize_pass_id"] =
                 plan.result_shape_finalize_pass_id;
+            root["proof_surface_contract_id"] =
+                plan.proof_surface_contract_id;
+            root["proof_surface_complete"] =
+                plan.proof_surface_complete;
+            root["proof_surface_claim_count"] =
+                plan.proof_surface_claim_count;
+            root["proof_surface_json"] =
+                plan.proof_surface_json;
             root["diagnostics_payload_json"] =
                 plan.diagnostics_payload_json;
             root["parameter_sensitive"] = plan.parameter_sensitive;
@@ -1947,6 +2003,15 @@ namespace scratchbird::optimizer
             plan_out.result_shape_finalize_pass_id =
                 root.value("result_shape_finalize_pass_id",
                            std::string("P10_RESULT_SHAPE_FINALIZE"));
+            plan_out.proof_surface_contract_id =
+                root.value("proof_surface_contract_id",
+                           std::string(kOptimizerProofSurfaceContractId));
+            plan_out.proof_surface_complete =
+                root.value("proof_surface_complete", false);
+            plan_out.proof_surface_claim_count =
+                root.value("proof_surface_claim_count", 0U);
+            plan_out.proof_surface_json =
+                root.value("proof_surface_json", std::string());
             plan_out.diagnostics_payload_json =
                 root.value("diagnostics_payload_json", std::string());
             plan_out.parameter_sensitive =

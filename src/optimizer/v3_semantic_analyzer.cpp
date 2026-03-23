@@ -2,6 +2,9 @@
 
 #include "scratchbird/core/debug.h"
 #include "scratchbird/parser/parser_v3.h"
+#include "scratchbird/sblr/v3_container.h"
+#include "scratchbird/sblr/v3_opcodes.generated.h"
+#include "scratchbird/sblr/v3_payloads.h"
 
 #include <algorithm>
 #include <cctype>
@@ -102,6 +105,355 @@ namespace scratchbird::optimizer
                 return relation.table_info.table_name;
             }
             return relation.table_path;
+        }
+
+        auto v3ValueObject(const scratchbird::sblr::v3::Value &value)
+            -> const scratchbird::sblr::v3::Value::Object *
+        {
+            return std::get_if<scratchbird::sblr::v3::Value::Object>(&value.data);
+        }
+
+        auto v3ValueList(const scratchbird::sblr::v3::Value &value)
+            -> const scratchbird::sblr::v3::Value::List *
+        {
+            return std::get_if<scratchbird::sblr::v3::Value::List>(&value.data);
+        }
+
+        auto v3ValueInstr(const scratchbird::sblr::v3::Value &value)
+            -> const scratchbird::sblr::v3::Instruction *
+        {
+            const auto *instr =
+                std::get_if<scratchbird::sblr::v3::Value::InstrPtr>(&value.data);
+            return instr != nullptr && *instr != nullptr ? instr->get() : nullptr;
+        }
+
+        auto v3FieldIsPresentAndNonNull(
+            const scratchbird::sblr::v3::Value::Object &object,
+            const char *field_name) -> bool
+        {
+            auto it = object.find(field_name);
+            return it != object.end() && !it->second.isNull();
+        }
+
+        auto v3FieldIsEmptyList(const scratchbird::sblr::v3::Value::Object &object,
+                                const char *field_name) -> bool
+        {
+            auto it = object.find(field_name);
+            if (it == object.end())
+            {
+                return true;
+            }
+            if (it->second.isNull())
+            {
+                return true;
+            }
+            const auto *list = v3ValueList(it->second);
+            return list != nullptr && list->empty();
+        }
+
+        auto v3SchemaPathToString(const scratchbird::sblr::v3::Value &value) -> std::string
+        {
+            const auto *parts = v3ValueList(value);
+            if (parts == nullptr || parts->empty())
+            {
+                return {};
+            }
+
+            std::ostringstream out;
+            for (size_t i = 0; i < parts->size(); ++i)
+            {
+                const auto *text = std::get_if<std::string>(&(*parts)[i].data);
+                if (text == nullptr || text->empty())
+                {
+                    continue;
+                }
+                if (out.tellp() > 0)
+                {
+                    out << '.';
+                }
+                out << *text;
+            }
+            return out.str();
+        }
+
+        auto populateResolvedPhysicalRelation(core::CatalogManager *catalog,
+                                             const TableInfo &table_info,
+                                             ResolvedRelation &relation_out) -> bool
+        {
+            if (catalog == nullptr)
+            {
+                return false;
+            }
+
+            relation_out.resolved = true;
+            relation_out.derived = false;
+            relation_out.flattened_derived = true;
+            relation_out.table_info = table_info;
+            relation_out.estimated_rows = table_info.row_count == 0 ? 1000 : table_info.row_count;
+            relation_out.estimated_pages = std::max<uint64_t>(1, relation_out.estimated_rows / 100);
+            relation_out.physical_table_path = table_info.table_name;
+            relation_out.columns.clear();
+            relation_out.indexes.clear();
+            (void)catalog->getColumns(table_info.table_id, relation_out.columns, nullptr);
+            (void)catalog->listIndexesForTable(table_info.table_id, relation_out.indexes, nullptr);
+            return true;
+        }
+
+        auto decodeStoredPassThroughViewTarget(const core::CatalogManager::ViewInfo &view_info,
+                                              std::string &schema_name_out,
+                                              std::string &table_name_out) -> bool
+        {
+            schema_name_out.clear();
+            table_name_out.clear();
+            if (view_info.compiled_query_sblr.empty())
+            {
+                return false;
+            }
+
+            scratchbird::sblr::v3::Container container;
+            std::string container_error;
+            if (!scratchbird::sblr::v3::decodeContainer(view_info.compiled_query_sblr.data(),
+                                                        view_info.compiled_query_sblr.size(),
+                                                        container,
+                                                        container_error))
+            {
+                return false;
+            }
+
+            scratchbird::sblr::v3::Instruction root_instruction;
+            scratchbird::sblr::v3::DecodeError decode_error;
+            size_t offset = 0;
+            bool found_statement = false;
+            while (offset < container.bytecode_stream.size())
+            {
+                scratchbird::sblr::v3::Instruction decoded_instruction;
+                if (!scratchbird::sblr::v3::decodeInstructionWithSchema(
+                        container.bytecode_stream.data(),
+                        container.bytecode_stream.size(),
+                        offset,
+                        decoded_instruction,
+                        decode_error))
+                {
+                    return false;
+                }
+
+                const auto opcode =
+                    static_cast<scratchbird::sblr::v3::Opcode>(decoded_instruction.opcode);
+                if (opcode == scratchbird::sblr::v3::Opcode::SBLR3_VERSION)
+                {
+                    continue;
+                }
+                if (opcode == scratchbird::sblr::v3::Opcode::SBLR3_END)
+                {
+                    break;
+                }
+
+                root_instruction = std::move(decoded_instruction);
+                found_statement = true;
+                break;
+            }
+            if (!found_statement)
+            {
+                return false;
+            }
+
+            if (static_cast<scratchbird::sblr::v3::Opcode>(root_instruction.opcode) !=
+                scratchbird::sblr::v3::Opcode::SBLR3_SELECT)
+            {
+                return false;
+            }
+
+            const auto *payload = v3ValueObject(root_instruction.payload);
+            if (payload == nullptr)
+            {
+                return false;
+            }
+
+            uint64_t select_flags = 0;
+            if (auto it = payload->find("flags"); it != payload->end())
+            {
+                if (const auto *u = std::get_if<uint64_t>(&it->second.data))
+                {
+                    select_flags = *u;
+                }
+                else if (const auto *i = std::get_if<int64_t>(&it->second.data))
+                {
+                    select_flags = static_cast<uint64_t>(*i);
+                }
+            }
+            constexpr uint64_t kAllowedPassThroughSelectFlags = 0x0002; // ALL
+            if ((select_flags & ~kAllowedPassThroughSelectFlags) != 0)
+            {
+                return false;
+            }
+
+            if (!v3FieldIsEmptyList(*payload, "distinct_on") ||
+                !v3FieldIsEmptyList(*payload, "joins") ||
+                !v3FieldIsEmptyList(*payload, "group_by") ||
+                !v3FieldIsEmptyList(*payload, "grouping_sets") ||
+                !v3FieldIsEmptyList(*payload, "order_by") ||
+                !v3FieldIsEmptyList(*payload, "with"))
+            {
+                return false;
+            }
+
+            if (v3FieldIsPresentAndNonNull(*payload, "where") ||
+                v3FieldIsPresentAndNonNull(*payload, "having") ||
+                v3FieldIsPresentAndNonNull(*payload, "limit") ||
+                v3FieldIsPresentAndNonNull(*payload, "offset") ||
+                v3FieldIsPresentAndNonNull(*payload, "optimize_for_rows") ||
+                v3FieldIsPresentAndNonNull(*payload, "firebird_plan") ||
+                v3FieldIsPresentAndNonNull(*payload, "fetch") ||
+                v3FieldIsPresentAndNonNull(*payload, "set_op"))
+            {
+                return false;
+            }
+
+            auto items_it = payload->find("select_items");
+            if (items_it == payload->end())
+            {
+                return false;
+            }
+            const auto *items = v3ValueList(items_it->second);
+            if (items == nullptr || items->empty())
+            {
+                return false;
+            }
+            for (const auto &item_value : *items)
+            {
+                const auto *select_item = v3ValueInstr(item_value);
+                if (select_item == nullptr)
+                {
+                    return false;
+                }
+
+                const auto item_opcode =
+                    static_cast<scratchbird::sblr::v3::Opcode>(select_item->opcode);
+                if (item_opcode != scratchbird::sblr::v3::Opcode::SBLR3_SELECT_STAR &&
+                    item_opcode != scratchbird::sblr::v3::Opcode::SBLR3_SELECT_TABLE_STAR &&
+                    item_opcode != scratchbird::sblr::v3::Opcode::SBLR3_COLUMN_REF)
+                {
+                    return false;
+                }
+            }
+
+            auto from_it = payload->find("from");
+            if (from_it == payload->end())
+            {
+                return false;
+            }
+
+            const auto *from_object = v3ValueObject(from_it->second);
+            if (from_object == nullptr ||
+                v3FieldIsPresentAndNonNull(*from_object, "query") ||
+                v3FieldIsPresentAndNonNull(*from_object, "function"))
+            {
+                return false;
+            }
+
+            auto path_it = from_object->find("table_path");
+            if (path_it == from_object->end())
+            {
+                return false;
+            }
+
+            const std::string relation_path = v3SchemaPathToString(path_it->second);
+            if (relation_path.empty())
+            {
+                return false;
+            }
+
+            const size_t split = relation_path.rfind('.');
+            if (split == std::string::npos)
+            {
+                table_name_out = relation_path;
+            }
+            else
+            {
+                schema_name_out = relation_path.substr(0, split);
+                table_name_out = relation_path.substr(split + 1);
+            }
+            return !table_name_out.empty();
+        }
+
+        auto flattenStoredPassThroughView(core::CatalogManager *catalog,
+                                          const core::CatalogManager::ViewInfo &view_info,
+                                          ResolvedRelation &relation_out,
+                                          std::unordered_set<std::string> &active_views) -> bool
+        {
+            if (catalog == nullptr)
+            {
+                return false;
+            }
+
+            const std::string view_key = view_info.view_id.toString();
+            if (!active_views.insert(view_key).second)
+            {
+                return false;
+            }
+
+            auto cleanup = [&]() {
+                active_views.erase(view_key);
+            };
+
+            if (view_info.materialized &&
+                view_info.materialized_table_id != core::ID{})
+            {
+                TableInfo materialized_table;
+                const bool ok =
+                    catalog->getTable(view_info.materialized_table_id,
+                                      materialized_table,
+                                      nullptr) == core::Status::OK &&
+                    populateResolvedPhysicalRelation(catalog, materialized_table, relation_out);
+                cleanup();
+                return ok;
+            }
+
+            std::string target_schema_name;
+            std::string target_table_name;
+            if (!decodeStoredPassThroughViewTarget(view_info,
+                                                   target_schema_name,
+                                                   target_table_name))
+            {
+                cleanup();
+                return false;
+            }
+
+            core::ID target_schema_id = view_info.schema_id;
+            if (!target_schema_name.empty())
+            {
+                SchemaInfo schema_info;
+                if (catalog->getSchema(target_schema_name, schema_info, nullptr) != core::Status::OK)
+                {
+                    cleanup();
+                    return false;
+                }
+                target_schema_id = schema_info.schema_id;
+            }
+
+            TableInfo table_info;
+            if (catalog->getTable(target_schema_id, target_table_name, table_info, nullptr) ==
+                core::Status::OK)
+            {
+                const bool ok = populateResolvedPhysicalRelation(catalog, table_info, relation_out);
+                cleanup();
+                return ok;
+            }
+
+            core::CatalogManager::ViewInfo nested_view;
+            if (catalog->getView(target_schema_id, target_table_name, nested_view, nullptr) !=
+                core::Status::OK)
+            {
+                cleanup();
+                return false;
+            }
+
+            const bool ok = flattenStoredPassThroughView(catalog,
+                                                         nested_view,
+                                                         relation_out,
+                                                         active_views);
+            cleanup();
+            return ok;
         }
 
         auto addSchemaCandidate(core::CatalogManager *catalog,
@@ -1002,52 +1354,12 @@ namespace scratchbird::optimizer
                             break;
                         }
 
-                        parser::v3::Parser parser(view_info.definition);
-                        auto parse_result = parser.parseStatement();
-                        if (!parse_result.success() ||
-                            parse_result.statement() == nullptr ||
-                            parse_result.statement()->kind() != parser::v3::ASTKind::SelectStmt)
-                        {
-                            resolved = false;
-                            break;
-                        }
-
-                        const auto *view_select =
-                            static_cast<const parser::v3::SelectStmt *>(parse_result.statement());
-                        const bool pass_through =
-                            view_select->with == nullptr &&
-                            !view_select->distinct &&
-                            !view_select->all &&
-                            view_select->joins.empty() &&
-                            view_select->where == nullptr &&
-                            view_select->group_by.empty() &&
-                            view_select->having == nullptr &&
-                            view_select->windows.empty() &&
-                            view_select->order_by.empty() &&
-                            view_select->limit == nullptr &&
-                            view_select->offset == nullptr &&
-                            view_select->set_op == parser::v3::SetOpType::NONE &&
-                            view_select->from != nullptr &&
-                            view_select->items.size() == 1 &&
-                            (view_select->items.front()->item_type ==
-                                 parser::v3::SelectItem::Type::STAR ||
-                             view_select->items.front()->item_type ==
-                                 parser::v3::SelectItem::Type::TABLE_STAR);
-                        if (!pass_through)
-                        {
-                            resolved = false;
-                            break;
-                        }
-
                         ResolvedRelation flattened;
-                        if (resolveTableLikeRelation(catalog,
-                                                     stats_manager,
-                                                     view_select->from,
-                                                     parser.stringPool(),
-                                                     conn_ctx,
-                                                     current_schema_id,
-                                                     relation_index,
-                                                     flattened) != core::Status::OK ||
+                        std::unordered_set<std::string> active_views;
+                        if (!flattenStoredPassThroughView(catalog,
+                                                         view_info,
+                                                         flattened,
+                                                         active_views) ||
                             !flattened.resolved)
                         {
                             resolved = false;

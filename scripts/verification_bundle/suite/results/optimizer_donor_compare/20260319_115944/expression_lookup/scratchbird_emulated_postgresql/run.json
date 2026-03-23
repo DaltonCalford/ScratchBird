@@ -1,0 +1,61 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\npsql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/expression_lookup.setup.sql:1: NOTICE:  table \"avp_expression_lookup\" does not exist, skipping\n",
+    "stderr": "",
+    "elapsed_ms": 625,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/expression_lookup/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.setup.ad1a2f30e939.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/expression_lookup/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.setup.ad1a2f30e939.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 3,
+    "sqlstate": "ERROR",
+    "message": "psql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/expression_lookup.plan.sql:1: ERROR:  V3 EXPLAIN plan payload invalid",
+    "stdout": "\npsql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/expression_lookup.plan.sql:1: ERROR:  V3 EXPLAIN plan payload invalid\n",
+    "stderr": "",
+    "elapsed_ms": 170,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/expression_lookup/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.plan.6e4763cb22b0.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/expression_lookup/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.plan.6e4763cb22b0.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "ASSERT|expression_lookup|id=3|payload=charlie-a\nASSERT|expression_lookup|id=4|payload=charlie-b\n\n",
+    "stderr": "",
+    "elapsed_ms": 269,
+    "assert_lines": [
+      "ASSERT|expression_lookup|id=3|payload=charlie-a",
+      "ASSERT|expression_lookup|id=4|payload=charlie-b"
+    ],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/expression_lookup/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.exec.9e1b9c191df7.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/expression_lookup/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.exec.9e1b9c191df7.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 253,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/expression_lookup/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.teardown.bbc04d40ddbd.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/expression_lookup/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.teardown.bbc04d40ddbd.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

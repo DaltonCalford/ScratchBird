@@ -1,0 +1,63 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\nRows affected: 0\nRows affected: 0\nRows affected: 0\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 304,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/scratchbird_native/raw/scratchbird_native.setup.09b346ab3d1d.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/scratchbird_native/raw/scratchbird_native.setup.09b346ab3d1d.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n\nError: V3 EXPLAIN plan payload invalid\nStopping due to error (SET BAIL is ON)\n",
+    "stderr": "",
+    "elapsed_ms": 264,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/scratchbird_native/raw/scratchbird_native.plan.10fa1e23d04e.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/scratchbird_native/raw/scratchbird_native.plan.10fa1e23d04e.stderr.txt",
+    "plan_lines": [
+      "PLAN|Error: V3 EXPLAIN plan payload invalid",
+      "PLAN|Stopping due to error (SET BAIL is ON)"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "+-------------------------------------------+\n| expr1                                     |\n+-------------------------------------------+\n| ASSERT|range_selectivity|count=0|sum_id=0 |\n+-------------------------------------------+\n(1 row)\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 347,
+    "assert_lines": [
+      "ASSERT|range_selectivity|count=0|sum_id=0"
+    ],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/scratchbird_native/raw/scratchbird_native.exec.a5d245846560.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/scratchbird_native/raw/scratchbird_native.exec.a5d245846560.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 312,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/scratchbird_native/raw/scratchbird_native.teardown.365ca888a97a.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/scratchbird_native/raw/scratchbird_native.teardown.365ca888a97a.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

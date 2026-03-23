@@ -15,12 +15,16 @@
  */
 
 #include "scratchbird/parser/postgresql/pg_parser.h"
-#include "scratchbird/core/catalog_manager.h"
-#include "scratchbird/core/domain_manager.h"
 #include <cctype>
 #include <cstring>
 #include <algorithm>
 #include <stdexcept>
+#include <array>
+
+#if __has_include(<openssl/sha.h>)
+#include <openssl/sha.h>
+#define SCRATCHBIRD_PG_PARSER_HAS_OPENSSL_SHA1 1
+#endif
 
 namespace scratchbird::parser::postgresql {
 
@@ -131,6 +135,124 @@ static std::string tokenToString(TokenType type) {
         case TokenType::KW_REGTYPE: return "regtype";
         default: return "";
     }
+}
+
+std::string toUpperAscii(std::string value) {
+    for (char& ch : value) {
+        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    }
+    return value;
+}
+
+int hexNibble(char ch) {
+    if (ch >= '0' && ch <= '9') {
+        return ch - '0';
+    }
+    if (ch >= 'a' && ch <= 'f') {
+        return 10 + (ch - 'a');
+    }
+    if (ch >= 'A' && ch <= 'F') {
+        return 10 + (ch - 'A');
+    }
+    return -1;
+}
+
+bool parseUuidLiteral(std::string_view literal, core::ID& out) {
+    if (literal.size() != 36) {
+        return false;
+    }
+
+    static constexpr std::array<size_t, 4> kDashPos{8, 13, 18, 23};
+    for (size_t dash : kDashPos) {
+        if (literal[dash] != '-') {
+            return false;
+        }
+    }
+
+    size_t out_idx = 0;
+    for (size_t i = 0; i < literal.size();) {
+        if (literal[i] == '-') {
+            ++i;
+            continue;
+        }
+        if (i + 1 >= literal.size() || out_idx >= out.bytes.size()) {
+            return false;
+        }
+        const int hi = hexNibble(literal[i]);
+        const int lo = hexNibble(literal[i + 1]);
+        if (hi < 0 || lo < 0) {
+            return false;
+        }
+        out.bytes[out_idx++] = static_cast<uint8_t>((hi << 4) | lo);
+        i += 2;
+    }
+    return out_idx == out.bytes.size();
+}
+
+const core::ID& postgresqlDomainIdentityNamespaceUuid() {
+    static const core::ID kNamespace = [] {
+        core::ID id{};
+        const bool ok = parseUuidLiteral("1cc0f343-1406-4d4c-a38d-a94535b536eb", id);
+        if (!ok) {
+            return core::ID{};
+        }
+        return id;
+    }();
+    return kNamespace;
+}
+
+std::string canonicalPostgresqlDomainIdentityKey(const std::string& domain_name) {
+    return "domain|global|" + toUpperAscii(domain_name);
+}
+
+core::ID deterministicPostgresqlDomainId(const std::string& domain_name) {
+    const core::ID& ns_uuid = postgresqlDomainIdentityNamespaceUuid();
+    const std::string key = canonicalPostgresqlDomainIdentityKey(domain_name);
+    core::ID out{};
+
+#ifdef SCRATCHBIRD_PG_PARSER_HAS_OPENSSL_SHA1
+    unsigned char hash[SHA_DIGEST_LENGTH];
+    std::string namespaced;
+    namespaced.reserve(ns_uuid.bytes.size() + key.size());
+    for (uint8_t byte : ns_uuid.bytes) {
+        namespaced.push_back(static_cast<char>(byte));
+    }
+    namespaced.append(key);
+    SHA1(reinterpret_cast<const unsigned char*>(namespaced.data()),
+         namespaced.size(),
+         hash);
+
+    for (size_t i = 0; i < out.bytes.size(); ++i) {
+        out.bytes[i] = hash[i];
+    }
+#else
+    auto fnv1a64 = [](std::string_view input, uint64_t seed) -> uint64_t {
+        uint64_t hash = 1469598103934665603ULL ^ seed;
+        for (unsigned char ch : input) {
+            hash ^= static_cast<uint64_t>(ch);
+            hash *= 1099511628211ULL;
+        }
+        return hash;
+    };
+
+    std::string namespaced;
+    namespaced.reserve(ns_uuid.bytes.size() + key.size());
+    for (uint8_t byte : ns_uuid.bytes) {
+        namespaced.push_back(static_cast<char>(byte));
+    }
+    namespaced.append(key);
+
+    uint64_t hi = fnv1a64(namespaced, 0x9ae16a3b2f90404fULL);
+    uint64_t lo = fnv1a64(namespaced, 0xc3a5c85c97cb3127ULL);
+    for (size_t i = 0; i < 8; ++i) {
+        out.bytes[i] = static_cast<uint8_t>((hi >> ((7 - i) * 8)) & 0xFF);
+        out.bytes[8 + i] = static_cast<uint8_t>((lo >> ((7 - i) * 8)) & 0xFF);
+    }
+#endif
+
+    out.bytes[6] = static_cast<uint8_t>((out.bytes[6] & 0x0F) | 0x50);
+    out.bytes[8] = static_cast<uint8_t>((out.bytes[8] & 0x3F) | 0x80);
+    return out;
 }
 
 // ============================================================================
@@ -1032,53 +1154,14 @@ void Parser::resolveTableName(std::string& schema, std::string& table) {
 }
 
 bool Parser::resolveDomainId(const std::string& type_name, core::ID& domain_id_out) {
-    domain_id_out = core::ID{};
-
-    if (!db_) {
-        error("Domain lookup requires database context");
+    if (type_name.empty()) {
+        error("Domain name cannot be empty");
         return false;
     }
 
-    auto* catalog = db_->catalog_manager();
-    if (!catalog) {
-        error("Catalog manager not available for domain lookup");
-        return false;
-    }
-
-    std::string schema;
-    std::string name = type_name;
-    auto dot = type_name.find('.');
-    if (dot != std::string::npos) {
-        schema = type_name.substr(0, dot);
-        name = type_name.substr(dot + 1);
-    }
-
-    resolveTableName(schema, name);
-
-    core::CatalogManager::SchemaInfo schema_info;
-    core::ErrorContext ctx;
-    auto status = catalog->getSchema(schema, schema_info, &ctx);
-    if (status != core::Status::OK) {
-        std::string err_msg = "Schema not found for domain: " + schema;
-        if (!ctx.message.empty()) {
-            err_msg += " (" + ctx.message + ")";
-        }
-        error(err_msg);
-        return false;
-    }
-
-    core::DomainInfo domain_info;
-    status = catalog->getDomainByName(schema_info.schema_id, name, domain_info, &ctx);
-    if (status != core::Status::OK) {
-        std::string err_msg = "Domain not found: " + name;
-        if (!ctx.message.empty()) {
-            err_msg += " (" + ctx.message + ")";
-        }
-        error(err_msg);
-        return false;
-    }
-
-    domain_id_out = domain_info.domain_id;
+    std::string canonical_name = type_name;
+    std::replace(canonical_name.begin(), canonical_name.end(), '/', '.');
+    domain_id_out = deterministicPostgresqlDomainId(canonical_name);
     return true;
 }
 

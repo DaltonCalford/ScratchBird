@@ -1,0 +1,62 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 193,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_mysql/raw/ref_mysql.setup.5ea220eb589a.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_mysql/raw/ref_mysql.setup.5ea220eb589a.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "1\tSIMPLE\tavp_point_lookup_exact\tNULL\tref\tidx_avp_point_lookup_exact_k\tidx_avp_point_lookup_exact_k\t4\tconst\t1\t100.00\tNULL\n\n",
+    "stderr": "",
+    "elapsed_ms": 37,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_mysql/raw/ref_mysql.plan.ace0450dfa52.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_mysql/raw/ref_mysql.plan.ace0450dfa52.stderr.txt",
+    "plan_lines": [
+      "PLAN|1\tSIMPLE\tavp_point_lookup_exact\tNULL\tref\tidx_avp_point_lookup_exact_k\tidx_avp_point_lookup_exact_k\t4\tconst\t1\t100.00\tNULL"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "ASSERT|point_lookup_exact|count=1|payload=p073\n\n",
+    "stderr": "",
+    "elapsed_ms": 36,
+    "assert_lines": [
+      "ASSERT|point_lookup_exact|count=1|payload=p073"
+    ],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_mysql/raw/ref_mysql.exec.49e9ab4f7709.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_mysql/raw/ref_mysql.exec.49e9ab4f7709.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 82,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_mysql/raw/ref_mysql.teardown.0359b9db9c4d.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_mysql/raw/ref_mysql.teardown.0359b9db9c4d.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

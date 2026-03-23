@@ -14943,6 +14943,18 @@ SetStmt* Parser::parseSet() {
     auto parseVariableAssignment = [&](StringPool::StringId name_id) -> SetStmt* {
         stmt->set_type = SetStmt::SetType::VARIABLE;
         stmt->name = name_id;
+        std::string variable_name =
+            name_id == StringPool::INVALID_ID
+                ? std::string()
+                : std::string(stringPool().get(name_id));
+        std::transform(variable_name.begin(),
+                       variable_name.end(),
+                       variable_name.begin(),
+                       [](unsigned char ch) {
+                           return static_cast<char>(std::toupper(ch));
+                       });
+        const bool schema_path_variable =
+            variable_name == "SEARCH_PATH" || variable_name == "SCHEMA_PATH";
 
         auto makeBooleanLiteral = [&](bool value) -> Expression* {
             auto* lit = arena_.create<LiteralExpr>();
@@ -14974,6 +14986,16 @@ SetStmt* Parser::parseSet() {
             stmt->value = makeBooleanLiteral(true);
         } else if (matchContextual("OFF")) {
             stmt->value = makeBooleanLiteral(false);
+        } else if (schema_path_variable) {
+            stmt->value = parseSchemaSettingValue();
+            while (match(TokenType::COMMA)) {
+                stmt->values.push_back(stmt->value);
+                stmt->value = parseSchemaSettingValue();
+            }
+            if (!stmt->values.empty()) {
+                stmt->values.push_back(stmt->value);
+                stmt->value = nullptr;
+            }
         } else {
             // Parse value(s) - some settings accept comma-separated lists
             stmt->value = parseExpression();
@@ -15360,7 +15382,7 @@ ShowStmt* Parser::parseShow() {
     else if (match(TokenType::KW_CREATE) || matchContextual("CREATE")) {
         expectContextual("TABLE", "Expected TABLE after CREATE");
         stmt->show_type = ShowStmt::ShowType::CREATE_TABLE;
-        stmt->name = expectIdentifier("Expected table name");
+        stmt->name = parsePathString("Expected table path");
     }
     // SHOW TABLE name - Firebird style detailed table info
     else if (matchContextual("TABLE")) {
@@ -15368,7 +15390,7 @@ ShowStmt* Parser::parseShow() {
         parseScopeClause();
         if (check(TokenType::IDENTIFIER)) {
             stmt->show_type = ShowStmt::ShowType::TABLE;
-            stmt->name = expectIdentifier("Expected table name");
+            stmt->name = parsePathString("Expected table path");
         } else {
             stmt->show_type = ShowStmt::ShowType::TABLES;
         }
@@ -15390,7 +15412,7 @@ ShowStmt* Parser::parseShow() {
         setUnifiedType("VIEW");
         parseScopeClause();
         if (check(TokenType::IDENTIFIER)) {
-            stmt->name = expectIdentifier("Expected view name");
+            stmt->name = parsePathString("Expected view path");
         }
         parseRecursiveClause();
     }
@@ -19285,6 +19307,24 @@ MergeStmt* Parser::parseMerge() {
 Statement* Parser::parsePSQLStatement() {
     ParseModeGuard guard(state_, ParseMode::PSQL);
 
+    auto parseVariableName = [&]() -> StringPool::StringId {
+        StringPool::StringId first = expectIdentifier("Expected variable name");
+        if (first == StringPool::INVALID_ID) {
+            return first;
+        }
+        std::string name = std::string(stringPool().get(first));
+        while (match(TokenType::DOT)) {
+            StringPool::StringId next =
+                expectIdentifier("Expected identifier after '.' in variable name");
+            if (next == StringPool::INVALID_ID) {
+                return StringPool::INVALID_ID;
+            }
+            name.push_back('.');
+            name.append(stringPool().get(next));
+        }
+        return stringPool().intern(name);
+    };
+
     if (check(TokenType::KW_WITH)) {
         return parseWithStatement();
     }
@@ -19378,7 +19418,10 @@ Statement* Parser::parsePSQLStatement() {
 
     // Assignment: variable := expression
     if (isIdentifier()) {
-        StringPool::StringId var_name = currentIdentifier();
+        StringPool::StringId var_name = parseVariableName();
+        if (var_name == StringPool::INVALID_ID) {
+            return nullptr;
+        }
         if (match(TokenType::COLON_EQUALS) || match(TokenType::EQUAL)) {
             auto* stmt = arena_.create<AssignmentStmt>();
             stmt->variable = var_name;

@@ -19,6 +19,8 @@ for candidate in \
   fi
 done
 ISQL_MODE="native_firebird"
+# Emulated Firebird verification must use donor `isql`/`isql-fb`. `sb_isql` is
+# native ScratchBird/V3 only and is intentionally not accepted for this lane.
 ISQL_BIN="${SCRATCHBIRD_FB_NATIVE_ISQL:-${SCRATCHBIRD_FB_ISQL:-$DEFAULT_ISQL}}"
 LIST_MODE="${SCRATCHBIRD_FB_CTEST_LIST_MODE:-${SCRATCHBIRD_COMPAT_CTEST_LIST_MODE:-curated}}"
 case "$LIST_MODE" in
@@ -50,7 +52,7 @@ case "$(basename "$ISQL_BIN")" in
   *)
     cat >&2 <<EOF
 SKIP: ScratchBird Firebird wrapper clients are deprecated for compatibility compare runs.
-Provide the cloned donor isql via SCRATCHBIRD_FB_NATIVE_ISQL.
+Provide the cloned donor isql via SCRATCHBIRD_FB_NATIVE_ISQL. sb_isql is native/V3 only.
 Resolved path: ${ISQL_BIN}
 EOF
     exit 77

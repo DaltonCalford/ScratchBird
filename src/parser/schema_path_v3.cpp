@@ -24,50 +24,6 @@ namespace scratchbird::parser::v3 {
 // Utility Functions
 // =============================================================================
 
-const char* pathTypeToString(PathType type) {
-    switch (type) {
-        case PathType::UNQUALIFIED: return "UNQUALIFIED";
-        case PathType::CURRENT:     return "CURRENT";
-        case PathType::PARENT:      return "PARENT";
-        case PathType::ABSOLUTE:    return "ABSOLUTE";
-    }
-    return "UNKNOWN";
-}
-
-std::string schemaPathToString(const SchemaPath& path, const StringPool& pool) {
-    std::ostringstream ss;
-
-    if (path.no_search_path) {
-        ss << "!:";
-    }
-
-    // Add prefix based on type
-    switch (path.type) {
-        case PathType::CURRENT:
-            ss << ".";
-            break;
-        case PathType::PARENT:
-            ss << "..";
-            break;
-        case PathType::UNQUALIFIED:
-        case PathType::ABSOLUTE:
-            // No prefix
-            break;
-    }
-
-    // Add components
-    bool first = true;
-    for (auto id : path.components) {
-        if (!first) {
-            ss << ".";
-        }
-        first = false;
-        ss << pool.get(id);
-    }
-
-    return ss.str();
-}
-
 bool canStartSchemaPath(const ParserState& state) {
     TokenType type = state.current().type;
     return type == TokenType::EXCLAIM_COLON ||

@@ -189,6 +189,7 @@ def resolve_firebird_cli_binary(workspace_root: Path) -> Tuple[Path, str]:
     # Generic sb_isql is intentionally not accepted for Firebird wire parity.
     generic_candidates = [
         workspace_root / "build/src/sb_isql",
+        workspace_root.parent / "ScratchBird-driver/build/tracks/p3/drivers/cli/sb_isql",
         workspace_root.parent / "ScratchBird-driver/build/tracks/alpha/drivers/cli/sb_isql",
         workspace_root.parent / "ScratchBird-driver/build/tracks/beta/drivers/cli/sb_isql",
     ]

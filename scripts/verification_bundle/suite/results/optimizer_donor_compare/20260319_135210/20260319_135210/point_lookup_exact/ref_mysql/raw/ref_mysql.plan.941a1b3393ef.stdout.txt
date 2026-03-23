@@ -1,0 +1,1 @@
+1	SIMPLE	avp_point_lookup_exact	NULL	ref	idx_avp_point_lookup_exact_k	idx_avp_point_lookup_exact_k	4	const	1	100.00	NULL

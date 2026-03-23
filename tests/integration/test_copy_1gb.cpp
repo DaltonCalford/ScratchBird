@@ -28,6 +28,7 @@
 
 #include "scratchbird/ipc/engine_ipc_session_handler.h"
 #include "scratchbird/ipc/ipc_server.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
@@ -91,6 +92,22 @@ MemoryStats getMemoryStats() {
 // Test fixture for 1GB COPY tests
 class Copy1GBTest : public ::testing::Test {
 protected:
+    void ensureSessionUserExists(const std::string& username, bool is_superuser = false) {
+        auto* catalog = database_->catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        ID user_id;
+        ErrorContext ctx;
+        auto status = catalog->ensureUserExists(username,
+                                                "",
+                                                ID{},
+                                                is_superuser,
+                                                user_id,
+                                                &ctx);
+        ASSERT_EQ(status, Status::OK)
+            << "Failed to ensure session user " << username << ": " << ctx.message;
+    }
+
     void SetUp() override {
         core::ErrorContext ctx;
         
@@ -108,6 +125,8 @@ protected:
         // Initialize ProcArray
         auto status = core::ProcArrayManager::initialize(database_.get(), 10, &ctx);
         ASSERT_EQ(status, core::Status::OK) << "Failed to initialize ProcArray: " << ctx.message;
+
+        ensureSessionUserExists("test_user");
         
         // Create handler
         handler_ = std::make_unique<EngineIPCSessionHandler>(database_.get());

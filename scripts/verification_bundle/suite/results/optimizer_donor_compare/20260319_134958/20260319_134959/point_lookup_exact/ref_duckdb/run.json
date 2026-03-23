@@ -1,0 +1,63 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 10,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/point_lookup_exact/ref_duckdb/raw/ref_duckdb.setup.cca27e214148.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/point_lookup_exact/ref_duckdb/raw/ref_duckdb.setup.cca27e214148.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "WHERE",
+    "message": "                                    ^",
+    "stdout": "\nCatalog Error: Table with name avp_point_lookup_exact does not exist!\nDid you mean \"pg_tablespace\"?\n\nLINE 1: EXPLAIN SELECT payload FROM avp_point_lookup_exact WHERE k = 73;\n                                    ^\n",
+    "stderr": "",
+    "elapsed_ms": 12,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/point_lookup_exact/ref_duckdb/raw/ref_duckdb.plan.668f944569af.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/point_lookup_exact/ref_duckdb/raw/ref_duckdb.plan.668f944569af.stderr.txt",
+    "plan_lines": [
+      "PLAN|Catalog Error: Table with name avp_point_lookup_exact does not exist!",
+      "PLAN|Did you mean \"pg_tablespace\"?",
+      "PLAN|LINE 1: EXPLAIN SELECT payload FROM avp_point_lookup_exact WHERE k = 73;",
+      "PLAN|^"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "00000",
+    "message": "             ^",
+    "stdout": "\nCatalog Error: Table with name avp_point_lookup_exact does not exist!\nDid you mean \"pg_tablespace\"?\n\nLINE 2: FROM avp_point_lookup_exact\n             ^\n",
+    "stderr": "",
+    "elapsed_ms": 9,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/point_lookup_exact/ref_duckdb/raw/ref_duckdb.exec.517c13ea86b4.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/point_lookup_exact/ref_duckdb/raw/ref_duckdb.exec.517c13ea86b4.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 9,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/point_lookup_exact/ref_duckdb/raw/ref_duckdb.teardown.082fb4af8b60.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/point_lookup_exact/ref_duckdb/raw/ref_duckdb.teardown.082fb4af8b60.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

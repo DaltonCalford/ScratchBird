@@ -1,0 +1,71 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 321,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_135210/20260319_135210/ordered_limit_topk/ref_firebird/raw/ref_firebird.setup.dd1c650609c8.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_135210/20260319_135210/ordered_limit_topk/ref_firebird/raw/ref_firebird.setup.dd1c650609c8.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\nPLAN SORT (AVP_ORDERED_LIMIT_TOPK NATURAL)\n\n          ID            K \n============ ============ \n           3           10 \n           5           10 \n           8           10 \n           4           20 \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 77,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_135210/20260319_135210/ordered_limit_topk/ref_firebird/raw/ref_firebird.plan.e465d83a2109.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_135210/20260319_135210/ordered_limit_topk/ref_firebird/raw/ref_firebird.plan.e465d83a2109.stderr.txt",
+    "plan_lines": [
+      "PLAN|PLAN SORT (AVP_ORDERED_LIMIT_TOPK NATURAL)",
+      "PLAN|ID            K",
+      "PLAN|============ ============",
+      "PLAN|3           10",
+      "PLAN|5           10",
+      "PLAN|8           10",
+      "PLAN|4           20"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\nCONCATENATION                                                            \n======================================================================== \nASSERT|ordered_limit_topk|id=3|k=10                                      \nASSERT|ordered_limit_topk|id=5|k=10                                      \nASSERT|ordered_limit_topk|id=8|k=10                                      \nASSERT|ordered_limit_topk|id=4|k=20                                      \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 80,
+    "assert_lines": [
+      "ASSERT|ordered_limit_topk|id=3|k=10",
+      "ASSERT|ordered_limit_topk|id=5|k=10",
+      "ASSERT|ordered_limit_topk|id=8|k=10",
+      "ASSERT|ordered_limit_topk|id=4|k=20"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_135210/20260319_135210/ordered_limit_topk/ref_firebird/raw/ref_firebird.exec.a39ff5cc4914.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_135210/20260319_135210/ordered_limit_topk/ref_firebird/raw/ref_firebird.exec.a39ff5cc4914.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 75,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_135210/20260319_135210/ordered_limit_topk/ref_firebird/raw/ref_firebird.teardown.0750cb588aff.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_135210/20260319_135210/ordered_limit_topk/ref_firebird/raw/ref_firebird.teardown.0750cb588aff.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

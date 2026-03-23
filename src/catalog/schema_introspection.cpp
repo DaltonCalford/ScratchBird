@@ -408,88 +408,6 @@ const char* SchemaIntrospection::MYSQL_SHOW_CREATE_TABLE = R"(
 )";
 
 // ============================================================================
-// Firebird Schema Introspection
-// ============================================================================
-
-const char* SchemaIntrospection::FB_RDB_RELATIONS = R"(
-CREATE VIEW rdb$relations AS
-SELECT 
-    r.rdb$relation_name,
-    r.rdb$relation_id,
-    r.rdb$system_flag,
-    r.rdb$dbkey_length,
-    r.rdb$format,
-    r.rdb$field_id,
-    r.rdb$relation_type,
-    r.rdb$security_class,
-    r.rdb$external_file,
-    r.rdb$owner_name,
-    r.rdb$description
-FROM rdb$database_meta r
-)";
-
-const char* SchemaIntrospection::FB_RDB_RELATION_FIELDS = R"(
-CREATE VIEW rdb$relation_fields AS
-SELECT 
-    rf.rdb$relation_name,
-    rf.rdb$field_name,
-    rf.rdb$field_source,
-    rf.rdb$query_name,
-    rf.rdb$base_field,
-    rf.rdb$edit_string,
-    rf.rdb$field_position,
-    rf.rdb$query_header,
-    rf.rdb$update_flag,
-    rf.rdb$field_id,
-    rf.rdb$view_context,
-    rf.rdb$description
-FROM rdb$fields_meta rf
-)";
-
-const char* SchemaIntrospection::FB_RDB_FIELDS = R"(
-CREATE VIEW rdb$fields AS
-SELECT 
-    f.rdb$field_name,
-    f.rdb$query_name,
-    f.rdb$validation_blr,
-    f.rdb$validation_source,
-    f.rdb$computed_blr,
-    f.rdb$computed_source,
-    f.rdb$default_value,
-    f.rdb$default_source,
-    f.rdb$field_length,
-    f.rdb$field_scale,
-    f.rdb$field_type,
-    f.rdb$field_sub_type,
-    f.rdb$dimensions,
-    f.rdb$null_flag,
-    f.rdb$default_flag,
-    f.rdb$field_precision,
-    f.rdb$character_length,
-    f.rdb$collation_id,
-    f.rdb$character_set_id,
-    f.rdb$description
-FROM rdb$field_defs f
-)";
-
-const char* SchemaIntrospection::FB_RDB_INDICES = R"(
-CREATE VIEW rdb$indices AS
-SELECT 
-    i.rdb$index_name,
-    i.rdb$relation_name,
-    i.rdb$index_id,
-    i.rdb$unique_flag,
-    i.rdb$description,
-    i.rdb$segment_count,
-    i.rdb$index_inactive,
-    i.rdb$foreign_key,
-    i.rdb$system_flag,
-    i.rdb$expression_blr,
-    i.rdb$expression_source
-FROM rdb$index_defs i
-)";
-
-// ============================================================================
 // SchemaIntrospection Implementation
 // ============================================================================
 
@@ -509,13 +427,6 @@ void SchemaIntrospection::initializeMySQL(core::Database* db) {
     if (!db) return;
     
     // Create mysql schema with SHOW compatibility views
-    (void)db;
-}
-
-void SchemaIntrospection::initializeFirebird(core::Database* db) {
-    if (!db) return;
-    
-    // Create RDB$ system views
     (void)db;
 }
 

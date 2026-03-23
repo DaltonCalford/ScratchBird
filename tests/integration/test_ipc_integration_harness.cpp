@@ -35,6 +35,7 @@
 #include "scratchbird/ipc/engine_ipc_session_handler.h"
 #include "scratchbird/ipc/ipc_server.h"
 #include "scratchbird/ipc/ipc_contract_v1_1.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/proc_array.h"
@@ -167,6 +168,22 @@ private:
 
 class IPCIntegrationTest : public ::testing::Test {
 protected:
+    void ensureSessionUserExists(const std::string& username, bool is_superuser = false) {
+        auto* catalog = db_->catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        core::ID user_id;
+        core::ErrorContext ctx;
+        auto status = catalog->ensureUserExists(username,
+                                                "",
+                                                core::ID{},
+                                                is_superuser,
+                                                user_id,
+                                                &ctx);
+        ASSERT_EQ(status, core::Status::OK)
+            << "Failed to ensure session user " << username << ": " << ctx.message;
+    }
+
     void SetUp() override {
         db_file_ = std::make_unique<TestDatabaseFile>("ipc_integration_test");
 
@@ -180,6 +197,12 @@ protected:
 
         auto status = core::ProcArrayManager::initialize(db_.get(), 100, &ctx);
         ASSERT_EQ(status, core::Status::OK) << "Failed to initialize ProcArray: " << ctx.message;
+
+        ensureSessionUserExists("test_user");
+        ensureSessionUserExists("test_user2");
+        for (int i = 0; i < 10; ++i) {
+            ensureSessionUserExists("user" + std::to_string(i));
+        }
 
         // Create testable handler
         handler_ = std::make_unique<TestableEngineIPCHandler>(db_.get());

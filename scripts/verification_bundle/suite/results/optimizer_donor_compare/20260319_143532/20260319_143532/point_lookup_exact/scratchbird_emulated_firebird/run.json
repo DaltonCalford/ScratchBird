@@ -1,0 +1,64 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 722,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.setup.9f579d53dbf0.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.setup.9f579d53dbf0.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08001",
+    "message": "After line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/point_lookup_exact.plan.sql",
+    "stdout": "\nPAYLOAD                        \n============================== \n\nStatement failed, SQLSTATE = 08001\nunavailable database\nAfter line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/point_lookup_exact.plan.sql\n",
+    "stderr": "",
+    "elapsed_ms": 307,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.plan.e68bda206c5e.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.plan.e68bda206c5e.stderr.txt",
+    "plan_lines": [
+      "PLAN|PAYLOAD",
+      "PLAN|==============================",
+      "PLAN|Statement failed, SQLSTATE = 08001",
+      "PLAN|unavailable database",
+      "PLAN|After line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/point_lookup_exact.plan.sql"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08001",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/point_lookup_exact.exec.sql",
+    "stdout": "\nexpr1                          \n============================== \n\nStatement failed, SQLSTATE = 08001\nunavailable database\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/point_lookup_exact.exec.sql\n",
+    "stderr": "",
+    "elapsed_ms": 309,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.exec.da54c20a6a77.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.exec.da54c20a6a77.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 272,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.teardown.280b78a0c756.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.teardown.280b78a0c756.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

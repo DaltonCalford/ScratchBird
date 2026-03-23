@@ -1,0 +1,63 @@
+{
+  "setup": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08006",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 08006\nUnable to complete network request to host \"127.0.0.1\".\n-Failed to establish a connection.\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql\n",
+    "stderr": "",
+    "elapsed_ms": 4,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_firebird/raw/ref_firebird.setup.01eac5cd7b82.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_firebird/raw/ref_firebird.setup.01eac5cd7b82.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08006",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.plan.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 08006\nUnable to complete network request to host \"127.0.0.1\".\n-Failed to establish a connection.\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.plan.sql\n",
+    "stderr": "",
+    "elapsed_ms": 3,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_firebird/raw/ref_firebird.plan.d0ef314ea160.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_firebird/raw/ref_firebird.plan.d0ef314ea160.stderr.txt",
+    "plan_lines": [
+      "PLAN|Statement failed, SQLSTATE = 08006",
+      "PLAN|Unable to complete network request to host \"127.0.0.1\".",
+      "PLAN|-Failed to establish a connection.",
+      "PLAN|After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.plan.sql"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08006",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.exec.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 08006\nUnable to complete network request to host \"127.0.0.1\".\n-Failed to establish a connection.\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.exec.sql\n",
+    "stderr": "",
+    "elapsed_ms": 4,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_firebird/raw/ref_firebird.exec.344b155129a6.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_firebird/raw/ref_firebird.exec.344b155129a6.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08006",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.teardown.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 08006\nUnable to complete network request to host \"127.0.0.1\".\n-Failed to establish a connection.\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.teardown.sql\n",
+    "stderr": "",
+    "elapsed_ms": 2,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_firebird/raw/ref_firebird.teardown.25b312b26f55.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_firebird/raw/ref_firebird.teardown.25b312b26f55.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

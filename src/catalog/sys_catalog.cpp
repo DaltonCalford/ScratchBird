@@ -1377,11 +1377,17 @@ Status SysCatalogHandler::querySchemas(VirtualResultSet& results, ErrorContext* 
     }
 
     for (const auto& schema : schemas) {
+        std::string schema_path;
+        ErrorContext path_ctx;
+        if (catalog_manager_->getSchemaPath(schema.schema_id, schema_path, &path_ctx) != Status::OK ||
+            schema_path.empty()) {
+            schema_path = schema.full_path.empty() ? schema.schema_name : schema.full_path;
+        }
+
         VirtualRow row;
         row.columns = {
             {"schema_id", uuidValueOrNull(schema.schema_id)},
-            {"schema_name", textValueOrNull(schema.full_path.empty() ? schema.schema_name : schema.full_path,
-                                            DataType::TEXT)},
+            {"schema_name", textValueOrNull(schema_path, DataType::TEXT)},
             {"owner_id", uuidValueOrNull(schema.owner_id)},
             {"default_tablespace_id", uuidValueOrNull(schema.default_tablespace_uuid)},
             {"default_charset", uuidValueOrNull(schema.default_charset_uuid)},

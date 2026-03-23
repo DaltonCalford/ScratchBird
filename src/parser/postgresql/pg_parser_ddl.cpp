@@ -16,6 +16,7 @@
 #include "scratchbird/parser/postgresql/pg_parser.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/sblr/ast_sblr_lowerer.h"
 #include <algorithm>
 #include <cctype>
 #include <limits>
@@ -23,6 +24,26 @@
 namespace scratchbird::parser::postgresql {
 
 namespace {
+bool encodeCanonicalViewQuery(parser::v3::StringPool& pool,
+                              parser::v3::SelectStmt* query,
+                              std::vector<uint8_t>& bytecode_out,
+                              std::string& error_out) {
+    bytecode_out.clear();
+    error_out.clear();
+    if (query == nullptr) {
+        error_out = "CREATE VIEW query is missing";
+        return false;
+    }
+
+    scratchbird::parser::v3::AstSblrLowerer lowerer(pool);
+    scratchbird::sblr::v3::Container container;
+    if (!lowerer.emitStatementToContainer(query, container, error_out)) {
+        return false;
+    }
+
+    return scratchbird::sblr::v3::encodeContainer(container, bytecode_out, error_out);
+}
+
 parser::v3::SchemaPath buildPathFromQualified(parser::v3::StringPool& pool,
                                               const std::string& name) {
     std::vector<parser::v3::StringPool::StringId> comps;
@@ -4805,7 +4826,7 @@ void Parser::parseCreateView() {
     size_t def_start = current_token_.span.start.offset;
     bool prev_emit = emit_enabled_;
     emit_enabled_ = false;
-    parseSelectStmt();
+    auto* query_stmt = parseSelectStmt();
     emit_enabled_ = prev_emit;
     size_t def_end = current_token_.span.start.offset;
 
@@ -4825,6 +4846,16 @@ void Parser::parseCreateView() {
     std::string definition;
     if (def_end >= def_start) {
         definition = trim_sql(lexer_.input().substr(def_start, def_end - def_start));
+    }
+
+    std::vector<uint8_t> compiled_query_sblr;
+    std::string compiled_query_error;
+    if (!encodeCanonicalViewQuery(string_pool_,
+                                  query_stmt,
+                                  compiled_query_sblr,
+                                  compiled_query_error)) {
+        error("Failed to encode CREATE VIEW query as canonical SBLR: " + compiled_query_error);
+        return;
     }
 
     // WITH CHECK OPTION
@@ -4860,6 +4891,7 @@ void Parser::parseCreateView() {
     if (if_not_exists) {
         flags |= 0x40;
     }
+    flags |= 0x80;
 
     emitString(view_path);
     emitByte(flags);
@@ -4874,6 +4906,12 @@ void Parser::parseCreateView() {
         }
     }
     emitString(definition);
+    emitU32(static_cast<uint32_t>(compiled_query_sblr.size()));
+    if (emit_enabled_) {
+        bytecode_.insert(bytecode_.end(),
+                         compiled_query_sblr.begin(),
+                         compiled_query_sblr.end());
+    }
 }
 
 void Parser::parseCreateMaterializedView() {
@@ -4895,7 +4933,7 @@ void Parser::parseCreateMaterializedView() {
     size_t def_start = current_token_.span.start.offset;
     bool prev_emit = emit_enabled_;
     emit_enabled_ = false;
-    parseSelectStmt();
+    auto* query_stmt = parseSelectStmt();
     emit_enabled_ = prev_emit;
     size_t def_end = current_token_.span.start.offset;
 
@@ -4917,6 +4955,17 @@ void Parser::parseCreateMaterializedView() {
         definition = trim_sql(lexer_.input().substr(def_start, def_end - def_start));
     }
 
+    std::vector<uint8_t> compiled_query_sblr;
+    std::string compiled_query_error;
+    if (!encodeCanonicalViewQuery(string_pool_,
+                                  query_stmt,
+                                  compiled_query_sblr,
+                                  compiled_query_error)) {
+        error("Failed to encode CREATE MATERIALIZED VIEW query as canonical SBLR: " +
+              compiled_query_error);
+        return;
+    }
+
     // WITH [NO] DATA
     if (matchKeyword(TokenType::KW_WITH)) {
         if (matchKeyword(TokenType::KW_NO)) {
@@ -4931,10 +4980,17 @@ void Parser::parseCreateMaterializedView() {
         flags |= 0x01;
     }
     flags |= 0x08;  // materialized
+    flags |= 0x80;
 
     emitString(view_path);
     emitByte(flags);
     emitString(definition);
+    emitU32(static_cast<uint32_t>(compiled_query_sblr.size()));
+    if (emit_enabled_) {
+        bytecode_.insert(bytecode_.end(),
+                         compiled_query_sblr.begin(),
+                         compiled_query_sblr.end());
+    }
 }
 
 void Parser::parseCreateSequence() {

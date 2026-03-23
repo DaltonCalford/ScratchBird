@@ -20,10 +20,12 @@
 #include "scratchbird/core/table_stats_manager.h"
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/sblr/executor.h"
+#include "scratchbird/parser/firebird/firebird_parser.h"
 #include <algorithm>
 #include <cctype>
-#include <unordered_set>
 #include <unordered_map>
+#include <unordered_set>
 #include "scratchbird/core/posix_compat.h"
 
 namespace scratchbird::catalog {
@@ -189,6 +191,872 @@ Status querySysTable(const std::string& table_name, VirtualResultSet& results) {
     }
     ErrorContext ctx;
     return router.routeQuery(ProtocolType::SCRATCHBIRD, "sys", table_name, "", results, &ctx);
+}
+
+struct FirebirdFieldMapping {
+    int16_t field_type = 0;
+    int16_t field_length = 0;
+    int16_t field_scale = 0;
+    int16_t charset_id = 0;
+    int16_t collation_id = 0;
+};
+
+struct FirebirdProjectedColumn {
+    std::string column_name;
+    DataType data_type = DataType::UNKNOWN;
+    uint32_t precision = 0;
+    uint32_t scale = 0;
+    bool nullable = true;
+    bool is_array = false;
+    std::string default_source;
+};
+
+struct FirebirdProjectedSource {
+    std::string relation_name;
+    std::string relation_alias;
+    std::vector<FirebirdProjectedColumn> columns;
+};
+
+bool projectFirebirdViewColumns(core::CatalogManager* catalog_manager,
+                                const core::CatalogManager::ViewInfo& view,
+                                std::vector<FirebirdProjectedColumn>& columns_out,
+                                ErrorContext* ctx,
+                                std::unordered_set<std::string>& active_views);
+
+FirebirdFieldMapping mapFirebirdFieldType(DataType type,
+                                          uint32_t precision,
+                                          uint32_t scale) {
+    FirebirdFieldMapping mapping{};
+
+    switch (type) {
+        case DataType::INT8:
+        case DataType::INT16:
+            mapping.field_type = 7;
+            mapping.field_length = 2;
+            break;
+        case DataType::INT32:
+            mapping.field_type = 8;
+            mapping.field_length = 4;
+            break;
+        case DataType::INT64:
+        case DataType::UINT64:
+        case DataType::UINT32:
+        case DataType::UINT16:
+        case DataType::UINT8:
+            mapping.field_type = 16;
+            mapping.field_length = 8;
+            break;
+        case DataType::INT128:
+        case DataType::UINT128:
+            mapping.field_type = 26;
+            mapping.field_length = 16;
+            break;
+        case DataType::FLOAT32:
+            mapping.field_type = 10;
+            mapping.field_length = 4;
+            break;
+        case DataType::FLOAT64:
+            mapping.field_type = 27;
+            mapping.field_length = 8;
+            break;
+        case DataType::DECIMAL:
+        case DataType::MONEY: {
+            uint32_t prec = precision == 0 ? 18 : precision;
+            if (prec <= 4) {
+                mapping.field_type = 7;
+                mapping.field_length = 2;
+            } else if (prec <= 9) {
+                mapping.field_type = 8;
+                mapping.field_length = 4;
+            } else if (prec <= 18) {
+                mapping.field_type = 16;
+                mapping.field_length = 8;
+            } else {
+                mapping.field_type = 26;
+                mapping.field_length = 16;
+            }
+            mapping.field_scale = static_cast<int16_t>(-static_cast<int32_t>(scale));
+            break;
+        }
+        case DataType::DECFLOAT16:
+            mapping.field_type = 24;
+            mapping.field_length = 8;
+            break;
+        case DataType::DECFLOAT34:
+            mapping.field_type = 25;
+            mapping.field_length = 16;
+            break;
+        case DataType::CHAR:
+            mapping.field_type = 14;
+            mapping.field_length = static_cast<int16_t>(precision == 0 ? 1 : precision);
+            break;
+        case DataType::VARCHAR:
+            mapping.field_type = 37;
+            mapping.field_length = static_cast<int16_t>(precision == 0 ? 255 : precision);
+            break;
+        case DataType::TEXT:
+            mapping.field_type = 37;
+            mapping.field_length = static_cast<int16_t>(precision == 0 ? 8192 : precision);
+            break;
+        case DataType::DATE:
+            mapping.field_type = 12;
+            mapping.field_length = 4;
+            break;
+        case DataType::TIME:
+            mapping.field_type = 13;
+            mapping.field_length = 4;
+            break;
+        case DataType::TIMESTAMP:
+            mapping.field_type = 35;
+            mapping.field_length = 8;
+            break;
+        case DataType::TIME_WITH_ZONE:
+            mapping.field_type = 28;
+            mapping.field_length = 8;
+            break;
+        case DataType::TIMESTAMP_WITH_ZONE:
+            mapping.field_type = 29;
+            mapping.field_length = 12;
+            break;
+        case DataType::BOOLEAN:
+            mapping.field_type = 23;
+            mapping.field_length = 1;
+            break;
+        case DataType::UUID:
+            mapping.field_type = 14;
+            mapping.field_length = 16;
+            break;
+        case DataType::BLOB:
+        case DataType::BYTEA:
+        case DataType::BINARY:
+        case DataType::VARBINARY:
+        case DataType::JSON:
+        case DataType::JSONB:
+        case DataType::XML:
+        case DataType::ARRAY:
+        case DataType::COMPOSITE:
+        case DataType::VECTOR:
+            mapping.field_type = 261;
+            mapping.field_length = 0;
+            break;
+        default:
+            mapping.field_type = 261;
+            mapping.field_length = 0;
+            break;
+    }
+
+    return mapping;
+}
+
+std::string parserPoolString(const parser::v3::StringPool& pool,
+                             parser::v3::StringPool::StringId id) {
+    if (id == parser::v3::StringPool::INVALID_ID) {
+        return {};
+    }
+    return std::string(pool.get(id));
+}
+
+std::string parserSchemaObjectName(const parser::v3::SchemaPath& path,
+                                   const parser::v3::StringPool& pool) {
+    if (path.components.empty()) {
+        return {};
+    }
+    return parserPoolString(pool, path.components.back());
+}
+
+std::string parserSchemaName(const parser::v3::SchemaPath& path,
+                             const parser::v3::StringPool& pool) {
+    if (path.components.size() < 2) {
+        return {};
+    }
+    return parserPoolString(pool, path.components[path.components.size() - 2]);
+}
+
+std::string parserSchemaPrefix(const parser::v3::SchemaPath& path,
+                               const parser::v3::StringPool& pool,
+                               size_t trailing_components) {
+    if (path.components.size() <= trailing_components) {
+        return {};
+    }
+
+    std::string result;
+    for (size_t i = 0; i + trailing_components < path.components.size(); ++i) {
+        const std::string component = parserPoolString(pool, path.components[i]);
+        if (component.empty()) {
+            continue;
+        }
+        if (!result.empty()) {
+            result.push_back('.');
+        }
+        result.append(component);
+    }
+    return result;
+}
+
+bool firebirdNamesEqual(const std::string& lhs, const std::string& rhs) {
+    return core::IdentifierUtils::namesMatch(lhs, false, rhs, false);
+}
+
+std::string firebirdSyntheticFieldSourceName(const std::string& kind,
+                                             const std::string& object_name,
+                                             const std::string& field_name) {
+    std::string result = "SB$";
+    result.append(kind);
+    result.push_back('$');
+    result.append(object_name);
+    result.push_back('$');
+    result.append(field_name);
+    return core::IdentifierUtils::toUpper(result);
+}
+
+uint32_t dataTypePrecisionHint(DataType type) {
+    switch (type) {
+        case DataType::CHAR:
+            return 1;
+        case DataType::VARCHAR:
+            return 255;
+        case DataType::TEXT:
+            return 8192;
+        case DataType::INT8:
+        case DataType::UINT8:
+            return 3;
+        case DataType::INT16:
+        case DataType::UINT16:
+            return 5;
+        case DataType::INT32:
+        case DataType::UINT32:
+            return 10;
+        case DataType::INT64:
+        case DataType::UINT64:
+            return 19;
+        case DataType::INT128:
+        case DataType::UINT128:
+            return 38;
+        case DataType::DECFLOAT16:
+            return 16;
+        case DataType::DECFLOAT34:
+            return 34;
+        default:
+            return 0;
+    }
+}
+
+std::optional<FirebirdProjectedColumn> inferFirebirdLiteralColumn(
+    const parser::v3::Expression* expr,
+    const parser::v3::StringPool& pool) {
+    using namespace parser::v3;
+
+    if (expr == nullptr) {
+        return std::nullopt;
+    }
+
+    FirebirdProjectedColumn out;
+    switch (expr->kind()) {
+        case ASTKind::LiteralExpr: {
+            const auto* literal = static_cast<const LiteralExpr*>(expr);
+            switch (literal->literal_type) {
+                case LiteralType::INTEGER:
+                    out.data_type = DataType::INT64;
+                    out.precision = 19;
+                    return out;
+                case LiteralType::FLOAT:
+                    out.data_type = DataType::FLOAT64;
+                    return out;
+                case LiteralType::STRING:
+                    out.data_type = DataType::VARCHAR;
+                    out.precision =
+                        std::max<uint32_t>(1, parserPoolString(pool, literal->string_value).size());
+                    return out;
+                case LiteralType::BOOLEAN:
+                    out.data_type = DataType::BOOLEAN;
+                    return out;
+                case LiteralType::NULL_VALUE:
+                case LiteralType::DEFAULT:
+                case LiteralType::BLOB:
+                    return std::nullopt;
+            }
+            return std::nullopt;
+        }
+        case ASTKind::LiteralInt8Expr:
+            out.data_type = DataType::INT8;
+            out.precision = 3;
+            return out;
+        case ASTKind::LiteralInt16Expr:
+            out.data_type = DataType::INT16;
+            out.precision = 5;
+            return out;
+        case ASTKind::LiteralMediumIntExpr:
+        case ASTKind::LiteralUInt16Expr:
+        case ASTKind::LiteralUInt8Expr:
+        case ASTKind::LiteralUInt32Expr:
+            out.data_type = DataType::INT32;
+            out.precision = 10;
+            return out;
+        case ASTKind::LiteralUInt64Expr:
+            out.data_type = DataType::UINT64;
+            out.precision = 20;
+            return out;
+        case ASTKind::LiteralInt128Expr:
+            out.data_type = DataType::INT128;
+            out.precision = 38;
+            return out;
+        case ASTKind::LiteralUInt128Expr:
+            out.data_type = DataType::UINT128;
+            out.precision = 38;
+            return out;
+        case ASTKind::LiteralFloat32Expr:
+            out.data_type = DataType::FLOAT32;
+            return out;
+        case ASTKind::LiteralDateTimeExpr: {
+            const auto* dt = static_cast<const LiteralDateTimeExpr*>(expr);
+            out.data_type = dt->with_timezone ? DataType::TIMESTAMP_WITH_ZONE
+                                              : DataType::TIMESTAMP;
+            return out;
+        }
+        case ASTKind::LiteralTimeTzExpr:
+            out.data_type = DataType::TIME_WITH_ZONE;
+            return out;
+        case ASTKind::LiteralTimestampTzExpr:
+            out.data_type = DataType::TIMESTAMP_WITH_ZONE;
+            return out;
+        case ASTKind::LiteralArrayExpr:
+        case ASTKind::ArrayExpr:
+            out.data_type = DataType::ARRAY;
+            out.is_array = true;
+            return out;
+        case ASTKind::LiteralDomainExpr: {
+            const auto* dom = static_cast<const LiteralDomainExpr*>(expr);
+            return inferFirebirdLiteralColumn(dom->value, pool);
+        }
+        case ASTKind::LiteralEnumExpr: {
+            const auto* enum_expr = static_cast<const LiteralEnumExpr*>(expr);
+            if (enum_expr->has_label) {
+                out.data_type = DataType::VARCHAR;
+                out.precision = std::max<uint32_t>(
+                    1, parserPoolString(pool, enum_expr->label).size());
+            } else {
+                out.data_type = DataType::INT32;
+                out.precision = 10;
+            }
+            return out;
+        }
+        case ASTKind::LiteralSetExpr:
+            out.data_type = DataType::ARRAY;
+            out.is_array = true;
+            return out;
+        case ASTKind::LiteralRowExpr:
+        case ASTKind::LiteralCompositeExpr:
+        case ASTKind::LiteralRangeExpr:
+            out.data_type = DataType::COMPOSITE;
+            return out;
+        case ASTKind::LiteralVariantExpr: {
+            const auto* variant = static_cast<const LiteralVariantExpr*>(expr);
+            return inferFirebirdLiteralColumn(variant->value, pool);
+        }
+        case ASTKind::LiteralBitExpr:
+            out.data_type = DataType::VARBINARY;
+            out.precision = 8192;
+            return out;
+        case ASTKind::LiteralYearExpr:
+            out.data_type = DataType::INT32;
+            out.precision = 10;
+            return out;
+        case ASTKind::LiteralGeometryExpr:
+        case ASTKind::LiteralBlobLocatorExpr:
+            out.data_type = DataType::BLOB;
+            return out;
+        case ASTKind::LiteralJsonPathExpr:
+        case ASTKind::LiteralTsVectorExpr:
+        case ASTKind::LiteralTsQueryExpr:
+            out.data_type = DataType::TEXT;
+            out.precision = 8192;
+            return out;
+        default:
+            return std::nullopt;
+    }
+}
+
+FirebirdProjectedColumn projectFirebirdDomainColumn(const DomainInfo& domain) {
+    FirebirdProjectedColumn projected;
+    DataType base_type = domain.base_type;
+    uint32_t precision = domain.precision;
+    uint32_t scale = domain.scale;
+
+    if (domain.domain_type == DomainType::ENUM) {
+        base_type = DataType::VARCHAR;
+        size_t max_len = 0;
+        for (const auto& value : domain.enum_values) {
+            max_len = std::max(max_len, value.label.size());
+        }
+        precision = max_len == 0 ? 1 : static_cast<uint32_t>(max_len);
+        scale = 0;
+    } else if (domain.domain_type != DomainType::BASIC) {
+        base_type = DataType::BLOB;
+    }
+
+    projected.data_type = base_type;
+    projected.precision = precision == 0 ? dataTypePrecisionHint(base_type) : precision;
+    projected.scale = scale;
+    projected.is_array = base_type == DataType::ARRAY;
+    return projected;
+}
+
+FirebirdProjectedColumn projectFirebirdCatalogColumn(core::CatalogManager* catalog_manager,
+                                                     const core::CatalogManager::ColumnInfo& column,
+                                                     ErrorContext* ctx) {
+    FirebirdProjectedColumn projected;
+    projected.column_name = column.column_name;
+    projected.data_type = static_cast<DataType>(column.data_type);
+    projected.precision = column.type_precision;
+    projected.scale = column.type_scale;
+    projected.nullable = column.nullable;
+    projected.is_array = column.is_array;
+    projected.default_source = column.default_value;
+
+    if (catalog_manager != nullptr && !isZeroIdLocal(column.domain_id)) {
+        DomainInfo domain;
+        if (catalog_manager->getDomainById(column.domain_id, domain, ctx) == Status::OK) {
+            FirebirdProjectedColumn domain_projected = projectFirebirdDomainColumn(domain);
+            projected.data_type = domain_projected.data_type;
+            projected.precision =
+                domain_projected.precision == 0 ? projected.precision : domain_projected.precision;
+            projected.scale = domain_projected.scale;
+            projected.is_array = projected.is_array || domain_projected.is_array;
+        }
+    }
+
+    if (projected.precision == 0) {
+        projected.precision = dataTypePrecisionHint(projected.data_type);
+    }
+    return projected;
+}
+
+bool loadFirebirdRelationProjection(core::CatalogManager* catalog_manager,
+                                    const core::ID& schema_id,
+                                    const std::string& relation_name,
+                                    std::vector<FirebirdProjectedColumn>& projected_out,
+                                    ErrorContext* ctx,
+                                    std::unordered_set<std::string>& active_views) {
+    projected_out.clear();
+
+    if (catalog_manager == nullptr || relation_name.empty()) {
+        return false;
+    }
+
+    core::CatalogManager::TableInfo table_info;
+    if (catalog_manager->getTable(schema_id, relation_name, table_info, ctx) == Status::OK) {
+        std::vector<core::CatalogManager::ColumnInfo> columns;
+        if (catalog_manager->getColumns(table_info.table_id, columns, ctx) != Status::OK) {
+            return false;
+        }
+        projected_out.reserve(columns.size());
+        for (const auto& column : columns) {
+            projected_out.push_back(projectFirebirdCatalogColumn(catalog_manager, column, ctx));
+        }
+        return true;
+    }
+
+    core::CatalogManager::ViewInfo nested_view;
+    if (catalog_manager->getView(schema_id, relation_name, nested_view, ctx) != Status::OK) {
+        return false;
+    }
+
+    if (nested_view.materialized && !isZeroIdLocal(nested_view.materialized_table_id)) {
+        std::vector<core::CatalogManager::ColumnInfo> columns;
+        if (catalog_manager->getColumns(nested_view.materialized_table_id, columns, ctx) !=
+            Status::OK) {
+            return false;
+        }
+        projected_out.reserve(columns.size());
+        for (size_t i = 0; i < columns.size(); ++i) {
+            FirebirdProjectedColumn projected =
+                projectFirebirdCatalogColumn(catalog_manager, columns[i], ctx);
+            if (i < nested_view.column_names.size() && !nested_view.column_names[i].empty()) {
+                projected.column_name = nested_view.column_names[i];
+            }
+            projected_out.push_back(std::move(projected));
+        }
+        return true;
+    }
+
+    return projectFirebirdViewColumns(catalog_manager,
+                                      nested_view,
+                                      projected_out,
+                                      ctx,
+                                      active_views);
+}
+
+std::optional<FirebirdProjectedColumn> inferFirebirdTypeNameColumn(
+    core::CatalogManager* catalog_manager,
+    const core::ID& default_schema_id,
+    const parser::v3::TypeName& type_name,
+    const parser::v3::StringPool& pool,
+    ErrorContext* ctx,
+    std::unordered_set<std::string>* active_views) {
+    FirebirdProjectedColumn out;
+
+    if (catalog_manager != nullptr && type_name.is_type_of_column) {
+        if (type_name.schema_path.components.size() < 2) {
+            return std::nullopt;
+        }
+
+        core::ID schema_id = default_schema_id;
+        const std::string schema_name = parserSchemaPrefix(type_name.schema_path, pool, 2);
+        if (!schema_name.empty()) {
+            core::CatalogManager::SchemaInfo schema_info;
+            if (catalog_manager->getSchema(schema_name, schema_info, ctx) != Status::OK) {
+                return std::nullopt;
+            }
+            schema_id = schema_info.schema_id;
+        }
+
+        const auto& components = type_name.schema_path.components;
+        const std::string relation_name = parserPoolString(pool, components[components.size() - 2]);
+        const std::string column_name = parserSchemaObjectName(type_name.schema_path, pool);
+
+        std::unordered_set<std::string> local_active_views;
+        auto& active_view_set = active_views != nullptr ? *active_views : local_active_views;
+        std::vector<FirebirdProjectedColumn> relation_columns;
+        if (!loadFirebirdRelationProjection(catalog_manager,
+                                           schema_id,
+                                           relation_name,
+                                           relation_columns,
+                                           ctx,
+                                           active_view_set)) {
+            return std::nullopt;
+        }
+
+        for (const auto& column : relation_columns) {
+            if (!firebirdNamesEqual(column.column_name, column_name)) {
+                continue;
+            }
+            FirebirdProjectedColumn resolved = column;
+            resolved.column_name.clear();
+            resolved.nullable = true;
+            resolved.default_source.clear();
+            if (type_name.is_array) {
+                resolved.data_type = DataType::ARRAY;
+                resolved.is_array = true;
+            }
+            return resolved;
+        }
+        return std::nullopt;
+    }
+
+    if (catalog_manager != nullptr && type_name.is_type_of) {
+        core::ID schema_id = default_schema_id;
+        const std::string schema_name = parserSchemaPrefix(type_name.schema_path, pool, 1);
+        if (!schema_name.empty()) {
+            core::CatalogManager::SchemaInfo schema_info;
+            if (catalog_manager->getSchema(schema_name, schema_info, ctx) != Status::OK) {
+                return std::nullopt;
+            }
+            schema_id = schema_info.schema_id;
+        }
+
+        const std::string domain_name = parserSchemaObjectName(type_name.schema_path, pool);
+        DomainInfo domain;
+        if (catalog_manager->getDomainByName(schema_id, domain_name, domain, ctx) != Status::OK) {
+            return std::nullopt;
+        }
+
+        FirebirdProjectedColumn resolved = projectFirebirdDomainColumn(domain);
+        if (type_name.is_array) {
+            resolved.data_type = DataType::ARRAY;
+            resolved.is_array = true;
+        }
+        return resolved;
+    }
+
+    std::string type_upper =
+        core::IdentifierUtils::toUpper(parserPoolString(pool, type_name.name));
+
+    if (type_upper.empty()) {
+        return std::nullopt;
+    }
+
+    if (type_upper == "SMALLINT") {
+        out.data_type = DataType::INT16;
+        out.precision = 5;
+    } else if (type_upper == "INT" || type_upper == "INTEGER") {
+        out.data_type = DataType::INT32;
+        out.precision = 10;
+    } else if (type_upper == "BIGINT") {
+        out.data_type = DataType::INT64;
+        out.precision = 19;
+    } else if (type_upper == "INT128") {
+        out.data_type = DataType::INT128;
+        out.precision = 38;
+    } else if (type_upper == "FLOAT" || type_upper == "REAL") {
+        out.data_type = DataType::FLOAT32;
+    } else if (type_upper == "DOUBLE" || type_upper == "DOUBLE PRECISION") {
+        out.data_type = DataType::FLOAT64;
+    } else if (type_upper == "DECIMAL" || type_upper == "NUMERIC") {
+        out.data_type = DataType::DECIMAL;
+        out.precision = type_name.precision.has_value()
+            ? static_cast<uint32_t>(*type_name.precision)
+            : 18;
+        out.scale = type_name.scale.has_value()
+            ? static_cast<uint32_t>(*type_name.scale)
+            : 0;
+    } else if (type_upper == "DECFLOAT") {
+        uint32_t precision = type_name.precision.has_value()
+            ? static_cast<uint32_t>(*type_name.precision)
+            : 34;
+        out.data_type = precision <= 16 ? DataType::DECFLOAT16 : DataType::DECFLOAT34;
+        out.precision = precision <= 16 ? 16 : 34;
+    } else if (type_upper == "CHAR" || type_upper == "CHARACTER") {
+        out.data_type = DataType::CHAR;
+        out.precision = type_name.length.has_value()
+            ? static_cast<uint32_t>(*type_name.length)
+            : 1;
+    } else if (type_upper == "VARCHAR" || type_upper == "CHARACTER VARYING") {
+        out.data_type = DataType::VARCHAR;
+        out.precision = type_name.length.has_value()
+            ? static_cast<uint32_t>(*type_name.length)
+            : 255;
+    } else if (type_upper == "BLOB") {
+        out.data_type = DataType::BLOB;
+    } else if (type_upper == "BOOLEAN") {
+        out.data_type = DataType::BOOLEAN;
+    } else if (type_upper == "DATE") {
+        out.data_type = DataType::DATE;
+    } else if (type_upper == "TIME") {
+        out.data_type = type_name.with_time_zone
+            ? DataType::TIME_WITH_ZONE
+            : DataType::TIME;
+    } else if (type_upper == "TIMESTAMP") {
+        out.data_type = type_name.with_time_zone
+            ? DataType::TIMESTAMP_WITH_ZONE
+            : DataType::TIMESTAMP;
+    } else {
+        return std::nullopt;
+    }
+
+    if (type_name.is_array) {
+        out.data_type = DataType::ARRAY;
+        out.is_array = true;
+    }
+
+    return out;
+}
+
+FirebirdProjectedColumn mergeFirebirdProjectedColumns(const FirebirdProjectedColumn& left,
+                                                      const FirebirdProjectedColumn& right) {
+    FirebirdProjectedColumn merged = left;
+    merged.nullable = left.nullable || right.nullable;
+    merged.precision = std::max(left.precision, right.precision);
+    merged.scale = std::max(left.scale, right.scale);
+    merged.is_array = left.is_array || right.is_array;
+    if (merged.column_name.empty()) {
+        merged.column_name = right.column_name;
+    }
+
+    if (left.data_type == DataType::UNKNOWN) {
+        merged.data_type = right.data_type;
+        return merged;
+    }
+    if (right.data_type == DataType::UNKNOWN || left.data_type == right.data_type) {
+        return merged;
+    }
+
+    auto is_integer = [](DataType type) {
+        switch (type) {
+            case DataType::INT8:
+            case DataType::INT16:
+            case DataType::INT32:
+            case DataType::INT64:
+            case DataType::INT128:
+            case DataType::UINT8:
+            case DataType::UINT16:
+            case DataType::UINT32:
+            case DataType::UINT64:
+            case DataType::UINT128:
+                return true;
+            default:
+                return false;
+        }
+    };
+    auto is_decimalish = [](DataType type) {
+        return type == DataType::DECIMAL || type == DataType::MONEY ||
+               type == DataType::DECFLOAT16 || type == DataType::DECFLOAT34;
+    };
+    auto is_floatish = [](DataType type) {
+        return type == DataType::FLOAT32 || type == DataType::FLOAT64;
+    };
+    auto is_stringy = [](DataType type) {
+        return type == DataType::CHAR || type == DataType::VARCHAR ||
+               type == DataType::TEXT;
+    };
+
+    if ((is_integer(left.data_type) || is_decimalish(left.data_type) || is_floatish(left.data_type)) &&
+        (is_integer(right.data_type) || is_decimalish(right.data_type) || is_floatish(right.data_type))) {
+        if (left.data_type == DataType::FLOAT64 || right.data_type == DataType::FLOAT64 ||
+            ((left.data_type == DataType::FLOAT32 || right.data_type == DataType::FLOAT32) &&
+             (is_integer(left.data_type) || is_integer(right.data_type)))) {
+            merged.data_type = DataType::FLOAT64;
+            return merged;
+        }
+        if (left.data_type == DataType::FLOAT32 || right.data_type == DataType::FLOAT32) {
+            merged.data_type = DataType::FLOAT32;
+            return merged;
+        }
+        if (left.data_type == DataType::DECFLOAT34 || right.data_type == DataType::DECFLOAT34 ||
+            left.data_type == DataType::INT128 || right.data_type == DataType::INT128 ||
+            left.data_type == DataType::UINT128 || right.data_type == DataType::UINT128) {
+            merged.data_type = DataType::DECFLOAT34;
+            if (merged.precision == 0) {
+                merged.precision = 34;
+            }
+            return merged;
+        }
+        if (left.data_type == DataType::DECFLOAT16 || right.data_type == DataType::DECFLOAT16) {
+            merged.data_type = DataType::DECFLOAT16;
+            if (merged.precision == 0) {
+                merged.precision = 16;
+            }
+            return merged;
+        }
+        if (left.data_type == DataType::DECIMAL || right.data_type == DataType::DECIMAL ||
+            left.data_type == DataType::MONEY || right.data_type == DataType::MONEY) {
+            merged.data_type = DataType::DECIMAL;
+            if (merged.precision == 0) {
+                merged.precision = 18;
+            }
+            return merged;
+        }
+        if (left.data_type == DataType::INT64 || right.data_type == DataType::INT64 ||
+            left.data_type == DataType::UINT64 || right.data_type == DataType::UINT64) {
+            merged.data_type = DataType::INT64;
+            if (merged.precision == 0) {
+                merged.precision = 19;
+            }
+            return merged;
+        }
+        merged.data_type = DataType::INT32;
+        if (merged.precision == 0) {
+            merged.precision = 10;
+        }
+        return merged;
+    }
+
+    if (is_stringy(left.data_type) && is_stringy(right.data_type)) {
+        if (left.data_type == DataType::TEXT || right.data_type == DataType::TEXT) {
+            merged.data_type = DataType::TEXT;
+        } else if (left.data_type == DataType::VARCHAR || right.data_type == DataType::VARCHAR) {
+            merged.data_type = DataType::VARCHAR;
+        } else {
+            merged.data_type = DataType::CHAR;
+        }
+        if (merged.precision == 0) {
+            merged.precision = dataTypePrecisionHint(merged.data_type);
+        }
+        return merged;
+    }
+
+    if ((left.data_type == DataType::TIME || left.data_type == DataType::TIME_WITH_ZONE) &&
+        (right.data_type == DataType::TIME || right.data_type == DataType::TIME_WITH_ZONE)) {
+        merged.data_type =
+            left.data_type == DataType::TIME_WITH_ZONE || right.data_type == DataType::TIME_WITH_ZONE
+                ? DataType::TIME_WITH_ZONE
+                : DataType::TIME;
+        return merged;
+    }
+
+    if ((left.data_type == DataType::TIMESTAMP || left.data_type == DataType::TIMESTAMP_WITH_ZONE ||
+         left.data_type == DataType::DATE) &&
+        (right.data_type == DataType::TIMESTAMP || right.data_type == DataType::TIMESTAMP_WITH_ZONE ||
+         right.data_type == DataType::DATE)) {
+        if (left.data_type == DataType::TIMESTAMP_WITH_ZONE ||
+            right.data_type == DataType::TIMESTAMP_WITH_ZONE) {
+            merged.data_type = DataType::TIMESTAMP_WITH_ZONE;
+        } else if (left.data_type == DataType::TIMESTAMP ||
+                   right.data_type == DataType::TIMESTAMP) {
+            merged.data_type = DataType::TIMESTAMP;
+        } else {
+            merged.data_type = DataType::DATE;
+        }
+        return merged;
+    }
+
+    if (left.data_type == DataType::BOOLEAN && right.data_type == DataType::BOOLEAN) {
+        merged.data_type = DataType::BOOLEAN;
+        return merged;
+    }
+
+    if (left.data_type == DataType::ARRAY && right.data_type == DataType::ARRAY) {
+        merged.data_type = DataType::ARRAY;
+        merged.is_array = true;
+        return merged;
+    }
+
+    return merged;
+}
+
+bool projectFirebirdViewColumns(core::CatalogManager* catalog_manager,
+                                const core::CatalogManager::ViewInfo& view,
+                                std::vector<FirebirdProjectedColumn>& columns_out,
+                                ErrorContext* ctx,
+                                std::unordered_set<std::string>& active_views) {
+    columns_out.clear();
+    if (catalog_manager == nullptr || view.compiled_query_sblr.empty()) {
+        return false;
+    }
+
+    const std::string active_key = view.view_id.toString();
+    if (!active_views.insert(active_key).second) {
+        return false;
+    }
+
+    auto finish = [&](bool ok) {
+        active_views.erase(active_key);
+        return ok;
+    };
+
+    core::Database* db = catalog_manager->database();
+    if (db == nullptr) {
+        return finish(false);
+    }
+
+    scratchbird::sblr::Executor executor(db);
+    if (auto* conn_ctx = core::ConnectionContext::getCurrent()) {
+        executor.setConnectionContext(conn_ctx);
+    } else if (!isZeroIdLocal(view.schema_id)) {
+        executor.setCurrentSchema(view.schema_id);
+    }
+
+    auto exec_result = executor.execute(view.compiled_query_sblr);
+    if (!exec_result.success() || !exec_result.hasResultSet()) {
+        if (ctx != nullptr && !exec_result.error().empty()) {
+            ctx->set(exec_result.status(),
+                     exec_result.error().c_str(),
+                     __FILE__,
+                     __LINE__,
+                     __func__);
+        }
+        return finish(false);
+    }
+
+    auto* result_set = exec_result.resultSet();
+    columns_out.reserve(result_set->columnCount());
+    for (size_t i = 0; i < result_set->columnCount(); ++i) {
+        FirebirdProjectedColumn projected;
+        projected.column_name = result_set->columnName(i);
+        projected.data_type = result_set->columnType(i);
+        projected.precision = dataTypePrecisionHint(projected.data_type);
+        projected.scale = 0;
+        projected.nullable = true;
+        projected.is_array = projected.data_type == DataType::ARRAY;
+        columns_out.push_back(std::move(projected));
+    }
+
+    for (size_t i = 0; i < columns_out.size() && i < view.column_names.size(); ++i) {
+        if (!view.column_names[i].empty()) {
+            columns_out[i].column_name = view.column_names[i];
+        }
+    }
+
+    return finish(!columns_out.empty() || result_set->columnCount() == 0);
 }
 
 }  // namespace
@@ -424,12 +1292,20 @@ Status FirebirdCatalogHandler::queryRdbRelations(VirtualResultSet& results, Erro
         }
 
         for (const auto& table : tables) {
+            std::string owner_name = "SYSDBA";
+            if (!isZeroIdLocal(table.owner_id)) {
+                CatalogManager::UserInfo owner_info;
+                if (catalog_manager_->getUser(table.owner_id, owner_info, ctx) == Status::OK &&
+                    !owner_info.username.empty()) {
+                    owner_name = owner_info.username;
+                }
+            }
             VirtualRow row;
             row.columns = {
                 {"RDB$RELATION_NAME", TypedValue::makeVarchar(table.table_name)},
                 {"RDB$SYSTEM_FLAG", TypedValue::makeInt64(0)},  // User table
                 {"RDB$RELATION_TYPE", TypedValue::makeInt64(0)},  // 0 = table
-                {"RDB$OWNER_NAME", TypedValue::makeVarchar("SYSDBA")},
+                {"RDB$OWNER_NAME", TypedValue::makeVarchar(owner_name)},
                 {"RDB$DESCRIPTION", TypedValue()},  // NULL
                 {"RDB$VIEW_SOURCE", TypedValue()},  // NULL (not a view)
                 {"RDB$EXTERNAL_FILE", TypedValue()},  // NULL
@@ -437,145 +1313,62 @@ Status FirebirdCatalogHandler::queryRdbRelations(VirtualResultSet& results, Erro
             };
             results.rows.push_back(row);
         }
+
+        std::vector<CatalogManager::ViewInfo> views;
+        status = catalog_manager_->listViewsForSchema(schema.schema_id, views, ctx);
+        if (status != Status::OK) {
+            continue;
+        }
+
+        for (const auto& view : views) {
+            std::string owner_name = "SYSDBA";
+            if (!isZeroIdLocal(view.owner_id)) {
+                CatalogManager::UserInfo owner_info;
+                if (catalog_manager_->getUser(view.owner_id, owner_info, ctx) == Status::OK &&
+                    !owner_info.username.empty()) {
+                    owner_name = owner_info.username;
+                }
+            }
+
+            VirtualRow row;
+            row.columns = {
+                {"RDB$RELATION_NAME", TypedValue::makeVarchar(view.name)},
+                {"RDB$SYSTEM_FLAG", TypedValue::makeInt64(0)},  // User view
+                {"RDB$RELATION_TYPE", TypedValue::makeInt64(1)},  // 1 = view
+                {"RDB$OWNER_NAME", TypedValue::makeVarchar(owner_name)},
+                {"RDB$DESCRIPTION", TypedValue()},
+                {"RDB$VIEW_SOURCE", view.definition.empty() ? TypedValue()
+                                                             : TypedValue::makeText(view.definition)},
+                {"RDB$EXTERNAL_FILE", TypedValue()},
+                {"RDB$RELATION_ID", TypedValue::makeInt64(relationId++)}
+            };
+            results.rows.push_back(std::move(row));
+        }
     }
 
     return Status::OK;
 }
 
-Status FirebirdCatalogHandler::queryRdbFields(VirtualResultSet& results, ErrorContext* /* ctx */) {
+Status FirebirdCatalogHandler::queryRdbFields(VirtualResultSet& results, ErrorContext* ctx) {
     // Domain definitions - minimal implementation
     results.column_names = {
         "RDB$FIELD_NAME", "RDB$FIELD_TYPE", "RDB$FIELD_LENGTH",
         "RDB$FIELD_SCALE", "RDB$CHARACTER_SET_ID", "RDB$COLLATION_ID",
-        "RDB$NULL_FLAG", "RDB$DEFAULT_SOURCE", "RDB$DESCRIPTION"
+        "RDB$DIMENSIONS", "RDB$NULL_FLAG", "RDB$DEFAULT_SOURCE", "RDB$DESCRIPTION"
     };
     results.column_types = {
         DataType::TEXT, DataType::INT16, DataType::INT16,
         DataType::INT16, DataType::INT16, DataType::INT16,
-        DataType::INT16, DataType::TEXT, DataType::TEXT
+        DataType::INT16, DataType::INT16, DataType::TEXT, DataType::TEXT
     };
 
     if (!catalog_manager_) {
         return Status::OK;
     }
 
-    struct FieldMapping {
-        int16_t field_type = 0;
-        int16_t field_length = 0;
-        int16_t field_scale = 0;
-        int16_t charset_id = 0;
-        int16_t collation_id = 0;
-    };
-
-    auto mapDataType = [](DataType type, uint32_t precision, uint32_t scale) -> FieldMapping {
-        FieldMapping mapping{};
-
-        switch (type) {
-            case DataType::INT8:
-            case DataType::INT16:
-                mapping.field_type = 7; // SMALLINT
-                mapping.field_length = 2;
-                break;
-            case DataType::INT32:
-                mapping.field_type = 8; // INTEGER
-                mapping.field_length = 4;
-                break;
-            case DataType::INT64:
-            case DataType::UINT64:
-            case DataType::UINT32:
-            case DataType::UINT16:
-            case DataType::UINT8:
-                mapping.field_type = 16; // BIGINT
-                mapping.field_length = 8;
-                break;
-            case DataType::FLOAT32:
-                mapping.field_type = 10; // FLOAT
-                mapping.field_length = 4;
-                break;
-            case DataType::FLOAT64:
-                mapping.field_type = 27; // DOUBLE
-                mapping.field_length = 8;
-                break;
-            case DataType::DECIMAL:
-            case DataType::MONEY: {
-                uint32_t prec = precision == 0 ? 18 : precision;
-                if (prec <= 4) {
-                    mapping.field_type = 7;
-                    mapping.field_length = 2;
-                } else if (prec <= 9) {
-                    mapping.field_type = 8;
-                    mapping.field_length = 4;
-                } else {
-                    mapping.field_type = 16;
-                    mapping.field_length = 8;
-                }
-                mapping.field_scale = static_cast<int16_t>(-static_cast<int32_t>(scale));
-                break;
-            }
-            case DataType::DECFLOAT16:
-                mapping.field_type = 24; // DECFLOAT(16)
-                mapping.field_length = 8;
-                break;
-            case DataType::DECFLOAT34:
-                mapping.field_type = 25; // DECFLOAT(34)
-                mapping.field_length = 16;
-                break;
-            case DataType::CHAR:
-                mapping.field_type = 14; // CHAR
-                mapping.field_length = static_cast<int16_t>(precision == 0 ? 1 : precision);
-                break;
-            case DataType::VARCHAR:
-                mapping.field_type = 37; // VARCHAR
-                mapping.field_length = static_cast<int16_t>(precision == 0 ? 255 : precision);
-                break;
-            case DataType::TEXT:
-                mapping.field_type = 37; // VARCHAR
-                mapping.field_length = static_cast<int16_t>(precision == 0 ? 8192 : precision);
-                break;
-            case DataType::DATE:
-                mapping.field_type = 12;
-                mapping.field_length = 4;
-                break;
-            case DataType::TIME:
-                mapping.field_type = 13;
-                mapping.field_length = 4;
-                break;
-            case DataType::TIMESTAMP:
-                mapping.field_type = 35;
-                mapping.field_length = 8;
-                break;
-            case DataType::BOOLEAN:
-                mapping.field_type = 23;
-                mapping.field_length = 1;
-                break;
-            case DataType::UUID:
-                mapping.field_type = 14; // CHAR
-                mapping.field_length = 16;
-                break;
-            case DataType::BLOB:
-            case DataType::BYTEA:
-            case DataType::BINARY:
-            case DataType::VARBINARY:
-            case DataType::JSON:
-            case DataType::JSONB:
-            case DataType::XML:
-            case DataType::ARRAY:
-            case DataType::COMPOSITE:
-            case DataType::VECTOR:
-                mapping.field_type = 261; // BLOB
-                mapping.field_length = 0;
-                break;
-            default:
-                mapping.field_type = 261; // Default to BLOB
-                mapping.field_length = 0;
-                break;
-        }
-
-        return mapping;
-    };
-
     auto addFieldRow = [&results](const std::string& field_name,
-                                  const FieldMapping& mapping,
+                                  const FirebirdFieldMapping& mapping,
+                                  const std::optional<int16_t>& dimensions,
                                   bool nullable,
                                   const std::string& default_source) {
         VirtualRow row;
@@ -586,6 +1379,8 @@ Status FirebirdCatalogHandler::queryRdbFields(VirtualResultSet& results, ErrorCo
             {"RDB$FIELD_SCALE", TypedValue::makeInt64(mapping.field_scale)},
             {"RDB$CHARACTER_SET_ID", TypedValue::makeInt64(mapping.charset_id)},
             {"RDB$COLLATION_ID", TypedValue::makeInt64(mapping.collation_id)},
+            {"RDB$DIMENSIONS", dimensions.has_value() ? TypedValue::makeInt64(*dimensions)
+                                                      : TypedValue()},
             {"RDB$NULL_FLAG", nullable ? TypedValue() : TypedValue::makeInt64(1)},
             {"RDB$DEFAULT_SOURCE", default_source.empty() ? TypedValue() : TypedValue::makeText(default_source)},
             {"RDB$DESCRIPTION", TypedValue()}
@@ -626,8 +1421,64 @@ Status FirebirdCatalogHandler::queryRdbFields(VirtualResultSet& results, ErrorCo
             base_type = DataType::BLOB;
         }
 
-        FieldMapping mapping = mapDataType(base_type, precision, scale);
-        addFieldRow(field_name, mapping, domain.nullable, domain.default_value);
+        FirebirdFieldMapping mapping = mapFirebirdFieldType(base_type, precision, scale);
+        const std::optional<int16_t> dimensions =
+            base_type == DataType::ARRAY ? std::optional<int16_t>(1) : std::nullopt;
+        addFieldRow(field_name, mapping, dimensions, domain.nullable, domain.default_value);
+    }
+
+    std::vector<CatalogManager::ProcedureInfo> procedures;
+    if (catalog_manager_->listProcedures(procedures, ctx) == Status::OK) {
+        for (const auto& proc : procedures) {
+            for (const auto& param : proc.parameters) {
+                const std::string field_name =
+                    firebirdSyntheticFieldSourceName("P", proc.name, param.name);
+                if (!field_names.insert(field_name).second) {
+                    continue;
+                }
+
+                const uint32_t precision =
+                    param.type_precision == 0 ? dataTypePrecisionHint(param.type)
+                                              : param.type_precision;
+                const FirebirdFieldMapping mapping =
+                    mapFirebirdFieldType(param.type, precision, param.type_scale);
+                const std::optional<int16_t> dimensions =
+                    param.type == DataType::ARRAY ? std::optional<int16_t>(1)
+                                                  : std::nullopt;
+                addFieldRow(field_name,
+                            mapping,
+                            dimensions,
+                            true,
+                            param.has_default ? param.default_value : std::string{});
+            }
+        }
+    }
+
+    std::vector<CatalogManager::FunctionInfo> functions;
+    if (catalog_manager_->listFunctions(functions, ctx) == Status::OK) {
+        for (const auto& func : functions) {
+            for (const auto& param : func.parameters) {
+                const std::string field_name =
+                    firebirdSyntheticFieldSourceName("F", func.name, param.name);
+                if (!field_names.insert(field_name).second) {
+                    continue;
+                }
+
+                const uint32_t precision =
+                    param.type_precision == 0 ? dataTypePrecisionHint(param.type)
+                                              : param.type_precision;
+                const FirebirdFieldMapping mapping =
+                    mapFirebirdFieldType(param.type, precision, param.type_scale);
+                const std::optional<int16_t> dimensions =
+                    param.type == DataType::ARRAY ? std::optional<int16_t>(1)
+                                                  : std::nullopt;
+                addFieldRow(field_name,
+                            mapping,
+                            dimensions,
+                            true,
+                            param.has_default ? param.default_value : std::string{});
+            }
+        }
     }
 
     std::vector<CatalogManager::SchemaInfo> schemas;
@@ -656,7 +1507,7 @@ Status FirebirdCatalogHandler::queryRdbFields(VirtualResultSet& results, ErrorCo
                     continue;
                 }
 
-                FieldMapping mapping{};
+                FirebirdFieldMapping mapping{};
                 auto domain_it = domain_map.find(column.domain_id);
                 if (domain_it != domain_map.end()) {
                     const DomainInfo& domain = domain_it->second;
@@ -676,14 +1527,115 @@ Status FirebirdCatalogHandler::queryRdbFields(VirtualResultSet& results, ErrorCo
                         base_type = DataType::BLOB;
                     }
 
-                    mapping = mapDataType(base_type, precision, scale);
+                    mapping = mapFirebirdFieldType(base_type, precision, scale);
                 } else {
-                    mapping = mapDataType(static_cast<DataType>(column.data_type),
-                                          column.type_precision,
-                                          column.type_scale);
+                    mapping = mapFirebirdFieldType(static_cast<DataType>(column.data_type),
+                                                   column.type_precision,
+                                                   column.type_scale);
                 }
 
-                addFieldRow(field_name, mapping, column.nullable, column.default_value);
+                const std::optional<int16_t> dimensions =
+                    column.is_array ? std::optional<int16_t>(1) : std::nullopt;
+                addFieldRow(field_name,
+                            mapping,
+                            dimensions,
+                            column.nullable,
+                            column.default_value);
+            }
+        }
+
+        std::vector<CatalogManager::ViewInfo> views;
+        status = catalog_manager_->listViewsForSchema(schema.schema_id, views, nullptr);
+        if (status != Status::OK) {
+            continue;
+        }
+
+        for (const auto& view : views) {
+            if (!view.materialized || isZeroIdLocal(view.materialized_table_id)) {
+                continue;
+            }
+
+            std::vector<CatalogManager::ColumnInfo> columns;
+            status = catalog_manager_->getColumns(view.materialized_table_id, columns, nullptr);
+            if (status != Status::OK) {
+                continue;
+            }
+
+            for (size_t i = 0; i < columns.size(); ++i) {
+                const auto& column = columns[i];
+                std::string field_name =
+                    i < view.column_names.size() && !view.column_names[i].empty()
+                        ? toUpperCase(view.column_names[i])
+                        : toUpperCase(column.column_name);
+                if (!field_names.insert(field_name).second) {
+                    continue;
+                }
+
+                FirebirdFieldMapping mapping{};
+                auto domain_it = domain_map.find(column.domain_id);
+                if (domain_it != domain_map.end()) {
+                    const DomainInfo& domain = domain_it->second;
+                    DataType base_type = domain.base_type;
+                    uint32_t precision = domain.precision;
+                    uint32_t scale = domain.scale;
+
+                    if (domain.domain_type == DomainType::ENUM) {
+                        base_type = DataType::VARCHAR;
+                        size_t max_len = 0;
+                        for (const auto& val : domain.enum_values) {
+                            max_len = std::max(max_len, val.label.size());
+                        }
+                        precision = max_len == 0 ? 1 : static_cast<uint32_t>(max_len);
+                        scale = 0;
+                    } else if (domain.domain_type != DomainType::BASIC) {
+                        base_type = DataType::BLOB;
+                    }
+
+                    mapping = mapFirebirdFieldType(base_type, precision, scale);
+                } else {
+                    mapping = mapFirebirdFieldType(static_cast<DataType>(column.data_type),
+                                                   column.type_precision,
+                                                   column.type_scale);
+                }
+
+                const std::optional<int16_t> dimensions =
+                    column.is_array ? std::optional<int16_t>(1) : std::nullopt;
+                addFieldRow(field_name,
+                            mapping,
+                            dimensions,
+                            column.nullable,
+                            column.default_value);
+            }
+
+            if (!view.materialized || isZeroIdLocal(view.materialized_table_id)) {
+                std::unordered_set<std::string> active_views;
+                std::vector<FirebirdProjectedColumn> projected_columns;
+                if (!projectFirebirdViewColumns(catalog_manager_,
+                                               view,
+                                               projected_columns,
+                                               nullptr,
+                                               active_views)) {
+                    continue;
+                }
+
+                for (const auto& column : projected_columns) {
+                    std::string field_name = toUpperCase(column.column_name);
+                    if (!field_names.insert(field_name).second) {
+                        continue;
+                    }
+
+                    FirebirdFieldMapping mapping =
+                        mapFirebirdFieldType(column.data_type,
+                                             column.precision,
+                                             column.scale);
+                    const std::optional<int16_t> dimensions =
+                        column.is_array ? std::optional<int16_t>(1) : std::nullopt;
+                    addFieldRow(field_name,
+                                mapping,
+                                dimensions,
+                                column.nullable,
+                                column.default_source);
+                }
             }
         }
     }
@@ -797,6 +1749,75 @@ Status FirebirdCatalogHandler::queryRdbIndices(VirtualResultSet& results, ErrorC
                     {"RDB$SEGMENT_COUNT", TypedValue::makeInt16(static_cast<int16_t>(index.column_ids.size()))},
                     {"RDB$DESCRIPTION", TypedValue()},
                     {"RDB$SYSTEM_FLAG", TypedValue::makeInt16(0)}
+                };
+                results.rows.push_back(std::move(row));
+            }
+        }
+
+        std::vector<CatalogManager::ViewInfo> views;
+        status = catalog_manager_->listViewsForSchema(schema.schema_id, views, ctx);
+        if (status != Status::OK) {
+            continue;
+        }
+
+        for (const auto& view : views) {
+            std::vector<std::string> projected_names = view.column_names;
+            std::vector<FirebirdProjectedColumn> projected_columns;
+            std::vector<CatalogManager::ColumnInfo> materialized_columns;
+            if (view.materialized && !isZeroIdLocal(view.materialized_table_id)) {
+                catalog_manager_->getColumns(view.materialized_table_id, materialized_columns, ctx);
+                if (projected_names.empty()) {
+                    projected_names.reserve(materialized_columns.size());
+                    for (const auto& col : materialized_columns) {
+                        projected_names.push_back(col.column_name);
+                    }
+                }
+            }
+            else if (projected_names.empty()) {
+                std::unordered_set<std::string> active_views;
+                if (projectFirebirdViewColumns(catalog_manager_,
+                                               view,
+                                               projected_columns,
+                                               ctx,
+                                               active_views)) {
+                    projected_names.reserve(projected_columns.size());
+                    for (const auto& column : projected_columns) {
+                        projected_names.push_back(column.column_name);
+                    }
+                }
+            }
+
+            int64_t position = 0;
+            for (size_t i = 0; i < projected_names.size(); ++i) {
+                const std::string& column_name = projected_names[i];
+                const CatalogManager::ColumnInfo* materialized_column =
+                    i < materialized_columns.size() ? &materialized_columns[i] : nullptr;
+                const FirebirdProjectedColumn* projected_column =
+                    i < projected_columns.size() ? &projected_columns[i] : nullptr;
+                VirtualRow row;
+                row.columns = {
+                    {"RDB$RELATION_NAME", TypedValue::makeVarchar(view.name)},
+                    {"RDB$FIELD_NAME", TypedValue::makeVarchar(column_name)},
+                    {"RDB$FIELD_SOURCE", TypedValue::makeVarchar(column_name)},
+                    {"RDB$FIELD_POSITION", TypedValue::makeInt64(position++)},
+                    {"RDB$NULL_FLAG",
+                     materialized_column != nullptr
+                         ? (materialized_column->nullable ? TypedValue()
+                                                          : TypedValue::makeInt64(1))
+                         : (projected_column != nullptr && !projected_column->nullable
+                                ? TypedValue::makeInt64(1)
+                                : TypedValue())},
+                    {"RDB$DEFAULT_SOURCE",
+                     materialized_column != nullptr
+                         ? (!materialized_column->default_value.empty()
+                                ? TypedValue::makeText(materialized_column->default_value)
+                                : TypedValue())
+                         : (projected_column != nullptr &&
+                                    !projected_column->default_source.empty()
+                                ? TypedValue::makeText(projected_column->default_source)
+                                : TypedValue())},
+                    {"RDB$DESCRIPTION", TypedValue()},
+                    {"RDB$SYSTEM_FLAG", TypedValue::makeInt64(0)}
                 };
                 results.rows.push_back(std::move(row));
             }
@@ -943,6 +1964,14 @@ Status FirebirdCatalogHandler::queryRdbProcedures(VirtualResultSet& results, Err
 
     int64_t proc_id = 0;
     for (const auto& proc : procedures) {
+        std::string owner_name = "SYSDBA";
+        if (!isZeroIdLocal(proc.owner_id)) {
+            CatalogManager::UserInfo owner_info;
+            if (catalog_manager_->getUser(proc.owner_id, owner_info, nullptr) == Status::OK &&
+                !owner_info.username.empty()) {
+                owner_name = owner_info.username;
+            }
+        }
         int16_t inputs = 0;
         int16_t outputs = 0;
         for (const auto& param : proc.parameters) {
@@ -964,7 +1993,7 @@ Status FirebirdCatalogHandler::queryRdbProcedures(VirtualResultSet& results, Err
             {"RDB$DESCRIPTION", TypedValue()},
             {"RDB$PROCEDURE_SOURCE", proc.source_text.empty() ? TypedValue()
                                                               : TypedValue::makeText(proc.source_text)},
-            {"RDB$OWNER_NAME", TypedValue::makeVarchar("SYSDBA")},
+            {"RDB$OWNER_NAME", TypedValue::makeVarchar(owner_name)},
             {"RDB$SYSTEM_FLAG", TypedValue::makeInt16(0)}
         };
         results.rows.push_back(std::move(row));
@@ -1003,7 +2032,9 @@ Status FirebirdCatalogHandler::queryRdbProcedureParameters(VirtualResultSet& res
                 {"RDB$PROCEDURE_NAME", TypedValue::makeVarchar(proc.name)},
                 {"RDB$PARAMETER_NAME", TypedValue::makeVarchar(param.name)},
                 {"RDB$PARAMETER_TYPE", TypedValue::makeInt16(param_type)},
-                {"RDB$FIELD_SOURCE", TypedValue::makeVarchar(param.name)},
+                {"RDB$FIELD_SOURCE",
+                 TypedValue::makeVarchar(
+                     firebirdSyntheticFieldSourceName("P", proc.name, param.name))},
                 {"RDB$DEFAULT_SOURCE", param.has_default ? TypedValue::makeText(param.default_value)
                                                          : TypedValue()},
                 {"RDB$DESCRIPTION", TypedValue()},
@@ -1038,6 +2069,15 @@ Status FirebirdCatalogHandler::queryRdbFunctions(VirtualResultSet& results, Erro
     }
 
     for (const auto& func : functions) {
+        std::string owner_name = "SYSDBA";
+        if (!isZeroIdLocal(func.owner_id)) {
+            CatalogManager::UserInfo owner_info;
+            if (catalog_manager_->getUser(func.owner_id, owner_info, nullptr) == Status::OK &&
+                !owner_info.username.empty()) {
+                owner_name = owner_info.username;
+            }
+        }
+
         VirtualRow row;
         row.columns = {
             {"RDB$FUNCTION_NAME", TypedValue::makeVarchar(func.name)},
@@ -1046,7 +2086,7 @@ Status FirebirdCatalogHandler::queryRdbFunctions(VirtualResultSet& results, Erro
             {"RDB$DESCRIPTION", TypedValue()},
             {"RDB$MODULE_NAME", TypedValue()},
             {"RDB$ENTRYPOINT", TypedValue()},
-            {"RDB$OWNER_NAME", TypedValue::makeVarchar("SYSDBA")},
+            {"RDB$OWNER_NAME", TypedValue::makeVarchar(owner_name)},
             {"RDB$SYSTEM_FLAG", TypedValue::makeInt16(0)}
         };
         results.rows.push_back(std::move(row));
@@ -1083,7 +2123,9 @@ Status FirebirdCatalogHandler::queryRdbFunctionArguments(VirtualResultSet& resul
                 {"RDB$ARGUMENT_NAME", TypedValue::makeVarchar(param.name)},
                 {"RDB$ARGUMENT_POSITION", TypedValue::makeInt16(arg_pos++)},
                 {"RDB$MECHANISM", TypedValue::makeInt16(0)},
-                {"RDB$FIELD_SOURCE", TypedValue::makeVarchar(param.name)}
+                {"RDB$FIELD_SOURCE",
+                 TypedValue::makeVarchar(
+                     firebirdSyntheticFieldSourceName("F", func.name, param.name))}
             };
             results.rows.push_back(std::move(row));
         }
@@ -2749,6 +3791,7 @@ void FirebirdCatalogHandler::getRdbFieldsColumns(std::vector<CatalogManager::Col
     cols.push_back(makeCol("RDB$FIELD_SCALE", DataType::INT16, true));
     cols.push_back(makeCol("RDB$CHARACTER_SET_ID", DataType::INT16, true));
     cols.push_back(makeCol("RDB$COLLATION_ID", DataType::INT16, true));
+    cols.push_back(makeCol("RDB$DIMENSIONS", DataType::INT16, true));
     cols.push_back(makeCol("RDB$NULL_FLAG", DataType::INT16, true));
     cols.push_back(makeCol("RDB$DEFAULT_SOURCE", DataType::TEXT, true));
     cols.push_back(makeCol("RDB$DESCRIPTION", DataType::TEXT, true));

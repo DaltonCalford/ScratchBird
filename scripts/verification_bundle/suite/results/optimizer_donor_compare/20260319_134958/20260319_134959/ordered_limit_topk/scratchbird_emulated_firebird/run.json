@@ -1,0 +1,62 @@
+{
+  "setup": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "42000",
+    "message": "After line 16 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 5 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 6 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 7 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 8 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 9 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 10 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 11 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 12 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 13 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 14 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 15 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 16 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql\n",
+    "stderr": "",
+    "elapsed_ms": 465,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/ordered_limit_topk/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.setup.361be27ca6ca.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/ordered_limit_topk/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.setup.361be27ca6ca.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "42000",
+    "message": "After line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.plan.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.plan.sql\n",
+    "stderr": "",
+    "elapsed_ms": 468,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/ordered_limit_topk/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.plan.54c2e8e62872.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/ordered_limit_topk/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.plan.54c2e8e62872.stderr.txt",
+    "plan_lines": [
+      "PLAN|Statement failed, SQLSTATE = 42000",
+      "PLAN|Dynamic SQL Error",
+      "PLAN|After line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.plan.sql"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "42000",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.exec.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.exec.sql\n",
+    "stderr": "",
+    "elapsed_ms": 432,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/ordered_limit_topk/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.exec.35343cc19b55.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/ordered_limit_topk/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.exec.35343cc19b55.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "42000",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.teardown.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.teardown.sql\n",
+    "stderr": "",
+    "elapsed_ms": 459,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/ordered_limit_topk/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.teardown.1c2dbdb29730.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/ordered_limit_topk/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.teardown.1c2dbdb29730.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

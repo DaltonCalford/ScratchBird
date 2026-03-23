@@ -61,6 +61,7 @@ struct PGClientState {
     
     // Client tracking for IPC
     uint32_t client_id = 0;
+    uint32_t session_id = 0;
     
     // Request tracking
     uint32_t request_id = 0;
@@ -148,6 +149,12 @@ public:
     core::Status handleCancelRequest(PGClientState& state, 
                                     const std::vector<uint8_t>& msg,
                                     core::ErrorContext* ctx);
+    core::Status ensureEngineSession(PGClientState& state, core::ErrorContext* ctx);
+    core::Status compileQueryToSblr(const PGClientState& state,
+                                    const std::string& sql,
+                                    std::vector<uint8_t>& bytecode_out,
+                                    std::string& error_out);
+    std::string currentSchemaRoot(const PGClientState& state) const;
     
     // ========================================================================
     // Message Handlers

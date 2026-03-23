@@ -1,0 +1,10 @@
+
+PLAN SORT (AVP_ORDERED_LIMIT_TOPK NATURAL)
+
+          ID            K 
+============ ============ 
+           3           10 
+           5           10 
+           8           10 
+           4           20 
+

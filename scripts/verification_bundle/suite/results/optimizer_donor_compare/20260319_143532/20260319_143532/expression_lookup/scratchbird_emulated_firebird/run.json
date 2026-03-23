@@ -1,0 +1,64 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 938,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.setup.9e6ab44aa031.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.setup.9e6ab44aa031.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08001",
+    "message": "After line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.plan.sql",
+    "stdout": "\n          ID PAYLOAD                        \n============ ============================== \n\nStatement failed, SQLSTATE = 08001\nunavailable database\nAfter line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.plan.sql\n",
+    "stderr": "",
+    "elapsed_ms": 458,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.plan.498071e0e868.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.plan.498071e0e868.stderr.txt",
+    "plan_lines": [
+      "PLAN|ID PAYLOAD",
+      "PLAN|============ ==============================",
+      "PLAN|Statement failed, SQLSTATE = 08001",
+      "PLAN|unavailable database",
+      "PLAN|After line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.plan.sql"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08001",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.exec.sql",
+    "stdout": "\nexpr1                          \n============================== \n\nStatement failed, SQLSTATE = 08001\nunavailable database\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.exec.sql\n",
+    "stderr": "",
+    "elapsed_ms": 453,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.exec.7e1d04730047.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.exec.7e1d04730047.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 381,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.teardown.c8b2efa94953.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.teardown.c8b2efa94953.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

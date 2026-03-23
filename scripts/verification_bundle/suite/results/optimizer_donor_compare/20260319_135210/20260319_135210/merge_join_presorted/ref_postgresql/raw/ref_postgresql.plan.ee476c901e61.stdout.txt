@@ -1,0 +1,12 @@
+Incremental Sort  (cost=99.14..165.79 rows=794 width=176)
+  Sort Key: a.k, a.id, b.id
+  Presorted Key: a.k
+  ->  Merge Join  (cost=98.87..143.97 rows=794 width=176)
+        Merge Cond: (a.k = b.k)
+        Join Filter: (a.id < b.id)
+        ->  Sort  (cost=49.44..51.16 rows=690 width=90)
+              Sort Key: a.k
+              ->  Seq Scan on avp_merge_join_presorted a  (cost=0.00..16.90 rows=690 width=90)
+        ->  Sort  (cost=49.44..51.16 rows=690 width=90)
+              Sort Key: b.k
+              ->  Seq Scan on avp_merge_join_presorted b  (cost=0.00..16.90 rows=690 width=90)

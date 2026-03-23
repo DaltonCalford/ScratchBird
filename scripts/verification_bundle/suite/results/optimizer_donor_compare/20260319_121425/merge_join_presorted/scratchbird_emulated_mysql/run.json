@@ -1,0 +1,64 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 330,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.setup.b517e476c344.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.setup.b517e476c344.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "HY000",
+    "message": "ERROR 5002 (HY000) at line 1: V3 EXPLAIN plan payload invalid",
+    "stdout": "\nERROR 5002 (HY000) at line 1: V3 EXPLAIN plan payload invalid\n",
+    "stderr": "",
+    "elapsed_ms": 106,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.plan.2cc459dd2d62.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.plan.2cc459dd2d62.stderr.txt",
+    "plan_lines": [
+      "PLAN|ERROR 5002 (HY000) at line 1: V3 EXPLAIN plan payload invalid"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "ASSERT|merge_join_presorted|k=10|a=m10a|b=m10b\nASSERT|merge_join_presorted|k=20|a=m20a|b=m20b\nASSERT|merge_join_presorted|k=30|a=m30a|b=m30b\n\n",
+    "stderr": "",
+    "elapsed_ms": 171,
+    "assert_lines": [
+      "ASSERT|merge_join_presorted|k=10|a=m10a|b=m10b",
+      "ASSERT|merge_join_presorted|k=20|a=m20a|b=m20b",
+      "ASSERT|merge_join_presorted|k=30|a=m30a|b=m30b"
+    ],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.exec.4be7bbd72e12.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.exec.4be7bbd72e12.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 154,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.teardown.d32e6e7b08e8.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.teardown.d32e6e7b08e8.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

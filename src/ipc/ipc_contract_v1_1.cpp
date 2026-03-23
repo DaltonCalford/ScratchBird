@@ -90,6 +90,8 @@ const char* ipcMessageTypeToString(IPCMessageType type) {
         case IPCMessageType::EXECUTE: return "EXECUTE";
         case IPCMessageType::CLOSE: return "CLOSE";
         case IPCMessageType::SYNC: return "SYNC";
+        case IPCMessageType::COMPILED_QUERY: return "COMPILED_QUERY";
+        case IPCMessageType::COMPILED_PARSE: return "COMPILED_PARSE";
         
         // Results
         case IPCMessageType::ROW_DESCRIPTION: return "ROW_DESCRIPTION";
@@ -180,6 +182,20 @@ bool validateIPCMessage(const IPCMessage& msg, std::string& error) {
         case IPCMessageType::PARSE:
             if (msg.payload.size() < sizeof(IPCParsePayload)) {
                 error = "PARSE payload too small";
+                return false;
+            }
+            break;
+
+        case IPCMessageType::COMPILED_QUERY:
+            if (msg.payload.size() < sizeof(IPCCompiledQueryPayload)) {
+                error = "COMPILED_QUERY payload too small";
+                return false;
+            }
+            break;
+
+        case IPCMessageType::COMPILED_PARSE:
+            if (msg.payload.size() < sizeof(IPCCompiledParsePayload)) {
+                error = "COMPILED_PARSE payload too small";
                 return false;
             }
             break;

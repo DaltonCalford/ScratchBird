@@ -13,6 +13,7 @@
 #include <cstring>
 #include <vector>
 #include <string>
+#include <array>
 #include <algorithm>
 #include <cctype>
 #include <optional>
@@ -91,6 +92,13 @@ namespace scratchbird::optimizer
         LTRIM = 4,
         RTRIM = 5
     };
+
+    inline constexpr const char *kExpressionStatsContractId =
+        "sb_expression_stats/v1";
+    inline constexpr const char *kExpressionStatsRegistryContractId =
+        "sb_expression_stats_registry/v1";
+    inline constexpr const char *kExpressionStatsCoverageContractId =
+        "sb_expression_stats_coverage/v1";
 
     enum class IndexFamilyMetricsType : uint32_t
     {
@@ -272,10 +280,15 @@ namespace scratchbird::optimizer
 
     struct ExpressionStatsDescriptor
     {
-        std::string contract_id = "sb_expression_stats/v1";
+        std::string contract_id = kExpressionStatsContractId;
+        std::string registry_contract_id =
+            kExpressionStatsRegistryContractId;
+        std::string coverage_contract_id =
+            kExpressionStatsCoverageContractId;
         ExpressionStatsFunction function = ExpressionStatsFunction::UNKNOWN;
         std::string function_name;
         std::string column_name;
+        std::string coverage_class;
         core::DataType input_data_type = core::DataType::UNKNOWN;
         core::DataType result_data_type = core::DataType::UNKNOWN;
     };
@@ -284,12 +297,25 @@ namespace scratchbird::optimizer
     {
         ID table_id;
         std::string expression_key;
-        std::string expression_contract_id = "sb_expression_stats/v1";
+        std::string expression_contract_id = kExpressionStatsContractId;
+        std::string registry_contract_id =
+            kExpressionStatsRegistryContractId;
+        std::string coverage_contract_id =
+            kExpressionStatsCoverageContractId;
         std::string function_name;
         std::string base_column_name;
+        std::string coverage_class;
         core::DataType input_data_type = core::DataType::UNKNOWN;
         core::DataType result_data_type = core::DataType::UNKNOWN;
         ColumnStatistics stats;
+    };
+
+    struct ExpressionStatsRegistryEntry
+    {
+        ExpressionStatsFunction function = ExpressionStatsFunction::UNKNOWN;
+        const char *canonical_name = "UNKNOWN";
+        const char *alternate_name = "";
+        const char *coverage_class = "UNSUPPORTED";
     };
 
     struct MultivariateMCVEntry
@@ -396,27 +422,6 @@ namespace scratchbird::optimizer
         }
     }
 
-    inline auto expressionStatsFunctionName(ExpressionStatsFunction value)
-        -> const char *
-    {
-        switch (value)
-        {
-            case ExpressionStatsFunction::LOWER:
-                return "LOWER";
-            case ExpressionStatsFunction::UPPER:
-                return "UPPER";
-            case ExpressionStatsFunction::TRIM:
-                return "TRIM";
-            case ExpressionStatsFunction::LTRIM:
-                return "LTRIM";
-            case ExpressionStatsFunction::RTRIM:
-                return "RTRIM";
-            case ExpressionStatsFunction::UNKNOWN:
-            default:
-                return "UNKNOWN";
-        }
-    }
-
     inline auto expressionStatsAsciiUpper(std::string text) -> std::string
     {
         std::transform(text.begin(),
@@ -428,32 +433,147 @@ namespace scratchbird::optimizer
         return text;
     }
 
-    inline auto expressionStatsFunctionFromName(std::string_view name)
-        -> ExpressionStatsFunction
+    inline auto expressionStatsRegistryEntries()
+        -> const std::array<ExpressionStatsRegistryEntry, 5> &
+    {
+        static constexpr std::array<ExpressionStatsRegistryEntry, 5>
+            kExpressionStatsRegistry{{
+                {ExpressionStatsFunction::LOWER,
+                 "LOWER",
+                 "LCASE",
+                 "UNARY_TEXT_EQ_NORMALIZED"},
+                {ExpressionStatsFunction::UPPER,
+                 "UPPER",
+                 "UCASE",
+                 "UNARY_TEXT_EQ_NORMALIZED"},
+                {ExpressionStatsFunction::TRIM,
+                 "TRIM",
+                 "BTRIM",
+                 "UNARY_TEXT_EQ_NORMALIZED"},
+                {ExpressionStatsFunction::LTRIM,
+                 "LTRIM",
+                 "",
+                 "UNARY_TEXT_EQ_NORMALIZED"},
+                {ExpressionStatsFunction::RTRIM,
+                 "RTRIM",
+                 "",
+                 "UNARY_TEXT_EQ_NORMALIZED"},
+            }};
+        return kExpressionStatsRegistry;
+    }
+
+    inline auto findExpressionStatsRegistryEntry(ExpressionStatsFunction value)
+        -> const ExpressionStatsRegistryEntry *
+    {
+        for (const auto &entry : expressionStatsRegistryEntries())
+        {
+            if (entry.function == value)
+            {
+                return &entry;
+            }
+        }
+        return nullptr;
+    }
+
+    inline auto findExpressionStatsRegistryEntry(std::string_view name)
+        -> const ExpressionStatsRegistryEntry *
     {
         const std::string normalized =
             expressionStatsAsciiUpper(std::string(name));
-        if (normalized == "LOWER" || normalized == "LCASE")
+        for (const auto &entry : expressionStatsRegistryEntries())
         {
-            return ExpressionStatsFunction::LOWER;
+            if (normalized == entry.canonical_name ||
+                (!std::string_view(entry.alternate_name).empty() &&
+                 normalized == entry.alternate_name))
+            {
+                return &entry;
+            }
         }
-        if (normalized == "UPPER" || normalized == "UCASE")
+        return nullptr;
+    }
+
+    inline auto expressionStatsFunctionName(ExpressionStatsFunction value)
+        -> const char *
+    {
+        const auto *entry = findExpressionStatsRegistryEntry(value);
+        return entry != nullptr ? entry->canonical_name : "UNKNOWN";
+    }
+
+    inline auto expressionStatsCoverageClassName(
+        ExpressionStatsFunction value) -> const char *
+    {
+        const auto *entry = findExpressionStatsRegistryEntry(value);
+        return entry != nullptr ? entry->coverage_class : "UNSUPPORTED";
+    }
+
+    inline auto expressionStatsFunctionFromName(std::string_view name)
+        -> ExpressionStatsFunction
+    {
+        const auto *entry = findExpressionStatsRegistryEntry(name);
+        return entry != nullptr ? entry->function
+                                : ExpressionStatsFunction::UNKNOWN;
+    }
+
+    inline auto applyExpressionStatsTextTransform(std::string &text,
+                                                  ExpressionStatsFunction function)
+        -> void
+    {
+        switch (function)
         {
-            return ExpressionStatsFunction::UPPER;
+            case ExpressionStatsFunction::LOWER:
+                std::transform(text.begin(),
+                               text.end(),
+                               text.begin(),
+                               [](unsigned char ch) {
+                                   return static_cast<char>(std::tolower(ch));
+                               });
+                return;
+            case ExpressionStatsFunction::UPPER:
+                std::transform(text.begin(),
+                               text.end(),
+                               text.begin(),
+                               [](unsigned char ch) {
+                                   return static_cast<char>(std::toupper(ch));
+                               });
+                return;
+            case ExpressionStatsFunction::TRIM:
+            {
+                auto is_space = [](unsigned char ch) {
+                    return std::isspace(ch) != 0;
+                };
+                const auto begin =
+                    std::find_if_not(text.begin(), text.end(), is_space);
+                const auto end =
+                    std::find_if_not(text.rbegin(), text.rend(), is_space)
+                        .base();
+                text = begin < end ? std::string(begin, end) : std::string();
+                return;
+            }
+            case ExpressionStatsFunction::LTRIM:
+            {
+                auto is_space = [](unsigned char ch) {
+                    return std::isspace(ch) != 0;
+                };
+                const auto begin =
+                    std::find_if_not(text.begin(), text.end(), is_space);
+                text = std::string(begin, text.end());
+                return;
+            }
+            case ExpressionStatsFunction::RTRIM:
+            {
+                auto is_space = [](unsigned char ch) {
+                    return std::isspace(ch) != 0;
+                };
+                const auto end =
+                    std::find_if_not(text.rbegin(), text.rend(), is_space)
+                        .base();
+                text = std::string(text.begin(), end);
+                return;
+            }
+            case ExpressionStatsFunction::UNKNOWN:
+            default:
+                return;
         }
-        if (normalized == "TRIM" || normalized == "BTRIM")
-        {
-            return ExpressionStatsFunction::TRIM;
-        }
-        if (normalized == "LTRIM")
-        {
-            return ExpressionStatsFunction::LTRIM;
-        }
-        if (normalized == "RTRIM")
-        {
-            return ExpressionStatsFunction::RTRIM;
-        }
-        return ExpressionStatsFunction::UNKNOWN;
     }
 
     inline auto isTextLikeExpressionStatsInput(core::DataType type) -> bool
@@ -513,6 +633,8 @@ namespace scratchbird::optimizer
         descriptor.function = function;
         descriptor.function_name = expressionStatsFunctionName(function);
         descriptor.column_name = expressionStatsAsciiUpper(std::string(column_name));
+        descriptor.coverage_class =
+            expressionStatsCoverageClassName(function);
         descriptor.input_data_type = input_type;
         descriptor.result_data_type =
             expressionStatsResultType(function, input_type);

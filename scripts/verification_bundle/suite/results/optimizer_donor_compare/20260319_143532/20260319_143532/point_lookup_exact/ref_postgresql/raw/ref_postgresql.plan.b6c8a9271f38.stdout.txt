@@ -1,0 +1,4 @@
+Bitmap Heap Scan on avp_point_lookup_exact  (cost=4.17..11.28 rows=3 width=82)
+  Recheck Cond: (k = 73)
+  ->  Bitmap Index Scan on idx_avp_point_lookup_exact_k  (cost=0.00..4.17 rows=3 width=0)
+        Index Cond: (k = 73)

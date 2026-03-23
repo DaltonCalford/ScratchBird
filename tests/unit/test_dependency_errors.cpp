@@ -12,6 +12,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "test_helpers.h"
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -102,6 +103,8 @@ TEST_F(DependencyErrorTest, ErrorMessageFormatIncludesDetailAndHint)
     func.owner_id = catalog->getSystemUserId(&ctx);
     func.return_type = DataType::INT32;
     func.source_text = "select 1";
+    func.source_dialect = "scratchbird_v3";
+    func.bytecode = scratchbird::testing::minimalCompiledStoredCodeBytecode("dep_func");
     ASSERT_EQ(catalog->registerFunction(func, &ctx), Status::OK);
 
     ID dep_view;

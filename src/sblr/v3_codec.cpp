@@ -401,7 +401,26 @@ bool decodePayloadBySchema(const SchemaDef& schema, const uint8_t* data, size_t 
     }
 
     Value::Object obj;
-    for (const auto& field : schema.fields) {
+    for (size_t i = 0; i < schema.fields.size(); ++i) {
+        const auto& field = schema.fields[i];
+        if (offset >= size) {
+            bool remaining_optional = true;
+            for (size_t j = i; j < schema.fields.size(); ++j) {
+                if (schema.fields[j].type != FieldType::OPT) {
+                    remaining_optional = false;
+                    break;
+                }
+            }
+            if (!remaining_optional) {
+                err.message = "payload truncated";
+                return false;
+            }
+            for (size_t j = i; j < schema.fields.size(); ++j) {
+                obj[schema.fields[j].name] = defaultValueForField(schema.fields[j]);
+            }
+            out = Value(std::move(obj));
+            return true;
+        }
         Value value;
         if (!decodeValue(field, data, size, offset, value, err)) {
             return false;

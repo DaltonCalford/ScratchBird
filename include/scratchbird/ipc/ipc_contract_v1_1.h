@@ -81,6 +81,8 @@ enum class IPCMessageType : uint16_t {
     EXECUTE = 0x24,           // Client -> Server: Execute statement
     CLOSE = 0x25,             // Client -> Server: Close statement/portal
     SYNC = 0x26,              // Client -> Server: End request batch
+    COMPILED_QUERY = 0x27,    // Client -> Server: Execute precompiled SBLR
+    COMPILED_PARSE = 0x28,    // Client -> Server: Store precompiled SBLR
     
     // Results (0x30-0x3F)
     ROW_DESCRIPTION = 0x30,   // Server -> Client: Result schema
@@ -221,6 +223,22 @@ struct IPCParsePayload {
     char stmt_name[64];       // Statement name
     char sql[IPC_MAX_SQL_LENGTH]; // SQL text
     uint16_t param_types[IPC_MAX_PARAMS]; // Parameter type OIDs
+};
+
+// COMPILED_QUERY payload
+struct IPCCompiledQueryPayload {
+    uint32_t flags;               // Query flags
+    uint32_t original_sql_length; // Length of optional source SQL
+    uint32_t bytecode_length;     // Length of SBLR bytecode
+    // Original SQL bytes followed by SBLR bytecode
+};
+
+// COMPILED_PARSE payload
+struct IPCCompiledParsePayload {
+    char stmt_name[64];           // Statement name
+    uint32_t original_sql_length; // Length of optional source SQL
+    uint32_t bytecode_length;     // Length of SBLR bytecode
+    // Original SQL bytes followed by SBLR bytecode
 };
 
 // BIND payload

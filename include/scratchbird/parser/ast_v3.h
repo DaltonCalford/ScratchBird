@@ -123,6 +123,7 @@ enum class ASTKind : uint16_t {
     CreateTriggerStmt,
     CreatePackageStmt,
     CreateUserStmt,
+    AlterUserStmt,
     CreateRoleStmt,
     CreateGroupStmt,
     CreateExceptionStmt,
@@ -172,6 +173,9 @@ enum class ASTKind : uint16_t {
     MergeStmt,
     ExecuteProcedureStmt,
     ExecuteStatementStmt,
+    PrepareStatementStmt,
+    ExecutePreparedStmt,
+    DeallocatePreparedStmt,
 
     // Statements - Transaction
     StartTransactionStmt,
@@ -1073,6 +1077,23 @@ public:
     bool has_password = false;
     StringPool::StringId password = StringPool::INVALID_ID;
     bool is_superuser = false;
+};
+
+/**
+ * ALTER USER statement
+ */
+class AlterUserStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::AlterUserStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId user_name = StringPool::INVALID_ID;
+    bool has_password = false;
+    StringPool::StringId password = StringPool::INVALID_ID;
+    bool change_superuser = false;
+    bool is_superuser = false;
+    bool rename_user = false;
+    StringPool::StringId new_user_name = StringPool::INVALID_ID;
 };
 
 /**
@@ -2579,6 +2600,42 @@ public:
     bool with_caller_privileges = false;
 };
 
+/**
+ * PREPARE statement
+ */
+class PrepareStatementStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::PrepareStatementStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId statement_name = StringPool::INVALID_ID;
+    Expression* sql = nullptr;
+};
+
+/**
+ * EXECUTE prepared statement
+ */
+class ExecutePreparedStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::ExecutePreparedStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId statement_name = StringPool::INVALID_ID;
+    std::vector<Expression*> parameters;
+};
+
+/**
+ * DEALLOCATE prepared statement
+ */
+class DeallocatePreparedStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DeallocatePreparedStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool all = false;
+    StringPool::StringId statement_name = StringPool::INVALID_ID;
+};
+
 // =============================================================================
 // PSQL Statements (Procedural SQL)
 // =============================================================================
@@ -3720,6 +3777,7 @@ public:
 
     // SET clause: column = expression pairs
     std::vector<std::pair<StringPool::StringId, Expression*>> set_items;
+    bool ignore_errors = false;
 
     // FROM clause (for UPDATE ... FROM ... syntax)
     TableRefNode* from = nullptr;
@@ -4516,6 +4574,7 @@ public:
     virtual void visit(CreateTriggerStmt* stmt) = 0;
     virtual void visit(CreatePackageStmt* stmt) = 0;
     virtual void visit(CreateUserStmt* stmt) = 0;
+    virtual void visit(AlterUserStmt* stmt) = 0;
     virtual void visit(CreateRoleStmt* stmt) = 0;
     virtual void visit(CreateGroupStmt* stmt) = 0;
     virtual void visit(CreatePolicyStmt* stmt) = 0;
@@ -4573,6 +4632,9 @@ public:
     virtual void visit(MergeStmt* stmt) = 0;
     virtual void visit(ExecuteProcedureStmt* stmt) = 0;
     virtual void visit(ExecuteStatementStmt* stmt) = 0;
+    virtual void visit(PrepareStatementStmt* stmt) = 0;
+    virtual void visit(ExecutePreparedStmt* stmt) = 0;
+    virtual void visit(DeallocatePreparedStmt* stmt) = 0;
 
     // Transaction statements
     virtual void visit(StartTransactionStmt* stmt) = 0;

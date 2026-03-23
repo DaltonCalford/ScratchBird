@@ -1,0 +1,62 @@
+{
+  "setup": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "42000",
+    "message": "After line 12 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.setup.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 5 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 6 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 7 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 8 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 9 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 10 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 11 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.setup.sql\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 12 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.setup.sql\n",
+    "stderr": "",
+    "elapsed_ms": 342,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.setup.399277707341.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.setup.399277707341.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "42000",
+    "message": "After line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.plan.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.plan.sql\n",
+    "stderr": "",
+    "elapsed_ms": 338,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.plan.ba9fdea44b41.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.plan.ba9fdea44b41.stderr.txt",
+    "plan_lines": [
+      "PLAN|Statement failed, SQLSTATE = 42000",
+      "PLAN|Dynamic SQL Error",
+      "PLAN|After line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.plan.sql"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "42000",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.exec.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.exec.sql\n",
+    "stderr": "",
+    "elapsed_ms": 363,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.exec.ab89f8c35b85.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.exec.ab89f8c35b85.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "42000",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.teardown.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 42000\nDynamic SQL Error\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.teardown.sql\n",
+    "stderr": "",
+    "elapsed_ms": 345,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.teardown.03e24dc11976.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/expression_lookup/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.teardown.03e24dc11976.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

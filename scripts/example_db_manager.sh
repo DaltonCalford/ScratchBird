@@ -34,7 +34,11 @@ MYSQL_PORT=""
 FB_PORT=""
 
 SERVER_BIN=""
+# `sb_isql` is reserved for the native ScratchBird/V3 lane only.
+# Emulated PostgreSQL/MySQL/Firebird lanes must use donor client tools.
 ISQL_BIN=""
+# Legacy variable names retained for env/profile compatibility. These resolve to
+# donor clients only and must not point at ScratchBird wrapper binaries.
 PG_ISQL_BIN=""
 MY_ISQL_BIN=""
 FB_ISQL_BIN=""
@@ -115,7 +119,10 @@ Environment:
   SCRATCHBIRD_EXAMPLE_DYNAMIC_ROOT   Dynamic root path (default /tmp/scratchbird-example-dynamic)
   SCRATCHBIRD_EXAMPLE_STATIC_ROOT    Static root path (default $HOME/.scratchbird/static-example)
   SCRATCHBIRD_SB_SERVER              Override sb_server binary
-  SCRATCHBIRD_SB_ISQL                Override sb_isql binary
+  SCRATCHBIRD_SB_ISQL                Override sb_isql binary for the native V3 lane only
+  SCRATCHBIRD_PG_PSQL_BIN            Override donor PostgreSQL psql binary for emulation lanes
+  SCRATCHBIRD_MYSQL_CLI_BIN          Override donor MySQL mysql binary for emulation lanes
+  SCRATCHBIRD_FB_NATIVE_ISQL         Override donor Firebird isql binary for emulation lanes
   SCRATCHBIRD_EXAMPLE_AUTH_MANIFEST  Override auth manifest path (default resources/bootstrap/default_auth_manifest.json)
   SCRATCHBIRD_EXAMPLE_SEED_RENDERER  Override manifest->SQL renderer script
   SCRATCHBIRD_EXAMPLE_BOOTSTRAP_SQL  Override generated bootstrap SQL path
@@ -158,12 +165,16 @@ resolve_binaries() {
         "${REPO_ROOT}/build/src/server/sb_server")" \
         || die "sb_server not found. Build ScratchBird first."
 
+    # Native ScratchBird/V3 lane only.
     ISQL_BIN="$(resolve_binary SCRATCHBIRD_SB_ISQL \
         "${REPO_ROOT}/build/src/sb_isql" \
         "${REPO_ROOT}/build/src/cli/sb_isql" \
+        "${DRIVER_ROOT}/build/tracks/p3/drivers/cli/sb_isql" \
         "${DRIVER_ROOT}/build/tracks/alpha/drivers/cli/sb_isql")" \
         || die "sb_isql not found. Build ScratchBird-driver CLI first."
 
+    # Emulated lanes must use donor clients so the engine is exercised strictly
+    # through dialect parsers/UDRs instead of any ScratchBird SQL-aware client.
     PG_ISQL_BIN="$(resolve_binary SCRATCHBIRD_PG_PSQL_BIN \
         "${WORKSPACE_ROOT}/postgresql/build_codex/src/bin/psql/psql" \
         "${WORKSPACE_ROOT}/postgresql/build_codex2/src/bin/psql/psql" \
@@ -771,7 +782,11 @@ write_connection_profiles() {
     cat > "${RUNTIME_ENV_FILE}" <<EOF
 export SCRATCHBIRD_EXAMPLE_ROOT='${EXAMPLE_ROOT}'
 export SCRATCHBIRD_SB_SERVER='${SERVER_BIN}'
+# ScratchBird native V3 client only. Do not use for PostgreSQL/MySQL/Firebird
+# emulation proof; those lanes must use the donor binaries below.
 export SCRATCHBIRD_SB_ISQL='${ISQL_BIN}'
+# Legacy *_ISQL aliases remain for compatibility, but they must resolve to donor
+# clients rather than ScratchBird wrapper binaries.
 export SCRATCHBIRD_PG_ISQL='${PG_ISQL_BIN}'
 export SCRATCHBIRD_PG_PSQL_BIN='${PG_ISQL_BIN}'
 export SCRATCHBIRD_MY_ISQL='${MY_ISQL_BIN}'

@@ -14,6 +14,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/sblr/opcodes.h"
+#include "test_helpers.h"
 #include <cstdio>
 #include <cstdint>
 #include <sstream>
@@ -169,6 +170,8 @@ TEST_F(TypeDependencyTest, DropExceptionFailsIfProcedureReferences)
     proc.name = "p1";
     proc.owner_id = catalog->getSystemUserId(&ctx);
     proc.source_text = "raise ex_test;";
+    proc.source_dialect = "scratchbird_v3";
+    proc.bytecode = scratchbird::testing::minimalCompiledStoredCodeBytecode("p1");
     status = catalog->registerProcedure(proc, &ctx);
     ASSERT_EQ(status, Status::OK) << ctx.message;
 

@@ -1,0 +1,1 @@
+psql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/range_selectivity.exec.sql:3: ERROR:  Parse error at line 1, column 97: Expected expression

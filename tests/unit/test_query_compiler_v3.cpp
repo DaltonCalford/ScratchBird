@@ -408,6 +408,14 @@ TEST_F(QueryCompilerV3Test, RouteParityClosedFamiliesDoNotUseBridgeFallbackPaths
     }
 }
 
+TEST_F(QueryCompilerV3Test, CommitAfterDropBootstrapSeededSysArchViaSql) {
+    auto drop_result = compileAndExecute("DROP USER IF EXISTS SysArch");
+    ASSERT_TRUE(drop_result.success()) << drop_result.error();
+
+    auto commit_result = compileAndExecute("COMMIT");
+    EXPECT_TRUE(commit_result.success()) << commit_result.error();
+}
+
 TEST_F(QueryCompilerV3Test, ExecuteCanonicalExtractMonthFromCurrentDate) {
     auto result = compiler_->compile("SELECT EXTRACT(MONTH FROM CAST('2026-03-03' AS DATE))");
     ASSERT_TRUE(result.success()) << "EXTRACT(MONTH FROM CAST('2026-03-03' AS DATE)) compile failed";
@@ -1420,6 +1428,202 @@ TEST_F(QueryCompilerV3Test, ExecuteCanonicalCurrentDatabaseFunctionEvaluate) {
     EXPECT_FALSE(rs->getValue(0, 0).toString().empty());
 }
 
+TEST_F(QueryCompilerV3Test, ExecuteRoutinesAndTriggerBodiesFromCompiledBytecode) {
+    ASSERT_TRUE(compileAndExecute("CREATE SCHEMA IF NOT EXISTS rt_v3").success());
+    ASSERT_TRUE(compileAndExecute(
+        "CREATE TABLE rt_v3.rt_table (id INTEGER PRIMARY KEY, val INTEGER, note VARCHAR(32))")
+                    .success());
+
+    auto create_trigger = compileAndExecute(
+        "CREATE OR ALTER TRIGGER trg_rt_v3_seed FOR rt_v3.rt_table ACTIVE BEFORE INSERT AS "
+        "BEGIN "
+        "IF (NEW.note IS NULL) THEN NEW.note = 'seed'; "
+        "END");
+    ASSERT_TRUE(create_trigger.success()) << create_trigger.error();
+
+    auto create_function = compileAndExecute(
+        "CREATE FUNCTION rt_v3.rt_fn() RETURNS INTEGER AS "
+        "BEGIN "
+        "RETURN 2; "
+        "END");
+    ASSERT_TRUE(create_function.success()) << create_function.error();
+
+    auto create_procedure = compileAndExecute(
+        "CREATE PROCEDURE rt_v3.rt_proc AS "
+        "BEGIN "
+        "INSERT INTO rt_v3.rt_table (id, val, note) VALUES (1, 10, NULL); "
+        "END");
+    ASSERT_TRUE(create_procedure.success()) << create_procedure.error();
+
+    auto exec_procedure = compileAndExecute("EXECUTE PROCEDURE rt_v3.rt_proc");
+    ASSERT_TRUE(exec_procedure.success()) << exec_procedure.error();
+
+    auto after_insert = compileAndExecute(
+        "SELECT note, val FROM rt_v3.rt_table WHERE id = 1");
+    ASSERT_TRUE(after_insert.success()) << after_insert.error();
+    ASSERT_NE(after_insert.resultSet(), nullptr);
+    ASSERT_EQ(after_insert.resultSet()->rowCount(), 1u);
+    ASSERT_EQ(after_insert.resultSet()->columnCount(), 2u);
+    EXPECT_EQ(after_insert.resultSet()->getValue(0, 0).toString(), "seed");
+    EXPECT_EQ(after_insert.resultSet()->getValue(0, 1).toString(), "10");
+
+    auto function_result = compileAndExecute("SELECT rt_v3.rt_fn()");
+    ASSERT_TRUE(function_result.success()) << function_result.error();
+    ASSERT_NE(function_result.resultSet(), nullptr);
+    ASSERT_EQ(function_result.resultSet()->rowCount(), 1u);
+    ASSERT_EQ(function_result.resultSet()->columnCount(), 1u);
+    EXPECT_EQ(function_result.resultSet()->getValue(0, 0).toString(), "2");
+
+    auto update = compileAndExecute(
+        "UPDATE rt_v3.rt_table SET val = val * rt_v3.rt_fn() WHERE id = 1");
+    ASSERT_TRUE(update.success()) << update.error();
+
+    auto result = compileAndExecute(
+        "SELECT note, val FROM rt_v3.rt_table WHERE id = 1");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_NE(result.resultSet(), nullptr);
+    ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+    ASSERT_EQ(result.resultSet()->columnCount(), 2u);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "seed");
+    EXPECT_EQ(result.resultSet()->getValue(0, 1).toString(), "20");
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteUnqualifiedRoutinesWithTriggerAndProcedureFromCurrentSchema) {
+    connection_ctx_->set_current_schema("public");
+    connection_ctx_->set_search_path({"public"});
+
+    ASSERT_TRUE(compileAndExecute("CREATE SCHEMA IF NOT EXISTS v3inet").success());
+    ASSERT_TRUE(compileAndExecute(
+        "CREATE TABLE v3inet.v3_rt_table (id INTEGER PRIMARY KEY, val INTEGER, note VARCHAR(32))")
+                    .success());
+
+    auto create_trigger = compileAndExecute(
+        "CREATE OR ALTER TRIGGER trg_v3inet_rt_seed FOR v3inet.v3_rt_table ACTIVE BEFORE INSERT AS "
+        "BEGIN "
+        "IF (NEW.note IS NULL) THEN NEW.note = 'trg_seed'; "
+        "END");
+    ASSERT_TRUE(create_trigger.success()) << create_trigger.error();
+
+    auto create_function = compileAndExecute(
+        "CREATE FUNCTION v3inet_rt_fn() RETURNS INTEGER AS "
+        "BEGIN "
+        "RETURN 2; "
+        "END");
+    ASSERT_TRUE(create_function.success()) << create_function.error();
+
+    auto create_procedure = compileAndExecute(
+        "CREATE PROCEDURE v3inet_rt_proc AS "
+        "BEGIN "
+        "INSERT INTO v3inet.v3_rt_table (id, val, note) VALUES (1, 10, NULL); "
+        "END");
+    ASSERT_TRUE(create_procedure.success()) << create_procedure.error();
+
+    auto function_result = compileAndExecute("SELECT v3inet_rt_fn()");
+    ASSERT_TRUE(function_result.success()) << function_result.error();
+    ASSERT_NE(function_result.resultSet(), nullptr);
+    ASSERT_EQ(function_result.resultSet()->rowCount(), 1u);
+    ASSERT_EQ(function_result.resultSet()->columnCount(), 1u);
+    EXPECT_EQ(function_result.resultSet()->getValue(0, 0).toString(), "2");
+
+    auto exec_procedure = compileAndExecute("EXECUTE PROCEDURE v3inet_rt_proc");
+    ASSERT_TRUE(exec_procedure.success()) << exec_procedure.error();
+
+    auto after_insert = compileAndExecute(
+        "SELECT note, val FROM v3inet.v3_rt_table WHERE id = 1");
+    ASSERT_TRUE(after_insert.success()) << after_insert.error();
+    ASSERT_NE(after_insert.resultSet(), nullptr);
+    ASSERT_EQ(after_insert.resultSet()->rowCount(), 1u);
+    ASSERT_EQ(after_insert.resultSet()->columnCount(), 2u);
+    EXPECT_EQ(after_insert.resultSet()->getValue(0, 0).toString(), "trg_seed");
+    EXPECT_EQ(after_insert.resultSet()->getValue(0, 1).toString(), "10");
+}
+
+TEST_F(QueryCompilerV3Test, UnqualifiedStoredRoutinesRemainVisibleAcrossSessions) {
+    connection_ctx_->set_current_schema("public");
+    connection_ctx_->set_search_path({"public"});
+
+    ASSERT_TRUE(compileAndExecute("CREATE FUNCTION v3inet_rt_fn() RETURNS INTEGER AS "
+                                  "BEGIN RETURN 2; END")
+                    .success());
+    ASSERT_TRUE(compileAndExecute("CREATE PROCEDURE v3inet_rt_proc AS "
+                                  "BEGIN RETURN; END")
+                    .success());
+
+    std::unique_ptr<ConnectionContext> second_ctx;
+    ErrorContext ctx;
+    ASSERT_EQ(db_.connect(second_ctx, &ctx), Status::OK) << ctx.message;
+    second_ctx->setCurrentSchemaId(public_schema_id_);
+    second_ctx->set_current_schema("public");
+    second_ctx->set_search_path({"public"});
+    second_ctx->setCurrentUser(catalog_->getSystemUserId(&ctx), true);
+    ConnectionContext::setCurrent(second_ctx.get());
+
+    QueryCompilerV3 second_compiler(&db_);
+    Executor second_executor(&db_);
+    second_executor.setConnectionContext(second_ctx.get());
+
+    auto compile_and_execute_second = [&](const std::string& sql) -> ExecutionResult {
+        auto compile_result = second_compiler.compile(sql);
+        if (!compile_result.success()) {
+            std::string errors;
+            for (const auto& err : compile_result.errors()) {
+                errors += err + "\n";
+            }
+            return ExecutionResult("Compilation failed: " + errors);
+        }
+        return second_executor.execute(compile_result.bytecode());
+    };
+
+    auto function_result = compile_and_execute_second("SELECT v3inet_rt_fn()");
+    EXPECT_TRUE(function_result.success()) << function_result.error();
+
+    auto procedure_result = compile_and_execute_second("EXECUTE PROCEDURE v3inet_rt_proc");
+    EXPECT_TRUE(procedure_result.success()) << procedure_result.error();
+
+    ConnectionContext::setCurrent(connection_ctx_.get());
+}
+
+TEST_F(QueryCompilerV3Test, CommitAfterCreateFunctionKeepsTransactionAndPersistsRoutine) {
+    connection_ctx_->set_current_schema("public");
+    connection_ctx_->set_search_path({"public"});
+
+    ASSERT_TRUE(compileAndExecute("CREATE FUNCTION v3_commit_fn() RETURNS INTEGER AS "
+                                  "BEGIN RETURN 7; END")
+                    .success());
+
+    auto commit_result = compileAndExecute("COMMIT");
+    ASSERT_TRUE(commit_result.success()) << "COMMIT failed: " << commit_result.error();
+
+    auto function_result = compileAndExecute("SELECT v3_commit_fn()");
+    ASSERT_TRUE(function_result.success()) << function_result.error();
+    ASSERT_NE(function_result.resultSet(), nullptr);
+    ASSERT_EQ(function_result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(function_result.resultSet()->getValue(0, 0).toString(), "7");
+}
+
+TEST_F(QueryCompilerV3Test, CommitAfterCreateProcedureKeepsTransactionAndPersistsRoutine) {
+    connection_ctx_->set_current_schema("public");
+    connection_ctx_->set_search_path({"public"});
+
+    ASSERT_TRUE(compileAndExecute("CREATE TABLE public.v3_commit_proc_table (id INTEGER PRIMARY KEY)")
+                    .success());
+    ASSERT_TRUE(compileAndExecute("CREATE PROCEDURE v3_commit_proc AS "
+                                  "BEGIN INSERT INTO public.v3_commit_proc_table (id) VALUES (1); END")
+                    .success());
+
+    auto commit_result = compileAndExecute("COMMIT");
+    ASSERT_TRUE(commit_result.success()) << "COMMIT failed: " << commit_result.error();
+
+    auto exec_result = compileAndExecute("EXECUTE PROCEDURE v3_commit_proc");
+    ASSERT_TRUE(exec_result.success()) << exec_result.error();
+
+    auto row_result = compileAndExecute("SELECT COUNT(*) FROM public.v3_commit_proc_table");
+    ASSERT_TRUE(row_result.success()) << row_result.error();
+    ASSERT_NE(row_result.resultSet(), nullptr);
+    ASSERT_EQ(row_result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(row_result.resultSet()->getValue(0, 0).toString(), "1");
+}
+
 TEST_F(QueryCompilerV3Test, ExecuteCanonicalFunctionResultShapeParity) {
     auto result = compileAndExecute(
         "SELECT "
@@ -1530,6 +1734,144 @@ TEST_F(QueryCompilerV3Test, ExecuteSetCurrentSchemaSupportsToAndDefault) {
     ASSERT_EQ(show_after_reset.resultSet()->rowCount(), 1u);
     const auto reset_schema_value = show_after_reset.resultSet()->getValue(0, 1).toString();
     EXPECT_NE(reset_schema_value.find("public"), std::string::npos);
+}
+
+TEST_F(QueryCompilerV3Test, AlterSchemaOwnerResolvesUnqualifiedSchemaName) {
+    auto create_role = compileAndExecute("CREATE ROLE v3_owner_target");
+    ASSERT_TRUE(create_role.success()) << create_role.error();
+
+    auto create_schema = compileAndExecute("CREATE SCHEMA sec_owner_schema");
+    ASSERT_TRUE(create_schema.success()) << create_schema.error();
+
+    auto alter_schema =
+        compileAndExecute("ALTER SCHEMA sec_owner_schema OWNER TO v3_owner_target");
+    ASSERT_TRUE(alter_schema.success()) << alter_schema.error();
+
+    ErrorContext ctx;
+    CatalogManager::SchemaInfo schema_info;
+    ASSERT_EQ(catalog_->getSchema("sec_owner_schema", schema_info, &ctx), Status::OK)
+        << ctx.message;
+
+    CatalogManager::RoleInfo role_info;
+    ASSERT_EQ(catalog_->getRoleByName("v3_owner_target", role_info, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(schema_info.owner_id, role_info.role_id);
+}
+
+TEST_F(QueryCompilerV3Test, GrantAndRevokeViewThroughTableSyntaxTargetsViewPermissions) {
+    EnsureUser(catalog_, "v3_view_grantee");
+
+    ASSERT_TRUE(
+        compileAndExecute("CREATE TABLE public.v3_view_base (id INTEGER PRIMARY KEY)").success());
+    ASSERT_TRUE(
+        compileAndExecute("CREATE VIEW public.v3_view_grant AS SELECT id FROM public.v3_view_base")
+            .success());
+
+    auto grant_result =
+        compileAndExecute("GRANT SELECT ON TABLE public.v3_view_grant TO v3_view_grantee");
+    ASSERT_TRUE(grant_result.success()) << grant_result.error();
+
+    ErrorContext ctx;
+    CatalogManager::ViewInfo view_info;
+    ASSERT_EQ(catalog_->getView(public_schema_id_, "v3_view_grant", view_info, &ctx), Status::OK)
+        << ctx.message;
+
+    CatalogManager::UserInfo user_info;
+    ASSERT_EQ(catalog_->getUserByName("v3_view_grantee", user_info, &ctx), Status::OK)
+        << ctx.message;
+
+    bool has_select = false;
+    ASSERT_EQ(catalog_->hasPermission(user_info.user_id,
+                                      view_info.view_id,
+                                      CatalogManager::PermissionObjectType::VIEW,
+                                      CatalogManager::Privilege::SELECT,
+                                      has_select,
+                                      &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(has_select);
+
+    auto revoke_result =
+        compileAndExecute("REVOKE SELECT ON TABLE public.v3_view_grant FROM v3_view_grantee");
+    ASSERT_TRUE(revoke_result.success()) << revoke_result.error();
+
+    has_select = true;
+    ASSERT_EQ(catalog_->hasPermission(user_info.user_id,
+                                      view_info.view_id,
+                                      CatalogManager::PermissionObjectType::VIEW,
+                                      CatalogManager::Privilege::SELECT,
+                                      has_select,
+                                      &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_FALSE(has_select);
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteSetSearchPathPreservesMultipleEntries) {
+    ASSERT_TRUE(compileAndExecute("CREATE SCHEMA v3inet").success());
+    ASSERT_TRUE(compileAndExecute("CREATE SCHEMA users.public").success());
+
+    auto set_path = compileAndExecute("SET SEARCH_PATH TO v3inet, users.public");
+    ASSERT_TRUE(set_path.success()) << set_path.error();
+
+    ASSERT_EQ(connection_ctx_->search_path().size(), 2u);
+    EXPECT_EQ(connection_ctx_->search_path()[0], "v3inet");
+    EXPECT_EQ(connection_ctx_->search_path()[1], "users.public");
+
+    auto show_path = compileAndExecute("SHOW search_path");
+    ASSERT_TRUE(show_path.success()) << show_path.error();
+    ASSERT_TRUE(show_path.hasResultSet());
+    ASSERT_NE(show_path.resultSet(), nullptr);
+    ASSERT_EQ(show_path.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(show_path.resultSet()->getValue(0, 1).toString(),
+              "v3inet, users.public");
+}
+
+TEST_F(QueryCompilerV3Test, CompileSetSearchPathPreservesValuesListInV3Payload) {
+    auto compile_result = compiler_->compile("SET SEARCH_PATH TO v3inet, users.public");
+    ASSERT_TRUE(compile_result.success());
+
+    sblr_v3::Container container;
+    std::string err;
+    ASSERT_TRUE(sblr_v3::decodeContainer(
+        compile_result.bytecode().data(),
+        compile_result.bytecode().size(),
+        container,
+        err))
+        << err;
+
+    size_t offset = 0;
+    sblr_v3::DecodeError decode_err;
+    sblr_v3::Instruction version_inst;
+    ASSERT_TRUE(sblr_v3::decodeInstructionWithSchema(container.bytecode_stream.data(),
+                                                     container.bytecode_stream.size(),
+                                                     offset,
+                                                     version_inst,
+                                                     decode_err))
+        << decode_err.message;
+
+    sblr_v3::Instruction root_inst;
+    ASSERT_TRUE(sblr_v3::decodeInstructionWithSchema(container.bytecode_stream.data(),
+                                                     container.bytecode_stream.size(),
+                                                     offset,
+                                                     root_inst,
+                                                     decode_err))
+        << decode_err.message;
+    ASSERT_EQ(root_inst.opcode, static_cast<uint16_t>(sblr_v3::Opcode::SBLR3_SET_VARIABLE));
+
+    const auto* payload = std::get_if<sblr_v3::Value::Object>(&root_inst.payload.data);
+    ASSERT_NE(payload, nullptr);
+
+    auto value_it = payload->find("value");
+    if (value_it != payload->end()) {
+        EXPECT_TRUE(value_it->second.isNull());
+    }
+
+    auto values_it = payload->find("values");
+    ASSERT_NE(values_it, payload->end());
+    const auto* values = std::get_if<sblr_v3::Value::List>(&values_it->second.data);
+    ASSERT_NE(values, nullptr);
+    ASSERT_EQ(values->size(), 2u);
 }
 
 TEST_F(QueryCompilerV3Test, EmulatedSessionResetAllKeepsDialectTag) {

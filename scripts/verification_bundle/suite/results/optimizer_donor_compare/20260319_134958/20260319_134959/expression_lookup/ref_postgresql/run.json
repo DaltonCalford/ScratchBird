@@ -1,0 +1,66 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\npsql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/expression_lookup.setup.sql:1: NOTICE:  table \"avp_expression_lookup\" does not exist, skipping\n",
+    "stderr": "",
+    "elapsed_ms": 41,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_postgresql/raw/ref_postgresql.setup.6f866914393f.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_postgresql/raw/ref_postgresql.setup.6f866914393f.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Bitmap Heap Scan on avp_expression_lookup  (cost=4.16..9.51 rows=2 width=86)\n  Recheck Cond: (lower((name)::text) = 'charlie'::text)\n  ->  Bitmap Index Scan on idx_avp_expression_lookup_lower_name  (cost=0.00..4.16 rows=2 width=0)\n        Index Cond: (lower((name)::text) = 'charlie'::text)\n\n",
+    "stderr": "",
+    "elapsed_ms": 16,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_postgresql/raw/ref_postgresql.plan.69809bb22c8a.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_postgresql/raw/ref_postgresql.plan.69809bb22c8a.stderr.txt",
+    "plan_lines": [
+      "PLAN|Bitmap Heap Scan on avp_expression_lookup  (cost=4.16..9.51 rows=2 width=86)",
+      "PLAN|Recheck Cond: (lower((name)::text) = 'charlie'::text)",
+      "PLAN|->  Bitmap Index Scan on idx_avp_expression_lookup_lower_name  (cost=0.00..4.16 rows=2 width=0)",
+      "PLAN|Index Cond: (lower((name)::text) = 'charlie'::text)"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "ASSERT|expression_lookup|id=3|payload=charlie-a\nASSERT|expression_lookup|id=4|payload=charlie-b\n\n",
+    "stderr": "",
+    "elapsed_ms": 19,
+    "assert_lines": [
+      "ASSERT|expression_lookup|id=3|payload=charlie-a",
+      "ASSERT|expression_lookup|id=4|payload=charlie-b"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_postgresql/raw/ref_postgresql.exec.25efdca8dfa3.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_postgresql/raw/ref_postgresql.exec.25efdca8dfa3.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 15,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_postgresql/raw/ref_postgresql.teardown.4250f76c26e2.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_postgresql/raw/ref_postgresql.teardown.4250f76c26e2.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 785,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/merge_join_presorted/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.setup.3fd75a1fa961.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/merge_join_presorted/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.setup.3fd75a1fa961.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08001",
+    "message": "After line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/merge_join_presorted.plan.sql",
+    "stdout": "\n           K PAYLOAD                        PAYLOAD                        \n============ ============================== ============================== \n\nStatement failed, SQLSTATE = 08001\nunavailable database\nAfter line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/merge_join_presorted.plan.sql\n",
+    "stderr": "",
+    "elapsed_ms": 486,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/merge_join_presorted/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.plan.641accee9b44.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/merge_join_presorted/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.plan.641accee9b44.stderr.txt",
+    "plan_lines": [
+      "PLAN|K PAYLOAD                        PAYLOAD",
+      "PLAN|============ ============================== ==============================",
+      "PLAN|Statement failed, SQLSTATE = 08001",
+      "PLAN|unavailable database",
+      "PLAN|After line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/merge_join_presorted.plan.sql"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08001",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/merge_join_presorted.exec.sql",
+    "stdout": "\nexpr1                          \n============================== \n\nStatement failed, SQLSTATE = 08001\nunavailable database\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/merge_join_presorted.exec.sql\n",
+    "stderr": "",
+    "elapsed_ms": 477,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/merge_join_presorted/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.exec.2d875dd09e0b.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/merge_join_presorted/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.exec.2d875dd09e0b.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 377,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/merge_join_presorted/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.teardown.70b00399fc4b.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/merge_join_presorted/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.teardown.70b00399fc4b.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

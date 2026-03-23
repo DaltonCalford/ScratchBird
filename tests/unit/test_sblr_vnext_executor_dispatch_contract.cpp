@@ -981,6 +981,27 @@ TEST_F(SBLRVNextExecutorDispatchContractTest,
 }
 
 TEST_F(SBLRVNextExecutorDispatchContractTest,
+       AlterSchemaOpcodeRoutesWithoutUnknownOpcodeReject)
+{
+    const std::string metric = "scratchbird_vnext_executor_events_total";
+    const double reject_before =
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0403"});
+
+    ExecutionResult result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_ALTER_SCHEMA),
+        Value::Object{
+            {"schema", Value(Value::List{Value(std::string("missing_schema"))})},
+            {"action", Value(static_cast<uint64_t>(2))},
+            {"owner", Value(std::string("new_owner"))},
+        });
+
+    EXPECT_EQ(result.error().find("IRX_0403"), std::string::npos) << result.error();
+
+    EXPECT_EQ(reject_before,
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0403"}));
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
        EmulatedCreateTablespaceUsesMetadataTokenAndAvoidsFilesystemTouch)
 {
     const std::string emulated_schema =

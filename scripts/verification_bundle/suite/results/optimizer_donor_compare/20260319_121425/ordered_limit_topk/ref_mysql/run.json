@@ -1,0 +1,65 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 145,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_mysql/raw/ref_mysql.setup.c85c3eedc92b.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_mysql/raw/ref_mysql.setup.c85c3eedc92b.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "1\tSIMPLE\tavp_ordered_limit_topk\tNULL\tindex\tNULL\tidx_avp_ordered_limit_topk_k\t4\tNULL\t4\t100.00\tUsing index\n\n",
+    "stderr": "",
+    "elapsed_ms": 32,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_mysql/raw/ref_mysql.plan.4725dd8e2cf4.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_mysql/raw/ref_mysql.plan.4725dd8e2cf4.stderr.txt",
+    "plan_lines": [
+      "PLAN|1\tSIMPLE\tavp_ordered_limit_topk\tNULL\tindex\tNULL\tidx_avp_ordered_limit_topk_k\t4\tNULL\t4\t100.00\tUsing index"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "ASSERT|ordered_limit_topk|id=3|k=10\nASSERT|ordered_limit_topk|id=5|k=10\nASSERT|ordered_limit_topk|id=8|k=10\nASSERT|ordered_limit_topk|id=4|k=20\n\n",
+    "stderr": "",
+    "elapsed_ms": 28,
+    "assert_lines": [
+      "ASSERT|ordered_limit_topk|id=3|k=10",
+      "ASSERT|ordered_limit_topk|id=5|k=10",
+      "ASSERT|ordered_limit_topk|id=8|k=10",
+      "ASSERT|ordered_limit_topk|id=4|k=20"
+    ],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_mysql/raw/ref_mysql.exec.6c67208e6e7b.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_mysql/raw/ref_mysql.exec.6c67208e6e7b.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 78,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_mysql/raw/ref_mysql.teardown.c56ba0f1cc05.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/ordered_limit_topk/ref_mysql/raw/ref_mysql.teardown.c56ba0f1cc05.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

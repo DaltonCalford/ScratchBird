@@ -1,0 +1,65 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 352,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/point_lookup_exact/ref_firebird/raw/ref_firebird.setup.81aa33763dbe.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/point_lookup_exact/ref_firebird/raw/ref_firebird.setup.81aa33763dbe.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "INDEX",
+    "message": "",
+    "stdout": "\nPLAN (AVP_POINT_LOOKUP_EXACT INDEX (IDX_AVP_POINT_LOOKUP_EXACT_K))\n\nPAYLOAD                          \n================================ \np073                             \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 119,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/point_lookup_exact/ref_firebird/raw/ref_firebird.plan.3e5f18ff0f76.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/point_lookup_exact/ref_firebird/raw/ref_firebird.plan.3e5f18ff0f76.stderr.txt",
+    "plan_lines": [
+      "PLAN|PLAN (AVP_POINT_LOOKUP_EXACT INDEX (IDX_AVP_POINT_LOOKUP_EXACT_K))",
+      "PLAN|PAYLOAD",
+      "PLAN|================================",
+      "PLAN|p073"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\nCONCATENATION                                                                                 \n=============================================================================== \nASSERT|point_lookup_exact|count=1|payload=p073                                                \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 96,
+    "assert_lines": [
+      "ASSERT|point_lookup_exact|count=1|payload=p073"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/point_lookup_exact/ref_firebird/raw/ref_firebird.exec.4a5cc48806ab.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/point_lookup_exact/ref_firebird/raw/ref_firebird.exec.4a5cc48806ab.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 94,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/point_lookup_exact/ref_firebird/raw/ref_firebird.teardown.a74a90462f30.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/point_lookup_exact/ref_firebird/raw/ref_firebird.teardown.a74a90462f30.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

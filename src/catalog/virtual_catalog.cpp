@@ -126,7 +126,7 @@ void initializeVirtualCatalogs(CatalogManager* catalog) {
     }
 
     if (shouldRegisterEmulationHandler(policy, CatalogManager::EmulationEngine::FIREBIRD)) {
-        // Register RDB$, MON$, SEC$ (Firebird wire protocol)
+        // Register RDB$/MON$/SEC$ overlays (Firebird wire protocol)
         router.registerHandler(ProtocolType::FIREBIRD,
             std::make_unique<FirebirdCatalogHandler>(catalog));
     }

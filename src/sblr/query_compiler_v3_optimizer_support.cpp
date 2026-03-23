@@ -1044,6 +1044,8 @@ namespace scratchbird::sblr::detail
             if (runtime_plan.relations.empty())
             {
                 payload["plan"] = sblr::v3::Value(std::move(plan_bytes));
+                payload["plan_text"] = sblr::v3::Value(runtime_plan.explain_text);
+                payload["plan_hash"] = sblr::v3::Value(runtime_plan.plan_hash);
                 return true;
             }
 
@@ -1109,6 +1111,8 @@ namespace scratchbird::sblr::detail
 
             payload["joins"] = sblr::v3::Value(std::move(rewritten_joins));
             payload["plan"] = sblr::v3::Value(std::move(plan_bytes));
+            payload["plan_text"] = sblr::v3::Value(runtime_plan.explain_text);
+            payload["plan_hash"] = sblr::v3::Value(runtime_plan.plan_hash);
             return true;
         }
 
@@ -1950,6 +1954,23 @@ namespace scratchbird::sblr::detail
                     }
                     return false;
                 }
+                auto refreshed_plan_it = query_payload->find("plan");
+                if (refreshed_plan_it == query_payload->end())
+                {
+                    error_out = "Cached EXPLAIN query payload is missing runtime plan";
+                    return false;
+                }
+                (*payload)["plan"] = refreshed_plan_it->second;
+                auto refreshed_plan_text_it = query_payload->find("plan_text");
+                if (refreshed_plan_text_it != query_payload->end())
+                {
+                    (*payload)["plan_text"] = refreshed_plan_text_it->second;
+                }
+                auto refreshed_plan_hash_it = query_payload->find("plan_hash");
+                if (refreshed_plan_hash_it != query_payload->end())
+                {
+                    (*payload)["plan_hash"] = refreshed_plan_hash_it->second;
+                }
             }
 
             if (!encodeInstructions(instructions,
@@ -2386,6 +2407,28 @@ namespace scratchbird::sblr::detail
                 variant_out.stats_snapshot_signature,
                 variant_out.cost_profile_id,
                 variant_out.policy_snapshot_id);
+            if (is_explain)
+            {
+                auto *explain_payload = instructionObject(variant_out.instructions[root_index]);
+                if (explain_payload == nullptr)
+                {
+                    error_out = "EXPLAIN instruction payload is not an object";
+                    return false;
+                }
+                std::vector<uint8_t> explain_plan_bytes;
+                if (!optimizer::encodeRuntimePlan(variant_out.runtime_plan,
+                                                  explain_plan_bytes,
+                                                  error_out))
+                {
+                    return false;
+                }
+                (*explain_payload)["plan"] =
+                    sblr::v3::Value(std::move(explain_plan_bytes));
+                (*explain_payload)["plan_text"] =
+                    sblr::v3::Value(variant_out.runtime_plan.explain_text);
+                (*explain_payload)["plan_hash"] =
+                    sblr::v3::Value(variant_out.runtime_plan.plan_hash);
+            }
             return true;
         }
     } // namespace
@@ -2439,6 +2482,10 @@ namespace scratchbird::sblr::detail
         const parser::v3::SelectStmt *select_stmt = nullptr;
         bool is_explain = false;
         const bool cacheable = isCacheableSelect(stmt, select_stmt, is_explain);
+        const auto root_opcode =
+            static_cast<sblr::v3::Opcode>(instructions[root_index].opcode);
+        const std::string root_opcode_symbol =
+            sblr::v3::canonicalOpcodeSymbolForOpcode(instructions[root_index].opcode);
         const std::string normalized_sql = normalizeSql(sql);
         const std::string payload_hash = hashTextHex(normalized_sql);
         const std::string query_feedback_key =
@@ -2480,6 +2527,28 @@ namespace scratchbird::sblr::detail
         result.plan_profile.parameter_sensitive = false;
         result.plan_profile.signature =
             planProfileSignature(QueryCompilerV3PlanProfileMode::GENERIC, std::string());
+
+        if ((root_opcode == sblr::v3::Opcode::SBLR3_SELECT ||
+             root_opcode == sblr::v3::Opcode::SBLR3_EXPLAIN_PLAN) &&
+            (!cacheable || !optimizations_enabled))
+        {
+            std::ostringstream warning;
+            warning << "planner finalizer bypassed root_opcode=" << root_opcode_symbol
+                    << " stmt_kind=";
+            if (stmt != nullptr)
+            {
+                warning << static_cast<int>(stmt->kind());
+            }
+            else
+            {
+                warning << "null";
+            }
+            warning << " cacheable=" << (cacheable ? "true" : "false")
+                    << " optimizations_enabled="
+                    << (optimizations_enabled ? "true" : "false")
+                    << " is_explain=" << (is_explain ? "true" : "false");
+            result.warnings.push_back(warning.str());
+        }
 
         if (cacheable && optimizations_enabled)
         {
@@ -2566,6 +2635,43 @@ namespace scratchbird::sblr::detail
                             : plan_error);
                         return false;
                     }
+                    auto plan_it = query_payload->find("plan");
+                    if (plan_it == query_payload->end())
+                    {
+                        result.errors.push_back(
+                            "EXPLAIN query payload is missing rewritten runtime plan");
+                        return false;
+                    }
+                    (*explain_payload)["plan"] = plan_it->second;
+                    auto plan_text_it = query_payload->find("plan_text");
+                    if (plan_text_it != query_payload->end())
+                    {
+                        (*explain_payload)["plan_text"] = plan_text_it->second;
+                    }
+                    auto plan_hash_it = query_payload->find("plan_hash");
+                    if (plan_hash_it != query_payload->end())
+                    {
+                        (*explain_payload)["plan_hash"] = plan_hash_it->second;
+                    }
+                    std::ostringstream explain_warning;
+                    explain_warning << "explain payload stamped"
+                                    << " root_has_plan="
+                                    << (explain_payload->find("plan") != explain_payload->end()
+                                            ? "true"
+                                            : "false")
+                                    << " root_has_plan_text="
+                                    << (explain_payload->find("plan_text") != explain_payload->end()
+                                            ? "true"
+                                            : "false")
+                                    << " query_has_plan="
+                                    << (query_payload->find("plan") != query_payload->end()
+                                            ? "true"
+                                            : "false")
+                                    << " query_has_plan_text="
+                                    << (query_payload->find("plan_text") != query_payload->end()
+                                            ? "true"
+                                            : "false");
+                    result.warnings.push_back(explain_warning.str());
                 }
 
                 if (!encodeInstructions(variant.instructions,

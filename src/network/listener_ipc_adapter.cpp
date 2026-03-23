@@ -40,6 +40,13 @@ namespace scratchbird::network
                     return status;
                 }
 
+                status = listener_->setReuseAddress(true, ctx);
+                if (status != core::Status::OK)
+                {
+                    listener_.reset();
+                    return status;
+                }
+
                 NetworkAddress bind_address;
                 bind_address.family = config.family;
                 bind_address.host = config.bind_address;

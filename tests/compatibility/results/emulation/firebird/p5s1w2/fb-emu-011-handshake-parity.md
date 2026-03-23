@@ -1,4 +1,4 @@
-Last updated: 2026-03-18
+Last updated: 2026-03-22
 
 # FB-EMU-011 Handshake Parity
 
@@ -6,12 +6,13 @@ Last updated: 2026-03-18
 - Native endpoint: `127.0.0.1:3050`
 - Emulated endpoint: `127.0.0.1:13050`
 - Native capture: `unavailable`
-- Emulated capture: `ok`
+- Emulated capture: `unavailable`
 - Native issue: `Native endpoint unavailable: [Errno 111] Connection refused`
+- Emulated issue: `[Errno 104] Connection reset by peer`
 
 ## Comparison
 - Comparison status: `skipped` (both capture streams not available).
 
 ## Capture Artifacts
 - Native capture: `not generated`
-- Emulated capture: `artifacts/emulation/firebird/p5s1w2/fb-emu-010-wire-captures/firebird-emulated-live-accept.hex`
+- Emulated capture: `not generated`

@@ -1,0 +1,5 @@
+Catalog Error: Table with name avp_ordered_limit_topk does not exist!
+Did you mean "pg_depend"?
+
+LINE 2: FROM avp_ordered_limit_topk
+             ^

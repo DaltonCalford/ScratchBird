@@ -1494,11 +1494,16 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
                         {
                             ++round_candidates;
                             ++telemetry_.pair_evaluation_count;
-                            pushFrontierEntry(candidate_frontier,
-                                              costJoin(left_entry,
-                                                       right_entry,
-                                                       join_edges_[edge_idx],
-                                                       ctx));
+                            auto alternatives =
+                                enumerateJoinAlternatives(left_entry,
+                                                          right_entry,
+                                                          join_edges_[edge_idx],
+                                                          ctx);
+                            for (auto& alternative : alternatives)
+                            {
+                                pushFrontierEntry(candidate_frontier,
+                                                  std::move(alternative));
+                            }
                         }
                     }
                     const auto* best_entry = frontierBestEntry(candidate_frontier);
@@ -1654,12 +1659,17 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizePreservingInputOrder(
                 {
                     ++telemetry_.pair_evaluation_count;
                     ++round_candidates;
-                    pushFrontierEntry(next_frontier,
-                                      costJoin(left_entry,
-                                               relation_entry,
-                                               edge,
-                                               ctx,
-                                               true));
+                    auto alternatives =
+                        enumerateJoinAlternatives(left_entry,
+                                                  relation_entry,
+                                                  edge,
+                                                  ctx,
+                                                  true);
+                    for (auto& alternative : alternatives)
+                    {
+                        pushFrontierEntry(next_frontier,
+                                          std::move(alternative));
+                    }
                 }
             }
 
@@ -1783,32 +1793,38 @@ JoinOrderingOptimizer::DPFrontier JoinOrderingOptimizer::generateSubsetPlans(
         // Try each connecting edge
         for (size_t edge_idx : connecting_edges)
         {
-            for (const auto& left_entry : left_it->second)
-            {
-                for (const auto& right_entry : right_it->second)
+                for (const auto& left_entry : left_it->second)
                 {
-                    ++telemetry_.pair_evaluation_count;
-                    pushFrontierEntry(best_frontier,
-                                      costJoin(left_entry,
-                                               right_entry,
-                                               join_edges_[edge_idx],
-                                               ctx));
+                    for (const auto& right_entry : right_it->second)
+                    {
+                        ++telemetry_.pair_evaluation_count;
+                        auto alternatives =
+                            enumerateJoinAlternatives(left_entry,
+                                                      right_entry,
+                                                      join_edges_[edge_idx],
+                                                      ctx);
+                        for (auto& alternative : alternatives)
+                        {
+                            pushFrontierEntry(best_frontier,
+                                              std::move(alternative));
+                        }
+                    }
                 }
-            }
         }
     }
 
     return best_frontier;
 }
 
-JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
+JoinOrderingOptimizer::DPFrontier
+JoinOrderingOptimizer::enumerateJoinAlternatives(
     const DPEntry& left_entry,
     const DPEntry& right_entry,
     const JoinEdge& edge,
     core::ErrorContext* ctx,
     bool preserve_orientation)
 {
-    DPEntry result;
+    DPFrontier results;
 
     const uint64_t left_rows = left_entry.rows;
     const uint64_t right_rows = right_entry.rows;
@@ -1956,9 +1972,6 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
         MERGE_JOIN
     };
 
-    const bool merge_requires_explicit_sort =
-        merge_legality.requires_sort_outer || merge_legality.requires_sort_inner;
-
     if (!allow_nested_loop && !allow_hash && !allow_merge)
     {
         if (ctx != nullptr)
@@ -1985,44 +1998,21 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
                                   reject_reason.c_str());
             }
         }
-        return result;
+        return results;
     }
 
-    ChosenJoinMethod chosen_method = ChosenJoinMethod::NESTED_LOOP;
-    if (!allow_nested_loop)
+    const auto emit_join_method =
+        [&](ChosenJoinMethod chosen_method,
+            const CostEstimate& chosen_cost_estimate) -> void
     {
-        chosen_method = allow_hash ? ChosenJoinMethod::HASH_JOIN
-                                   : ChosenJoinMethod::MERGE_JOIN;
-    }
-    double chosen_cost =
-        chosen_method == ChosenJoinMethod::HASH_JOIN
-            ? hash_cost.total_cost
-            : chosen_method == ChosenJoinMethod::MERGE_JOIN
-                  ? merge_cost.total_cost
-                  : nl_cost.total_cost;
-    if (allow_hash && hash_cost.total_cost < chosen_cost)
-    {
-        chosen_method = ChosenJoinMethod::HASH_JOIN;
-        chosen_cost = hash_cost.total_cost;
-    }
-    if (allow_merge &&
-        (controls_.method_policy == JoinMethodPolicy::MERGE_ONLY ||
-         (!allow_hash && merge_cost.total_cost < chosen_cost) ||
-         (!merge_requires_explicit_sort &&
-          controls_.method_policy != JoinMethodPolicy::AUTO &&
-          merge_cost.total_cost < chosen_cost)))
-    {
-        chosen_method = ChosenJoinMethod::MERGE_JOIN;
-        chosen_cost = merge_cost.total_cost;
-    }
+        DPEntry result;
+        result.rows = join_rows;
+        result.relation_set_mask =
+            left_entry.relation_set_mask | right_entry.relation_set_mask;
 
-    result.rows = join_rows;
-    result.relation_set_mask =
-        left_entry.relation_set_mask | right_entry.relation_set_mask;
-
-    if (chosen_method == ChosenJoinMethod::HASH_JOIN)
-    {
-        result.cost = hash_cost.total_cost;
+        if (chosen_method == ChosenJoinMethod::HASH_JOIN)
+        {
+            result.cost = chosen_cost_estimate.total_cost;
         std::shared_ptr<Path> build_path = left_entry.best_path;
         std::shared_ptr<Path> probe_path = right_entry.best_path;
         if (edge.join_type == parser::JoinType::INNER && !preserve_orientation)
@@ -2043,7 +2033,7 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
             hash_keys_outer,
             hash_keys_inner,
             selectivity,
-            hash_cost);
+            chosen_cost_estimate);
         AccessPathDescriptor descriptor;
         descriptor.family = "HASH_JOIN";
         descriptor.path_name = "HASH_JOIN";
@@ -2061,10 +2051,10 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
             descriptor.parallel_stage = "HASH_JOIN";
         }
         result.best_path->setAccessDescriptor(std::move(descriptor));
-    }
-    else if (chosen_method == ChosenJoinMethod::MERGE_JOIN)
-    {
-        result.cost = merge_cost.total_cost;
+        }
+        else if (chosen_method == ChosenJoinMethod::MERGE_JOIN)
+        {
+            result.cost = chosen_cost_estimate.total_cost;
         std::vector<parser::v3::Expression*> merge_keys_outer;
         std::vector<parser::v3::Expression*> merge_keys_inner;
         result.best_path = std::make_shared<MergeJoinPath>(
@@ -2077,7 +2067,7 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
             selectivity,
             outer_presorted,
             inner_presorted,
-            merge_cost);
+            chosen_cost_estimate);
         AccessPathDescriptor descriptor;
         descriptor.family = "MERGE_JOIN";
         descriptor.path_name =
@@ -2128,17 +2118,17 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
             descriptor.parallel_stage = "MERGE_JOIN";
         }
         result.best_path->setAccessDescriptor(std::move(descriptor));
-    }
-    else
-    {
-        result.cost = nl_cost.total_cost;
+        }
+        else
+        {
+            result.cost = chosen_cost_estimate.total_cost;
         result.best_path = std::make_shared<NestedLoopJoinPath>(
             edge.join_type,
             left_entry.best_path,
             right_entry.best_path,
             edge.join_condition,
             selectivity,
-            nl_cost);
+            chosen_cost_estimate);
         AccessPathDescriptor descriptor;
         descriptor.family = parameterized_inner ? "PARAMETERIZED_NESTED_LOOP"
                                                 : "NESTED_LOOP_JOIN";
@@ -2168,9 +2158,41 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
                         parameterized_inner ? "PARAMETERIZED_NESTED_LOOP"
                                             : "NESTED_LOOP_JOIN");
         result.best_path->setAccessDescriptor(std::move(descriptor));
+        }
+
+        pushFrontierEntry(results, std::move(result));
+    };
+
+    if (allow_nested_loop)
+    {
+        emit_join_method(ChosenJoinMethod::NESTED_LOOP, nl_cost);
+    }
+    if (allow_hash)
+    {
+        emit_join_method(ChosenJoinMethod::HASH_JOIN, hash_cost);
+    }
+    if (allow_merge)
+    {
+        emit_join_method(ChosenJoinMethod::MERGE_JOIN, merge_cost);
     }
 
-    return result;
+    return results;
+}
+
+JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
+    const DPEntry& left_entry,
+    const DPEntry& right_entry,
+    const JoinEdge& edge,
+    core::ErrorContext* ctx,
+    bool preserve_orientation)
+{
+    const auto alternatives = enumerateJoinAlternatives(left_entry,
+                                                        right_entry,
+                                                        edge,
+                                                        ctx,
+                                                        preserve_orientation);
+    const auto* best_entry = frontierBestEntry(alternatives);
+    return best_entry != nullptr ? *best_entry : DPEntry{};
 }
 
 JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costCrossJoin(

@@ -132,6 +132,18 @@ namespace scratchbird::optimizer
         INVALID = 3,
     };
 
+    inline constexpr const char *kIndexFamilyCapabilityContractId =
+        "sb_index_family_capability/v1";
+
+    enum class AccessPathCapabilityTier : uint32_t
+    {
+        ILLEGAL = 0,
+        EXACT = 1,
+        EXACT_RECHECK = 2,
+        BOUNDED = 3,
+        APPROXIMATE = 4,
+    };
+
     inline auto plannerAccessFamilyName(PlannerAccessFamily family) -> const char *
     {
         switch (family)
@@ -253,6 +265,25 @@ namespace scratchbird::optimizer
                 return "INVALID";
         }
         return "UNKNOWN";
+    }
+
+    inline auto accessPathCapabilityTierName(AccessPathCapabilityTier tier)
+        -> const char *
+    {
+        switch (tier)
+        {
+            case AccessPathCapabilityTier::ILLEGAL:
+                return "ILLEGAL";
+            case AccessPathCapabilityTier::EXACT:
+                return "EXACT";
+            case AccessPathCapabilityTier::EXACT_RECHECK:
+                return "EXACT_RECHECK";
+            case AccessPathCapabilityTier::BOUNDED:
+                return "BOUNDED";
+            case AccessPathCapabilityTier::APPROXIMATE:
+                return "APPROXIMATE";
+        }
+        return "ILLEGAL";
     }
 
     inline auto accessPathNativeTrustClassName(
@@ -767,6 +798,114 @@ namespace scratchbird::optimizer
                collector_specialization_id != "GENERIC_ROW_COLLECTOR_V1";
     }
 
+    struct AccessPathFamilyCapability
+    {
+        std::string contract_id = kIndexFamilyCapabilityContractId;
+        std::string capability_tier =
+            accessPathCapabilityTierName(AccessPathCapabilityTier::ILLEGAL);
+        std::string native_trust_class;
+        std::string locator_granularity;
+        std::string publication_model;
+        std::string mga_certification_class;
+        bool supports_exact = false;
+        bool supports_ordered_output = false;
+        bool supports_covering_payload = false;
+        bool supports_late_materialization = false;
+        bool supports_bulk_filter = false;
+        bool supports_parallel_merge = false;
+        bool supports_specialized_collector_modes = false;
+    };
+
+    inline auto buildAccessPathFamilyCapability(
+        PlannerAccessFamily family,
+        AccessPathExactnessClass exactness_class,
+        AccessPathVisibilityEnforcement visibility_enforcement,
+        bool requires_recheck = false,
+        bool ordered_output = false,
+        bool covering_index = false,
+        std::string_view collector_specialization_id = {})
+        -> AccessPathFamilyCapability
+    {
+        AccessPathFamilyCapability capability;
+        capability.native_trust_class = accessPathNativeTrustClassName(
+            family,
+            exactness_class,
+            visibility_enforcement,
+            requires_recheck);
+        capability.locator_granularity = accessPathLocatorGranularityName(
+            family,
+            exactness_class,
+            visibility_enforcement);
+        capability.publication_model = accessPathPublicationModelName(
+            family,
+            exactness_class,
+            visibility_enforcement);
+        capability.mga_certification_class =
+            accessPathMgaCertificationClassName(exactness_class,
+                                                visibility_enforcement,
+                                                requires_recheck);
+        capability.supports_exact = accessPathSupportsExact(exactness_class);
+        capability.supports_ordered_output =
+            accessPathSupportsOrderedOutput(family, ordered_output);
+        capability.supports_covering_payload =
+            accessPathSupportsCoveringPayload(family, covering_index);
+        capability.supports_late_materialization =
+            accessPathSupportsLateMaterialization(
+                capability.locator_granularity);
+        capability.supports_bulk_filter = accessPathSupportsBulkFilter(family);
+        capability.supports_parallel_merge =
+            accessPathSupportsParallelMerge(family);
+        capability.supports_specialized_collector_modes =
+            accessPathSupportsSpecializedCollectorModes(
+                collector_specialization_id);
+
+        const auto legality_code = accessPathFamilyLegalityCode(
+            family,
+            exactness_class,
+            capability.native_trust_class,
+            capability.locator_granularity,
+            visibility_enforcement);
+        if (legality_code[0] != '\0')
+        {
+            capability.capability_tier =
+                accessPathCapabilityTierName(
+                    AccessPathCapabilityTier::ILLEGAL);
+            return capability;
+        }
+
+        switch (exactness_class)
+        {
+            case AccessPathExactnessClass::EXACT_ROW:
+                capability.capability_tier =
+                    accessPathCapabilityTierName(
+                        AccessPathCapabilityTier::EXACT);
+                break;
+            case AccessPathExactnessClass::EXACT_KEY:
+                capability.capability_tier =
+                    accessPathCapabilityTierName(
+                        AccessPathCapabilityTier::EXACT_RECHECK);
+                break;
+            case AccessPathExactnessClass::CANDIDATE_REGION:
+                capability.capability_tier =
+                    accessPathCapabilityTierName(
+                        AccessPathCapabilityTier::BOUNDED);
+                break;
+            case AccessPathExactnessClass::LOWER_BOUND_ORDERED:
+            case AccessPathExactnessClass::APPROX_TOPK:
+                capability.capability_tier =
+                    accessPathCapabilityTierName(
+                        AccessPathCapabilityTier::APPROXIMATE);
+                break;
+            case AccessPathExactnessClass::UNKNOWN:
+            default:
+                capability.capability_tier =
+                    accessPathCapabilityTierName(
+                        AccessPathCapabilityTier::ILLEGAL);
+                break;
+        }
+        return capability;
+    }
+
     inline auto plannerAccessFamilyFromLegacy(std::string_view family_text,
                                               std::string_view scan_kind_text = {})
         -> PlannerAccessFamily
@@ -995,6 +1134,7 @@ namespace scratchbird::optimizer
         std::string native_trust_class;
         std::string locator_granularity;
         std::string family_capability_contract_id;
+        std::string capability_tier;
         std::string publication_model;
         std::string mga_certification_class;
         bool supports_exact = false;
@@ -1272,16 +1412,35 @@ namespace scratchbird::optimizer
                 AccessPathQueryabilityState::QUERYABLE;
             access_descriptor_.coverage_fraction =
                 type_ == PathType::SEQ_SCAN ? 1.0 : 0.0;
-            access_descriptor_.native_trust_class = accessPathNativeTrustClassName(
+            const auto capability = buildAccessPathFamilyCapability(
                 access_descriptor_.family_kind,
                 access_descriptor_.exactness_class,
                 access_descriptor_.visibility_enforcement,
                 access_descriptor_.requires_recheck);
+            access_descriptor_.native_trust_class =
+                capability.native_trust_class;
             access_descriptor_.locator_granularity =
-                accessPathLocatorGranularityName(
-                    access_descriptor_.family_kind,
-                    access_descriptor_.exactness_class,
-                    access_descriptor_.visibility_enforcement);
+                capability.locator_granularity;
+            access_descriptor_.family_capability_contract_id =
+                capability.contract_id;
+            access_descriptor_.capability_tier = capability.capability_tier;
+            access_descriptor_.publication_model =
+                capability.publication_model;
+            access_descriptor_.mga_certification_class =
+                capability.mga_certification_class;
+            access_descriptor_.supports_exact = capability.supports_exact;
+            access_descriptor_.supports_ordered_output =
+                capability.supports_ordered_output;
+            access_descriptor_.supports_covering_payload =
+                capability.supports_covering_payload;
+            access_descriptor_.supports_late_materialization =
+                capability.supports_late_materialization;
+            access_descriptor_.supports_bulk_filter =
+                capability.supports_bulk_filter;
+            access_descriptor_.supports_parallel_merge =
+                capability.supports_parallel_merge;
+            access_descriptor_.supports_specialized_collector_modes =
+                capability.supports_specialized_collector_modes;
             access_descriptor_.maintenance_state_class =
                 accessPathMaintenanceStateClassName(
                     access_descriptor_.queryability_state);

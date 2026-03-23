@@ -1478,11 +1478,15 @@ public:
         if (config_.has_bound_db_uuid) {
             bound_db_uuid_ptr = config_.bound_db_uuid.data();
         }
+        uint16_t connect_flags = config_.connect_client_flags;
+        if (!config_.auto_commit) {
+            connect_flags |= protocol::CONNECT_FLAG_AUTOCOMMIT_OFF;
+        }
         auto connect_msg = protocol::ProtocolCodec::buildConnectRequest(
             config_.database_name,
             config_.client_name.empty() ? "scratchbird_client" : config_.client_name,
             getpid(),
-            config_.connect_client_flags,
+            connect_flags,
             bound_db_uuid_ptr
         );
 
@@ -1530,8 +1534,10 @@ public:
             }
         }
 
-        state_ = ConnectionState::CONNECTED;
         auto_commit_ = config_.auto_commit;
+        in_transaction_ = !auto_commit_;
+        state_ = in_transaction_ ? ConnectionState::IN_TRANSACTION
+                                 : ConnectionState::CONNECTED;
         return core::Status::OK;
     }
 
@@ -2446,11 +2452,25 @@ public:
                     if (results) {
                         results->impl_->row_count_ = static_cast<int64_t>(results->impl_->rows_.size());
                     }
+                    if (auto_commit_) {
+                        in_transaction_ = false;
+                        state_ = ConnectionState::CONNECTED;
+                    } else {
+                        in_transaction_ = true;
+                        state_ = ConnectionState::IN_TRANSACTION;
+                    }
                     return core::Status::OK;
                 }
                 case protocol::MessageType::PORTAL_SUSPENDED: {
                     if (results) {
                         results->impl_->row_count_ = static_cast<int64_t>(results->impl_->rows_.size());
+                    }
+                    if (auto_commit_) {
+                        in_transaction_ = false;
+                        state_ = ConnectionState::CONNECTED;
+                    } else {
+                        in_transaction_ = true;
+                        state_ = ConnectionState::IN_TRANSACTION;
                     }
                     return core::Status::OK;
                 }
@@ -2689,8 +2709,9 @@ public:
             return static_cast<core::Status>(code);
         }
 
-        in_transaction_ = false;
-        state_ = ConnectionState::CONNECTED;
+        // ScratchBird keeps a new transaction active after COMMIT.
+        in_transaction_ = true;
+        state_ = ConnectionState::IN_TRANSACTION;
         return core::Status::OK;
     }
 
@@ -2719,8 +2740,9 @@ public:
             return static_cast<core::Status>(code);
         }
 
-        in_transaction_ = false;
-        state_ = ConnectionState::CONNECTED;
+        // ScratchBird keeps a new transaction active after ROLLBACK.
+        in_transaction_ = true;
+        state_ = ConnectionState::IN_TRANSACTION;
         return core::Status::OK;
     }
 };

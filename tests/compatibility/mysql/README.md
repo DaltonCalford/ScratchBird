@@ -53,24 +53,23 @@ The converted tests are organized into 59 suites including:
 
 ## Running Tests
 
-**Prerequisites:** Build CLI clients in the `ScratchBird-driver` repository first. This runner requires `sb_my_isql` for MySQL wire-protocol parity. Generic `sb_isql` is native-protocol only and is rejected for this lane.
+**Prerequisites:** Use the donor MySQL `mysql` client for this lane. Generic `sb_isql` is native-protocol only and is rejected for emulated MySQL verification.
 
 **Refresh vendored MySQL tests:**
 ```bash
 ./tests/compatibility/scripts/update_test_repos.sh
 ```
 
-Once the MySQL CLI is available:
+Once the donor `mysql` binary is available:
 
 ```bash
 # Run a single test
-sb_my_isql -u root -p \
-  -D /remote/emulated/mysql/localhost/testdb < converted/main/select.sql \
-  > results/select.out
+mysql --protocol=TCP -h 127.0.0.1 -P 3306 -u root testdb \
+  < converted/main/select.sql > results/select.out
 
 # Run all tests in a suite
 for test in converted/innodb/*.sql; do
-  sb_my_isql -u root -p -D testdb < "$test" \
+  mysql --protocol=TCP -h 127.0.0.1 -P 3306 -u root testdb < "$test" \
     > "results/$(basename $test .sql).out"
 done
 ```
@@ -103,7 +102,7 @@ Proof-boundary artifacts are written per run under `results/ctest/<run_id>/`:
 
 This lane is emulation-only proof. Core parser proof is the native ScratchBird lane.
 
-If `sb_my_isql` is unavailable, set `SCRATCHBIRD_MY_ISQL` to a valid `sb_my_isql` path after building FDW CLI wrappers; generic `sb_isql` fallback is intentionally blocked.
+Set `SCRATCHBIRD_MYSQL_CLI_BIN` to an explicit donor `mysql` path when auto-detection is not sufficient. `SCRATCHBIRD_MY_ISQL` remains a legacy alias, but it must still point to donor `mysql`, not to a ScratchBird wrapper client.
 
 Runner controls:
 

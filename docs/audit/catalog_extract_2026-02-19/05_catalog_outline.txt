@@ -305,7 +305,6 @@ nosql.neo4j [o] (SCHEMA)
 nosql.neo4j [s]
 nosql.redis [o] (SCHEMA)
 nosql.redis [s]
-rebuild_indexes [o] (JOB)
 remote [o] (SCHEMA)
 remote [s]
 remote.emulation [o] (SCHEMA)
@@ -342,11 +341,11 @@ sys.information [o] (SCHEMA)
 sys.information [s]
 sys.jobs [o] (SCHEMA)
 sys.jobs [s]
-sys.sb_toast_019cff7f-f4f3-70bf-a503-1c6c7d10e4d9 [o] (TABLE)
-sys.sb_toast_019cff7f-f4f3-70bf-a503-1c6c7d10e4d9.chunk_data [o] (COLUMN)
-sys.sb_toast_019cff7f-f4f3-70bf-a503-1c6c7d10e4d9.chunk_id [o] (COLUMN)
-sys.sb_toast_019cff7f-f4f3-70bf-a503-1c6c7d10e4d9.chunk_seq [o] (COLUMN)
-sys.sb_toast_019cff7f-f4f3-70bf-a503-1c6c7d10e4d9.sb_toast_019cff7f-f4f3-70bf-a503-1c6c7d10e4d9_idx [o] (INDEX)
+sys.sb_toast_019d1816-6e97-7a45-b415-f6c2f2f7d153 [o] (TABLE)
+sys.sb_toast_019d1816-6e97-7a45-b415-f6c2f2f7d153.chunk_data [o] (COLUMN)
+sys.sb_toast_019d1816-6e97-7a45-b415-f6c2f2f7d153.chunk_id [o] (COLUMN)
+sys.sb_toast_019d1816-6e97-7a45-b415-f6c2f2f7d153.chunk_seq [o] (COLUMN)
+sys.sb_toast_019d1816-6e97-7a45-b415-f6c2f2f7d153.sb_toast_019d1816-6e97-7a45-b415-f6c2f2f7d153_idx [o] (INDEX)
 sys.schema [o] (SCHEMA)
 sys.schema [s]
 sys.security [o] (SCHEMA)
@@ -361,7 +360,6 @@ sys.security.users [o] (SCHEMA)
 sys.security.users [s]
 sys.system [o] (SCHEMA)
 sys.system [s]
-update_stats [o] (JOB)
 users [o] (SCHEMA)
 users [s]
 users.app_data [o] (SCHEMA)

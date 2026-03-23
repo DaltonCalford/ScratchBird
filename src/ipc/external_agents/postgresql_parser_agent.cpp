@@ -22,7 +22,9 @@
  */
 
 #include "scratchbird/ipc/postgresql_parser_agent.h"
+#include "scratchbird/client/connection.h"
 #include "scratchbird/ipc/ipc_server.h"
+#include "scratchbird/sblr/postgresql_query_compiler.h"
 #ifdef _WIN32
     #include <winsock2.h>
     #include <ws2tcpip.h>
@@ -136,6 +138,10 @@ static uint16_t readUint16(const uint8_t* data) {
     return (data[0] << 8) | data[1];
 }
 
+static const char* defaultPostgreSQLServerVersion() {
+    return "15.4 (ScratchBird 1.0)";
+}
+
 static void writeUint32(uint8_t* data, uint32_t value) {
     data[0] = (value >> 24) & 0xFF;
     data[1] = (value >> 16) & 0xFF;
@@ -146,6 +152,44 @@ static void writeUint32(uint8_t* data, uint32_t value) {
 static void writeUint16(uint8_t* data, uint16_t value) {
     data[0] = (value >> 8) & 0xFF;
     data[1] = value & 0xFF;
+}
+
+static std::string buildPostgresqlSchemaPath(const std::string& db_name) {
+    return "emulated.postgresql.localhost.databases." + db_name;
+}
+
+static std::string extractEmulatedDatabaseName(const std::string& selected_database) {
+    if (selected_database.empty()) {
+        return selected_database;
+    }
+
+    std::string normalized = selected_database;
+    std::replace(normalized.begin(), normalized.end(), '/', '.');
+    while (!normalized.empty() && normalized.front() == '.') {
+        normalized.erase(normalized.begin());
+    }
+    while (!normalized.empty() && normalized.back() == '.') {
+        normalized.pop_back();
+    }
+    if (normalized.empty()) {
+        return selected_database;
+    }
+
+    std::string lower = normalized;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+
+    constexpr const char* marker = ".databases.";
+    size_t marker_pos = lower.rfind(marker);
+    if (marker_pos != std::string::npos) {
+        std::string leaf = normalized.substr(marker_pos + std::strlen(marker));
+        if (!leaf.empty()) {
+            return leaf;
+        }
+    }
+
+    return normalized;
 }
 
 // ============================================================================
@@ -252,6 +296,55 @@ static std::array<uint8_t, 4> getMD5Salt(const ParserAgentConfig& config) {
     return salt;
 }
 
+static std::string resolveEngineDatabaseName(const ParserAgentConfig& config,
+                                             const std::string& requested_database) {
+    std::string engine_database = requested_database;
+    auto default_db_it = config.options.find("default_database");
+    if ((engine_database.empty() || engine_database == "postgres") &&
+        default_db_it != config.options.end() &&
+        !default_db_it->second.empty()) {
+        engine_database = default_db_it->second;
+    }
+    if (engine_database.empty()) {
+        engine_database = "main";
+    }
+    return engine_database;
+}
+
+static core::Status authenticateAgainstEngine(const ParserAgentConfig& config,
+                                              const std::string& requested_database,
+                                              const std::string& username,
+                                              protocol::AuthMethod method,
+                                              const std::vector<uint8_t>& payload,
+                                              client::Connection::AuthResponse& response,
+                                              core::ErrorContext* ctx) {
+    if (config.ipc_endpoint.empty()) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_ARGUMENT,
+                     "PostgreSQL parser auth requires engine IPC endpoint",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    client::ConnectionConfig client_config;
+    client_config.database_name = resolveEngineDatabaseName(config, requested_database);
+    client_config.client_name = "sb_parser_pg";
+    client_config.username = username;
+    client_config.manual_auth = true;
+    client_config.auto_start_server = false;
+    client_config.ipc_method = server::IPCMethod::UNIX_SOCKET;
+    client_config.socket_path = config.ipc_endpoint;
+
+    client::Connection auth_client;
+    auto status = auth_client.connect(client_config, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    return auth_client.sendAuthRequest(method, payload, response, ctx);
+}
+
 static std::string computePostgreSQLMD5Response(const std::string& password,
                                                 const std::string& username,
                                                 const std::array<uint8_t, 4>& salt) {
@@ -327,15 +420,52 @@ PostgreSQLParserAgent::~PostgreSQLParserAgent() {
 }
 
 core::Status PostgreSQLParserAgent::handleClient(int client_fd, core::ErrorContext* ctx) {
+    uint32_t client_id = next_client_id_++;
+    auto client = std::make_unique<ClientConnection>();
+    client->client_id = client_id;
+    client->socket_fd = client_fd;
+    client->connect_time_ms = getCurrentTimeMs();
+    client->last_activity_ms = client->connect_time_ms;
+    client->ipc_channel = acquireIPCChannel();
+    if (!client->ipc_channel) {
+        if (ctx) {
+            ctx->set(core::Status::NOT_FOUND,
+                     "No IPC channel available for PostgreSQL parser client",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::NOT_FOUND;
+    }
+    {
+        std::unique_lock<std::shared_mutex> lock(connections_mutex_);
+        connections_[client_id] = std::move(client);
+    }
+    updateStats([](Stats& s) { s.active_connections++; });
+
     PGClientState state;
     state.client_fd = client_fd;
+    state.client_id = client_id;
+    state.session_id = 0;
     state.state = PGClientState::STARTUP;
     state.transaction_status = 'I';  // Idle
+    state.process_id = client_id;
+    state.secret_key = client_id ^ 0x5A17C3D1u;
+    state.request_id = 1;
     
     // Handle startup phase
     auto status = handleStartupPhase(state, ctx);
     if (status != core::Status::OK) {
+        disconnectClient(client_id);
         return status;
+    }
+
+    {
+        std::unique_lock<std::shared_mutex> lock(connections_mutex_);
+        auto it = connections_.find(client_id);
+        if (it != connections_.end()) {
+            it->second->database = state.database;
+            it->second->user = state.username;
+            it->second->session_id = state.session_id;
+        }
     }
     
     // Main message loop
@@ -350,6 +480,8 @@ core::Status PostgreSQLParserAgent::handleClient(int client_fd, core::ErrorConte
             break;
         }
     }
+
+    disconnectClient(client_id);
     
     return core::Status::OK;
 }
@@ -366,7 +498,7 @@ core::Status PostgreSQLParserAgent::handleStartupPhase(PGClientState& state, cor
         return core::Status::INVALID_ARGUMENT;
     }
     
-    uint32_t version = readUint32(startup_msg.data());
+    uint32_t version = readUint32(startup_msg.data() + 4);
     
     // SSL/GSS encryption negotiation requests return one-byte 'N' refusal and retry startup.
     while (version == pg::SSL_REQUEST_CODE || version == pg::GSSENC_REQUEST_CODE) {
@@ -384,7 +516,7 @@ core::Status PostgreSQLParserAgent::handleStartupPhase(PGClientState& state, cor
             return core::Status::INVALID_ARGUMENT;
         }
 
-        version = readUint32(startup_msg.data());
+        version = readUint32(startup_msg.data() + 4);
     }
     
     // Check for cancel request
@@ -425,12 +557,17 @@ core::Status PostgreSQLParserAgent::handleStartupPhase(PGClientState& state, cor
     if (status != core::Status::OK) {
         return status;
     }
+
+    status = ensureEngineSession(state, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
     
     // Send backend key data
     sendBackendKeyData(state);
     
     // Send parameter status messages
-    sendParameterStatus(state, "server_version", "14.0");
+    sendParameterStatus(state, "server_version", defaultPostgreSQLServerVersion());
     sendParameterStatus(state, "server_encoding", "UTF8");
     sendParameterStatus(state, "client_encoding", "UTF8");
     sendParameterStatus(state, "DateStyle", "ISO, MDY");
@@ -442,6 +579,122 @@ core::Status PostgreSQLParserAgent::handleStartupPhase(PGClientState& state, cor
     state.state = PGClientState::IDLE;
     sendReadyForQuery(state);
     
+    return core::Status::OK;
+}
+
+core::Status PostgreSQLParserAgent::ensureEngineSession(PGClientState& state,
+                                                        core::ErrorContext* ctx) {
+    if (state.session_id != 0) {
+        return core::Status::OK;
+    }
+
+    std::string engine_database = state.database;
+    auto default_db_it = config_.options.find("default_database");
+    if ((engine_database.empty() || engine_database == "postgres") &&
+        default_db_it != config_.options.end() &&
+        !default_db_it->second.empty()) {
+        engine_database = default_db_it->second;
+    }
+    if (engine_database.empty()) {
+        engine_database = "main";
+    }
+
+    std::string engine_user = "scratchbird";
+    auto engine_user_it = config_.options.find("engine_user");
+    if (engine_user_it != config_.options.end() && !engine_user_it->second.empty()) {
+        engine_user = engine_user_it->second;
+    }
+    const std::string session_user = state.username.empty() ? engine_user : state.username;
+
+    IPCMessage startup(IPCMessageType::STARTUP, 0);
+    IPCStartupPayload startup_payload{};
+    startup_payload.process_id = state.client_id;
+    startup_payload.secret_key = state.secret_key;
+    startup_payload.feature_flags =
+        IPC_FEATURE_PREPARED_STATEMENTS | IPC_FEATURE_BINARY_RESULTS;
+    std::strncpy(startup_payload.database,
+                 engine_database.c_str(),
+                 sizeof(startup_payload.database) - 1);
+    startup_payload.database[sizeof(startup_payload.database) - 1] = '\0';
+    std::strncpy(startup_payload.user,
+                 session_user.c_str(),
+                 sizeof(startup_payload.user) - 1);
+    startup_payload.user[sizeof(startup_payload.user) - 1] = '\0';
+    std::strncpy(startup_payload.application,
+                 "postgresql_parser",
+                 sizeof(startup_payload.application) - 1);
+    startup_payload.application[sizeof(startup_payload.application) - 1] = '\0';
+    startup.payload.resize(sizeof(startup_payload));
+    std::memcpy(startup.payload.data(), &startup_payload, sizeof(startup_payload));
+
+    auto status = sendToEngine(state.client_id, startup, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    IPCMessage startup_response;
+    status = receiveFromEngine(state.client_id, startup_response, ctx, 30000);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    if (startup_response.getType() != IPCMessageType::READY) {
+        if (ctx) {
+            ctx->set(core::Status::CONNECTION_FAILURE,
+                     "PostgreSQL parser did not receive IPC READY during startup",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    if (auto* ready = startup_response.getPayload<IPCReadyPayload>()) {
+        state.session_id = ready->session_id;
+        return core::Status::OK;
+    }
+
+    if (ctx) {
+        ctx->set(core::Status::CONNECTION_FAILURE,
+                 "Malformed IPC READY payload for PostgreSQL parser startup",
+                 __FILE__, __LINE__, __func__);
+    }
+    return core::Status::CONNECTION_FAILURE;
+}
+
+std::string PostgreSQLParserAgent::currentSchemaRoot(const PGClientState& state) const {
+    std::string database_name = extractEmulatedDatabaseName(state.database);
+    if (database_name.empty()) {
+        auto default_db_it = config_.options.find("default_database");
+        if (default_db_it != config_.options.end()) {
+            database_name = extractEmulatedDatabaseName(default_db_it->second);
+        }
+    }
+    if (database_name.empty()) {
+        database_name = "main";
+    }
+    return buildPostgresqlSchemaPath(database_name);
+}
+
+core::Status PostgreSQLParserAgent::compileQueryToSblr(const PGClientState& state,
+                                                       const std::string& sql,
+                                                       std::vector<uint8_t>& bytecode_out,
+                                                       std::string& error_out) {
+    if (sql.empty()) {
+        error_out = "Query text is empty";
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    sblr::PostgreSQLQueryCompiler compiler(nullptr);
+    const std::string schema_root = currentSchemaRoot(state);
+    compiler.setDefaultSchema(schema_root);
+    compiler.setSearchPath({schema_root});
+
+    auto result = compiler.compile(sql);
+    if (!result.success()) {
+        error_out = result.errors().empty() ? "PostgreSQL SQL to SBLR lowering failed"
+                                            : result.errors().front();
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    bytecode_out = result.bytecode();
     return core::Status::OK;
 }
 
@@ -515,10 +768,22 @@ core::Status PostgreSQLParserAgent::authenticate(PGClientState& state, core::Err
             provided_password += static_cast<char>(password_msg[i]);
         }
         
-        // Verify credentials
-        if (!verifyPassword(state.username, provided_password)) {
-            sendErrorResponse(state, "28P01", "Invalid username or password");
-            return core::Status::PERMISSION_DENIED;
+        client::Connection::AuthResponse auth_response;
+        std::vector<uint8_t> payload(provided_password.begin(), provided_password.end());
+        status = authenticateAgainstEngine(config_,
+                                           state.database,
+                                           state.username,
+                                           protocol::AuthMethod::PASSWORD,
+                                           payload,
+                                           auth_response,
+                                           ctx);
+        if (status != core::Status::OK || auth_response.status != protocol::AuthStatus::OK) {
+            const std::string error_message =
+                auth_response.error_message.empty()
+                    ? "Invalid username or password"
+                    : auth_response.error_message;
+            sendErrorResponse(state, "28P01", error_message);
+            return status == core::Status::OK ? core::Status::PERMISSION_DENIED : status;
         }
         
         sendAuthenticationOk(state);
@@ -538,13 +803,14 @@ core::Status PostgreSQLParserAgent::handleSASLAuth(PGClientState& state, core::E
     msg.push_back(pg::BE_AUTHENTICATION);
     
     uint32_t len_placeholder = 0;
-    writeUint32(msg.data() + msg.size(), len_placeholder);
     size_t len_offset = msg.size();
     msg.resize(msg.size() + 4);
+    writeUint32(msg.data() + len_offset, len_placeholder);
     
     // Authentication type: SASL (10)
-    writeUint32(msg.data() + msg.size(), pg::AUTH_SASL);
+    size_t auth_offset = msg.size();
     msg.resize(msg.size() + 4);
+    writeUint32(msg.data() + auth_offset, pg::AUTH_SASL);
     
     // Mechanisms (null-terminated list)
     const char* mechanisms[] = {"SCRAM-SHA-256", "SCRAM-SHA-256-PLUS"};
@@ -698,26 +964,28 @@ core::Status PostgreSQLParserAgent::handleQueryMessage(PGClientState& state,
             return core::Status::IO_ERROR;
         }
     } else {
-        // Execute query through IPC
-        IPCMessage ipc_msg;
-        ipc_msg.setType(IPCMessageType::SIMPLE_QUERY);
-        ipc_msg.header.request_id = state.request_id++;
-        
-        // Build payload
-        IPCSimpleQueryPayload query_payload;
-        query_payload.query_length = static_cast<uint32_t>(sql_len);
-        
-        ipc_msg.payload.resize(sizeof(query_payload) + sql_len);
-        std::memcpy(ipc_msg.payload.data(), &query_payload, sizeof(query_payload));
-        std::memcpy(ipc_msg.payload.data() + sizeof(query_payload), sql, sql_len);
-        
-        // Send to engine via IPC
-        auto status = sendToEngine(state.client_id, ipc_msg, ctx);
+        std::vector<uint8_t> bytecode;
+        std::string compile_error;
+        auto status = compileQueryToSblr(state,
+                                         std::string(sql, sql_len),
+                                         bytecode,
+                                         compile_error);
+        if (status != core::Status::OK) {
+            sendErrorResponse(state, "42601", compile_error);
+            sendReadyForQuery(state);
+            return core::Status::OK;
+        }
+
+        status = sendCompiledQueryToEngine(state.client_id,
+                                           state.request_id++,
+                                           bytecode,
+                                           std::string(sql, sql_len),
+                                           ctx);
         if (status != core::Status::OK) {
             return sendErrorResponse(state, "58000", "Failed to send query to engine");
         }
         
-        // Receive and forward response(s) until READY_FOR_QUERY
+        // Receive and forward response(s) until command completion or error.
         IPCMessage response;
         bool done = false;
         while (!done) {
@@ -733,13 +1001,15 @@ core::Status PostgreSQLParserAgent::handleQueryMessage(PGClientState& state,
             }
             
             // Check if we're done
-            if (response.getType() == IPCMessageType::READY_FOR_QUERY ||
+            if (response.getType() == IPCMessageType::COMMAND_COMPLETE ||
                 response.getType() == IPCMessageType::ERROR_RESPONSE) {
                 done = true;
             }
         }
+
+        sendReadyForQuery(state);
         
-        return core::Status::OK;  // Already sent ReadyForQuery in translation
+        return core::Status::OK;
     }
     
     sendReadyForQuery(state);
@@ -763,32 +1033,58 @@ core::Status PostgreSQLParserAgent::handleParseMessage(PGClientState& state,
     const char* query = reinterpret_cast<const char*>(msg.data() + offset);
     offset += std::strlen(query) + 1;
     
-    // Parameter types (we'll ignore for now)
+    uint16_t num_params = 0;
+    size_t param_types_offset = 0;
     if (offset + 2 <= msg.size()) {
-        uint16_t num_params = readUint16(msg.data() + offset);
+        num_params = readUint16(msg.data() + offset);
         offset += 2;
+        param_types_offset = offset;
         offset += num_params * 4;  // Skip OIDs
     }
     
-    // Store prepared statement
     PGClientState::PreparedStatementInfo info;
     info.name = stmt_name;
     info.sql = query;
-    info.valid = true;
-    state.prepared_stmts[stmt_name] = info;
-    
-    // Send ParseComplete
-    std::vector<uint8_t> response;
-    response.push_back(pg::BE_PARSE_COMPLETE);
-    writeUint32(response.data() + response.size(), 4);
-    response.resize(response.size() + 4);
-    
-    if (sb_socket_send(state.client_fd, response.data(), response.size(), 0) != 
-        static_cast<ssize_t>(response.size())) {
-        return core::Status::IO_ERROR;
+    info.param_types.reserve(num_params);
+    if (param_types_offset != 0 &&
+        param_types_offset + static_cast<size_t>(num_params) * 4 <= msg.size()) {
+        for (uint16_t i = 0; i < num_params; ++i) {
+            info.param_types.push_back(readUint32(msg.data() + param_types_offset + (i * 4)));
+        }
     }
-    
-    return core::Status::OK;
+    info.valid = true;
+
+    std::vector<uint8_t> bytecode;
+    std::string compile_error;
+    auto status = compileQueryToSblr(state, query, bytecode, compile_error);
+    if (status != core::Status::OK) {
+        return sendErrorResponse(state, "42601", compile_error);
+    }
+
+    status = sendCompiledParseToEngine(state.client_id,
+                                       state.request_id++,
+                                       stmt_name,
+                                       bytecode,
+                                       query,
+                                       ctx);
+    if (status != core::Status::OK) {
+        return sendErrorResponse(state, "58000", "Failed to send parse to engine");
+    }
+
+    IPCMessage response;
+    while (true) {
+        status = receiveFromEngine(state.client_id, response, ctx, 30000);
+        if (status != core::Status::OK) {
+            return sendErrorResponse(state, "58000", "Failed to receive parse response from engine");
+        }
+        if (response.getType() == IPCMessageType::ERROR_RESPONSE) {
+            return translateAndSendResponse(state, response, ctx);
+        }
+        if (response.getType() == IPCMessageType::PARSE_COMPLETE) {
+            state.prepared_stmts[stmt_name] = std::move(info);
+            return translateAndSendResponse(state, response, ctx);
+        }
+    }
 }
 
 core::Status PostgreSQLParserAgent::handleBindMessage(PGClientState& state,
@@ -821,14 +1117,17 @@ core::Status PostgreSQLParserAgent::handleBindMessage(PGClientState& state,
     uint16_t num_params = readUint16(msg.data() + offset);
     offset += 2;
     std::vector<std::vector<uint8_t>> params;
+    std::vector<bool> param_is_nulls;
     for (uint16_t i = 0; i < num_params && offset + 4 <= msg.size(); ++i) {
         int32_t param_len = static_cast<int32_t>(readUint32(msg.data() + offset));
         offset += 4;
         if (param_len == -1) {
             // NULL parameter
             params.push_back({});
+            param_is_nulls.push_back(true);
         } else if (param_len >= 0 && offset + param_len <= msg.size()) {
             params.emplace_back(msg.data() + offset, msg.data() + offset + param_len);
+            param_is_nulls.push_back(false);
             offset += param_len;
         }
     }
@@ -842,26 +1141,77 @@ core::Status PostgreSQLParserAgent::handleBindMessage(PGClientState& state,
         offset += 2;
     }
     
-    // Create portal
-    PGClientState::PortalInfo portal;
-    portal.name = portal_name;
-    portal.stmt_name = stmt_name;
-    portal.params = params;
-    portal.result_formats = result_formats;
-    state.portals[portal_name] = portal;
-    
-    // Send BindComplete
-    std::vector<uint8_t> response;
-    response.push_back(pg::BE_BIND_COMPLETE);
-    writeUint32(response.data() + response.size(), 4);
-    response.resize(response.size() + 4);
-    
-    if (sb_socket_send(state.client_fd, response.data(), response.size(), 0) != 
-        static_cast<ssize_t>(response.size())) {
-        return core::Status::IO_ERROR;
+    auto stmt_it = state.prepared_stmts.find(stmt_name);
+    if (stmt_it == state.prepared_stmts.end()) {
+        return sendErrorResponse(state, "26000", "Prepared statement not found: " + std::string(stmt_name));
     }
-    
-    return core::Status::OK;
+
+    IPCMessage bind_msg(IPCMessageType::BIND, 0);
+    bind_msg.header.request_id = state.request_id++;
+    IPCBindPayload bind_payload{};
+    std::strncpy(bind_payload.portal_name, portal_name, sizeof(bind_payload.portal_name) - 1);
+    bind_payload.portal_name[sizeof(bind_payload.portal_name) - 1] = '\0';
+    std::strncpy(bind_payload.stmt_name, stmt_name, sizeof(bind_payload.stmt_name) - 1);
+    bind_payload.stmt_name[sizeof(bind_payload.stmt_name) - 1] = '\0';
+    bind_payload.num_params = num_params;
+
+    size_t payload_size = sizeof(bind_payload);
+    for (uint16_t i = 0; i < num_params; ++i) {
+        payload_size += sizeof(IPCParamValue);
+        if (!param_is_nulls[i]) {
+            payload_size += params[i].size();
+        }
+    }
+    bind_msg.payload.resize(payload_size);
+    std::memcpy(bind_msg.payload.data(), &bind_payload, sizeof(bind_payload));
+
+    size_t bind_offset = sizeof(bind_payload);
+    for (uint16_t i = 0; i < num_params; ++i) {
+        IPCParamValue param{};
+        param.type_oid =
+            i < stmt_it->second.param_types.size()
+                ? static_cast<uint16_t>(stmt_it->second.param_types[i])
+                : 0;
+        param.format =
+            num_formats == 0 ? 0
+                             : (num_formats == 1 ? format_codes.front()
+                                                 : format_codes[i]);
+        param.length = param_is_nulls[i] ? -1 : static_cast<int32_t>(params[i].size());
+        std::memcpy(bind_msg.payload.data() + bind_offset, &param, sizeof(param));
+        bind_offset += sizeof(param);
+        if (param.length > 0) {
+            std::memcpy(bind_msg.payload.data() + bind_offset,
+                        params[i].data(),
+                        static_cast<size_t>(param.length));
+            bind_offset += static_cast<size_t>(param.length);
+        }
+    }
+
+    auto status = sendToEngine(state.client_id, bind_msg, ctx);
+    if (status != core::Status::OK) {
+        return sendErrorResponse(state, "58000", "Failed to send bind to engine");
+    }
+
+    IPCMessage response;
+    while (true) {
+        status = receiveFromEngine(state.client_id, response, ctx, 30000);
+        if (status != core::Status::OK) {
+            return sendErrorResponse(state, "58000", "Failed to receive bind response from engine");
+        }
+        if (response.getType() == IPCMessageType::ERROR_RESPONSE) {
+            return translateAndSendResponse(state, response, ctx);
+        }
+        if (response.getType() == IPCMessageType::BIND_COMPLETE) {
+            PGClientState::PortalInfo portal;
+            portal.name = portal_name;
+            portal.stmt_name = stmt_name;
+            portal.params = std::move(params);
+            portal.result_formats = std::move(result_formats);
+            portal.is_open = true;
+            state.portals[portal_name] = std::move(portal);
+            return translateAndSendResponse(state, response, ctx);
+        }
+    }
 }
 
 core::Status PostgreSQLParserAgent::handleExecuteMessage(PGClientState& state,
@@ -913,25 +1263,20 @@ core::Status PostgreSQLParserAgent::handleExecuteMessage(PGClientState& state,
         return sendErrorResponse(state, "26000", "Prepared statement not found: " + stmt_name);
     }
     
-    const std::string& sql = stmt_it->second.sql;
-    
-    // Execute via IPC using SIMPLE_QUERY (matches IPC contract)
-    // Note: EXECUTE in IPC contract doesn't include SQL; engine would need
-    // its own prepared statement cache. Using SIMPLE_QUERY for now.
     IPCMessage ipc_msg;
-    ipc_msg.setType(IPCMessageType::SIMPLE_QUERY);
+    ipc_msg.setType(IPCMessageType::EXECUTE);
     ipc_msg.header.request_id = state.request_id++;
-    
-    // Build SIMPLE_QUERY payload (matches IPC contract)
-    IPCSimpleQueryPayload query_payload;
-    query_payload.flags = 0;
-    query_payload.query_length = static_cast<uint32_t>(sql.length());
-    
-    ipc_msg.payload.resize(sizeof(query_payload) + sql.length());
-    std::memcpy(ipc_msg.payload.data(), &query_payload, sizeof(query_payload));
-    std::memcpy(ipc_msg.payload.data() + sizeof(query_payload), sql.data(), sql.length());
-    
-    // Send to engine via IPC
+
+    IPCExecutePayload execute_payload{};
+    std::strncpy(execute_payload.portal_name,
+                 portal_name.c_str(),
+                 sizeof(execute_payload.portal_name) - 1);
+    execute_payload.portal_name[sizeof(execute_payload.portal_name) - 1] = '\0';
+    execute_payload.max_rows = 0;
+
+    ipc_msg.payload.resize(sizeof(execute_payload));
+    std::memcpy(ipc_msg.payload.data(), &execute_payload, sizeof(execute_payload));
+
     auto status = sendToEngine(state.client_id, ipc_msg, ctx);
     if (status != core::Status::OK) {
         return sendErrorResponse(state, "58000", "Failed to send execute to engine");
@@ -973,24 +1318,38 @@ core::Status PostgreSQLParserAgent::handleCloseMessage(PGClientState& state,
     uint8_t close_type = msg[5];
     const char* name = reinterpret_cast<const char*>(msg.data() + 6);
     
-    if (close_type == 'S') {
-        state.prepared_stmts.erase(name);
-    } else if (close_type == 'P') {
-        state.portals.erase(name);
+    IPCMessage close_msg(IPCMessageType::CLOSE, 0);
+    close_msg.header.request_id = state.request_id++;
+    IPCClosePayload close_payload{};
+    close_payload.type = close_type;
+    std::strncpy(close_payload.name, name, sizeof(close_payload.name) - 1);
+    close_payload.name[sizeof(close_payload.name) - 1] = '\0';
+    close_msg.payload.resize(sizeof(close_payload));
+    std::memcpy(close_msg.payload.data(), &close_payload, sizeof(close_payload));
+
+    auto status = sendToEngine(state.client_id, close_msg, ctx);
+    if (status != core::Status::OK) {
+        return sendErrorResponse(state, "58000", "Failed to send close to engine");
     }
-    
-    // Send CloseComplete
-    std::vector<uint8_t> response;
-    response.push_back(pg::BE_CLOSE_COMPLETE);
-    writeUint32(response.data() + response.size(), 4);
-    response.resize(response.size() + 4);
-    
-    if (sb_socket_send(state.client_fd, response.data(), response.size(), 0) != 
-        static_cast<ssize_t>(response.size())) {
-        return core::Status::IO_ERROR;
+
+    IPCMessage response;
+    while (true) {
+        status = receiveFromEngine(state.client_id, response, ctx, 30000);
+        if (status != core::Status::OK) {
+            return sendErrorResponse(state, "58000", "Failed to receive close response from engine");
+        }
+        if (response.getType() == IPCMessageType::ERROR_RESPONSE) {
+            return translateAndSendResponse(state, response, ctx);
+        }
+        if (response.getType() == IPCMessageType::CLOSE_COMPLETE) {
+            if (close_type == 'S') {
+                state.prepared_stmts.erase(name);
+            } else if (close_type == 'P') {
+                state.portals.erase(name);
+            }
+            return translateAndSendResponse(state, response, ctx);
+        }
     }
-    
-    return core::Status::OK;
 }
 
 core::Status PostgreSQLParserAgent::handleDescribeMessage(PGClientState& state,
@@ -1174,10 +1533,12 @@ core::Status PostgreSQLParserAgent::handleCancelRequest(PGClientState& state,
 void PostgreSQLParserAgent::sendAuthenticationOk(PGClientState& state) {
     std::vector<uint8_t> msg;
     msg.push_back(pg::BE_AUTHENTICATION);
-    writeUint32(msg.data() + msg.size(), 8);
+    size_t len_offset = msg.size();
     msg.resize(msg.size() + 4);
-    writeUint32(msg.data() + msg.size(), pg::AUTH_OK);
+    writeUint32(msg.data() + len_offset, 8);
+    size_t auth_offset = msg.size();
     msg.resize(msg.size() + 4);
+    writeUint32(msg.data() + auth_offset, pg::AUTH_OK);
     
     sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
 }
@@ -1185,10 +1546,12 @@ void PostgreSQLParserAgent::sendAuthenticationOk(PGClientState& state) {
 void PostgreSQLParserAgent::sendAuthenticationCleartext(PGClientState& state) {
     std::vector<uint8_t> msg;
     msg.push_back(pg::BE_AUTHENTICATION);
-    writeUint32(msg.data() + msg.size(), 8);
+    size_t len_offset = msg.size();
     msg.resize(msg.size() + 4);
-    writeUint32(msg.data() + msg.size(), pg::AUTH_CLEARTEXT_PASSWORD);
+    writeUint32(msg.data() + len_offset, 8);
+    size_t auth_offset = msg.size();
     msg.resize(msg.size() + 4);
+    writeUint32(msg.data() + auth_offset, pg::AUTH_CLEARTEXT_PASSWORD);
     
     sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
 }
@@ -1196,10 +1559,12 @@ void PostgreSQLParserAgent::sendAuthenticationCleartext(PGClientState& state) {
 void PostgreSQLParserAgent::sendAuthenticationMD5(PGClientState& state, const std::string& salt) {
     std::vector<uint8_t> msg;
     msg.push_back(pg::BE_AUTHENTICATION);
-    writeUint32(msg.data() + msg.size(), 12);
+    size_t len_offset = msg.size();
     msg.resize(msg.size() + 4);
-    writeUint32(msg.data() + msg.size(), pg::AUTH_MD5_PASSWORD);
+    writeUint32(msg.data() + len_offset, 12);
+    size_t auth_offset = msg.size();
     msg.resize(msg.size() + 4);
+    writeUint32(msg.data() + auth_offset, pg::AUTH_MD5_PASSWORD);
     
     std::array<uint8_t, 4> salt_bytes{{0, 0, 0, 0}};
     std::memcpy(salt_bytes.data(), salt.data(), std::min<size_t>(salt.size(), salt_bytes.size()));
@@ -1211,12 +1576,15 @@ void PostgreSQLParserAgent::sendAuthenticationMD5(PGClientState& state, const st
 void PostgreSQLParserAgent::sendBackendKeyData(PGClientState& state) {
     std::vector<uint8_t> msg;
     msg.push_back(pg::BE_BACKEND_KEY_DATA);
-    writeUint32(msg.data() + msg.size(), 12);
+    size_t len_offset = msg.size();
     msg.resize(msg.size() + 4);
-    writeUint32(msg.data() + msg.size(), state.process_id);
+    writeUint32(msg.data() + len_offset, 12);
+    size_t process_offset = msg.size();
     msg.resize(msg.size() + 4);
-    writeUint32(msg.data() + msg.size(), state.secret_key);
+    writeUint32(msg.data() + process_offset, state.process_id);
+    size_t secret_offset = msg.size();
     msg.resize(msg.size() + 4);
+    writeUint32(msg.data() + secret_offset, state.secret_key);
     
     sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
 }
@@ -1224,8 +1592,9 @@ void PostgreSQLParserAgent::sendBackendKeyData(PGClientState& state) {
 void PostgreSQLParserAgent::sendReadyForQuery(PGClientState& state) {
     std::vector<uint8_t> msg;
     msg.push_back(pg::BE_READY_FOR_QUERY);
-    writeUint32(msg.data() + msg.size(), 5);
+    size_t len_offset = msg.size();
     msg.resize(msg.size() + 4);
+    writeUint32(msg.data() + len_offset, 5);
     msg.push_back(state.transaction_status);
     
     sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
@@ -1238,8 +1607,9 @@ void PostgreSQLParserAgent::sendParameterStatus(PGClientState& state,
     msg.push_back(pg::BE_PARAMETER_STATUS);
     
     uint32_t len = 4 + name.size() + 1 + value.size() + 1;
-    writeUint32(msg.data() + msg.size(), len);
+    size_t len_offset = msg.size();
     msg.resize(msg.size() + 4);
+    writeUint32(msg.data() + len_offset, len);
     
     msg.insert(msg.end(), name.begin(), name.end());
     msg.push_back('\0');
@@ -1256,9 +1626,9 @@ core::Status PostgreSQLParserAgent::sendErrorResponse(PGClientState& state,
     msg.push_back(pg::BE_ERROR_RESPONSE);
     
     uint32_t len_placeholder = 0;
-    writeUint32(msg.data() + msg.size(), len_placeholder);
     size_t len_offset = msg.size();
     msg.resize(msg.size() + 4);
+    writeUint32(msg.data() + len_offset, len_placeholder);
     
     // Severity
     msg.push_back(pg::ERR_SEVERITY);
@@ -1280,7 +1650,7 @@ core::Status PostgreSQLParserAgent::sendErrorResponse(PGClientState& state,
     msg.push_back(pg::ERR_NULL);
     
     // Update length
-    writeUint32(msg.data() + len_offset, msg.size());
+    writeUint32(msg.data() + len_offset, static_cast<uint32_t>(msg.size() - 1));
     
     if (sb_socket_send(state.client_fd, msg.data(), msg.size(), 0) != 
         static_cast<ssize_t>(msg.size())) {

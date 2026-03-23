@@ -65,6 +65,11 @@ namespace scratchbird::udr
         auto canonicalizeProfileId(const std::string &profile_id) -> std::string
         {
             std::string normalized = toLowerAscii(trimAscii(profile_id));
+            if (normalized == "scratchbird_v3" || normalized == "scratchbird_native" ||
+                normalized == "native")
+            {
+                return "scratchbird";
+            }
             if (normalized == "firebird")
             {
                 return "firebirdsql";
@@ -195,7 +200,7 @@ namespace scratchbird::udr
         {
             const std::string normalized = canonicalizeProfileId(profile_id);
 
-            if (normalized == "native")
+            if (normalized == "scratchbird")
             {
                 contract_out.translation_mode = "SQL_REWRITE_TO_NATIVE";
                 contract_out.payload_formats = {"SQL_TEXT", ""};

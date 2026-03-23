@@ -1,0 +1,63 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 11,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_duckdb/raw/ref_duckdb.setup.2930f4d7ca8a.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_duckdb/raw/ref_duckdb.setup.2930f4d7ca8a.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "WHERE",
+    "message": "                                        ^",
+    "stdout": "\nCatalog Error: Table with name avp_expression_lookup does not exist!\nDid you mean \"pg_description\"?\n\nLINE 1: EXPLAIN SELECT id, payload FROM avp_expression_lookup WHERE LOWER(name) = 'charlie';\n                                        ^\n",
+    "stderr": "",
+    "elapsed_ms": 13,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_duckdb/raw/ref_duckdb.plan.04f6ea01335f.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_duckdb/raw/ref_duckdb.plan.04f6ea01335f.stderr.txt",
+    "plan_lines": [
+      "PLAN|Catalog Error: Table with name avp_expression_lookup does not exist!",
+      "PLAN|Did you mean \"pg_description\"?",
+      "PLAN|LINE 1: EXPLAIN SELECT id, payload FROM avp_expression_lookup WHERE LOWER(name) = 'charlie';",
+      "PLAN|^"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "00000",
+    "message": "             ^",
+    "stdout": "\nCatalog Error: Table with name avp_expression_lookup does not exist!\nDid you mean \"pg_description\"?\n\nLINE 2: FROM avp_expression_lookup\n             ^\n",
+    "stderr": "",
+    "elapsed_ms": 10,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_duckdb/raw/ref_duckdb.exec.dd3b590b6d6b.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_duckdb/raw/ref_duckdb.exec.dd3b590b6d6b.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 12,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_duckdb/raw/ref_duckdb.teardown.bf3cbf8fbb08.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/expression_lookup/ref_duckdb/raw/ref_duckdb.teardown.bf3cbf8fbb08.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

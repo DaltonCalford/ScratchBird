@@ -267,8 +267,9 @@ namespace scratchbird::core
         uint16_t restart_count = 0;
     };
 
-    static auto inspect_root_btree_page(const SBBTreePage *page,
-                                        uint32_t expected_page_id) -> BTreePageOpenInspection
+    static auto inspect_btree_page(const SBBTreePage *page,
+                                   uint32_t expected_page_id,
+                                   bool require_root) -> BTreePageOpenInspection
     {
         BTreePageOpenInspection result;
         if (page == nullptr)
@@ -327,14 +328,16 @@ namespace scratchbird::core
             return result;
         }
 
-        if ((page->btr_flags & static_cast<uint16_t>(BTreeFlags::ROOT)) == 0)
+        const bool is_root =
+            (page->btr_flags & static_cast<uint16_t>(BTreeFlags::ROOT)) != 0;
+        if (require_root && !is_root)
         {
             result.status = Status::PAGE_CORRUPT;
             result.error_message = "B-tree root page missing ROOT flag";
             return result;
         }
 
-        if (page->btr_parent_page != 0)
+        if (is_root && page->btr_parent_page != 0)
         {
             result.status = Status::PAGE_CORRUPT;
             result.error_message = "B-tree root page has parent pointer";
@@ -473,6 +476,12 @@ namespace scratchbird::core
         }
 
         return result;
+    }
+
+    static auto inspect_root_btree_page(const SBBTreePage *page,
+                                        uint32_t expected_page_id) -> BTreePageOpenInspection
+    {
+        return inspect_btree_page(page, expected_page_id, true);
     }
 
     // Compute minimal separator key between left_max and right_min for internal nodes.
@@ -1552,7 +1561,6 @@ namespace scratchbird::core
         // Get proc_id from ConnectionContext (thread-local storage)
         int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
         const uint32_t proc_id = (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
-
         uint64_t previous_page_num = 0; // For lock coupling
 
         while (true)
@@ -1688,7 +1696,6 @@ namespace scratchbird::core
             }
 
             const auto *page = reinterpret_cast<const SBBTreePage *>(page_data_ptr);
-
             if ((page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0)
             {
                 // Found leaf page - keep lock held and return
@@ -3233,47 +3240,10 @@ namespace scratchbird::core
                 }
             }
 
-            // Attempt to merge adjacent pages at this level
-            for (size_t i = 0; i + 1 < pages_at_level.size(); ++i)
-            {
-                uint32_t left_page = pages_at_level[i];
-                uint32_t right_page = pages_at_level[i + 1];
-
-                // Check if pages should be merged
-                void *left_data_ptr = nullptr;
-                void *right_data_ptr = nullptr;
-
-                status = pinIndexPage(left_page, &left_data_ptr, ctx,
-                                      BufferPool::AccessStrategy::Vacuum);
-                if (status != Status::OK)
-                    continue;
-
-                status = pinIndexPage(right_page, &right_data_ptr, ctx,
-                                      BufferPool::AccessStrategy::Vacuum);
-                if (status != Status::OK)
-                {
-                    unpinIndexPage(left_page, false, ctx);
-                    continue;
-                }
-
-                auto *left_page_hdr = reinterpret_cast<SBBTreePage *>(left_data_ptr);
-                auto *right_page_hdr = reinterpret_cast<SBBTreePage *>(right_data_ptr);
-
-                bool should_merge = shouldMergePages(left_page_hdr, right_page_hdr);
-
-                unpinIndexPage(left_page, false, ctx);
-                unpinIndexPage(right_page, false, ctx);
-
-                if (should_merge)
-                {
-                    status = mergePages(left_page, right_page, stats, ctx);
-                    if (status == Status::OK)
-                    {
-                        // Page was merged, skip right_page in future iterations
-                        pages_at_level.erase(pages_at_level.begin() + i + 1);
-                    }
-                }
-            }
+            // GC compaction currently performs in-page cleanup only.
+            // Structural sibling merges stay disabled here until the separator-key rewrite path is
+            // fully revalidated for every internal-page shape. This keeps GC reclamation correct
+            // without risking parent/child routing corruption during maintenance.
         }
 
         if (stats_out)
@@ -3298,6 +3268,8 @@ namespace scratchbird::core
 
         auto *page = reinterpret_cast<SBBTreePage *>(page_data_ptr);
         uint32_t page_size = page->btr_header.page_size;
+        const bool is_leaf =
+            (page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0;
 
         TransactionManager *txn_mgr = db_->transaction_manager();
         uint64_t current_xid = txn_mgr ? txn_mgr->getCurrentXid() : 0;
@@ -3348,8 +3320,27 @@ namespace scratchbird::core
             return Status::OK;
         }
 
+        if (!is_leaf)
+        {
+            // GC compaction is deliberately leaf-only for now. Internal-page rewrite paths are
+            // still undergoing restart-anchor/separator revalidation, so leave internal garbage
+            // markers in place rather than risking search-routing corruption during maintenance.
+            unpinIndexPage(page_id, false, ctx);
+            return Status::OK;
+        }
+
         // Compact the page
         status = compactPage(reinterpret_cast<uint8_t *>(page_data_ptr), page_size, stats, ctx);
+        if (status == Status::OK)
+        {
+            const BTreePageOpenInspection inspection =
+                inspect_btree_page(page, page_id, false);
+            if (inspection.status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, inspection.status, inspection.error_message);
+                status = inspection.status;
+            }
+        }
 
         if (status == Status::OK)
         {
@@ -3549,55 +3540,99 @@ namespace scratchbird::core
         auto *left_page = reinterpret_cast<SBBTreePage *>(left_data_ptr);
         auto *right_page = reinterpret_cast<SBBTreePage *>(right_data_ptr);
         uint32_t page_size = left_page->btr_header.page_size;
+        const bool is_leaf =
+            (left_page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0;
 
-        // Get offset arrays
-        auto *left_offsets = reinterpret_cast<uint16_t *>(
-            reinterpret_cast<uint8_t *>(left_data_ptr) + sizeof(SBBTreePage));
-        auto *right_offsets = reinterpret_cast<uint16_t *>(
-            reinterpret_cast<uint8_t *>(right_data_ptr) + sizeof(SBBTreePage));
-
-        // Copy all nodes from right page to left page
-        for (uint16_t i = 0; i < right_page->btr_count; ++i)
+        if (!is_leaf)
         {
-            auto *node = reinterpret_cast<SBBTreeNode *>(
-                reinterpret_cast<uint8_t *>(right_data_ptr) + right_offsets[i]);
+            unpinIndexPage(left_page_id, false, ctx);
+            unpinIndexPage(right_page_id, false, ctx);
+            return Status::NOT_SUPPORTED;
+        }
 
-            // Calculate node size
-            uint32_t node_size = sizeof(SBBTreeNode) + node->btn_key_len;
+        std::vector<LeafEntryData> merged_entries;
+        merged_entries.reserve(static_cast<size_t>(left_page->btr_count) +
+                               static_cast<size_t>(right_page->btr_count));
 
-            if (right_page->btr_level == 0)
+        const auto append_leaf_entries = [&](const uint8_t *page_data,
+                                             const SBBTreePage *page_hdr) -> Status
+        {
+            const auto *offsets = reinterpret_cast<const uint16_t *>(
+                page_data + sizeof(SBBTreePage));
+            std::vector<uint8_t> prev_key;
+
+            for (uint16_t i = 0; i < page_hdr->btr_count; ++i)
             {
-                // Leaf node
-                node_size += node->btn_tuple_count * sizeof(OnDiskTID);
+                const SBBTreeNode *node = nullptr;
+                const uint8_t *node_key_data = nullptr;
+                uint32_t node_size = 0;
+                if (!loadBTreeNodeView(page_data, page_size, offsets, i, true,
+                                       &node, &node_key_data, &node_size))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                      "B-tree page merge encountered invalid leaf node bounds");
+                    return Status::PAGE_CORRUPT;
+                }
+
+                LeafEntryData entry;
+                entry.key = decompress_key(prev_key,
+                                           node_key_data,
+                                           node->btn_key_len,
+                                           node->btn_prefix_len);
+                prev_key = entry.key;
+                entry.flags = node->btn_flags;
+                entry.xmin = node->btn_xmin;
+                entry.xmax = node->btn_xmax;
+
+                const auto *tuple_ids_ptr =
+                    reinterpret_cast<const OnDiskTID *>(node_key_data + node->btn_key_len);
+                entry.tids.reserve(node->btn_tuple_count);
+                for (uint32_t j = 0; j < node->btn_tuple_count; ++j)
+                {
+                    entry.tids.push_back(tuple_ids_ptr[j]);
+                }
+
+                merged_entries.push_back(std::move(entry));
             }
 
-            // Check if there's enough space
-            if (left_page->btr_free_space < node_size + sizeof(uint16_t))
-            {
-                // Not enough space, abort merge
-                unpinIndexPage(left_page_id, false, ctx);
-                unpinIndexPage(right_page_id, false, ctx);
-                return Status::PAGE_FULL;
-            }
+            return Status::OK;
+        };
 
-            // Allocate space from end of left page
-            left_page->btr_high_water -= node_size;
-
-            // Copy node data
-            uint8_t *dest_node =
-                reinterpret_cast<uint8_t *>(left_data_ptr) + left_page->btr_high_water;
-            std::memcpy(dest_node, node, node_size);
-
-            // Update offset array
-            left_offsets[left_page->btr_count] = left_page->btr_high_water;
-            left_page->btr_count++;
-
-            // Update free space
-            left_page->btr_free_space -= (node_size + sizeof(uint16_t));
+        status = append_leaf_entries(reinterpret_cast<const uint8_t *>(left_data_ptr),
+                                     left_page);
+        if (status != Status::OK)
+        {
+            unpinIndexPage(left_page_id, false, ctx);
+            unpinIndexPage(right_page_id, false, ctx);
+            return status;
+        }
+        status = append_leaf_entries(reinterpret_cast<const uint8_t *>(right_data_ptr),
+                                     right_page);
+        if (status != Status::OK)
+        {
+            unpinIndexPage(left_page_id, false, ctx);
+            unpinIndexPage(right_page_id, false, ctx);
+            return status;
         }
 
         // Update sibling pointers
         left_page->btr_right_sibling = right_page->btr_right_sibling;
+        if ((right_page->btr_flags & static_cast<uint16_t>(BTreeFlags::RIGHTMOST)) != 0)
+        {
+            left_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
+        }
+        else
+        {
+            left_page->btr_flags &= ~static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
+        }
+
+        status = rebuild_leaf_page(left_page, page_size, merged_entries, ctx);
+        if (status != Status::OK)
+        {
+            unpinIndexPage(left_page_id, false, ctx);
+            unpinIndexPage(right_page_id, false, ctx);
+            return status;
+        }
 
         // Update right sibling's left pointer if it exists
         if (right_page->btr_right_sibling != 0)
@@ -3662,61 +3697,73 @@ namespace scratchbird::core
         }
 
         auto *parent_page = reinterpret_cast<SBBTreePage *>(parent_data_ptr);
-        auto *parent_offsets = reinterpret_cast<uint16_t *>(
-            reinterpret_cast<uint8_t *>(parent_data_ptr) + sizeof(SBBTreePage));
+        const uint32_t page_size = parent_page->btr_header.page_size;
+        const auto *page_data = reinterpret_cast<const uint8_t *>(parent_data_ptr);
+        const auto *parent_offsets = reinterpret_cast<const uint16_t *>(
+            page_data + sizeof(SBBTreePage));
 
-        // Find the entry that points to child_page_id
-        int16_t entry_to_remove = -1;
+        std::vector<InternalKeyEntry> keys;
+        std::vector<uint64_t> children;
+        keys.reserve(parent_page->btr_count);
+        children.reserve(static_cast<size_t>(parent_page->btr_count) + 1);
+
+        std::vector<uint8_t> prev_key;
         for (uint16_t i = 0; i < parent_page->btr_count; ++i)
         {
-            auto *node = reinterpret_cast<SBBTreeNode *>(
-                reinterpret_cast<uint8_t *>(parent_data_ptr) + parent_offsets[i]);
-
-            // Check if this node points to the child page we're removing
-            if (node->btn_child_page == child_page_id)
+            const SBBTreeNode *node = nullptr;
+            const uint8_t *node_key_data = nullptr;
+            uint32_t node_size = 0;
+            if (!loadBTreeNodeView(page_data, page_size, parent_offsets, i, false,
+                                   &node, &node_key_data, &node_size))
             {
-                entry_to_remove = i;
-                break;
+                unpinIndexPage(parent_page_num, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Parent page contains invalid internal node bounds");
+                return Status::PAGE_CORRUPT;
             }
+
+            InternalKeyEntry entry;
+            entry.key = decompress_key(prev_key,
+                                       node_key_data,
+                                       node->btn_key_len,
+                                       node->btn_prefix_len);
+            prev_key = entry.key;
+            entry.suffix_trunc = node->btn_suffix_trunc;
+            entry.flags = node->btn_flags;
+            keys.push_back(std::move(entry));
+            children.push_back(node->btn_child_page);
         }
+        children.push_back(parent_page->btr_rightmost_child);
 
-        if (entry_to_remove < 0)
+        auto child_it = std::find(children.begin(), children.end(), child_page_id);
+        if (child_it == children.end())
         {
-            // Child not found in parent - might be rightmost child or corruption
-            // Check if child is the rightmost child
-            if (parent_page->btr_rightmost_child == child_page_id)
-            {
-                // Need to promote the last entry's child to be the new rightmost child
-                if (parent_page->btr_count > 0)
-                {
-                    auto *last_node = reinterpret_cast<SBBTreeNode *>(
-                        reinterpret_cast<uint8_t *>(parent_data_ptr) +
-                        parent_offsets[parent_page->btr_count - 1]);
-                    parent_page->btr_rightmost_child = last_node->btn_child_page;
-
-                    // Remove the last entry since its child became the rightmost
-                    parent_page->btr_count--;
-
-                    // Recalculate free space
-                    uint32_t node_size = sizeof(SBBTreeNode) + last_node->btn_key_len;
-                    parent_page->btr_free_space += (node_size + sizeof(uint16_t));
-
-                    unpinIndexPage(parent_page_num, true, ctx);
-                    return Status::OK;
-                }
-            }
-
             unpinIndexPage(parent_page_num, false, ctx);
             return Status::NOT_FOUND;
         }
 
-        // Mark the node as deleted (physical removal done by compaction during next GC pass)
-        auto *node_to_remove = reinterpret_cast<SBBTreeNode *>(
-            reinterpret_cast<uint8_t *>(parent_data_ptr) + parent_offsets[entry_to_remove]);
-        node_to_remove->btn_flags |= static_cast<uint16_t>(BTreeNodeFlags::DELETED);
+        const size_t child_index = static_cast<size_t>(std::distance(children.begin(), child_it));
+        size_t key_index_to_remove = child_index;
+        if (child_index > 0)
+        {
+            key_index_to_remove = child_index - 1;
+        }
+        if (key_index_to_remove < keys.size())
+        {
+            keys.erase(keys.begin() + static_cast<std::ptrdiff_t>(key_index_to_remove));
+        }
+        children.erase(child_it);
 
-        // Set HAS_GARBAGE flag to indicate page needs GC compaction
-        parent_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE);
+        const Status rebuild_status = rebuild_internal_page(parent_page,
+                                                            page_size,
+                                                            keys,
+                                                            children,
+                                                            ctx);
+        if (rebuild_status != Status::OK)
+        {
+            unpinIndexPage(parent_page_num, false, ctx);
+            return rebuild_status;
+        }
 
         unpinIndexPage(parent_page_num, true, ctx);
 

@@ -14,6 +14,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/permission_cache.h"
+#include "scratchbird/core/job_scheduler_utils.h"
 #include "scratchbird/core/secure_diagnostics.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
@@ -80,6 +81,9 @@
 #include "scratchbird/core/tablespace.h"
 #include "scratchbird/security/scram_auth.h"
 #include "scratchbird/security/mfa_auth.h"
+#include "scratchbird/sblr/v3_container.h"
+#include "scratchbird/sblr/v3_opcodes.generated.h"
+#include "scratchbird/sblr/v3_payloads.h"
 
 namespace scratchbird::core
 {
@@ -89,11 +93,16 @@ using json = nlohmann::json;
 using CatalogMutex = CatalogManager::CatalogMutex;
 
 std::vector<uint8_t> hexToBytesLocal(const std::string& hex_str);
+std::string bytesToHexLocal(const std::vector<uint8_t>& bytes);
+bool parseUuidTextLocal(std::string_view text, ID& out);
 bool isReasonableSequenceName(const std::string& name);
 void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
                                    std::vector<std::string>& names_out);
 bool isZeroUuidLocal(const ID& id);
 bool isValidSourceScopeKind(CatalogManager::SourceScopeKind kind);
+std::string encodeViewDefinitionStorage(const CatalogManager::ViewInfo& view);
+void decodeViewDefinitionStorage(const std::string& stored,
+                                 CatalogManager::ViewInfo& view);
 bool isUuidV7Local(const ID& id)
 {
     std::vector<uint8_t> bytes;
@@ -125,6 +134,15 @@ std::string normalizeEmulationModeLocal(const std::string& emulation_mode)
     return normalized;
 }
 
+bool isCanonicalNativeModeLocal(std::string_view emulation_mode)
+{
+    return emulation_mode.empty() ||
+           emulation_mode == "native" ||
+           emulation_mode == "scratchbird" ||
+           emulation_mode == "scratchbird_native" ||
+           emulation_mode == "scratchbird_v3";
+}
+
 std::string toLowerCopy(const std::string& input)
 {
     std::string out;
@@ -148,6 +166,362 @@ std::string normalizeCatalogName(std::string value)
         }
     }
     return out;
+}
+
+std::string bytesToHexLocal(const std::vector<uint8_t>& bytes)
+{
+    static constexpr char kHexDigits[] = "0123456789abcdef";
+    std::string out;
+    out.reserve(bytes.size() * 2);
+    for (uint8_t byte : bytes)
+    {
+        out.push_back(kHexDigits[(byte >> 4) & 0x0F]);
+        out.push_back(kHexDigits[byte & 0x0F]);
+    }
+    return out;
+}
+
+bool parseUuidTextLocal(std::string_view text, ID& out)
+{
+    std::array<uint8_t, 16> bytes{};
+    size_t nibble_index = 0;
+    uint8_t current = 0;
+
+    auto hex_value = [](char c) -> int {
+        if (c >= '0' && c <= '9')
+        {
+            return c - '0';
+        }
+        if (c >= 'a' && c <= 'f')
+        {
+            return 10 + (c - 'a');
+        }
+        if (c >= 'A' && c <= 'F')
+        {
+            return 10 + (c - 'A');
+        }
+        return -1;
+    };
+
+    for (char c : text)
+    {
+        if (c == '-')
+        {
+            continue;
+        }
+        int value = hex_value(c);
+        if (value < 0 || nibble_index >= 32)
+        {
+            return false;
+        }
+        if ((nibble_index & 1u) == 0)
+        {
+            current = static_cast<uint8_t>(value << 4);
+        }
+        else
+        {
+            bytes[nibble_index / 2] = static_cast<uint8_t>(current | static_cast<uint8_t>(value));
+        }
+        ++nibble_index;
+    }
+
+    if (nibble_index != 32)
+    {
+        return false;
+    }
+
+    out.bytes = bytes;
+    return true;
+}
+
+std::string encodeViewDefinitionStorage(const CatalogManager::ViewInfo& view)
+{
+    if (view.compiled_query_sblr.empty() &&
+        view.insert_bindings.empty() &&
+        view.source_dialect.empty() &&
+        view.native_compiled_code.empty())
+    {
+        return view.definition;
+    }
+
+    json doc;
+    doc["format"] = "scratchbird.view_bundle.v1";
+    doc["definition"] = view.definition;
+    if (!view.source_dialect.empty())
+    {
+        doc["source_dialect"] = view.source_dialect;
+    }
+
+    if (!view.compiled_query_sblr.empty())
+    {
+        doc["compiled_query_sblr_hex"] = bytesToHexLocal(view.compiled_query_sblr);
+    }
+    if (!view.native_compiled_code.empty())
+    {
+        doc["native_compiled_code_hex"] = bytesToHexLocal(view.native_compiled_code);
+    }
+
+    if (!view.insert_bindings.empty())
+    {
+        json bindings = json::array();
+        for (const auto& binding : view.insert_bindings)
+        {
+            json binding_doc;
+            binding_doc["view_column"] = binding.view_column;
+            binding_doc["base_column"] = binding.base_column;
+            binding_doc["writable"] = binding.writable;
+            if (!isZeroUuidLocal(binding.base_table_id))
+            {
+                binding_doc["base_table_id"] = binding.base_table_id.toString();
+            }
+            bindings.push_back(std::move(binding_doc));
+        }
+        doc["insert_bindings"] = std::move(bindings);
+    }
+
+    return doc.dump();
+}
+
+bool buildSingleStatementV3ContainerLocal(const scratchbird::sblr::v3::Instruction& root,
+                                          std::vector<uint8_t>& out,
+                                          std::string& error)
+{
+    using namespace scratchbird::sblr::v3;
+
+    Container container;
+    container.header.version_major = 3;
+    container.header.version_minor = 0;
+    container.header.version_patch = 0;
+    container.header.flags = 0;
+
+    container.metadata.module_name = "scratchbird";
+    container.metadata.module_version = "v3";
+    container.metadata.dialect_id = 1;
+    container.metadata.target_platform = 0;
+
+    Buffer stream;
+    DecodeError derr;
+
+    Instruction version;
+    version.opcode = static_cast<uint16_t>(Opcode::SBLR3_VERSION);
+    version.flags = 0;
+    version.payload = Value(Value::Bytes{3, 0, 0, 0, 0, 0});
+    if (!encodeInstructionWithSchema(version, stream, derr))
+    {
+        error = derr.message;
+        return false;
+    }
+
+    if (!encodeInstructionWithSchema(root, stream, derr))
+    {
+        error = derr.message;
+        return false;
+    }
+
+    Instruction end;
+    end.opcode = static_cast<uint16_t>(Opcode::SBLR3_END);
+    end.flags = 0;
+    end.payload = Value(Value::Bytes{});
+    if (!encodeInstructionWithSchema(end, stream, derr))
+    {
+        error = derr.message;
+        return false;
+    }
+
+    container.bytecode_stream = std::move(stream);
+    return encodeContainer(container, out, error);
+}
+
+bool buildSystemMaintenanceJobBytecodeLocal(const std::string& job_sql,
+                                            std::vector<uint8_t>& out,
+                                            std::string& error)
+{
+    using namespace scratchbird::sblr::v3;
+
+    Instruction root;
+    root.flags = 0;
+
+    if (job_sql == "SWEEP DATABASE")
+    {
+        root.opcode = static_cast<uint16_t>(Opcode::SBLR3_SWEEP);
+        root.payload = Value(Value::Object{});
+        return buildSingleStatementV3ContainerLocal(root, out, error);
+    }
+
+    error = "No canonical maintenance SBLR builder for: " + job_sql;
+    return false;
+}
+
+void decodeViewDefinitionStorage(const std::string& stored,
+                                 CatalogManager::ViewInfo& view)
+{
+    view.definition = stored;
+    view.source_dialect.clear();
+    view.compiled_query_sblr.clear();
+    view.native_compiled_code.clear();
+    view.insert_bindings.clear();
+
+    if (stored.empty())
+    {
+        return;
+    }
+
+    json doc;
+    try
+    {
+        doc = json::parse(stored);
+    }
+    catch (...)
+    {
+        return;
+    }
+
+    if (!doc.is_object() || doc.value("format", std::string()) != "scratchbird.view_bundle.v1")
+    {
+        return;
+    }
+
+    view.definition = doc.value("definition", std::string());
+    view.source_dialect = doc.value("source_dialect", std::string());
+
+    const std::string compiled_hex = doc.value("compiled_query_sblr_hex", std::string());
+    if (!compiled_hex.empty())
+    {
+        view.compiled_query_sblr = hexToBytesLocal(compiled_hex);
+    }
+    const std::string native_hex = doc.value("native_compiled_code_hex", std::string());
+    if (!native_hex.empty())
+    {
+        view.native_compiled_code = hexToBytesLocal(native_hex);
+    }
+
+    auto bindings_it = doc.find("insert_bindings");
+    if (bindings_it == doc.end() || !bindings_it->is_array())
+    {
+        return;
+    }
+
+    for (const auto& binding_doc : *bindings_it)
+    {
+        if (!binding_doc.is_object())
+        {
+            continue;
+        }
+
+        CatalogManager::ViewColumnBinding binding;
+        binding.view_column = binding_doc.value("view_column", std::string());
+        binding.base_column = binding_doc.value("base_column", std::string());
+        binding.writable = binding_doc.value("writable", false);
+
+        const std::string table_id_text = binding_doc.value("base_table_id", std::string());
+        if (!table_id_text.empty())
+        {
+            (void)parseUuidTextLocal(table_id_text, binding.base_table_id);
+        }
+
+        view.insert_bindings.push_back(std::move(binding));
+    }
+}
+
+std::string encodeStoredCodeSourceStorage(const std::string& source_text,
+                                          const std::string& source_dialect)
+{
+    if (source_dialect.empty())
+    {
+        return source_text;
+    }
+
+    json doc;
+    doc["format"] = "scratchbird.stored_code.source_bundle.v1";
+    doc["source_text"] = source_text;
+    doc["source_dialect"] = source_dialect;
+    return doc.dump();
+}
+
+void decodeStoredCodeSourceStorage(const std::string& stored,
+                                   std::string& source_text_out,
+                                   std::string& source_dialect_out)
+{
+    source_text_out = stored;
+    source_dialect_out.clear();
+
+    if (stored.empty())
+    {
+        return;
+    }
+
+    json doc;
+    try
+    {
+        doc = json::parse(stored);
+    }
+    catch (...)
+    {
+        return;
+    }
+
+    if (!doc.is_object() ||
+        doc.value("format", std::string()) != "scratchbird.stored_code.source_bundle.v1")
+    {
+        return;
+    }
+
+    source_text_out = doc.value("source_text", std::string());
+    source_dialect_out = doc.value("source_dialect", std::string());
+}
+
+std::string encodeStoredCodeExecutionStorage(const std::vector<uint8_t>& bytecode,
+                                             const std::vector<uint8_t>& native_compiled_code)
+{
+    if (bytecode.empty() && native_compiled_code.empty())
+    {
+        return {};
+    }
+
+    json doc;
+    doc["format"] = "scratchbird.stored_code.exec_bundle.v1";
+    doc["compiled_sblr_hex"] = bytesToHexLocal(bytecode);
+    if (!native_compiled_code.empty())
+    {
+        doc["native_compiled_code_hex"] = bytesToHexLocal(native_compiled_code);
+    }
+    return doc.dump();
+}
+
+void decodeStoredCodeExecutionStorage(const std::string& stored,
+                                      std::vector<uint8_t>& bytecode_out,
+                                      std::vector<uint8_t>& native_compiled_code_out)
+{
+    bytecode_out.assign(stored.begin(), stored.end());
+    native_compiled_code_out.clear();
+
+    if (stored.empty())
+    {
+        return;
+    }
+
+    json doc;
+    try
+    {
+        doc = json::parse(stored);
+    }
+    catch (...)
+    {
+        return;
+    }
+
+    if (!doc.is_object() ||
+        doc.value("format", std::string()) != "scratchbird.stored_code.exec_bundle.v1")
+    {
+        return;
+    }
+
+    bytecode_out = hexToBytesLocal(doc.value("compiled_sblr_hex", std::string()));
+    const std::string native_hex = doc.value("native_compiled_code_hex", std::string());
+    if (!native_hex.empty())
+    {
+        native_compiled_code_out = hexToBytesLocal(native_hex);
+    }
 }
 
 void copyErrorContextLocal(const ErrorContext& from, ErrorContext* to)
@@ -5586,7 +5960,8 @@ bool hasTriggerNameConflictInTable(
         uint8_t on_completion;      // JobOnCompletion enum
         uint8_t state;              // JobState enum
         uint8_t reserved[3];        // Alignment
-        char job_sql[2048];
+        ID job_source_oid;          // TOAST reference for encoded source SQL + dialect
+        ID job_exec_oid;            // TOAST reference for encoded SBLR/native artifact
         ID procedure_uuid;
         char external_command[1024];
         char cron_expression[256];
@@ -12470,7 +12845,8 @@ bool hasTriggerNameConflictInTable(
         DEBUG_LOG_DB("Security system bootstrap complete");
 
         // ========================================================================
-        // WS-4: Seed built-in maintenance jobs (sweep/GC, stats, index rebuild)
+        // WS-4: Seed built-in maintenance jobs with canonical SBLR only.
+        // Unsupported maintenance commands are not persisted as runnable raw SQL.
         // ========================================================================
         auto now_ms = []() -> uint64_t {
             auto now = std::chrono::system_clock::now().time_since_epoch();
@@ -12483,11 +12859,21 @@ bool hasTriggerNameConflictInTable(
                             const std::string& cron_expression,
                             const std::string& job_sql,
                             CatalogManager::JobState state) -> Status {
+            std::vector<uint8_t> bytecode;
+            std::string compile_error;
+            if (!buildSystemMaintenanceJobBytecodeLocal(job_sql, bytecode, compile_error))
+            {
+                DEBUG_LOG_DB("Skipping maintenance job seed for " << name << ": " << compile_error);
+                return Status::OK;
+            }
+
             CatalogManager::JobInfo job;
             job.job_name = name;
             job.description = description;
             job.job_type = CatalogManager::JobType::SQL;
             job.job_sql = job_sql;
+            job.bytecode = std::move(bytecode);
+            job.source_dialect = "scratchbird_v3";
             job.schedule_kind = CatalogManager::ScheduleKind::CRON;
             job.cron_expression = cron_expression;
             job.created_by_user_uuid = system_user_id_;
@@ -13486,6 +13872,26 @@ bool hasTriggerNameConflictInTable(
                     return status;
                 }
                 status = backfill_catalog_page(healing_step_table_page_, "healing_step");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(jobs_table_page_, "jobs");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(job_runs_table_page_, "job_runs");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(job_dependencies_table_page_, "job_dependencies");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(job_secrets_table_page_, "job_secrets");
                 if (status != Status::OK)
                 {
                     return status;
@@ -15990,7 +16396,8 @@ bool hasTriggerNameConflictInTable(
             auto it = schema_cache_.find(current);
             if (it == schema_cache_.end())
             {
-                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found for path");
+                std::string message = "Schema not found for path: " + current.toString();
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, message.c_str());
                 return Status::NOT_FOUND;
             }
 
@@ -16004,7 +16411,8 @@ bool hasTriggerNameConflictInTable(
             auto info_it = schema_cache_.find(*it);
             if (info_it == schema_cache_.end())
             {
-                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found for path");
+                std::string message = "Schema not found for path: " + it->toString();
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, message.c_str());
                 return Status::NOT_FOUND;
             }
             if (isZeroUuidLocal(info_it->second.parent_schema_id) &&
@@ -16321,8 +16729,8 @@ bool hasTriggerNameConflictInTable(
                 auto it = schema_by_id.find(current);
                 if (it == schema_by_id.end())
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found for path");
-                    return Status::NOT_FOUND;
+                    path_out.clear();
+                    return Status::OK;
                 }
                 chain.push_back(current);
                 current = it->second.parent_schema_id;
@@ -16339,8 +16747,8 @@ bool hasTriggerNameConflictInTable(
                 auto schema_it = schema_by_id.find(*it);
                 if (schema_it == schema_by_id.end())
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found for path");
-                    return Status::NOT_FOUND;
+                    path_out.clear();
+                    return Status::OK;
                 }
                 if (current_path.empty())
                 {
@@ -16393,7 +16801,20 @@ bool hasTriggerNameConflictInTable(
             key.name_is_delimited = name_is_delimited;
             if (!resolver_by_name.emplace(key, obj.object_id).second)
             {
-                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Duplicate object name in scope");
+                if (obj.object_type == ObjectType::FUNCTION ||
+                    obj.object_type == ObjectType::PROCEDURE ||
+                    obj.object_type == ObjectType::UDR ||
+                    obj.object_type == ObjectType::USER ||
+                    obj.object_type == ObjectType::ROLE ||
+                    obj.object_type == ObjectType::GROUP)
+                {
+                    return Status::OK;
+                }
+                std::string message =
+                    "Duplicate object name in scope: type=" +
+                    std::to_string(static_cast<int>(obj.object_type)) +
+                    " name=" + obj.full_path;
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, message.c_str());
                 return Status::DATA_CORRUPTED;
             }
             return Status::OK;
@@ -18553,6 +18974,29 @@ bool hasTriggerNameConflictInTable(
             return Status::INVALID_ARGUMENT;
         }
 
+        ID owner_id{};
+        {
+            UserInfo user_info;
+            ErrorContext lookup_ctx;
+            if (getUserByName(owner, user_info, &lookup_ctx) == Status::OK)
+            {
+                owner_id = user_info.user_id;
+            }
+            else
+            {
+                RoleInfo role_info;
+                if (getRoleByName(owner, role_info, &lookup_ctx) == Status::OK)
+                {
+                    owner_id = role_info.role_id;
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Owner not found");
+                    return Status::NOT_FOUND;
+                }
+            }
+        }
+
         uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
 
         std::lock_guard<CatalogMutex> lock(mutex_);
@@ -18561,12 +19005,6 @@ bool hasTriggerNameConflictInTable(
         {
             SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found");
             return Status::NOT_FOUND;
-        }
-
-        ID owner_id = resolveOwnerUUID(owner, ctx);
-        if (isZeroUuidLocal(owner_id))
-        {
-            return ctx ? ctx->code : Status::NOT_FOUND;
         }
 
         SchemaInfo old_info = it->second;
@@ -18783,6 +19221,7 @@ bool hasTriggerNameConflictInTable(
         uint16_t ordinal = 0;
         for (auto &col : columns_with_ids)
         {
+            col.table_id = table.table_id;
             col.column_id = generateUuidV7();
             col.ordinal = ordinal++;
             col.created_time = table.created_time;
@@ -21179,6 +21618,8 @@ bool hasTriggerNameConflictInTable(
 
         std::string normalized_language = normalize_language(language_code);
         std::string canonical_name = normalizeResolverName(name_text, name_is_delimited);
+        ObjectNameRecord existing_collision{};
+        bool has_existing_collision = false;
 
         if (normalized_language == "default")
         {
@@ -21215,10 +21656,8 @@ bool hasTriggerNameConflictInTable(
 
             if (collision.status == Status::OK && collision.record.object_id != object_id)
             {
-                std::string message =
-                    "NAME_COLLISION: object_name default-language row already exists in parent scope";
-                SET_ERROR_CONTEXT(ctx, Status::DUPLICATE_OBJECT, message.c_str());
-                return Status::DUPLICATE_OBJECT;
+                existing_collision = collision.record;
+                has_existing_collision = true;
             }
             if (collision.status != Status::OK && collision.status != Status::NOT_FOUND)
             {
@@ -21253,6 +21692,14 @@ bool hasTriggerNameConflictInTable(
                 persisted_created_time = existing.record.created_time;
             }
         }
+        else if (has_existing_collision)
+        {
+            persisted_name_id = existing_collision.name_id;
+            if (existing_collision.created_time != 0)
+            {
+                persisted_created_time = existing_collision.created_time;
+            }
+        }
         if (isZeroUuidLocal(persisted_name_id))
         {
             persisted_name_id = generateUuidV7();
@@ -21276,10 +21723,39 @@ bool hasTriggerNameConflictInTable(
         rec.is_valid = 1;
         rec.padding = 0;
 
-        auto predicate = [&object_id, &normalized_language](const ObjectNameRecord& current) {
+        auto predicate = [&object_id,
+                          &normalized_language,
+                          &canonical_name,
+                          &parent_object_id,
+                          &object_type,
+                          &has_existing_collision](const ObjectNameRecord& current) {
             if (current.is_valid == 0 || current.object_id != object_id)
             {
-                return false;
+                if (!has_existing_collision)
+                {
+                    return false;
+                }
+
+                if (current.parent_object_id != parent_object_id)
+                {
+                    return false;
+                }
+                if (current.object_type != static_cast<uint8_t>(object_type))
+                {
+                    return false;
+                }
+
+                size_t lang_len = strnlen(current.language_code, sizeof(current.language_code));
+                std::string row_lang(current.language_code, lang_len);
+                if (row_lang != normalized_language)
+                {
+                    return false;
+                }
+
+                size_t canonical_len = strnlen(current.canonical_name_text,
+                                               sizeof(current.canonical_name_text));
+                std::string row_canonical(current.canonical_name_text, canonical_len);
+                return row_canonical == canonical_name;
             }
             size_t lang_len = strnlen(current.language_code, sizeof(current.language_code));
             std::string row_lang(current.language_code, lang_len);
@@ -21833,6 +22309,12 @@ bool hasTriggerNameConflictInTable(
                 return table_cache_.find(candidate) != table_cache_.end();
             };
 
+            if (resolved.object_type == ObjectType::SCHEMA &&
+                !is_schema_parent(parent_object_id))
+            {
+                parent_object_id = database_id;
+            }
+
             switch (resolved.object_type)
             {
                 case ObjectType::DATABASE:
@@ -21854,9 +22336,17 @@ bool hasTriggerNameConflictInTable(
                     }
                     if (!is_schema_parent(parent_object_id))
                     {
+                        std::string detail =
+                            "PARENT_TYPE_MISMATCH: schema parent must be database or schema";
+                        detail += " object_id=" + resolved.object_id.toString();
+                        detail += " parent_object_id=" + parent_object_id.toString();
+                        if (!name_text.empty())
+                        {
+                            detail += " name=" + name_text;
+                        }
                         SET_ERROR_CONTEXT(
                             ctx, Status::WRONG_OBJECT_TYPE,
-                            "PARENT_TYPE_MISMATCH: schema parent must be database or schema");
+                            detail.c_str());
                         return Status::WRONG_OBJECT_TYPE;
                     }
                     break;
@@ -21879,9 +22369,19 @@ bool hasTriggerNameConflictInTable(
                     }
                     if (parent_object_id != schema_id || !is_schema_parent(parent_object_id))
                     {
+                        std::string detail =
+                            "PARENT_TYPE_MISMATCH: schema-owned object parent must be schema";
+                        detail += " type=" + objectTypeToString(resolved.object_type);
+                        detail += " object_id=" + resolved.object_id.toString();
+                        detail += " schema_id=" + schema_id.toString();
+                        detail += " parent_object_id=" + parent_object_id.toString();
+                        if (!name_text.empty())
+                        {
+                            detail += " name=" + name_text;
+                        }
                         SET_ERROR_CONTEXT(
                             ctx, Status::WRONG_OBJECT_TYPE,
-                            "PARENT_TYPE_MISMATCH: schema-owned object parent must be schema");
+                            detail.c_str());
                         return Status::WRONG_OBJECT_TYPE;
                     }
                     break;
@@ -29848,6 +30348,14 @@ auto CatalogManager::registerFunction(const FunctionInfo &info, ErrorContext *ct
 {
     std::lock_guard<std::mutex> lock(psql_mutex_);
 
+    if (info.bytecode.empty())
+    {
+        SET_ERROR_CONTEXT(ctx,
+                          Status::INVALID_ARGUMENT,
+                          "Function registration requires compiled SBLR bytecode");
+        return Status::INVALID_ARGUMENT;
+    }
+
     // Check if function already exists
     auto it = functions_.find(info.name);
     FunctionInfo updated = info;
@@ -29924,6 +30432,14 @@ auto CatalogManager::registerFunction(const FunctionInfo &info, ErrorContext *ct
 auto CatalogManager::registerProcedure(const ProcedureInfo &info, ErrorContext *ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(psql_mutex_);
+
+    if (info.bytecode.empty())
+    {
+        SET_ERROR_CONTEXT(ctx,
+                          Status::INVALID_ARGUMENT,
+                          "Procedure registration requires compiled SBLR bytecode");
+        return Status::INVALID_ARGUMENT;
+    }
 
     // Check if procedure already exists
     auto it = procedures_.find(info.name);
@@ -35666,9 +36182,13 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
             return Status::CONSTRAINT_VIOLATION;
         }
         view.definition = definition;
+        view.source_dialect.clear();
+        view.compiled_query_sblr.clear();
+        view.native_compiled_code.clear();
         view.check_option = check_option;
         view.materialized = materialized;  // ALPHA Phase 1 - Materialized Views
         view.column_names = column_names;
+        view.insert_bindings.clear();
         view.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
 
         // Update materialized view properties if materialized
@@ -35707,9 +36227,13 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
         return ctx ? ctx->code : Status::PAGE_CORRUPT;
     }
     view.definition = definition;
+    view.source_dialect.clear();
+    view.compiled_query_sblr.clear();
+    view.native_compiled_code.clear();
     view.check_option = check_option;
     view.materialized = materialized;  // ALPHA Phase 1 - Materialized Views
     view.column_names = column_names;
+    view.insert_bindings.clear();
     view.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     view.last_modified_time = view.created_time;
     view.temp_metadata_scope =
@@ -35743,6 +36267,44 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
     }
 
     LOG_INFO(CATALOG, "Created %sview '%s'", materialized ? "materialized " : "", name.c_str());
+    return Status::OK;
+}
+
+auto CatalogManager::setViewExecutionMetadata(
+    const ID& view_id,
+    const std::vector<uint8_t>& compiled_query_sblr,
+    const std::vector<ViewColumnBinding>& insert_bindings,
+    const std::string& source_dialect,
+    const std::vector<uint8_t>& native_compiled_code,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+
+    auto it = view_cache_.find(view_id);
+    if (it == view_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "View not found");
+        return Status::NOT_FOUND;
+    }
+
+    ViewInfo& view = it->second;
+    ViewInfo old_view = view;
+    view.compiled_query_sblr = compiled_query_sblr;
+    view.insert_bindings = insert_bindings;
+    view.source_dialect = source_dialect;
+    view.native_compiled_code = native_compiled_code;
+    view.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+    if (view.temp_metadata_scope != TempMetadataScope::SESSION)
+    {
+        Status persist_status = updateViewRecord(view, ctx);
+        if (persist_status != Status::OK)
+        {
+            view = old_view;
+            return persist_status;
+        }
+    }
+
     return Status::OK;
 }
 
@@ -39390,9 +39952,10 @@ auto CatalogManager::writeViewRecord(const ViewInfo &view, ErrorContext *ctx) ->
     record.is_valid = 1;
 
     uint64_t xmin = 0;
-    if (!view.definition.empty())
+    const std::string definition_storage = encodeViewDefinitionStorage(view);
+    if (!definition_storage.empty())
     {
-        Status st = storeStringInToast(view.definition, xmin, record.definition_oid, ctx);
+        Status st = storeStringInToast(definition_storage, xmin, record.definition_oid, ctx);
         if (st != Status::OK) return st;
     }
     if (!view.column_names.empty())
@@ -39436,9 +39999,10 @@ auto CatalogManager::updateViewRecord(const ViewInfo &view, ErrorContext *ctx) -
     record.is_valid = 1;
 
     uint64_t xmin = 0;
-    if (!view.definition.empty())
+    const std::string definition_storage = encodeViewDefinitionStorage(view);
+    if (!definition_storage.empty())
     {
-        Status st = storeStringInToast(view.definition, xmin, record.definition_oid, ctx);
+        Status st = storeStringInToast(definition_storage, xmin, record.definition_oid, ctx);
         if (st != Status::OK) return st;
     }
     if (!view.column_names.empty())
@@ -39479,9 +40043,13 @@ auto CatalogManager::readViewRecords(ErrorContext *ctx) -> Status
         info.name_is_delimited = record.name_is_delimited != 0;
         info.owner_id = record.owner_id;
         info.definition.clear();
+        info.compiled_query_sblr.clear();
+        info.insert_bindings.clear();
         if (!isZeroUuidLocal(record.definition_oid))
         {
-            loadStringFromToast(record.definition_oid, xmin, info.definition, ctx);
+            std::string definition_storage;
+            loadStringFromToast(record.definition_oid, xmin, definition_storage, ctx);
+            decodeViewDefinitionStorage(definition_storage, info);
         }
         info.check_option = record.check_option != 0;
         info.security_definer = record.security_definer != 0;
@@ -39769,16 +40337,18 @@ auto CatalogManager::writeProcedureRecord(const ProcedureInfo &info, ErrorContex
     record.is_valid = 1;
 
     uint64_t xmin = 0;
-    if (!info.source_text.empty())
+    const std::string source_storage =
+        encodeStoredCodeSourceStorage(info.source_text, info.source_dialect);
+    if (!source_storage.empty())
     {
-        Status st = storeStringInToast(info.source_text, xmin, record.body_oid, ctx);
+        Status st = storeStringInToast(source_storage, xmin, record.body_oid, ctx);
         if (st != Status::OK) return st;
     }
-    if (!info.bytecode.empty())
+    const std::string exec_storage =
+        encodeStoredCodeExecutionStorage(info.bytecode, info.native_compiled_code);
+    if (!exec_storage.empty())
     {
-        std::string bytecode(reinterpret_cast<const char*>(info.bytecode.data()),
-                             info.bytecode.size());
-        Status st = storeStringInToast(bytecode, xmin, record.bytecode_oid, ctx);
+        Status st = storeStringInToast(exec_storage, xmin, record.bytecode_oid, ctx);
         if (st != Status::OK) return st;
     }
 
@@ -39831,16 +40401,18 @@ auto CatalogManager::updateProcedureRecord(const ProcedureInfo &info, ErrorConte
     record.is_valid = 1;
 
     uint64_t xmin = 0;
-    if (!info.source_text.empty())
+    const std::string source_storage =
+        encodeStoredCodeSourceStorage(info.source_text, info.source_dialect);
+    if (!source_storage.empty())
     {
-        Status st = storeStringInToast(info.source_text, xmin, record.body_oid, ctx);
+        Status st = storeStringInToast(source_storage, xmin, record.body_oid, ctx);
         if (st != Status::OK) return st;
     }
-    if (!info.bytecode.empty())
+    const std::string exec_storage =
+        encodeStoredCodeExecutionStorage(info.bytecode, info.native_compiled_code);
+    if (!exec_storage.empty())
     {
-        std::string bytecode(reinterpret_cast<const char*>(info.bytecode.data()),
-                             info.bytecode.size());
-        Status st = storeStringInToast(bytecode, xmin, record.bytecode_oid, ctx);
+        Status st = storeStringInToast(exec_storage, xmin, record.bytecode_oid, ctx);
         if (st != Status::OK) return st;
     }
 
@@ -39889,16 +40461,18 @@ auto CatalogManager::writeFunctionRecord(const FunctionInfo &info, ErrorContext 
     Status st = storeStringInToast(type_blob, xmin, record.return_type_oid, ctx);
     if (st != Status::OK) return st;
 
-    if (!info.source_text.empty())
+    const std::string source_storage =
+        encodeStoredCodeSourceStorage(info.source_text, info.source_dialect);
+    if (!source_storage.empty())
     {
-        st = storeStringInToast(info.source_text, xmin, record.body_oid, ctx);
+        st = storeStringInToast(source_storage, xmin, record.body_oid, ctx);
         if (st != Status::OK) return st;
     }
-    if (!info.bytecode.empty())
+    const std::string exec_storage =
+        encodeStoredCodeExecutionStorage(info.bytecode, info.native_compiled_code);
+    if (!exec_storage.empty())
     {
-        std::string bytecode(reinterpret_cast<const char*>(info.bytecode.data()),
-                             info.bytecode.size());
-        st = storeStringInToast(bytecode, xmin, record.bytecode_oid, ctx);
+        st = storeStringInToast(exec_storage, xmin, record.bytecode_oid, ctx);
         if (st != Status::OK) return st;
     }
 
@@ -39957,16 +40531,18 @@ auto CatalogManager::updateFunctionRecord(const FunctionInfo &info, ErrorContext
     Status st = storeStringInToast(type_blob, xmin, record.return_type_oid, ctx);
     if (st != Status::OK) return st;
 
-    if (!info.source_text.empty())
+    const std::string source_storage =
+        encodeStoredCodeSourceStorage(info.source_text, info.source_dialect);
+    if (!source_storage.empty())
     {
-        st = storeStringInToast(info.source_text, xmin, record.body_oid, ctx);
+        st = storeStringInToast(source_storage, xmin, record.body_oid, ctx);
         if (st != Status::OK) return st;
     }
-    if (!info.bytecode.empty())
+    const std::string exec_storage =
+        encodeStoredCodeExecutionStorage(info.bytecode, info.native_compiled_code);
+    if (!exec_storage.empty())
     {
-        std::string bytecode(reinterpret_cast<const char*>(info.bytecode.data()),
-                             info.bytecode.size());
-        st = storeStringInToast(bytecode, xmin, record.bytecode_oid, ctx);
+        st = storeStringInToast(exec_storage, xmin, record.bytecode_oid, ctx);
         if (st != Status::OK) return st;
     }
 
@@ -40111,16 +40687,16 @@ auto CatalogManager::readProcedureRecords(ErrorContext *ctx) -> Status
             decodeTypeDescriptor(return_blob, return_type_blob);
         }
 
-        std::string body;
+        std::string body_storage;
         if (!isZeroUuidLocal(record.body_oid))
         {
-            loadStringFromToast(record.body_oid, xmin, body, ctx);
+            loadStringFromToast(record.body_oid, xmin, body_storage, ctx);
         }
 
-        std::string bytecode_blob;
+        std::string bytecode_storage;
         if (!isZeroUuidLocal(record.bytecode_oid))
         {
-            loadStringFromToast(record.bytecode_oid, xmin, bytecode_blob, ctx);
+            loadStringFromToast(record.bytecode_oid, xmin, bytecode_storage, ctx);
         }
 
         if (record.procedure_type == static_cast<uint8_t>(ProcedureType::FUNCTION))
@@ -40137,12 +40713,14 @@ auto CatalogManager::readProcedureRecords(ErrorContext *ctx) -> Status
             info.or_replace = false;
             info.deterministic = record.deterministic != 0;
             info.sql_security = static_cast<FunctionInfo::SqlSecurity>(record.sql_security);
-            info.source_text = body;
+            decodeStoredCodeSourceStorage(body_storage, info.source_text, info.source_dialect);
             info.created_time = record.created_time;
             info.modified_time = record.last_modified_time;
-            if (!bytecode_blob.empty())
+            if (!bytecode_storage.empty())
             {
-                info.bytecode.assign(bytecode_blob.begin(), bytecode_blob.end());
+                decodeStoredCodeExecutionStorage(bytecode_storage,
+                                                 info.bytecode,
+                                                 info.native_compiled_code);
             }
             functions_[info.name] = info;
         }
@@ -40156,12 +40734,14 @@ auto CatalogManager::readProcedureRecords(ErrorContext *ctx) -> Status
             info.owner_id = record.owner_id;
             info.or_replace = false;
             info.sql_security = static_cast<ProcedureInfo::SqlSecurity>(record.sql_security);
-            info.source_text = body;
+            decodeStoredCodeSourceStorage(body_storage, info.source_text, info.source_dialect);
             info.created_time = record.created_time;
             info.modified_time = record.last_modified_time;
-            if (!bytecode_blob.empty())
+            if (!bytecode_storage.empty())
             {
-                info.bytecode.assign(bytecode_blob.begin(), bytecode_blob.end());
+                decodeStoredCodeExecutionStorage(bytecode_storage,
+                                                 info.bytecode,
+                                                 info.native_compiled_code);
             }
             procedures_[info.name] = info;
         }
@@ -40538,9 +41118,14 @@ auto CatalogManager::readConstraintRecords(ErrorContext *ctx) -> Status
             std::string col_name;
             if (!resolve_column(record.table_id, record.column_ids[i], col_name))
             {
-                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
-                                  "Constraint column ID not found for table");
-                resolve_status = Status::NOT_FOUND;
+                LOG_WARNING(CATALOG,
+                            "Skipping orphaned constraint '%s': missing local column at index %u during catalog load",
+                            info.constraint_name.c_str(),
+                            static_cast<unsigned>(i));
+                info.constraint_id = ID{};
+                info.table_id = ID{};
+                info.column_names.clear();
+                info.referenced_columns.clear();
                 return;
             }
             info.column_names.push_back(col_name);
@@ -40554,9 +41139,14 @@ auto CatalogManager::readConstraintRecords(ErrorContext *ctx) -> Status
                 if (!resolve_column(record.referenced_table_id,
                                     record.referenced_column_ids[i], col_name))
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
-                                      "Referenced constraint column ID not found");
-                    resolve_status = Status::NOT_FOUND;
+                    LOG_WARNING(CATALOG,
+                                "Skipping orphaned constraint '%s': missing referenced column at index %u during catalog load",
+                                info.constraint_name.c_str(),
+                                static_cast<unsigned>(i));
+                    info.constraint_id = ID{};
+                    info.table_id = ID{};
+                    info.column_names.clear();
+                    info.referenced_columns.clear();
                     return;
                 }
                 info.referenced_columns.push_back(col_name);
@@ -40592,6 +41182,10 @@ auto CatalogManager::readConstraintRecords(ErrorContext *ctx) -> Status
     std::lock_guard<std::mutex> lock(constraints_cache_mutex_);
     for (const auto &info : constraints)
     {
+        if (isZeroUuidLocal(info.constraint_id) || isZeroUuidLocal(info.table_id))
+        {
+            continue;
+        }
         constraints_cache_[info.constraint_id] = info;
         table_constraints_.insert({info.table_id, info.constraint_id});
         constraint_name_lookup_[
@@ -41737,16 +42331,67 @@ auto CatalogManager::ensureJobCacheLoaded(ErrorContext* ctx) -> Status
     }
 
     std::vector<JobInfo> jobs;
+    auto recover_scheduler_pages = [&]() -> Status {
+        jobs_table_page_ = 0;
+        job_runs_table_page_ = 0;
+        job_dependencies_table_page_ = 0;
+        job_secrets_table_page_ = 0;
+
+        Status recover_status = allocateCatalogPage(jobs_table_page_, ctx);
+        if (recover_status != Status::OK)
+        {
+            return recover_status;
+        }
+        recover_status = allocateCatalogPage(job_runs_table_page_, ctx);
+        if (recover_status != Status::OK)
+        {
+            return recover_status;
+        }
+        recover_status = allocateCatalogPage(job_dependencies_table_page_, ctx);
+        if (recover_status != Status::OK)
+        {
+            return recover_status;
+        }
+        recover_status = allocateCatalogPage(job_secrets_table_page_, ctx);
+        if (recover_status != Status::OK)
+        {
+            return recover_status;
+        }
+        return writeCatalogRoot(ctx);
+    };
+
     auto filter = [](const JobRecord& rec) {
         return rec.is_valid;
     };
-    auto converter = [](const JobRecord& rec, JobInfo& info) {
+    uint64_t xmin = 0;
+    auto converter = [this, xmin, ctx](const JobRecord& rec, JobInfo& info) {
         info.job_id = rec.job_id;
         info.job_name = rec.job_name;
         info.description = rec.description;
         info.job_class = static_cast<JobClass>(rec.job_class);
         info.job_type = static_cast<JobType>(rec.job_type);
-        info.job_sql = rec.job_sql;
+        info.job_sql.clear();
+        info.bytecode.clear();
+        info.source_dialect.clear();
+        info.native_compiled_code.clear();
+        if (!isZeroUuidLocal(rec.job_source_oid))
+        {
+            std::string source_storage;
+            if (loadStringFromToast(rec.job_source_oid, xmin, source_storage, ctx) == Status::OK)
+            {
+                decodeStoredCodeSourceStorage(source_storage, info.job_sql, info.source_dialect);
+            }
+        }
+        if (!isZeroUuidLocal(rec.job_exec_oid))
+        {
+            std::string exec_storage;
+            if (loadStringFromToast(rec.job_exec_oid, xmin, exec_storage, ctx) == Status::OK)
+            {
+                decodeStoredCodeExecutionStorage(exec_storage,
+                                                 info.bytecode,
+                                                 info.native_compiled_code);
+            }
+        }
         info.procedure_uuid = rec.procedure_uuid;
         info.external_command = rec.external_command;
         info.schedule_kind = static_cast<ScheduleKind>(rec.schedule_kind);
@@ -41775,6 +42420,25 @@ auto CatalogManager::ensureJobCacheLoaded(ErrorContext* ctx) -> Status
                                                            filter, converter, ctx);
     if (status != Status::OK && status != Status::NOT_FOUND)
     {
+        const bool recoverable = status == Status::PAGE_CORRUPT ||
+                                 status == Status::INVALID_ARGUMENT ||
+                                 status == Status::DATA_CORRUPTED ||
+                                 status == Status::INTERNAL_ERROR ||
+                                 status == Status::IO_ERROR;
+        if (recoverable)
+        {
+            Status recover_status = recover_scheduler_pages();
+            if (recover_status != Status::OK)
+            {
+                return recover_status;
+            }
+            jobs.clear();
+            status = readRecordsToVector<JobRecord, JobInfo>(jobs_table_page_, jobs,
+                                                             filter, converter, ctx);
+        }
+    }
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
         return status;
     }
 
@@ -41799,6 +42463,35 @@ auto CatalogManager::ensureJobRunsCacheLoaded(ErrorContext* ctx) -> Status
     }
 
     std::vector<JobRunInfo> runs;
+    auto recover_scheduler_pages = [&]() -> Status {
+        jobs_table_page_ = 0;
+        job_runs_table_page_ = 0;
+        job_dependencies_table_page_ = 0;
+        job_secrets_table_page_ = 0;
+
+        Status recover_status = allocateCatalogPage(jobs_table_page_, ctx);
+        if (recover_status != Status::OK)
+        {
+            return recover_status;
+        }
+        recover_status = allocateCatalogPage(job_runs_table_page_, ctx);
+        if (recover_status != Status::OK)
+        {
+            return recover_status;
+        }
+        recover_status = allocateCatalogPage(job_dependencies_table_page_, ctx);
+        if (recover_status != Status::OK)
+        {
+            return recover_status;
+        }
+        recover_status = allocateCatalogPage(job_secrets_table_page_, ctx);
+        if (recover_status != Status::OK)
+        {
+            return recover_status;
+        }
+        return writeCatalogRoot(ctx);
+    };
+
     auto filter = [](const JobRunRecord& rec) {
         return rec.is_valid;
     };
@@ -41829,6 +42522,25 @@ auto CatalogManager::ensureJobRunsCacheLoaded(ErrorContext* ctx) -> Status
                                                                  filter, converter, ctx);
     if (status != Status::OK && status != Status::NOT_FOUND)
     {
+        const bool recoverable = status == Status::PAGE_CORRUPT ||
+                                 status == Status::INVALID_ARGUMENT ||
+                                 status == Status::DATA_CORRUPTED ||
+                                 status == Status::INTERNAL_ERROR ||
+                                 status == Status::IO_ERROR;
+        if (recoverable)
+        {
+            Status recover_status = recover_scheduler_pages();
+            if (recover_status != Status::OK)
+            {
+                return recover_status;
+            }
+            runs.clear();
+            status = readRecordsToVector<JobRunRecord, JobRunInfo>(job_runs_table_page_, runs,
+                                                                   filter, converter, ctx);
+        }
+    }
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
         return status;
     }
 
@@ -41848,6 +42560,22 @@ auto CatalogManager::createJob(const JobInfo& job_in, ID& job_id_out,
 {
     std::lock_guard<CatalogMutex> lock(mutex_);
 
+    const uint64_t created_time_ms =
+        job_in.created_at == 0 ? currentTimeMs() : job_in.created_at;
+    uint64_t next_run_time = job_in.next_run_time;
+    if (next_run_time == 0)
+    {
+        if (job_in.schedule_kind == ScheduleKind::CRON && !job_in.cron_expression.empty())
+        {
+            next_run_time = detail::computeNextCronRunMsWithTimezone(
+                job_in.cron_expression, created_time_ms, job_in.schedule_tz);
+        }
+        if (next_run_time == 0)
+        {
+            next_run_time = created_time_ms;
+        }
+    }
+
     JobRecord record{};
     record.job_id = generateUuidV7();
     copyStringField(record.job_name, job_in.job_name);
@@ -41857,7 +42585,27 @@ auto CatalogManager::createJob(const JobInfo& job_in, ID& job_id_out,
     record.schedule_kind = static_cast<uint8_t>(job_in.schedule_kind);
     record.on_completion = static_cast<uint8_t>(job_in.on_completion);
     record.state = static_cast<uint8_t>(job_in.state);
-    copyStringField(record.job_sql, job_in.job_sql);
+    uint64_t xmin = 0;
+    const std::string source_storage =
+        encodeStoredCodeSourceStorage(job_in.job_sql, job_in.source_dialect);
+    if (!source_storage.empty())
+    {
+        Status source_status = storeStringInToast(source_storage, xmin, record.job_source_oid, ctx);
+        if (source_status != Status::OK)
+        {
+            return source_status;
+        }
+    }
+    const std::string exec_storage =
+        encodeStoredCodeExecutionStorage(job_in.bytecode, job_in.native_compiled_code);
+    if (!exec_storage.empty())
+    {
+        Status exec_status = storeStringInToast(exec_storage, xmin, record.job_exec_oid, ctx);
+        if (exec_status != Status::OK)
+        {
+            return exec_status;
+        }
+    }
     record.procedure_uuid = job_in.procedure_uuid;
     copyStringField(record.external_command, job_in.external_command);
     copyStringField(record.cron_expression, job_in.cron_expression);
@@ -41867,7 +42615,7 @@ auto CatalogManager::createJob(const JobInfo& job_in, ID& job_id_out,
     copyStringField(record.schedule_tz, job_in.schedule_tz);
     record.has_measurement = job_in.has_measurement ? 1 : 0;
     copyStringField(record.measurement_options, job_in.measurement_options);
-    record.next_run_time = job_in.next_run_time == 0 ? currentTimeMs() : job_in.next_run_time;
+    record.next_run_time = next_run_time;
     copyStringField(record.partition_strategy, job_in.partition_strategy);
     record.partition_shard_uuid = job_in.partition_shard_uuid;
     copyStringField(record.partition_expression, job_in.partition_expression);
@@ -41876,7 +42624,7 @@ auto CatalogManager::createJob(const JobInfo& job_in, ID& job_id_out,
     record.timeout_seconds = job_in.timeout_seconds;
     record.created_by_user_uuid = job_in.created_by_user_uuid;
     record.run_as_role_uuid = job_in.run_as_role_uuid;
-    record.created_at = job_in.created_at == 0 ? currentTimeMs() : job_in.created_at;
+    record.created_at = created_time_ms;
     record.is_valid = 1;
 
     Status status = writeRecordToHeapPage(jobs_table_page_, record, ctx);
@@ -41934,7 +42682,32 @@ auto CatalogManager::getJobByName(const std::string& job_name, JobInfo& job_out,
     job_out.description = result.record.description;
     job_out.job_class = static_cast<JobClass>(result.record.job_class);
     job_out.job_type = static_cast<JobType>(result.record.job_type);
-    job_out.job_sql = result.record.job_sql;
+    job_out.job_sql.clear();
+    job_out.bytecode.clear();
+    job_out.source_dialect.clear();
+    job_out.native_compiled_code.clear();
+    if (!isZeroUuidLocal(result.record.job_source_oid))
+    {
+        uint64_t xmin = 0;
+        std::string source_storage;
+        if (loadStringFromToast(result.record.job_source_oid, xmin, source_storage, ctx) == Status::OK)
+        {
+            decodeStoredCodeSourceStorage(source_storage,
+                                          job_out.job_sql,
+                                          job_out.source_dialect);
+        }
+    }
+    if (!isZeroUuidLocal(result.record.job_exec_oid))
+    {
+        uint64_t xmin = 0;
+        std::string exec_storage;
+        if (loadStringFromToast(result.record.job_exec_oid, xmin, exec_storage, ctx) == Status::OK)
+        {
+            decodeStoredCodeExecutionStorage(exec_storage,
+                                             job_out.bytecode,
+                                             job_out.native_compiled_code);
+        }
+    }
     job_out.procedure_uuid = result.record.procedure_uuid;
     job_out.external_command = result.record.external_command;
     job_out.schedule_kind = static_cast<ScheduleKind>(result.record.schedule_kind);
@@ -41991,7 +42764,32 @@ auto CatalogManager::getJob(const ID& job_id, JobInfo& job_out,
     job_out.description = result.record.description;
     job_out.job_class = static_cast<JobClass>(result.record.job_class);
     job_out.job_type = static_cast<JobType>(result.record.job_type);
-    job_out.job_sql = result.record.job_sql;
+    job_out.job_sql.clear();
+    job_out.bytecode.clear();
+    job_out.source_dialect.clear();
+    job_out.native_compiled_code.clear();
+    if (!isZeroUuidLocal(result.record.job_source_oid))
+    {
+        uint64_t xmin = 0;
+        std::string source_storage;
+        if (loadStringFromToast(result.record.job_source_oid, xmin, source_storage, ctx) == Status::OK)
+        {
+            decodeStoredCodeSourceStorage(source_storage,
+                                          job_out.job_sql,
+                                          job_out.source_dialect);
+        }
+    }
+    if (!isZeroUuidLocal(result.record.job_exec_oid))
+    {
+        uint64_t xmin = 0;
+        std::string exec_storage;
+        if (loadStringFromToast(result.record.job_exec_oid, xmin, exec_storage, ctx) == Status::OK)
+        {
+            decodeStoredCodeExecutionStorage(exec_storage,
+                                             job_out.bytecode,
+                                             job_out.native_compiled_code);
+        }
+    }
     job_out.procedure_uuid = result.record.procedure_uuid;
     job_out.external_command = result.record.external_command;
     job_out.schedule_kind = static_cast<ScheduleKind>(result.record.schedule_kind);
@@ -42035,7 +42833,29 @@ auto CatalogManager::updateJob(const JobInfo& job_in, ErrorContext* ctx) -> Stat
     copyStringField(updated.description, job_in.description);
     updated.job_class = static_cast<uint8_t>(job_in.job_class);
     updated.job_type = static_cast<uint8_t>(job_in.job_type);
-    copyStringField(updated.job_sql, job_in.job_sql);
+    updated.job_source_oid = ID{};
+    updated.job_exec_oid = ID{};
+    uint64_t xmin = 0;
+    const std::string source_storage =
+        encodeStoredCodeSourceStorage(job_in.job_sql, job_in.source_dialect);
+    if (!source_storage.empty())
+    {
+        Status source_status = storeStringInToast(source_storage, xmin, updated.job_source_oid, ctx);
+        if (source_status != Status::OK)
+        {
+            return source_status;
+        }
+    }
+    const std::string exec_storage =
+        encodeStoredCodeExecutionStorage(job_in.bytecode, job_in.native_compiled_code);
+    if (!exec_storage.empty())
+    {
+        Status exec_status = storeStringInToast(exec_storage, xmin, updated.job_exec_oid, ctx);
+        if (exec_status != Status::OK)
+        {
+            return exec_status;
+        }
+    }
     updated.procedure_uuid = job_in.procedure_uuid;
     copyStringField(updated.external_command, job_in.external_command);
     updated.schedule_kind = static_cast<uint8_t>(job_in.schedule_kind);
@@ -45886,6 +46706,32 @@ auto CatalogManager::resolveSessionHomeSchema(const UserInfo& user,
         home_schema_id_out = public_schema.schema_id;
     }
 
+    if (isCanonicalNativeModeLocal(normalizeEmulationModeLocal(emulation_mode)) &&
+        !isZeroUuidLocal(home_schema_id_out))
+    {
+        std::string schema_path;
+        if (getSchemaPath(home_schema_id_out, schema_path, nullptr) != Status::OK ||
+            schema_path.empty())
+        {
+            SchemaInfo schema_info;
+            if (getSchema(home_schema_id_out, schema_info, nullptr) == Status::OK)
+            {
+                schema_path = schema_info.full_path.empty()
+                    ? schema_info.schema_name
+                    : schema_info.full_path;
+            }
+        }
+
+        if (schema_path == "users.public")
+        {
+            SchemaInfo public_schema;
+            if (getSchema("public", public_schema, nullptr) == Status::OK)
+            {
+                home_schema_id_out = public_schema.schema_id;
+            }
+        }
+    }
+
     Status table_status = ensureHomeSearchPathCatalogTables(ctx);
     if (table_status != Status::OK)
     {
@@ -46018,6 +46864,7 @@ auto CatalogManager::resolveSessionSearchPath(const ID& user_id,
     schema_paths_out.clear();
 
     std::string normalized_mode = normalizeEmulationModeLocal(emulation_mode);
+    const bool native_v3_mode = isCanonicalNativeModeLocal(normalized_mode);
 
     Status table_status = ensureHomeSearchPathCatalogTables(ctx);
     if (table_status != Status::OK)
@@ -46290,6 +47137,65 @@ auto CatalogManager::resolveSessionSearchPath(const ID& user_id,
         return Status::OK;
     };
 
+    auto schema_path_for_id = [&](const ID& schema_id) -> std::string {
+        std::string schema_path;
+        ErrorContext path_ctx;
+        if (getSchemaPath(schema_id, schema_path, &path_ctx) != Status::OK || schema_path.empty())
+        {
+            SchemaInfo schema_info;
+            if (getSchema(schema_id, schema_info, &path_ctx) == Status::OK)
+            {
+                schema_path = schema_info.full_path.empty()
+                    ? schema_info.schema_name
+                    : schema_info.full_path;
+            }
+        }
+        return schema_path;
+    };
+
+    auto canonicalize_native_public_ids = [&](std::vector<ID>& schema_ids) {
+        if (!native_v3_mode || schema_ids.empty())
+        {
+            return;
+        }
+
+        SchemaInfo public_schema;
+        if (getSchema("public", public_schema, nullptr) != Status::OK)
+        {
+            return;
+        }
+
+        std::vector<ID> normalized_ids;
+        normalized_ids.reserve(schema_ids.size());
+        std::unordered_set<ID, IDHash> seen;
+        for (const auto& schema_id : schema_ids)
+        {
+            if (isZeroUuidLocal(schema_id))
+            {
+                continue;
+            }
+
+            ID normalized_id = schema_id;
+            if (schema_path_for_id(schema_id) == "users.public")
+            {
+                normalized_id = public_schema.schema_id;
+            }
+
+            if (!seen.insert(normalized_id).second)
+            {
+                continue;
+            }
+
+            SchemaInfo schema_info;
+            if (getSchema(normalized_id, schema_info, nullptr) == Status::OK)
+            {
+                normalized_ids.push_back(normalized_id);
+            }
+        }
+
+        schema_ids.swap(normalized_ids);
+    };
+
     auto try_scope = [&](uint8_t scope,
                          const ID& principal_id,
                          const std::string& mode) -> Status {
@@ -46300,6 +47206,7 @@ auto CatalogManager::resolveSessionSearchPath(const ID& user_id,
         {
             return load_status;
         }
+        canonicalize_native_public_ids(loaded_ids);
         return finalize_path(loaded_ids, loaded_profile);
     };
 
@@ -46356,7 +47263,7 @@ auto CatalogManager::resolveSessionSearchPath(const ID& user_id,
         }
     }
 
-    if (normalized_mode != "native")
+    if (!native_v3_mode)
     {
         scoped_status = try_scope(
             static_cast<uint8_t>(SearchPathProfileScope::EMULATION), ID{}, normalized_mode);
@@ -46369,19 +47276,21 @@ auto CatalogManager::resolveSessionSearchPath(const ID& user_id,
     std::vector<ID> default_schema_ids;
     default_schema_ids.push_back(home_schema_id);
 
-    if (normalized_mode == "native")
+    if (native_v3_mode)
     {
         SchemaInfo public_schema;
-        Status public_status = getSchema("users.public", public_schema, nullptr);
+        Status public_status = getSchema("public", public_schema, nullptr);
         if (public_status != Status::OK)
         {
-            public_status = getSchema("public", public_schema, nullptr);
+            public_status = getSchema("users.public", public_schema, nullptr);
         }
         if (public_status == Status::OK)
         {
             default_schema_ids.push_back(public_schema.schema_id);
         }
     }
+
+    canonicalize_native_public_ids(default_schema_ids);
 
     std::vector<ID> deduped_ids;
     deduped_ids.reserve(default_schema_ids.size());

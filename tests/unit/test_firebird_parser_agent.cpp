@@ -237,7 +237,7 @@ protected:
         
         // Initialize client state
         state_.client_fd = -1;  // Mock FD
-        state_.state = ClientState::CONNECTING;
+        state_.state = FBClientState::CONNECTING;
         state_.protocol_version = fb::PROTOCOL_VERSION16;
         state_.accept_version = fb::PROTOCOL_VERSION16;
         state_.wire_encrypted = false;
@@ -576,7 +576,7 @@ protected:
     }
     
     std::unique_ptr<FirebirdParserAgent> agent_;
-    ClientState state_;
+    FBClientState state_;
     ErrorContext ctx_;
 };
 
@@ -1288,10 +1288,10 @@ TEST_F(FirebirdParserAgentTest, AuthenticatePacketLargeData) {
 // ============================================================================
 
 TEST_F(FirebirdParserAgentTest, ClientStateInitialization) {
-    ClientState state;
+    FBClientState state;
     
     EXPECT_EQ(state.client_fd, -1);
-    EXPECT_EQ(state.state, ClientState::CONNECTING);
+    EXPECT_EQ(state.state, FBClientState::CONNECTING);
     EXPECT_EQ(state.protocol_version, 0u);
     EXPECT_EQ(state.accept_version, 0u);
     EXPECT_EQ(state.handle, 0u);
@@ -1302,26 +1302,26 @@ TEST_F(FirebirdParserAgentTest, ClientStateInitialization) {
 }
 
 TEST_F(FirebirdParserAgentTest, ClientStateTransitions) {
-    ClientState state;
+    FBClientState state;
     
     // Initial state
-    EXPECT_EQ(state.state, ClientState::CONNECTING);
+    EXPECT_EQ(state.state, FBClientState::CONNECTING);
     
     // After connect
-    state.state = ClientState::CONNECTED;
-    EXPECT_EQ(state.state, ClientState::CONNECTED);
+    state.state = FBClientState::CONNECTED;
+    EXPECT_EQ(state.state, FBClientState::CONNECTED);
     
     // After attach
-    state.state = ClientState::ATTACHED;
-    EXPECT_EQ(state.state, ClientState::ATTACHED);
+    state.state = FBClientState::ATTACHED;
+    EXPECT_EQ(state.state, FBClientState::ATTACHED);
     
     // In transaction
-    state.state = ClientState::IN_TRANSACTION;
-    EXPECT_EQ(state.state, ClientState::IN_TRANSACTION);
+    state.state = FBClientState::IN_TRANSACTION;
+    EXPECT_EQ(state.state, FBClientState::IN_TRANSACTION);
     
     // Disconnected
-    state.state = ClientState::DISCONNECTED;
-    EXPECT_EQ(state.state, ClientState::DISCONNECTED);
+    state.state = FBClientState::DISCONNECTED;
+    EXPECT_EQ(state.state, FBClientState::DISCONNECTED);
 }
 
 // ============================================================================

@@ -82,53 +82,102 @@ void IPCSession::shutdown() {
 core::Status IPCSession::handleMessage(const IPCMessage& msg, core::ErrorContext* ctx) {
     updateActivity();
     stats_.messages_received++;
-    
+
+    core::Status status = core::Status::NOT_SUPPORTED;
     switch (msg.getType()) {
         case IPCMessageType::STARTUP:
-            return handleStartup(msg, ctx);
+            status = handleStartup(msg, ctx);
+            break;
         case IPCMessageType::FEATURE_NEGOTIATE:
-            return handleFeatureNegotiate(msg, ctx);
+            status = handleFeatureNegotiate(msg, ctx);
+            break;
         case IPCMessageType::SIMPLE_QUERY:
-            return handleSimpleQuery(msg, ctx);
+            status = handleSimpleQuery(msg, ctx);
+            break;
+        case IPCMessageType::COMPILED_QUERY:
+            status = handleCompiledQuery(msg, ctx);
+            break;
         case IPCMessageType::PARSE:
-            return handleParse(msg, ctx);
+            status = handleParse(msg, ctx);
+            break;
+        case IPCMessageType::COMPILED_PARSE:
+            status = handleCompiledParse(msg, ctx);
+            break;
         case IPCMessageType::BIND:
-            return handleBind(msg, ctx);
+            status = handleBind(msg, ctx);
+            break;
         case IPCMessageType::EXECUTE:
-            return handleExecute(msg, ctx);
+            status = handleExecute(msg, ctx);
+            break;
         case IPCMessageType::CLOSE:
-            return handleClose(msg, ctx);
+            status = handleClose(msg, ctx);
+            break;
         case IPCMessageType::SYNC:
-            return handleSync(msg, ctx);
+            status = handleSync(msg, ctx);
+            break;
         case IPCMessageType::TXN_BEGIN:
-            return handleTxnBegin(msg, ctx);
+            status = handleTxnBegin(msg, ctx);
+            break;
         case IPCMessageType::TXN_COMMIT:
-            return handleTxnCommit(msg, ctx);
+            status = handleTxnCommit(msg, ctx);
+            break;
         case IPCMessageType::TXN_ROLLBACK:
-            return handleTxnRollback(msg, ctx);
+            status = handleTxnRollback(msg, ctx);
+            break;
         case IPCMessageType::SAVEPOINT:
-            return handleSavepoint(msg, ctx);
+            status = handleSavepoint(msg, ctx);
+            break;
         case IPCMessageType::COPY_DATA:
-            return handleCopyData(msg, ctx);
+            status = handleCopyData(msg, ctx);
+            break;
         case IPCMessageType::COPY_DONE:
-            return handleCopyDone(msg, ctx);
+            status = handleCopyDone(msg, ctx);
+            break;
         case IPCMessageType::COPY_FAIL:
-            return handleCopyFail(msg, ctx);
+            status = handleCopyFail(msg, ctx);
+            break;
         case IPCMessageType::CANCEL_REQUEST:
-            return handleCancelRequest(msg, ctx);
+            status = handleCancelRequest(msg, ctx);
+            break;
         case IPCMessageType::PING:
-            return handlePing(msg, ctx);
+            status = handlePing(msg, ctx);
+            break;
         case IPCMessageType::TERMINATE:
-            return handleTerminate(msg, ctx);
+            status = handleTerminate(msg, ctx);
+            break;
         case IPCMessageType::STREAM_CONTROL:
-            return handleStreamControl(msg, ctx);
+            status = handleStreamControl(msg, ctx);
+            break;
         default:
             if (ctx) {
                 ctx->set(core::Status::NOT_SUPPORTED, "Unknown message type",
                         __FILE__, __LINE__, __func__);
             }
-            return core::Status::NOT_SUPPORTED;
+            status = core::Status::NOT_SUPPORTED;
+            break;
     }
+
+    auto flush_status = flushOutboundMessages(ctx);
+    if (status == core::Status::OK) {
+        return flush_status;
+    }
+    return status;
+}
+
+core::Status IPCSession::flushOutboundMessages(core::ErrorContext* ctx) {
+    std::vector<IPCMessage> outbound;
+    auto status = handler_->drainOutboundMessages(id_, outbound, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    for (const auto& msg : outbound) {
+        status = sendMessage(msg, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+    }
+    return core::Status::OK;
 }
 
 core::Status IPCSession::sendMessage(const IPCMessage& msg, core::ErrorContext* ctx) {
@@ -259,6 +308,61 @@ core::Status IPCSession::handleSimpleQuery(const IPCMessage& msg, core::ErrorCon
     return status;
 }
 
+core::Status IPCSession::handleCompiledQuery(const IPCMessage& msg, core::ErrorContext* ctx) {
+    auto* payload = msg.getPayload<IPCCompiledQueryPayload>();
+    if (!payload) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_ARGUMENT, "Invalid COMPILED_QUERY payload",
+                    __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    const size_t expected_size = sizeof(IPCCompiledQueryPayload) +
+                                 payload->original_sql_length +
+                                 payload->bytecode_length;
+    if (msg.payload.size() < expected_size) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_ARGUMENT, "Truncated COMPILED_QUERY payload",
+                    __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    state_ = SessionState::EXECUTING;
+
+    const uint8_t* payload_base = msg.payload.data() + sizeof(IPCCompiledQueryPayload);
+    std::string original_sql;
+    if (payload->original_sql_length > 0) {
+        original_sql.assign(reinterpret_cast<const char*>(payload_base),
+                            payload->original_sql_length);
+    }
+    std::vector<uint8_t> bytecode;
+    if (payload->bytecode_length > 0) {
+        const uint8_t* bytecode_base = payload_base + payload->original_sql_length;
+        bytecode.assign(bytecode_base, bytecode_base + payload->bytecode_length);
+    }
+
+    QueryContext qctx;
+    qctx.sql = original_sql;
+    qctx.request_id = msg.header.request_id;
+    qctx.start_time = std::chrono::steady_clock::now();
+    setQueryContext(qctx);
+
+    auto status = handler_->onCompiledQuery(id_, bytecode, original_sql, ctx);
+
+    clearQueryContext();
+    state_ = SessionState::ACTIVE;
+
+    if (status == core::Status::OK) {
+        stats_.queries_executed++;
+    } else {
+        stats_.errors++;
+    }
+
+    return status;
+}
+
 core::Status IPCSession::handleParse(const IPCMessage& msg, core::ErrorContext* ctx) {
     auto* payload = msg.getPayload<IPCParsePayload>();
     if (!payload) {
@@ -276,6 +380,50 @@ core::Status IPCSession::handleParse(const IPCMessage& msg, core::ErrorContext* 
     return status;
 }
 
+core::Status IPCSession::handleCompiledParse(const IPCMessage& msg, core::ErrorContext* ctx) {
+    auto* payload = msg.getPayload<IPCCompiledParsePayload>();
+    if (!payload) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_ARGUMENT, "Invalid COMPILED_PARSE payload",
+                    __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    const size_t expected_size = sizeof(IPCCompiledParsePayload) +
+                                 payload->original_sql_length +
+                                 payload->bytecode_length;
+    if (msg.payload.size() < expected_size) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_ARGUMENT, "Truncated COMPILED_PARSE payload",
+                    __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    const uint8_t* payload_base = msg.payload.data() + sizeof(IPCCompiledParsePayload);
+    std::string original_sql;
+    if (payload->original_sql_length > 0) {
+        original_sql.assign(reinterpret_cast<const char*>(payload_base),
+                            payload->original_sql_length);
+    }
+    std::vector<uint8_t> bytecode;
+    if (payload->bytecode_length > 0) {
+        const uint8_t* bytecode_base = payload_base + payload->original_sql_length;
+        bytecode.assign(bytecode_base, bytecode_base + payload->bytecode_length);
+    }
+
+    auto status = handler_->onCompiledParse(id_,
+                                            payload->stmt_name,
+                                            bytecode,
+                                            original_sql,
+                                            ctx);
+    if (status == core::Status::OK) {
+        status = handler_->sendParseComplete(id_);
+    }
+    return status;
+}
+
 core::Status IPCSession::handleBind(const IPCMessage& msg, core::ErrorContext* ctx) {
     auto* payload = msg.getPayload<IPCBindPayload>();
     if (!payload) {
@@ -286,7 +434,47 @@ core::Status IPCSession::handleBind(const IPCMessage& msg, core::ErrorContext* c
         return core::Status::INVALID_ARGUMENT;
     }
     
-    auto status = handler_->onBind(id_, payload->portal_name, payload->stmt_name, ctx);
+    std::vector<std::optional<std::string>> params;
+    std::vector<bool> param_nulls;
+    params.reserve(payload->num_params);
+    param_nulls.reserve(payload->num_params);
+
+    size_t offset = sizeof(IPCBindPayload);
+    for (uint16_t i = 0; i < payload->num_params; ++i) {
+        if (offset + sizeof(IPCParamValue) > msg.payload.size()) {
+            if (ctx) {
+                ctx->set(core::Status::INVALID_ARGUMENT, "Malformed BIND parameter payload",
+                        __FILE__, __LINE__, __func__);
+            }
+            return core::Status::INVALID_ARGUMENT;
+        }
+
+        IPCParamValue param{};
+        std::memcpy(&param, msg.payload.data() + offset, sizeof(param));
+        offset += sizeof(param);
+
+        if (param.length < 0) {
+            params.emplace_back(std::nullopt);
+            param_nulls.push_back(true);
+            continue;
+        }
+        if (offset + static_cast<size_t>(param.length) > msg.payload.size()) {
+            if (ctx) {
+                ctx->set(core::Status::INVALID_ARGUMENT, "Malformed BIND parameter data",
+                        __FILE__, __LINE__, __func__);
+            }
+            return core::Status::INVALID_ARGUMENT;
+        }
+
+        params.emplace_back(std::string(
+            reinterpret_cast<const char*>(msg.payload.data() + offset),
+            static_cast<size_t>(param.length)));
+        param_nulls.push_back(false);
+        offset += static_cast<size_t>(param.length);
+    }
+
+    auto status = handler_->onBind(id_, payload->portal_name, payload->stmt_name,
+                                   params, param_nulls, ctx);
     if (status == core::Status::OK) {
         status = handler_->sendBindComplete(id_);
     }
@@ -729,21 +917,15 @@ core::Status IPCServer::setupListener(core::ErrorContext* ctx) {
 void IPCServer::acceptLoop() {
     while (running_) {
 #if defined(__linux__) || defined(__APPLE__)
-        struct sockaddr_un client_addr;
-        socklen_t client_len = sizeof(client_addr);
-        
-        int client_fd = accept(listen_fd_, (struct sockaddr*)&client_addr, &client_len);
-        if (client_fd < 0) {
-            if (errno == EINTR) continue;
-            if (!running_) break;
-            continue;
-        }
-        
-        // Create channel and accept connection
         auto channel = std::make_unique<UnixSocketIPCChannel>();
         core::ErrorContext ctx;
-        if (channel->accept(client_fd, &ctx) != core::Status::OK) {
-            ::close(client_fd);
+        if (channel->accept(listen_fd_, &ctx) != core::Status::OK) {
+            if (ctx.code == core::Status::IO_ERROR && errno == EINTR) {
+                continue;
+            }
+            if (!running_) {
+                break;
+            }
             continue;
         }
         
@@ -806,6 +988,7 @@ uint32_t IPCServer::createSession(std::unique_ptr<IPCChannel> channel) {
     uint32_t id = next_session_id_++;
     
     auto session = std::make_shared<IPCSession>(id, std::move(channel), handler_.get());
+    session->start(nullptr);
     
     {
         std::unique_lock<std::shared_mutex> lock(sessions_mutex_);
@@ -824,9 +1007,10 @@ void IPCServer::destroySession(uint32_t session_id) {
             session = it->second;
         }
     }
-    
+
     if (session) {
         session->setState(SessionState::CLOSING);
+        handler_->onDetach(session_id, nullptr);
         session->shutdown();
         
         std::unique_lock<std::shared_mutex> lock(sessions_mutex_);
@@ -869,16 +1053,12 @@ void IPCServer::sessionReadLoop(uint32_t session_id) {
     core::ErrorContext ctx;
     while (running_ && session->isActive()) {
         IPCMessage msg;
-        
-        // Lock during receive (channel is not thread-safe)
-        {
-            std::lock_guard<std::mutex> io_lock(session->getIOMutex());
-            auto status = session->getChannel()->receive(msg, &ctx);
-            if (status != core::Status::OK) {
-                break; // disconnect or error
-            }
+
+        auto status = session->getChannel()->receive(msg, &ctx);
+        if (status != core::Status::OK) {
+            break; // disconnect or error
         }
-        
+
         enqueueMessage(session_id, std::move(msg));
     }
 

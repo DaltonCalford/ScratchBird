@@ -1,0 +1,1 @@
+psql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/merge_join_presorted.plan.sql:6: ERROR:  V3 EXPLAIN plan payload invalid

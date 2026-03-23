@@ -11,7 +11,8 @@
 
 namespace scratchbird::protocol::sbwp {
 
-constexpr uint32_t kProtocolMagic = 0x53425750; // "SBWP"
+// Encoded little-endian this yields bytes "SBWP".
+constexpr uint32_t kProtocolMagic = 0x50574253;
 constexpr uint8_t kProtocolMajor = 1;
 constexpr uint8_t kProtocolMinor = 1;
 constexpr uint16_t kProtocolVersion = (static_cast<uint16_t>(kProtocolMajor) << 8) | kProtocolMinor;

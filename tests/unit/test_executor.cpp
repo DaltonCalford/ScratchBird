@@ -359,7 +359,7 @@ TEST_F(ExecutorTest, TriggerBeforeInsertMissingProcedureFailsClosed) {
 
     auto insert_result = executeSQL("INSERT INTO trg_insert_missing_proc (id) VALUES (1)");
     EXPECT_FALSE(insert_result.success());
-    EXPECT_NE(insert_result.error().find("not registered"), std::string::npos);
+    EXPECT_NE(insert_result.error().find("Procedure not found"), std::string::npos);
 
     auto count_result = executeSQL("SELECT COUNT(*) FROM trg_insert_missing_proc");
     ASSERT_TRUE(count_result.success()) << count_result.error();
@@ -516,7 +516,7 @@ TEST_F(ExecutorTest, TriggerAfterInsertMissingProcedureFailsClosed) {
 
     auto insert_result = executeSQL("INSERT INTO trg_after_insert_missing_proc (id) VALUES (1)");
     EXPECT_FALSE(insert_result.success());
-    EXPECT_NE(insert_result.error().find("not registered"), std::string::npos);
+    EXPECT_NE(insert_result.error().find("Procedure not found"), std::string::npos);
 }
 
 TEST_F(ExecutorTest, InsertExpressions) {
@@ -1418,7 +1418,7 @@ TEST_F(ExecutorTest, FunctionCallRejectsSignatureMismatchDeterministically) {
     fn.name = "fn_sig_mismatch";
     fn.owner_id = system_user_id_;
     fn.return_type = DataType::INT64;
-    fn.bytecode = {0x00, 0x00, static_cast<uint8_t>(Opcode::END)};
+    fn.bytecode = scratchbird::testing::minimalCompiledStoredCodeBytecode("fn_sig_mismatch");
     fn.parameters.push_back({
         "p_value",
         DataType::INT64,
@@ -1457,7 +1457,7 @@ TEST_F(ExecutorTest, FunctionCallAllowsDeterministicNumericWidening) {
     fn.name = "fn_sig_widen";
     fn.owner_id = system_user_id_;
     fn.return_type = DataType::INT64;
-    fn.bytecode = {0x00, 0x00, static_cast<uint8_t>(Opcode::END)};
+    fn.bytecode = scratchbird::testing::minimalCompiledStoredCodeBytecode("fn_sig_widen");
     fn.parameters.push_back({
         "p_value",
         DataType::INT64,
@@ -1511,7 +1511,7 @@ TEST_F(ExecutorTest, ProcedureCallRejectsSignatureMismatchDeterministically) {
     proc.schema_id = default_schema_id_;
     proc.name = "proc_sig_mismatch";
     proc.owner_id = system_user_id_;
-    proc.bytecode = {0x00, 0x00, static_cast<uint8_t>(Opcode::END)};
+    proc.bytecode = scratchbird::testing::minimalCompiledStoredCodeBytecode("proc_sig_mismatch");
     proc.parameters.push_back({
         "p_value",
         DataType::INT64,
@@ -1544,7 +1544,7 @@ TEST_F(ExecutorTest, ProcedureCallAllowsDeterministicNumericWidening) {
     proc.schema_id = default_schema_id_;
     proc.name = "proc_sig_widen";
     proc.owner_id = system_user_id_;
-    proc.bytecode = {0x00, 0x00, static_cast<uint8_t>(Opcode::END)};
+    proc.bytecode = scratchbird::testing::minimalCompiledStoredCodeBytecode("proc_sig_widen");
     proc.parameters.push_back({
         "p_value",
         DataType::INT64,
@@ -1576,7 +1576,7 @@ TEST_F(ExecutorTest, ProcedureCallRejectsArgumentCountMismatchDeterministically)
     proc.schema_id = default_schema_id_;
     proc.name = "proc_sig_count";
     proc.owner_id = system_user_id_;
-    proc.bytecode = {0x00, 0x00, static_cast<uint8_t>(Opcode::END)};
+    proc.bytecode = scratchbird::testing::minimalCompiledStoredCodeBytecode("proc_sig_count");
     proc.parameters.push_back({
         "p_first",
         DataType::INT64,

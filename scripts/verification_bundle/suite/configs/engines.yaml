@@ -11,6 +11,7 @@ engines:
     client_candidates:
       - "{repo_root}/ScratchBird/build/src/sb_isql"
       - "{repo_root}/ScratchBird/build/src/cli/sb_isql"
+      - "{repo_root}/ScratchBird-driver/build/tracks/p3/drivers/cli/sb_isql"
       - "{repo_root}/ScratchBird-driver/build/tracks/alpha/drivers/cli/sb_isql"
       - "sb_isql"
     connect:

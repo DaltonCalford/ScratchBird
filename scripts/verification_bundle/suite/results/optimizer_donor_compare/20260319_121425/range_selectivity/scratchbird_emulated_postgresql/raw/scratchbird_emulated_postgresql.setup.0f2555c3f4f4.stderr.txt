@@ -1,0 +1,1 @@
+psql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/range_selectivity.setup.sql:1: NOTICE:  table "avp_range_selectivity" does not exist, skipping

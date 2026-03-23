@@ -232,6 +232,7 @@ void Lexer::initKeywordTables() {
         {"CURRENT", TokenType::KW_CURRENT},
         {"CURRENT_CONNECTION", TokenType::KW_CURRENT_CONNECTION},
         {"CURRENT_DATE", TokenType::KW_CURRENT_DATE},
+        {"CURRENT_SCHEMA", TokenType::KW_CURRENT_SCHEMA},
         {"CURRENT_ROLE", TokenType::KW_CURRENT_ROLE},
         {"CURRENT_TIME", TokenType::KW_CURRENT_TIME},
         {"CURRENT_TIMESTAMP", TokenType::KW_CURRENT_TIMESTAMP},

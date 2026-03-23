@@ -644,6 +644,10 @@ parser::v3::Expression* Parser::parsePrimaryExpr() {
 
     if (check(TokenType::KW_CASE)) return parseCaseExpr();
     if (check(TokenType::KW_CAST)) return parseCastExpr();
+    if (matchKeyword(TokenType::KW_COALESCE)) {
+        consume(TokenType::LEFT_PAREN, "Expected ( after COALESCE");
+        return parseFunctionCall({"coalesce"});
+    }
     if (matchKeyword(TokenType::KW_EXTRACT)) return parseExtractExpr();
     if (matchKeyword(TokenType::KW_ALTER_ELEMENT)) return parseAlterElementExpr();
     if (matchKeyword(TokenType::KW_ROW)) {

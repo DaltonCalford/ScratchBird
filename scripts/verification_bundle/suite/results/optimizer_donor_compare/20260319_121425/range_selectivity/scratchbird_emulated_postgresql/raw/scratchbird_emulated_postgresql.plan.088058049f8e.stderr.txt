@@ -1,0 +1,1 @@
+psql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/range_selectivity.plan.sql:1: ERROR:  V3 EXPLAIN plan payload invalid

@@ -1,0 +1,38 @@
+
+┌─────────────────────────────┐
+│┌───────────────────────────┐│
+││       Physical Plan       ││
+│└───────────────────────────┘│
+└─────────────────────────────┘
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 4          │
+│                           │
+│         Order By:         │
+│      ref_duckdb.main      │
+│ .avp_ordered_limit_topk.k │
+│             ASC           │
+│      ref_duckdb.main      │
+│ .avp_ordered_limit_topk.id│
+│             ASC           │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
+│    ────────────────────   │
+│           Table:          │
+│      ref_duckdb.main      │
+│  .avp_ordered_limit_topk  │
+│                           │
+│   Type: Sequential Scan   │
+│                           │
+│        Projections:       │
+│             id            │
+│             k             │
+│                           │
+│          Filters:         │
+│ optional: Dynamic Filter  │
+│            (k)            │
+│                           │
+│          ~10 rows         │
+└───────────────────────────┘

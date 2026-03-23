@@ -1,0 +1,5 @@
+Catalog Error: Table with name avp_range_selectivity does not exist!
+Did you mean "pg_prepared_statements"?
+
+LINE 1: EXPLAIN SELECT id FROM avp_range_selectivity WHERE k BETWEEN 25 AND 75;
+                               ^

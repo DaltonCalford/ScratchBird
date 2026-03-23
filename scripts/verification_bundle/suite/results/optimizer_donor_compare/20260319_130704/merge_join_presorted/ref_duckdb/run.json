@@ -1,0 +1,63 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 23,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/merge_join_presorted/ref_duckdb/raw/ref_duckdb.setup.49cce1dcd5bd.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/merge_join_presorted/ref_duckdb/raw/ref_duckdb.setup.49cce1dcd5bd.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "00000",
+    "message": "             ^",
+    "stdout": "\nCatalog Error: Table with name avp_merge_join_presorted does not exist!\nDid you mean \"pg_namespace\"?\n\nLINE 3: FROM avp_merge_join_presorted a\n             ^\n",
+    "stderr": "",
+    "elapsed_ms": 21,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/merge_join_presorted/ref_duckdb/raw/ref_duckdb.plan.530df37ee889.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/merge_join_presorted/ref_duckdb/raw/ref_duckdb.plan.530df37ee889.stderr.txt",
+    "plan_lines": [
+      "PLAN|Catalog Error: Table with name avp_merge_join_presorted does not exist!",
+      "PLAN|Did you mean \"pg_namespace\"?",
+      "PLAN|LINE 3: FROM avp_merge_join_presorted a",
+      "PLAN|^"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "00000",
+    "message": "             ^",
+    "stdout": "\nCatalog Error: Table with name avp_merge_join_presorted does not exist!\nDid you mean \"pg_namespace\"?\n\nLINE 2: FROM avp_merge_join_presorted a\n             ^\n",
+    "stderr": "",
+    "elapsed_ms": 15,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/merge_join_presorted/ref_duckdb/raw/ref_duckdb.exec.7bd3d9c951bd.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/merge_join_presorted/ref_duckdb/raw/ref_duckdb.exec.7bd3d9c951bd.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 13,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/merge_join_presorted/ref_duckdb/raw/ref_duckdb.teardown.f5ed1a3b3d27.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_130704/merge_join_presorted/ref_duckdb/raw/ref_duckdb.teardown.f5ed1a3b3d27.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

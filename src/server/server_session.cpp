@@ -16,6 +16,7 @@
 #include "scratchbird/server/server_session.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/bytecode_validator.h"
+#include "scratchbird/sblr/v3_container.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/auth_provider.h"
@@ -2069,7 +2070,8 @@ core::Status ServerSession::run() {
         fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent::ON_DISCONNECT);
 
         const bool preserve_dormant =
-            !conn_ctx_->autocommitMode() || conn_ctx_->autocommitSuspended();
+            (client_connect_flags_ & protocol::CONNECT_FLAG_NO_DORMANT_DETACH) == 0 &&
+            (!conn_ctx_->autocommitMode() || conn_ctx_->autocommitSuspended());
 
         core::ErrorContext cleanup_ctx;
         if (preserve_dormant) {
@@ -2366,7 +2368,9 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
             sendError("Failed to initialize connection context");
             return connect_status;
         }
-        conn_ctx_->setAutocommitMode(true);
+        const bool autocommit_enabled =
+            (client_connect_flags_ & protocol::CONNECT_FLAG_AUTOCOMMIT_OFF) == 0;
+        conn_ctx_->setAutocommitMode(autocommit_enabled);
 
         // Preserve the protocol session UUID for dormant reattach diagnostics.
         core::ID protocol_session_id;
@@ -2409,7 +2413,18 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
             core::CatalogManager::SchemaInfo schema_info;
             if (catalog->getSchema(session_info.current_schema_id, schema_info, nullptr) == core::Status::OK)
             {
-                conn_ctx_->set_current_schema(schema_info.schema_name);
+                std::string schema_path;
+                if (catalog->getSchemaPath(session_info.current_schema_id, schema_path, nullptr) !=
+                        core::Status::OK ||
+                    schema_path.empty())
+                {
+                    schema_path = schema_info.schema_name;
+                }
+                conn_ctx_->set_current_schema(schema_path);
+                if (session_info.search_path.empty() && !schema_path.empty())
+                {
+                    conn_ctx_->set_search_path({schema_path});
+                }
             }
 
             conn_ctx_->setSessionContext(session_info.session_id,
@@ -3005,7 +3020,8 @@ core::Status ServerSession::handleDisconnect(const protocol::Message& msg, core:
     // should release backend slots immediately on disconnect.
     if (conn_ctx_) {
         const bool preserve_dormant =
-            !conn_ctx_->autocommitMode() || conn_ctx_->autocommitSuspended();
+            (client_connect_flags_ & protocol::CONNECT_FLAG_NO_DORMANT_DETACH) == 0 &&
+            (!conn_ctx_->autocommitMode() || conn_ctx_->autocommitSuspended());
 
         if (preserve_dormant) {
             core::ID dormant_id;
@@ -3315,6 +3331,8 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
     }
     stats_.queries_executed++;
 
+    std::vector<uint8_t> executable_bytecode = bytecode;
+
     if (executor_) {
         executor_->resetCancellation();
     }
@@ -3363,7 +3381,7 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
 
     if (executor_) {
         core::ErrorContext validate_ctx;
-        core::Status validate_status = sblr::validateBytecode(bytecode, &validate_ctx);
+        core::Status validate_status = sblr::validateBytecode(executable_bytecode, &validate_ctx);
         if (validate_status != core::Status::OK) {
             stats_.queries_failed++;
             if (conn_ctx_) {
@@ -3456,7 +3474,7 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
 
     sblr::ExecutionResult exec_result;
     try {
-        exec_result = executor_->execute(bytecode);
+        exec_result = executor_->execute(executable_bytecode);
         if (debug_mysql_exec) {
             std::fprintf(stderr,
                          "[my_exec] server_session executor returned success=%d has_rs=%d affected=%lld\n",

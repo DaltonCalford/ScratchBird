@@ -173,6 +173,8 @@ namespace SqlType {
     constexpr uint16_t SQL_TYPE_TIME = 560;
     constexpr uint16_t SQL_TYPE_DATE = 570;
     constexpr uint16_t SQL_INT64     = 580;
+    constexpr uint16_t SQL_TIMESTAMP_TZ_EX = 32748;
+    constexpr uint16_t SQL_TIME_TZ_EX = 32750;
     constexpr uint16_t SQL_INT128    = 32752;
     constexpr uint16_t SQL_TIMESTAMP_TZ = 32754;
     constexpr uint16_t SQL_TIME_TZ   = 32756;
@@ -439,6 +441,8 @@ protected:
 
     core::Status parseMessage(network::Connection* conn) override;
     core::Status processMessage(network::Connection* conn) override;
+    void onConnectionClosed(network::Connection* conn,
+                            network::CloseReason reason) override;
     core::Status sendGreeting(network::Connection* conn) override;
     core::Status processAuthentication(network::Connection* conn) override;
     core::Status sendAuthResult(network::Connection* conn,

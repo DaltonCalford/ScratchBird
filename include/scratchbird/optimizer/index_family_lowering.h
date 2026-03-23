@@ -25,8 +25,6 @@ namespace scratchbird::optimizer
         "P09_JOIN_ORDER_PLAN";
     inline constexpr const char *kMgaRecheckContractId =
         "sb_mga_recheck/v1";
-    inline constexpr const char *kIndexFamilyCapabilityContractId =
-        "sb_index_family_capability/v1";
 
     enum class PredicateMatchShape : uint8_t
     {

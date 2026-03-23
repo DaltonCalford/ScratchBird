@@ -8,7 +8,8 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include "scratchbird/sblr/mysql_query_compiler.h"
-#include "scratchbird/parser/v3_emitter.h"
+#include "scratchbird/sblr/ast_sblr_lowerer.h"
+#include "scratchbird/sblr/query_compiler_v3_optimizer_support.h"
 #include "scratchbird/sblr/v3_container.h"
 #include "scratchbird/sblr/v3_codec.h"
 
@@ -56,7 +57,7 @@ MySQLCompilationResult MySQLQueryCompiler::compileInternal(const std::string& sq
     }
 
     if (parse_result.statement() != nullptr) {
-        parser::v3::V3Emitter emitter(parse_result.stringPool());
+        parser::v3::AstSblrLowerer emitter(parse_result.stringPool());
         sblr::v3::Container container;
         std::string emit_err;
         if (!emitter.emitStatementToContainer(parse_result.statement(), container, emit_err)) {
@@ -65,13 +66,34 @@ MySQLCompilationResult MySQLQueryCompiler::compileInternal(const std::string& sq
         }
         container.metadata.module_name = "mysql_emulation";
 
-        std::vector<uint8_t> encoded;
-        std::string encode_err;
-        if (!sblr::v3::encodeContainer(container, encoded, encode_err)) {
-            result.addError("V3 container encode failed: " + encode_err);
-            return result;
+        if (db_ != nullptr) {
+            auto finalized = detail::finalizeQueryCompilerV3Compilation(
+                db_,
+                sql,
+                parse_result.statement(),
+                parse_result.stringPool(),
+                core::ID{},
+                true,
+                container);
+            for (const auto& warning : finalized.warnings) {
+                result.addWarning(warning);
+            }
+            for (const auto& error : finalized.errors) {
+                result.addError(error);
+            }
+            if (!finalized.success) {
+                return result;
+            }
+            result.setBytecode(std::move(finalized.bytecode));
+        } else {
+            std::string encode_error;
+            std::vector<uint8_t> raw_bytecode;
+            if (!sblr::v3::encodeContainer(container, raw_bytecode, encode_error)) {
+                result.addError("V3 raw encode failed: " + encode_error);
+                return result;
+            }
+            result.setBytecode(std::move(raw_bytecode));
         }
-        result.setBytecode(std::move(encoded));
     } else {
         // No-op input chunk (e.g. comment-only statement segment).
         sblr::v3::Container container;
@@ -111,13 +133,34 @@ MySQLCompilationResult MySQLQueryCompiler::compileInternal(const std::string& sq
 
         container.bytecode_stream = std::move(bytecode_stream);
 
-        std::vector<uint8_t> encoded;
-        std::string encode_err;
-        if (!sblr::v3::encodeContainer(container, encoded, encode_err)) {
-            result.addError("V3 container encode failed: " + encode_err);
-            return result;
+        if (db_ != nullptr) {
+            auto finalized = detail::finalizeQueryCompilerV3Compilation(
+                db_,
+                sql,
+                nullptr,
+                parse_result.stringPool(),
+                core::ID{},
+                true,
+                container);
+            for (const auto& warning : finalized.warnings) {
+                result.addWarning(warning);
+            }
+            for (const auto& error : finalized.errors) {
+                result.addError(error);
+            }
+            if (!finalized.success) {
+                return result;
+            }
+            result.setBytecode(std::move(finalized.bytecode));
+        } else {
+            std::string encode_error;
+            std::vector<uint8_t> raw_bytecode;
+            if (!sblr::v3::encodeContainer(container, raw_bytecode, encode_error)) {
+                result.addError("V3 no-op encode failed: " + encode_error);
+                return result;
+            }
+            result.setBytecode(std::move(raw_bytecode));
         }
-        result.setBytecode(std::move(encoded));
     }
     for (const auto& warn : parse_result.warnings()) {
         result.addWarning(warn);

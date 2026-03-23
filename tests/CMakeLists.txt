@@ -56,6 +56,9 @@ message(STATUS "Using compatibility test timeout: ${SCRATCHBIRD_TEST_TIMEOUT_COM
 # Allow test sources to include test_helpers.h across all test targets.
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 link_libraries(scratchbird_link_group)
+if(NOT WIN32)
+    link_libraries("-Wl,--start-group" scratchbird_core scratchbird_sblr "-Wl,--end-group")
+endif()
 if(SCRATCHBIRD_WITH_COMPILER)
     set(SCRATCHBIRD_TEST_COMPILER_LIBS scratchbird_compiler scratchbird_parser)
 else()
@@ -242,6 +245,8 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_copy_flow_control\.cpp$")  # API
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_firebird_parser_agent\.cpp$")  # API mismatch
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_mysql_parser_agent\.cpp$")  # API mismatch
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_postgresql_parser_agent\.cpp$")  # API mismatch
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_firebird_parser_boundary_contract\.cpp$")  # Standalone target
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_emulated_parser_boundary_contracts\.cpp$")  # Needs dedicated parser-agent target split
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_schema_introspection\.cpp$")  # API mismatch
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_unix_socket_channel\.cpp$")  # API mismatch
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_type_mapping\.cpp$")  # Link error
@@ -325,6 +330,203 @@ endif()
 
 if(PROJ_FOUND)
     target_link_libraries(scratchbird_tests_sequential ${PROJ_LIBRARIES})
+endif()
+
+# Focused scheduler/catalog verification target. Parser-agent boundary suites run
+# in standalone targets so the aggregate scratchbird_tests binary can remain
+# focused on the monolithic unit/integration inventory.
+add_executable(test_scheduler_contracts
+    unit/job_scheduler_test.cpp
+    unit/test_catalog_scheduler_extension_contract.cpp
+)
+
+target_include_directories(test_scheduler_contracts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(test_scheduler_contracts
+    scratchbird_core
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    scratchbird_sblr
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+    scratchbird_fdw
+    scratchbird_protocol
+    scratchbird_pool
+    scratchbird_server
+    scratchbird_network
+    GTest::gtest
+    GTest::gtest_main
+    scratchbird_parser
+    scratchbird_link_group
+)
+if(TARGET scratchbird_udr)
+    target_link_libraries(test_scheduler_contracts scratchbird_udr)
+endif()
+if(GEOS_FOUND)
+    target_link_libraries(test_scheduler_contracts ${GEOS_LIBRARIES})
+endif()
+if(PROJ_FOUND)
+    target_link_libraries(test_scheduler_contracts ${PROJ_LIBRARIES})
+endif()
+
+# Focused Firebird parser/unit verification target. Keep this isolated from the
+# aggregate scratchbird_tests binary while the broader parser-agent surface is
+# still being repaired.
+add_executable(test_firebird_parser_contracts
+    unit/test_firebird_lexer.cpp
+    unit/test_firebird_parser.cpp
+    unit/test_firebird_parser_window.cpp
+    unit/test_firebird_drop_semantics.cpp
+    unit/test_rename_move_opcodes.cpp
+)
+
+target_include_directories(test_firebird_parser_contracts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(test_firebird_parser_contracts
+    scratchbird_core
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    scratchbird_sblr
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+    scratchbird_fdw
+    scratchbird_protocol
+    scratchbird_pool
+    scratchbird_server
+    scratchbird_network
+    GTest::gtest
+    GTest::gtest_main
+    scratchbird_parser
+    scratchbird_link_group
+)
+if(TARGET scratchbird_udr)
+    target_link_libraries(test_firebird_parser_contracts scratchbird_udr)
+endif()
+if(GEOS_FOUND)
+    target_link_libraries(test_firebird_parser_contracts ${GEOS_LIBRARIES})
+endif()
+if(PROJ_FOUND)
+    target_link_libraries(test_firebird_parser_contracts ${PROJ_LIBRARIES})
+endif()
+
+add_executable(test_firebird_parser_agent_contracts
+    unit/test_firebird_parser_agent.cpp
+)
+
+target_include_directories(test_firebird_parser_agent_contracts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(test_firebird_parser_agent_contracts
+    scratchbird_core
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    scratchbird_sblr
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+    scratchbird_fdw
+    scratchbird_protocol
+    scratchbird_ipc_firebird_parser
+    scratchbird_pool
+    scratchbird_server
+    scratchbird_network
+    GTest::gtest
+    GTest::gtest_main
+    scratchbird_parser
+    scratchbird_link_group
+)
+if(TARGET scratchbird_udr)
+    target_link_libraries(test_firebird_parser_agent_contracts scratchbird_udr)
+endif()
+if(GEOS_FOUND)
+    target_link_libraries(test_firebird_parser_agent_contracts ${GEOS_LIBRARIES})
+endif()
+if(PROJ_FOUND)
+    target_link_libraries(test_firebird_parser_agent_contracts ${PROJ_LIBRARIES})
+endif()
+
+add_executable(test_firebird_parser_boundary_contracts
+    unit/test_firebird_parser_boundary_contract.cpp
+)
+
+target_include_directories(test_firebird_parser_boundary_contracts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(test_firebird_parser_boundary_contracts
+    scratchbird_core
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    scratchbird_sblr
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+    scratchbird_fdw
+    scratchbird_protocol
+    scratchbird_ipc_firebird_parser
+    scratchbird_pool
+    scratchbird_server
+    scratchbird_network
+    GTest::gtest
+    GTest::gtest_main
+    scratchbird_parser
+    scratchbird_link_group
+)
+if(TARGET scratchbird_udr)
+    target_link_libraries(test_firebird_parser_boundary_contracts scratchbird_udr)
+endif()
+if(GEOS_FOUND)
+    target_link_libraries(test_firebird_parser_boundary_contracts ${GEOS_LIBRARIES})
+endif()
+if(PROJ_FOUND)
+    target_link_libraries(test_firebird_parser_boundary_contracts ${PROJ_LIBRARIES})
+endif()
+
+add_executable(test_dialect_compiler_udr_contracts
+    unit/test_dialect_compiler_udr_contracts.cpp
+)
+
+target_include_directories(test_dialect_compiler_udr_contracts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(test_dialect_compiler_udr_contracts
+    scratchbird_core
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    scratchbird_sblr
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+    GTest::gtest
+    GTest::gtest_main
+    scratchbird_parser
+    scratchbird_link_group
+)
+if(TARGET scratchbird_udr)
+    target_link_libraries(test_dialect_compiler_udr_contracts scratchbird_udr)
+endif()
+if(GEOS_FOUND)
+    target_link_libraries(test_dialect_compiler_udr_contracts ${GEOS_LIBRARIES})
+endif()
+if(PROJ_FOUND)
+    target_link_libraries(test_dialect_compiler_udr_contracts ${PROJ_LIBRARIES})
+endif()
+
+add_executable(test_emulated_parser_boundary_contracts
+    unit/test_emulated_parser_boundary_contracts.cpp
+)
+
+target_include_directories(test_emulated_parser_boundary_contracts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(test_emulated_parser_boundary_contracts
+    scratchbird_core
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    scratchbird_sblr
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+    scratchbird_fdw
+    scratchbird_protocol
+    scratchbird_ipc_firebird_parser
+    scratchbird_ipc_postgresql_parser
+    scratchbird_ipc_mysql_parser
+    scratchbird_pool
+    scratchbird_server
+    scratchbird_network
+    GTest::gtest
+    GTest::gtest_main
+    scratchbird_parser
+    scratchbird_link_group
+)
+if(TARGET scratchbird_udr)
+    target_link_libraries(test_emulated_parser_boundary_contracts scratchbird_udr)
+endif()
+if(GEOS_FOUND)
+    target_link_libraries(test_emulated_parser_boundary_contracts ${GEOS_LIBRARIES})
+endif()
+if(PROJ_FOUND)
+    target_link_libraries(test_emulated_parser_boundary_contracts ${PROJ_LIBRARIES})
 endif()
 
 # Register tests
@@ -476,7 +678,7 @@ if(SCRATCHBIRD_DIALECT_PARSER_FILTER)
         PROPERTIES
             TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_UNIT}
             LABELS "unit\\;smoke\\;parser\\;firebird"
-        TEST_FILTER "FirebirdParserTest.*"
+    TEST_FILTER "FirebirdParserTest.*"
     )
     gtest_discover_tests(scratchbird_tests
         PROPERTIES
@@ -491,6 +693,46 @@ if(SCRATCHBIRD_DIALECT_PARSER_FILTER)
         TEST_FILTER "MySQLParserTest.*"
     )
 endif()
+
+gtest_discover_tests(test_firebird_parser_contracts
+    PROPERTIES
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_UNIT}
+        LABELS "unit\\;smoke\\;parser\\;firebird"
+        ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
+    TEST_FILTER "FirebirdLexerTest.*:FirebirdParserTest.*:FirebirdParserWindowTest.*:FirebirdDropSemanticsTest.*:RenameMoveOpcodeV3Test.Firebird*"
+)
+
+gtest_discover_tests(test_firebird_parser_agent_contracts
+    PROPERTIES
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_UNIT}
+        LABELS "unit\\;parser_agent\\;firebird"
+        ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
+    TEST_FILTER "FirebirdParserAgentTest.*"
+)
+
+gtest_discover_tests(test_firebird_parser_boundary_contracts
+    PROPERTIES
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_UNIT}
+        LABELS "unit\\;boundary\\;parser_agent\\;firebird"
+        ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
+    TEST_FILTER "FirebirdParserBoundaryContractTest.*"
+)
+
+gtest_discover_tests(test_dialect_compiler_udr_contracts
+    PROPERTIES
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_UNIT}
+        LABELS "unit\\;compiler_udr\\;native"
+        ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
+    TEST_FILTER "DialectCompilerUdrContractTest.*"
+)
+
+gtest_discover_tests(test_emulated_parser_boundary_contracts
+    PROPERTIES
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_UNIT}
+        LABELS "unit\\;boundary\\;parser_agent\\;emulated"
+        ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
+    TEST_FILTER "EmulatedParserBoundaryContractsTest.*"
+)
 
 if(SCRATCHBIRD_STRESS_FILTER)
     gtest_discover_tests(scratchbird_tests
@@ -2180,6 +2422,30 @@ gtest_discover_tests(test_postgresql_parser
 )
 
 # ============================================================================
+# MySQL Query Compiler Unit Tests
+# ============================================================================
+
+add_executable(test_mysql_query_compiler
+    unit/test_mysql_query_compiler.cpp
+)
+target_link_libraries(test_mysql_query_compiler
+    scratchbird_core
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    scratchbird_sblr
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+    gtest
+    gtest_main
+)
+if(TARGET scratchbird_udr)
+    target_link_libraries(test_mysql_query_compiler scratchbird_udr)
+endif()
+gtest_discover_tests(test_mysql_query_compiler
+    TEST_PREFIX "MySQL."
+    PROPERTIES
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+)
+
+# ============================================================================
 # Parser V3 Performance Benchmarks (Phase 9)
 # ============================================================================
 
@@ -2523,6 +2789,8 @@ endif()
 # ============================================================================
 # Compatibility/Emulation Suite Contracts
 # ============================================================================
+# `sb_isql` is reserved for the native ScratchBird/V3 lane. Emulated
+# PostgreSQL/MySQL/Firebird compatibility runners must use donor clients.
 
 set(SCRATCHBIRD_COMPAT_ROOT "${CMAKE_SOURCE_DIR}/tests/compatibility")
 set(SCRATCHBIRD_COMPAT_FIREBIRD_RUNNER "${SCRATCHBIRD_COMPAT_ROOT}/firebird/scripts/run_firebird_ctest.sh")

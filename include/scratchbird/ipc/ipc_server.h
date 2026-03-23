@@ -115,13 +115,24 @@ public:
     virtual core::Status onSimpleQuery(uint32_t session_id,
                                       const std::string& sql,
                                       core::ErrorContext* ctx = nullptr) = 0;
+    virtual core::Status onCompiledQuery(uint32_t session_id,
+                                        const std::vector<uint8_t>& bytecode,
+                                        const std::string& original_sql,
+                                        core::ErrorContext* ctx = nullptr) = 0;
     virtual core::Status onParse(uint32_t session_id,
                                 const std::string& stmt_name,
                                 const std::string& sql,
                                 core::ErrorContext* ctx = nullptr) = 0;
+    virtual core::Status onCompiledParse(uint32_t session_id,
+                                        const std::string& stmt_name,
+                                        const std::vector<uint8_t>& bytecode,
+                                        const std::string& original_sql,
+                                        core::ErrorContext* ctx = nullptr) = 0;
     virtual core::Status onBind(uint32_t session_id,
                                const std::string& portal_name,
                                const std::string& stmt_name,
+                               const std::vector<std::optional<std::string>>& params,
+                               const std::vector<bool>& param_nulls,
                                core::ErrorContext* ctx = nullptr) = 0;
     virtual core::Status onExecute(uint32_t session_id,
                                   const std::string& portal_name,
@@ -196,6 +207,9 @@ public:
     virtual core::Status sendNotification(uint32_t session_id,
                                          const std::string& channel,
                                          const std::string& payload) = 0;
+    virtual core::Status drainOutboundMessages(uint32_t session_id,
+                                              std::vector<IPCMessage>& messages,
+                                              core::ErrorContext* ctx = nullptr) = 0;
 };
 
 // ============================================================================
@@ -213,8 +227,10 @@ public:
     // Lifecycle
     core::Status start(core::ErrorContext* ctx = nullptr);
     core::Status stop(core::ErrorContext* ctx = nullptr);
-    bool isActive() const { return state_ == SessionState::ACTIVE ||
-                                   state_ == SessionState::EXECUTING; }
+    bool isActive() const {
+        return state_ != SessionState::CLOSING &&
+               state_ != SessionState::CLOSED;
+    }
     
     // Message handling
     core::Status handleMessage(const IPCMessage& msg, core::ErrorContext* ctx);
@@ -267,10 +283,13 @@ private:
     } flow_control_;
     
     // Handlers for each message type
+    core::Status flushOutboundMessages(core::ErrorContext* ctx);
     core::Status handleStartup(const IPCMessage& msg, core::ErrorContext* ctx);
     core::Status handleFeatureNegotiate(const IPCMessage& msg, core::ErrorContext* ctx);
     core::Status handleSimpleQuery(const IPCMessage& msg, core::ErrorContext* ctx);
+    core::Status handleCompiledQuery(const IPCMessage& msg, core::ErrorContext* ctx);
     core::Status handleParse(const IPCMessage& msg, core::ErrorContext* ctx);
+    core::Status handleCompiledParse(const IPCMessage& msg, core::ErrorContext* ctx);
     core::Status handleBind(const IPCMessage& msg, core::ErrorContext* ctx);
     core::Status handleExecute(const IPCMessage& msg, core::ErrorContext* ctx);
     core::Status handleClose(const IPCMessage& msg, core::ErrorContext* ctx);

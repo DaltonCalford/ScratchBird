@@ -987,38 +987,6 @@ namespace scratchbird::optimizer
         return std::string(text.substr(0, end));
     }
 
-    auto applyExpressionStatsTextTransform(std::string &text,
-                                           ExpressionStatsFunction function)
-        -> void
-    {
-        switch (function)
-        {
-            case ExpressionStatsFunction::LOWER:
-                std::transform(text.begin(),
-                               text.end(),
-                               text.begin(),
-                               [](unsigned char ch) {
-                                   return static_cast<char>(std::tolower(ch));
-                               });
-                return;
-            case ExpressionStatsFunction::UPPER:
-                text = core::IdentifierUtils::toUpper(text);
-                return;
-            case ExpressionStatsFunction::TRIM:
-                text = ltrimAsciiCopy(rtrimAsciiCopy(text));
-                return;
-            case ExpressionStatsFunction::LTRIM:
-                text = ltrimAsciiCopy(text);
-                return;
-            case ExpressionStatsFunction::RTRIM:
-                text = rtrimAsciiCopy(text);
-                return;
-            case ExpressionStatsFunction::UNKNOWN:
-            default:
-                return;
-        }
-    }
-
     auto isLengthPrefixedType(core::DataType type) -> bool
     {
         switch (type)
@@ -2450,11 +2418,19 @@ namespace scratchbird::optimizer
         stats_out.table_id = table_id;
         stats_out.expression_key = canonical_expression_key;
         stats_out.expression_contract_id =
-            have_descriptor ? descriptor.contract_id : "sb_expression_stats/v1";
+            have_descriptor ? descriptor.contract_id : kExpressionStatsContractId;
+        stats_out.registry_contract_id =
+            have_descriptor ? descriptor.registry_contract_id
+                            : kExpressionStatsRegistryContractId;
+        stats_out.coverage_contract_id =
+            have_descriptor ? descriptor.coverage_contract_id
+                            : kExpressionStatsCoverageContractId;
         stats_out.function_name =
             have_descriptor ? descriptor.function_name : std::string();
         stats_out.base_column_name =
             have_descriptor ? descriptor.column_name : std::string();
+        stats_out.coverage_class =
+            have_descriptor ? descriptor.coverage_class : "UNSUPPORTED";
         stats_out.input_data_type = stored_stats.data_type;
         stats_out.result_data_type =
             have_descriptor && descriptor.result_data_type != core::DataType::UNKNOWN
@@ -4715,7 +4691,9 @@ namespace scratchbird::optimizer
                     {
                         return;
                     }
-                    applyExpressionStatsTextTransform(text, descriptor.function);
+                    ::scratchbird::optimizer::applyExpressionStatsTextTransform(
+                        text,
+                        descriptor.function);
                     expr_values.push_back(encodeStringValue(text));
                 }
 
@@ -4772,8 +4750,11 @@ namespace scratchbird::optimizer
                 info.table_id = table_id;
                 info.expression_key = expression_key;
                 info.expression_contract_id = descriptor.contract_id;
+                info.registry_contract_id = descriptor.registry_contract_id;
+                info.coverage_contract_id = descriptor.coverage_contract_id;
                 info.function_name = descriptor.function_name;
                 info.base_column_name = descriptor.column_name;
+                info.coverage_class = descriptor.coverage_class;
                 info.input_data_type = type;
                 info.result_data_type = descriptor.result_data_type;
                 expr_stats.column_id =
@@ -4796,10 +4777,10 @@ namespace scratchbird::optimizer
                 }
             };
 
-            for (const char *function_name :
-                 {"LOWER", "UPPER", "TRIM", "LTRIM", "RTRIM"})
+            for (const auto &entry : expressionStatsRegistryEntries())
             {
-                auto descriptor = buildExpressionStatsDescriptor(function_name,
+                auto descriptor =
+                    buildExpressionStatsDescriptor(entry.canonical_name,
                                                                  column.column_name,
                                                                  type);
                 if (descriptor.has_value())

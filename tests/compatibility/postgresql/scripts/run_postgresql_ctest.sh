@@ -18,6 +18,8 @@ for candidate in \
     break
   fi
 done
+# Emulated PostgreSQL verification must use donor `psql`. `sb_isql` is native
+# ScratchBird/V3 only and is intentionally not accepted for this lane.
 ISQL_BIN="${SCRATCHBIRD_PG_PSQL_BIN:-${SCRATCHBIRD_PG_ISQL:-$DEFAULT_PSQL_BIN}}"
 LIST_MODE="${SCRATCHBIRD_PG_CTEST_LIST_MODE:-${SCRATCHBIRD_COMPAT_CTEST_LIST_MODE:-curated}}"
 case "$LIST_MODE" in
@@ -46,7 +48,7 @@ fi
 if [[ "$(basename "$ISQL_BIN")" != "psql" ]]; then
   cat >&2 <<EOF
 SKIP: ScratchBird PostgreSQL wrapper clients are deprecated for compatibility compare runs.
-Provide the cloned donor psql via SCRATCHBIRD_PG_PSQL_BIN.
+Provide the cloned donor psql via SCRATCHBIRD_PG_PSQL_BIN. sb_isql is native/V3 only.
 Resolved path: ${ISQL_BIN}
 EOF
   exit 77

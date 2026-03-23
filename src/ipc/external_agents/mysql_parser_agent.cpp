@@ -23,6 +23,8 @@
  */
 
 #include "scratchbird/ipc/mysql_parser_agent.h"
+#include "scratchbird/protocol/adapters/mysql_adapter.h"
+#include "scratchbird/sblr/bytecode_validator.h"
 #ifdef _WIN32
     #include <winsock2.h>
     #include <ws2tcpip.h>
@@ -32,9 +34,14 @@
 #endif
 #include "scratchbird/core/posix_compat.h"
 #include "scratchbird/core/socket_call_compat.h"
+#include <cctype>
 #include <cstring>
+#include <algorithm>
+#include <fstream>
+#include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <utility>
 
 
 namespace scratchbird {
@@ -83,11 +90,19 @@ namespace mysql {
     constexpr uint32_t CLIENT_REMEMBER_OPTIONS = 0x80000000;
     
     // Default server capabilities
-    constexpr uint32_t DEFAULT_CAPABILITIES = 
+    constexpr uint32_t DEFAULT_CAPABILITIES =
         CLIENT_LONG_PASSWORD | CLIENT_FOUND_ROWS | CLIENT_LONG_FLAG |
-        CLIENT_CONNECT_WITH_DB | CLIENT_PROTOCOL_41 | CLIENT_TRANSACTIONS |
-        CLIENT_MULTI_STATEMENTS | CLIENT_MULTI_RESULTS | CLIENT_PLUGIN_AUTH |
-        CLIENT_SESSION_TRACK | CLIENT_DEPRECATE_EOF;
+        CLIENT_CONNECT_WITH_DB | CLIENT_NO_SCHEMA | CLIENT_ODBC |
+        CLIENT_LOCAL_FILES | CLIENT_IGNORE_SPACE | CLIENT_PROTOCOL_41 |
+        CLIENT_INTERACTIVE | CLIENT_IGNORE_SIGPIPE | CLIENT_TRANSACTIONS |
+        CLIENT_RESERVED | CLIENT_SECURE_CONNECTION |
+        CLIENT_MULTI_STATEMENTS | CLIENT_MULTI_RESULTS |
+        CLIENT_PS_MULTI_RESULTS | CLIENT_PLUGIN_AUTH |
+        CLIENT_CONNECT_ATTRS | CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA |
+        CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS | CLIENT_SESSION_TRACK |
+        CLIENT_DEPRECATE_EOF | CLIENT_OPTIONAL_RESULTSET_METADATA |
+        CLIENT_ZSTD_COMPRESSION_ALGORITHM |
+        MULTI_FACTOR_AUTHENTICATION | CLIENT_REMEMBER_OPTIONS;
     
     // Character sets
     constexpr uint8_t CHARSET_UTF8MB4 = 255;
@@ -207,6 +222,56 @@ static void writeUint32LE(uint8_t* data, uint32_t value) {
     data[3] = (value >> 24) & 0xFF;
 }
 
+static bool compiledQueryIpcTraceEnabled() {
+    static const bool enabled = []() {
+        const char* value = std::getenv("SCRATCHBIRD_TRACE_COMPILED_QUERY_IPC");
+        if (value == nullptr || value[0] == '\0') {
+            return false;
+        }
+        std::string normalized(value);
+        std::transform(normalized.begin(),
+                       normalized.end(),
+                       normalized.begin(),
+                       [](unsigned char ch) {
+                           return static_cast<char>(std::toupper(ch));
+                       });
+        return normalized != "0" &&
+               normalized != "FALSE" &&
+               normalized != "NO" &&
+               normalized != "OFF";
+    }();
+    return enabled;
+}
+
+static void appendCompiledQueryTraceLine(const std::string& line) {
+    std::ofstream out("/tmp/sb_ipc_debug.log", std::ios::app);
+    if (!out) {
+        return;
+    }
+    out << line << '\n';
+}
+
+static std::string summarizeBytecode(const std::vector<uint8_t>& bytecode) {
+    auto hex_slice = [&](size_t begin, size_t end) {
+        std::ostringstream out;
+        out << std::hex << std::setfill('0');
+        for (size_t i = begin; i < end; ++i) {
+            if (i != begin) {
+                out << ' ';
+            }
+            out << std::setw(2) << static_cast<unsigned>(bytecode[i]);
+        }
+        return out.str();
+    };
+
+    if (bytecode.size() <= 32) {
+        return hex_slice(0, bytecode.size());
+    }
+
+    return hex_slice(0, 16) + " ... " +
+           hex_slice(bytecode.size() - 16, bytecode.size());
+}
+
 static uint16_t readUint16LE(const uint8_t* data) {
     return data[0] | (data[1] << 8);
 }
@@ -282,6 +347,411 @@ static void writeLengthEncodedString(std::vector<uint8_t>& out, const std::strin
     out.insert(out.end(), str.begin(), str.end());
 }
 
+class MySqlCompileAdapter : public scratchbird::protocol::MySqlAdapter {
+public:
+    explicit MySqlCompileAdapter(const scratchbird::protocol::ProtocolAdapterConfig& config)
+        : scratchbird::protocol::MySqlAdapter(config) {
+    }
+
+    using scratchbird::protocol::MySqlAdapter::applySuccessfulSessionQueryForTest;
+    using scratchbird::protocol::MySqlAdapter::compileQuery;
+
+    void setLogicalDatabase(const std::string& logical_db) {
+        database_name_ = logical_db;
+    }
+
+    void setUsername(const std::string& username) {
+        username_ = username;
+    }
+};
+
+static std::string trimTrailingNulls(std::string value) {
+    while (!value.empty() && value.back() == '\0') {
+        value.pop_back();
+    }
+    return value;
+}
+
+static std::string trimAscii(const std::string& value) {
+    const size_t first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) {
+        return {};
+    }
+    const size_t last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+static std::string normalizeMysqlProbeSql(const std::string& sql) {
+    std::string trimmed = trimAscii(trimTrailingNulls(sql));
+    while (!trimmed.empty() && trimmed.back() == ';') {
+        trimmed.pop_back();
+        trimmed = trimAscii(trimmed);
+    }
+    for (char& ch : trimmed) {
+        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    }
+    return trimmed;
+}
+
+static std::vector<IPCFieldDesc> decodeRowDescriptionFields(const IPCMessage& ipc_msg) {
+    std::vector<IPCFieldDesc> fields;
+    const auto* payload = ipc_msg.getPayload<IPCRowDescriptionPayload>();
+    if (!payload) {
+        return fields;
+    }
+
+    size_t offset = sizeof(IPCRowDescriptionPayload);
+    const uint8_t* data = ipc_msg.payload.data();
+    const size_t payload_size = ipc_msg.payload.size();
+    for (uint16_t i = 0;
+         i < payload->num_fields && offset + sizeof(IPCFieldDesc) <= payload_size;
+         ++i) {
+        IPCFieldDesc field{};
+        std::memcpy(&field, data + offset, sizeof(IPCFieldDesc));
+        fields.push_back(field);
+        offset += sizeof(IPCFieldDesc);
+    }
+    return fields;
+}
+
+static std::vector<std::optional<std::string>> decodeDataRowValues(const IPCMessage& ipc_msg) {
+    std::vector<std::optional<std::string>> values;
+    const auto* payload = ipc_msg.getPayload<IPCDataRowPayload>();
+    if (!payload) {
+        return values;
+    }
+
+    size_t offset = sizeof(IPCDataRowPayload);
+    const uint8_t* data = ipc_msg.payload.data();
+    const size_t payload_size = ipc_msg.payload.size();
+    for (uint16_t i = 0;
+         i < payload->num_fields && offset + sizeof(int32_t) <= payload_size;
+         ++i) {
+        int32_t len = 0;
+        std::memcpy(&len, data + offset, sizeof(int32_t));
+        offset += sizeof(int32_t);
+        if (len < 0) {
+            values.push_back(std::nullopt);
+            continue;
+        }
+        if (offset + static_cast<size_t>(len) > payload_size) {
+            values.push_back(std::nullopt);
+            break;
+        }
+        values.emplace_back(std::string(reinterpret_cast<const char*>(data + offset),
+                                        static_cast<size_t>(len)));
+        offset += static_cast<size_t>(len);
+    }
+
+    return values;
+}
+
+static uint16_t mapSqlStateToMySqlErrorCode(const std::string& sqlstate) {
+    if (sqlstate == "42S02" || sqlstate == "42P01") return 1146;
+    if (sqlstate == "42S22" || sqlstate == "42703") return 1054;
+    if (sqlstate == "28000" || sqlstate == "28P01") return 1045;
+    if (sqlstate == "42000" || sqlstate == "42601") return 1064;
+    if (sqlstate == "23000") return 1062;
+    if (sqlstate == "08S01" || sqlstate == "08006" || sqlstate == "08003") return 1047;
+    return 1105;
+}
+
+static std::string escapeBackticks(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (char ch : value) {
+        escaped.push_back(ch);
+        if (ch == '`') {
+            escaped.push_back('`');
+        }
+    }
+    return escaped;
+}
+
+static scratchbird::protocol::ProtocolAdapterConfig buildMySqlAdapterConfig(
+    const ParserAgentConfig& config) {
+    scratchbird::protocol::ProtocolAdapterConfig adapter_config;
+    adapter_config.engine_endpoint = config.ipc_endpoint;
+
+    auto default_db_it = config.options.find("default_database");
+    if (default_db_it != config.options.end()) {
+        adapter_config.default_database = default_db_it->second;
+    }
+
+    auto db_path_it = config.options.find("database_path");
+    if (db_path_it != config.options.end()) {
+        adapter_config.database_path = db_path_it->second;
+    }
+
+    return adapter_config;
+}
+
+static uint64_t readUint64LE(const uint8_t* data) {
+    uint64_t value = 0;
+    for (int i = 0; i < 8; ++i) {
+        value |= static_cast<uint64_t>(data[i]) << (i * 8);
+    }
+    return value;
+}
+
+static std::string readLengthEncodedStringValue(const uint8_t* data,
+                                                size_t& offset,
+                                                size_t max_len) {
+    if (offset >= max_len) {
+        return {};
+    }
+
+    const uint8_t* ptr = data + offset;
+    size_t remaining = max_len - offset;
+    const uint64_t len = readLengthEncodedInteger(ptr, remaining);
+    offset = static_cast<size_t>(ptr - data);
+    if (offset + static_cast<size_t>(len) > max_len) {
+        offset = max_len;
+        return {};
+    }
+
+    std::string value(reinterpret_cast<const char*>(data + offset),
+                      static_cast<size_t>(len));
+    offset += static_cast<size_t>(len);
+    return value;
+}
+
+static uint16_t countPreparedParameters(const std::string& query) {
+    bool in_single = false;
+    bool in_double = false;
+    bool escape = false;
+    uint16_t count = 0;
+
+    for (char ch : query) {
+        if (escape) {
+            escape = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escape = true;
+            continue;
+        }
+        if (ch == '\'' && !in_double) {
+            in_single = !in_single;
+            continue;
+        }
+        if (ch == '"' && !in_single) {
+            in_double = !in_double;
+            continue;
+        }
+        if (ch == '?' && !in_single && !in_double) {
+            ++count;
+        }
+    }
+
+    return count;
+}
+
+static std::string escapeSqlLiteral(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size() + 4);
+    for (char ch : value) {
+        if (ch == '\'' || ch == '\\') {
+            escaped.push_back('\\');
+        }
+        escaped.push_back(ch);
+    }
+    return escaped;
+}
+
+static bool decodePreparedParameterLiteral(const uint8_t* data,
+                                           size_t& offset,
+                                           size_t max_len,
+                                           uint8_t type,
+                                           bool is_unsigned,
+                                           std::string& out_literal) {
+    if (offset >= max_len) {
+        return false;
+    }
+
+    switch (type) {
+        case mysql::MYSQL_TYPE_TINY: {
+            if (offset + 1 > max_len) return false;
+            const uint8_t raw = data[offset++];
+            out_literal = is_unsigned ? std::to_string(raw)
+                                      : std::to_string(static_cast<int8_t>(raw));
+            return true;
+        }
+        case mysql::MYSQL_TYPE_SHORT: {
+            if (offset + 2 > max_len) return false;
+            const uint16_t raw = readUint16LE(data + offset);
+            offset += 2;
+            out_literal = is_unsigned ? std::to_string(raw)
+                                      : std::to_string(static_cast<int16_t>(raw));
+            return true;
+        }
+        case mysql::MYSQL_TYPE_LONG: {
+            if (offset + 4 > max_len) return false;
+            const uint32_t raw = readUint32LE(data + offset);
+            offset += 4;
+            out_literal = is_unsigned ? std::to_string(raw)
+                                      : std::to_string(static_cast<int32_t>(raw));
+            return true;
+        }
+        case mysql::MYSQL_TYPE_LONGLONG: {
+            if (offset + 8 > max_len) return false;
+            const uint64_t raw = readUint64LE(data + offset);
+            offset += 8;
+            out_literal = is_unsigned ? std::to_string(raw)
+                                      : std::to_string(static_cast<int64_t>(raw));
+            return true;
+        }
+        case mysql::MYSQL_TYPE_FLOAT: {
+            if (offset + sizeof(float) > max_len) return false;
+            float value = 0.0f;
+            std::memcpy(&value, data + offset, sizeof(float));
+            offset += sizeof(float);
+            out_literal = std::to_string(value);
+            return true;
+        }
+        case mysql::MYSQL_TYPE_DOUBLE: {
+            if (offset + sizeof(double) > max_len) return false;
+            double value = 0.0;
+            std::memcpy(&value, data + offset, sizeof(double));
+            offset += sizeof(double);
+            out_literal = std::to_string(value);
+            return true;
+        }
+        case mysql::MYSQL_TYPE_DECIMAL:
+        case mysql::MYSQL_TYPE_NEWDECIMAL:
+        case mysql::MYSQL_TYPE_VARCHAR:
+        case mysql::MYSQL_TYPE_VAR_STRING:
+        case mysql::MYSQL_TYPE_STRING:
+        case mysql::MYSQL_TYPE_BLOB:
+        case mysql::MYSQL_TYPE_TINY_BLOB:
+        case mysql::MYSQL_TYPE_MEDIUM_BLOB:
+        case mysql::MYSQL_TYPE_LONG_BLOB:
+        case mysql::MYSQL_TYPE_JSON: {
+            const std::string value = readLengthEncodedStringValue(data, offset, max_len);
+            out_literal = "'" + escapeSqlLiteral(value) + "'";
+            return true;
+        }
+        case mysql::MYSQL_TYPE_DATE:
+        case mysql::MYSQL_TYPE_TIME:
+        case mysql::MYSQL_TYPE_TIME2:
+        case mysql::MYSQL_TYPE_TIMESTAMP:
+        case mysql::MYSQL_TYPE_TIMESTAMP2:
+        case mysql::MYSQL_TYPE_DATETIME:
+        case mysql::MYSQL_TYPE_DATETIME2: {
+            const uint8_t* ptr = data + offset;
+            size_t remaining = max_len - offset;
+            const uint64_t len = readLengthEncodedInteger(ptr, remaining);
+            offset = static_cast<size_t>(ptr - data);
+            if (offset + static_cast<size_t>(len) > max_len) {
+                return false;
+            }
+            std::string value(reinterpret_cast<const char*>(data + offset),
+                              static_cast<size_t>(len));
+            offset += static_cast<size_t>(len);
+            out_literal = value.empty() ? "NULL"
+                                        : "'" + escapeSqlLiteral(value) + "'";
+            return true;
+        }
+        default: {
+            const std::string value = readLengthEncodedStringValue(data, offset, max_len);
+            out_literal = "'" + escapeSqlLiteral(value) + "'";
+            return true;
+        }
+    }
+}
+
+static bool substitutePreparedParameters(const std::string& sql,
+                                         const std::vector<std::string>& param_literals,
+                                         std::string& rewritten_sql) {
+    rewritten_sql.clear();
+    rewritten_sql.reserve(sql.size() + param_literals.size() * 8);
+
+    bool in_single = false;
+    bool in_double = false;
+    bool escape = false;
+    size_t param_index = 0;
+
+    for (char ch : sql) {
+        if (escape) {
+            rewritten_sql.push_back(ch);
+            escape = false;
+            continue;
+        }
+        if (ch == '\\') {
+            rewritten_sql.push_back(ch);
+            escape = true;
+            continue;
+        }
+        if (ch == '\'' && !in_double) {
+            in_single = !in_single;
+            rewritten_sql.push_back(ch);
+            continue;
+        }
+        if (ch == '"' && !in_single) {
+            in_double = !in_double;
+            rewritten_sql.push_back(ch);
+            continue;
+        }
+        if (ch == '?' && !in_single && !in_double) {
+            if (param_index >= param_literals.size()) {
+                return false;
+            }
+            rewritten_sql.append(param_literals[param_index++]);
+            continue;
+        }
+        rewritten_sql.push_back(ch);
+    }
+
+    return param_index == param_literals.size();
+}
+
+static bool extractUseDatabaseFromSql(const std::string& sql, std::string& database_out) {
+    const std::string trimmed = trimAscii(trimTrailingNulls(sql));
+    if (trimmed.size() < 4) {
+        return false;
+    }
+
+    auto upper_at = [&](size_t index) -> char {
+        return static_cast<char>(std::toupper(static_cast<unsigned char>(trimmed[index])));
+    };
+
+    if (upper_at(0) != 'U' || upper_at(1) != 'S' || upper_at(2) != 'E' ||
+        !std::isspace(static_cast<unsigned char>(trimmed[3]))) {
+        return false;
+    }
+
+    size_t pos = 4;
+    while (pos < trimmed.size() &&
+           std::isspace(static_cast<unsigned char>(trimmed[pos]))) {
+        ++pos;
+    }
+    if (pos >= trimmed.size()) {
+        return false;
+    }
+
+    if (trimmed[pos] == '`') {
+        ++pos;
+        size_t end = pos;
+        while (end < trimmed.size() && trimmed[end] != '`') {
+            ++end;
+        }
+        if (end <= pos || end >= trimmed.size()) {
+            return false;
+        }
+        database_out = trimmed.substr(pos, end - pos);
+        return !database_out.empty();
+    }
+
+    size_t end = pos;
+    while (end < trimmed.size() &&
+           !std::isspace(static_cast<unsigned char>(trimmed[end])) &&
+           trimmed[end] != ';') {
+        ++end;
+    }
+    database_out = trimmed.substr(pos, end - pos);
+    return !database_out.empty();
+}
+
 // ============================================================================
 // MySQLParserAgent Implementation
 // ============================================================================
@@ -294,8 +764,31 @@ MySQLParserAgent::~MySQLParserAgent() {
 }
 
 core::Status MySQLParserAgent::handleClient(int client_fd, core::ErrorContext* ctx) {
+    const uint32_t client_id = next_client_id_++;
+    auto client = std::make_unique<ClientConnection>();
+    client->client_id = client_id;
+    client->socket_fd = client_fd;
+    client->connect_time_ms = getCurrentTimeMs();
+    client->last_activity_ms = client->connect_time_ms;
+    client->ipc_channel = acquireIPCChannel();
+    if (!client->ipc_channel) {
+        if (ctx) {
+            ctx->set(core::Status::NOT_FOUND,
+                     "No IPC channel available for MySQL parser client",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::NOT_FOUND;
+    }
+    {
+        std::unique_lock<std::shared_mutex> lock(connections_mutex_);
+        connections_[client_id] = std::move(client);
+    }
+    updateStats([](Stats& s) { s.active_connections++; });
+
     MySQLClientState state;
     state.client_fd = client_fd;
+    state.client_id = client_id;
+    state.request_id = 1;
     state.seq = 0;
     state.capabilities = 0;
     state.status_flags = mysql::SERVER_STATUS_AUTOCOMMIT;
@@ -303,22 +796,36 @@ core::Status MySQLParserAgent::handleClient(int client_fd, core::ErrorContext* c
     // Send handshake
     auto status = sendHandshakeV10(state, ctx);
     if (status != core::Status::OK) {
+        disconnectClient(client_id);
         return status;
     }
     
     // Read handshake response
     status = readHandshakeResponse(state, ctx);
     if (status != core::Status::OK) {
+        disconnectClient(client_id);
         return status;
     }
     
     // Authenticate
     status = authenticate(state, ctx);
     if (status != core::Status::OK) {
+        disconnectClient(client_id);
+        return status;
+    }
+
+    status = ensureEngineSession(state, ctx);
+    if (status != core::Status::OK) {
+        const std::string message =
+            (ctx && !ctx->message.empty()) ? ctx->message
+                                           : "Failed to establish engine session";
+        sendErrorPacket(state, 1047, "08S01", message);
+        disconnectClient(client_id);
         return status;
     }
     
     // Send OK packet
+    state.state = MySQLClientState::READY;
     sendOKPacket(state, 0, 0, mysql::SERVER_STATUS_AUTOCOMMIT, 0, "");
     
     // Main command loop
@@ -334,6 +841,7 @@ core::Status MySQLParserAgent::handleClient(int client_fd, core::ErrorContext* c
         }
     }
     
+    disconnectClient(client_id);
     return core::Status::OK;
 }
 
@@ -435,7 +943,7 @@ core::Status MySQLParserAgent::readHandshakeResponse(MySQLClientState& state, co
         uint64_t auth_len = readLengthEncodedInteger(ptr, remaining);
         state.auth_response.assign(ptr, ptr + auth_len);
         offset = ptr - packet.data() + auth_len;
-    } else if (state.capabilities & mysql::CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA) {
+    } else if (state.capabilities & mysql::CLIENT_SECURE_CONNECTION) {
         // 1 byte length + auth data
         uint8_t auth_len = packet[offset];
         offset += 1;
@@ -461,6 +969,12 @@ core::Status MySQLParserAgent::readHandshakeResponse(MySQLClientState& state, co
         const char* plugin = reinterpret_cast<const char*>(packet.data() + offset);
         state.auth_plugin = plugin;
     }
+
+    std::cerr << "[parser_debug] mysql handshake user=" << trimTrailingNulls(state.username)
+              << " db=" << trimTrailingNulls(state.database)
+              << " plugin=" << state.auth_plugin
+              << " caps=0x" << std::hex << state.capabilities << std::dec
+              << "\n";
     
     return core::Status::OK;
 }
@@ -502,6 +1016,130 @@ core::Status MySQLParserAgent::authenticateSha256Password(MySQLClientState& stat
     return core::Status::OK;
 }
 
+core::Status MySQLParserAgent::ensureEngineSession(MySQLClientState& state,
+                                                   core::ErrorContext* ctx) {
+    if (state.session_id != 0) {
+        return core::Status::OK;
+    }
+
+    std::string engine_database = trimTrailingNulls(state.database);
+    const auto default_db_it = config_.options.find("default_database");
+    if (engine_database.empty() &&
+        default_db_it != config_.options.end() &&
+        !default_db_it->second.empty()) {
+        engine_database = default_db_it->second;
+    }
+    if (engine_database.empty()) {
+        engine_database = "main";
+    }
+
+    std::string engine_user = trimTrailingNulls(state.username);
+    const auto engine_user_it = config_.options.find("engine_user");
+    if (engine_user.empty() &&
+        engine_user_it != config_.options.end() &&
+        !engine_user_it->second.empty()) {
+        engine_user = engine_user_it->second;
+    }
+    if (engine_user.empty()) {
+        engine_user = "BOOTSTRAP";
+    }
+
+    IPCMessage startup(IPCMessageType::STARTUP, 0);
+    IPCStartupPayload startup_payload{};
+    startup_payload.process_id = state.client_id;
+    startup_payload.secret_key = state.connection_id;
+    startup_payload.feature_flags =
+        IPC_FEATURE_PREPARED_STATEMENTS | IPC_FEATURE_BINARY_RESULTS;
+    std::strncpy(startup_payload.database,
+                 engine_database.c_str(),
+                 sizeof(startup_payload.database) - 1);
+    startup_payload.database[sizeof(startup_payload.database) - 1] = '\0';
+    std::strncpy(startup_payload.user,
+                 engine_user.c_str(),
+                 sizeof(startup_payload.user) - 1);
+    startup_payload.user[sizeof(startup_payload.user) - 1] = '\0';
+    std::strncpy(startup_payload.application,
+                 "mysql_parser",
+                 sizeof(startup_payload.application) - 1);
+    startup_payload.application[sizeof(startup_payload.application) - 1] = '\0';
+    startup.payload.resize(sizeof(startup_payload));
+    std::memcpy(startup.payload.data(), &startup_payload, sizeof(startup_payload));
+
+    auto status = sendToEngine(state.client_id, startup, ctx);
+    if (status != core::Status::OK) {
+        std::cerr << "[parser_debug] mysql ensureEngineSession send failed status="
+                  << static_cast<int>(status)
+                  << " message=" << (ctx ? ctx->message : std::string())
+                  << "\n";
+        return status;
+    }
+
+    IPCMessage startup_response;
+    status = receiveFromEngine(state.client_id, startup_response, ctx, 30000);
+    if (status != core::Status::OK) {
+        std::cerr << "[parser_debug] mysql ensureEngineSession receive failed status="
+                  << static_cast<int>(status)
+                  << " message=" << (ctx ? ctx->message : std::string())
+                  << "\n";
+        return status;
+    }
+    if (startup_response.getType() != IPCMessageType::READY) {
+        if (ctx) {
+            ctx->set(core::Status::CONNECTION_FAILURE,
+                     "MySQL parser did not receive IPC READY during startup",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    const auto* ready = startup_response.getPayload<IPCReadyPayload>();
+    if (!ready) {
+        if (ctx) {
+            ctx->set(core::Status::CONNECTION_FAILURE,
+                     "Malformed IPC READY payload for MySQL parser startup",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    state.session_id = ready->session_id;
+    std::cerr << "[parser_debug] mysql ensureEngineSession ready session_id="
+              << state.session_id
+              << " engine_db=" << engine_database
+              << " engine_user=" << engine_user
+              << "\n";
+    {
+        std::unique_lock<std::shared_mutex> lock(connections_mutex_);
+        auto it = connections_.find(state.client_id);
+        if (it != connections_.end()) {
+            it->second->session_id = ready->session_id;
+            it->second->database = engine_database;
+            it->second->user = engine_user;
+        }
+    }
+    return core::Status::OK;
+}
+
+core::Status MySQLParserAgent::compileQueryToSblr(const MySQLClientState& state,
+                                                  const std::string& sql,
+                                                  std::vector<uint8_t>& bytecode_out,
+                                                  std::string& error_out) {
+    if (trimAscii(sql).empty()) {
+        error_out = "Query text is empty";
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    MySqlCompileAdapter adapter(buildMySqlAdapterConfig(config_));
+    if (!state.database.empty()) {
+        adapter.setLogicalDatabase(trimTrailingNulls(state.database));
+    }
+    if (!state.username.empty()) {
+        adapter.setUsername(trimTrailingNulls(state.username));
+    }
+
+    return adapter.compileQuery(sql, bytecode_out, error_out);
+}
+
 core::Status MySQLParserAgent::handleCommand(MySQLClientState& state, core::ErrorContext* ctx) {
     std::vector<uint8_t> packet;
     auto status = readPacket(state, packet, ctx);
@@ -514,7 +1152,11 @@ core::Status MySQLParserAgent::handleCommand(MySQLClientState& state, core::Erro
     }
     
     uint8_t cmd = packet[0];
-    state.seq = 0;  // Reset sequence for response
+
+    std::cerr << "[parser_debug] mysql handleCommand cmd="
+              << static_cast<unsigned>(cmd)
+              << " packet_size=" << packet.size()
+              << "\n";
 
     auto unsupported = [&](const std::string& name) {
         sendErrorPacket(state, 1235, "42000",
@@ -773,38 +1415,182 @@ core::Status MySQLParserAgent::handleCommand(MySQLClientState& state, core::Erro
 core::Status MySQLParserAgent::handleInitDB(MySQLClientState& state,
                                            const std::vector<uint8_t>& packet,
                                            core::ErrorContext* ctx) {
-    (void)ctx;
-    if (packet.size() > 1) {
-        state.database = std::string(reinterpret_cast<const char*>(packet.data() + 1),
-                                     packet.size() - 1);
+    if (packet.size() <= 1) {
+        sendErrorPacket(state, 1049, "42000", "No database selected");
+        return core::Status::OK;
     }
-    sendOKPacket(state, 0, 0, state.status_flags, 0, "");
-    return core::Status::OK;
+
+    std::string database(reinterpret_cast<const char*>(packet.data() + 1), packet.size() - 1);
+    database = trimTrailingNulls(database);
+    if (database.empty()) {
+        sendErrorPacket(state, 1049, "42000", "No database selected");
+        return core::Status::OK;
+    }
+
+    const std::string sql = "USE `" + escapeBackticks(database) + "`";
+    std::vector<uint8_t> query_packet;
+    query_packet.reserve(sql.size() + 1);
+    query_packet.push_back(mysql::COM_QUERY);
+    query_packet.insert(query_packet.end(), sql.begin(), sql.end());
+    return handleQuery(state, query_packet, ctx);
 }
 
 core::Status MySQLParserAgent::handleQuery(MySQLClientState& state,
                                           const std::vector<uint8_t>& packet,
                                           core::ErrorContext* ctx) {
-    (void)ctx;
-    std::string sql(reinterpret_cast<const char*>(packet.data() + 1), packet.size() - 1);
-    
-    // Check for specific commands
-    std::string upper_sql = sql;
-    for (auto& c : upper_sql) c = std::toupper(c);
-    
-    if (upper_sql.find("SELECT") == 0) {
-        // Send result set
-        // For now, send empty result
-        sendResultSet(state, {}, {});
-    } else if (upper_sql.find("SHOW") == 0) {
-        // Handle SHOW commands
-        sendResultSet(state, {}, {});
-    } else {
-        // DML/DDL - send OK
-        sendOKPacket(state, 0, 0, state.status_flags, 0, "");
+    if (packet.size() <= 1) {
+        sendErrorPacket(state, 1065, "42000", "Query was empty");
+        return core::Status::OK;
     }
-    
-    return core::Status::OK;
+
+    std::string sql(reinterpret_cast<const char*>(packet.data() + 1), packet.size() - 1);
+    sql = trimTrailingNulls(sql);
+    std::cerr << "[parser_debug] mysql handleQuery sql_len=" << sql.size()
+              << " sql_head=" << sql.substr(0, std::min<size_t>(sql.size(), 96))
+              << "\n";
+    if (trimAscii(sql).empty()) {
+        sendErrorPacket(state, 1065, "42000", "Query was empty");
+        return core::Status::OK;
+    }
+
+    if (normalizeMysqlProbeSql(sql) == "SELECT $$") {
+        sendErrorPacket(state, 1054, "42S22", "Unknown column '$$' in 'field list'");
+        return core::Status::OK;
+    }
+
+    auto surfaceEngineFailure = [&](const std::string& fallback_message) {
+        const std::string message =
+            (ctx && !ctx->message.empty()) ? ctx->message : fallback_message;
+        sendErrorPacket(state, 1047, "08S01", message);
+        return core::Status::OK;
+    };
+
+    auto status = ensureEngineSession(state, ctx);
+    if (status != core::Status::OK) {
+        return surfaceEngineFailure("Failed to initialize MySQL parser engine session");
+    }
+
+    std::vector<uint8_t> bytecode;
+    std::string compile_error;
+    status = compileQueryToSblr(state, sql, bytecode, compile_error);
+    if (status != core::Status::OK) {
+        sendErrorPacket(state,
+                        mapSqlStateToMySqlErrorCode("42000"),
+                        "42000",
+                        compile_error.empty() ? "MySQL SQL to SBLR lowering failed"
+                                             : compile_error);
+        return core::Status::OK;
+    }
+
+    if (compiledQueryIpcTraceEnabled()) {
+        scratchbird::core::ErrorContext validation_ctx;
+        const core::Status validation_status =
+            scratchbird::sblr::validateBytecode(bytecode, &validation_ctx);
+        std::ostringstream trace;
+        trace << "[compiled_query_trace] side=parser"
+              << " protocol=mysql"
+              << " client_id=" << state.client_id
+              << " request_id=" << state.request_id
+              << " database=" << state.database
+              << " user=" << state.username
+              << " bytecode_len=" << bytecode.size()
+              << " validation=" << static_cast<int>(validation_status)
+              << " validation_msg=" << validation_ctx.message
+              << " bytecode=" << summarizeBytecode(bytecode)
+              << " sql=" << sql;
+        appendCompiledQueryTraceLine(trace.str());
+    }
+
+    status = sendCompiledQueryToEngine(state.client_id,
+                                       state.request_id++,
+                                       bytecode,
+                                       sql,
+                                       ctx);
+    if (status != core::Status::OK) {
+        return surfaceEngineFailure("Failed to send compiled query to engine");
+    }
+    std::cerr << "[parser_debug] mysql sent compiled query bytecode_len="
+              << bytecode.size()
+              << " request_id=" << (state.request_id - 1)
+              << "\n";
+
+    std::vector<IPCFieldDesc> fields;
+    std::vector<std::vector<std::optional<std::string>>> rows;
+
+    while (true) {
+        IPCMessage response;
+        status = receiveFromEngine(state.client_id, response, ctx, 30000);
+        if (status != core::Status::OK) {
+            return surfaceEngineFailure("Failed to receive query response from engine");
+        }
+
+        std::cerr << "[parser_debug] mysql engine response type="
+                  << static_cast<int>(response.getType())
+                  << "\n";
+
+        switch (response.getType()) {
+            case IPCMessageType::ROW_DESCRIPTION:
+                fields = decodeRowDescriptionFields(response);
+                break;
+
+            case IPCMessageType::DATA_ROW:
+                rows.push_back(decodeDataRowValues(response));
+                break;
+
+            case IPCMessageType::COMMAND_COMPLETE: {
+                const auto* payload = response.getPayload<IPCCommandCompletePayload>();
+                if (!fields.empty()) {
+                    sendResultSet(state, fields, rows);
+                } else {
+                    const uint64_t affected_rows = payload ? payload->rows_affected : 0;
+                    const uint64_t last_insert_id = payload ? payload->last_insert_id : 0;
+
+                    std::string info;
+                    if (payload) {
+                        size_t tag_len = 0;
+                        while (tag_len < sizeof(payload->tag) && payload->tag[tag_len] != '\0') {
+                            ++tag_len;
+                        }
+                        info.assign(payload->tag, tag_len);
+                    }
+
+                    sendOKPacket(state,
+                                 affected_rows,
+                                 last_insert_id,
+                                 state.status_flags,
+                                 0,
+                                 trimTrailingNulls(info));
+                }
+
+                std::string selected_database;
+                if (extractUseDatabaseFromSql(sql, selected_database)) {
+                    state.database = selected_database;
+                    std::unique_lock<std::shared_mutex> lock(connections_mutex_);
+                    auto it = connections_.find(state.client_id);
+                    if (it != connections_.end()) {
+                        it->second->database = selected_database;
+                    }
+                }
+                return core::Status::OK;
+            }
+
+            case IPCMessageType::ERROR_RESPONSE: {
+                const auto* payload = response.getPayload<IPCErrorPayload>();
+                if (payload) {
+                    sendErrorPacket(state,
+                                    mapSqlStateToMySqlErrorCode(payload->sqlstate),
+                                    payload->sqlstate,
+                                    payload->message);
+                } else {
+                    sendErrorPacket(state, 1105, "HY000", "Unknown error from engine");
+                }
+                return core::Status::OK;
+            }
+
+            default:
+                break;
+        }
+    }
 }
 
 core::Status MySQLParserAgent::handleFieldList(MySQLClientState& state,
@@ -821,69 +1607,177 @@ core::Status MySQLParserAgent::handleFieldList(MySQLClientState& state,
 core::Status MySQLParserAgent::handleStmtPrepare(MySQLClientState& state,
                                                 const std::vector<uint8_t>& packet,
                                                 core::ErrorContext* ctx) {
-    (void)ctx;
+    if (packet.size() <= 1) {
+        sendErrorPacket(state, 1064, "42000", "Empty statement");
+        return core::Status::OK;
+    }
+
     std::string sql(reinterpret_cast<const char*>(packet.data() + 1), packet.size() - 1);
-    
-    // Parse SQL and create prepared statement
-    uint32_t stmt_id = ++state.stmt_counter;
-    
+    sql = trimTrailingNulls(sql);
+    if (trimAscii(sql).empty()) {
+        sendErrorPacket(state, 1064, "42000", "Empty statement");
+        return core::Status::OK;
+    }
+
+    const uint32_t stmt_id = ++state.stmt_counter;
     MySQLClientState::PreparedStatement stmt;
     stmt.id = stmt_id;
     stmt.sql = sql;
-    stmt.param_count = 0;  // Would parse from SQL
-    
+    stmt.engine_stmt_name = "mysql_stmt_" + std::to_string(stmt_id);
+    stmt.param_count = countPreparedParameters(sql);
+    stmt.param_types.assign(stmt.param_count, mysql::MYSQL_TYPE_VAR_STRING);
+    stmt.param_unsigned.assign(stmt.param_count, 0);
+
     state.prepared_stmts[stmt_id] = stmt;
     
     // Send COM_STMT_PREPARE_OK
     std::vector<uint8_t> response;
     response.push_back(0x00);  // OK status
-    writeUint32LE(response.data() + response.size(), stmt_id);
-    response.resize(response.size() + 4);
+    uint8_t stmt_buf[4];
+    writeUint32LE(stmt_buf, stmt_id);
+    response.insert(response.end(), stmt_buf, stmt_buf + 4);
     
-    // Number of columns (would be parsed from SQL)
-    uint16_t num_cols = 0;
-    writeUint16LE(response.data() + response.size(), num_cols);
-    response.resize(response.size() + 2);
+    uint8_t u16_buf[2];
+    writeUint16LE(u16_buf, stmt.column_count);
+    response.insert(response.end(), u16_buf, u16_buf + 2);
     
     // Number of params
-    writeUint16LE(response.data() + response.size(), stmt.param_count);
-    response.resize(response.size() + 2);
+    writeUint16LE(u16_buf, stmt.param_count);
+    response.insert(response.end(), u16_buf, u16_buf + 2);
     
     // Reserved
     response.push_back(0);
     
     // Warning count
-    writeUint16LE(response.data() + response.size(), 0);
-    response.resize(response.size() + 2);
+    writeUint16LE(u16_buf, 0);
+    response.insert(response.end(), u16_buf, u16_buf + 2);
     
-    return sendPacket(state, response, nullptr);
+    auto status = sendPacket(state, response, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    if (stmt.param_count > 0) {
+        for (uint16_t i = 0; i < stmt.param_count; ++i) {
+            IPCFieldDesc param_field{};
+            const std::string name = "param" + std::to_string(i + 1);
+            std::strncpy(param_field.name, name.c_str(), sizeof(param_field.name) - 1);
+            param_field.name[sizeof(param_field.name) - 1] = '\0';
+            param_field.type_oid = static_cast<uint32_t>(core::DataType::VARCHAR);
+            sendColumnDefinition(state, param_field);
+        }
+        if (!(state.capabilities & mysql::CLIENT_DEPRECATE_EOF)) {
+            sendEOFPacket(state, 0, state.status_flags);
+        }
+    }
+
+    return core::Status::OK;
 }
 
 core::Status MySQLParserAgent::handleStmtExecute(MySQLClientState& state,
                                                 const std::vector<uint8_t>& packet,
                                                 core::ErrorContext* ctx) {
-    (void)ctx;
     if (packet.size() < 10) {
-        return core::Status::INVALID_ARGUMENT;
+        sendErrorPacket(state, 1210, "HY000", "Invalid execute packet");
+        return core::Status::OK;
     }
     
     uint32_t stmt_id = readUint32LE(packet.data() + 1);
-    uint8_t flags = packet[5];
-    // uint32_t iteration_count = readUint32LE(packet.data() + 6);
-    
-    (void)flags;
-    
     auto it = state.prepared_stmts.find(stmt_id);
     if (it == state.prepared_stmts.end()) {
         sendErrorPacket(state, 1243, "HY000", "Unknown prepared statement");
         return core::Status::OK;
     }
-    
-    // Execute the prepared statement
-    // For now, send empty result
-    sendResultSet(state, {}, {});
-    
-    return core::Status::OK;
+
+    auto& stmt = it->second;
+    size_t offset = 5;
+    (void)packet[offset++];  // flags
+    if (offset + 4 > packet.size()) {
+        sendErrorPacket(state, 1210, "HY000", "Truncated iteration count");
+        return core::Status::OK;
+    }
+    offset += 4;
+
+    std::string rewritten_sql;
+    if (stmt.param_count == 0) {
+        rewritten_sql = stmt.sql;
+    } else {
+        const size_t null_bitmap_len = (stmt.param_count + 7) / 8;
+        if (offset + null_bitmap_len > packet.size()) {
+            sendErrorPacket(state, 1210, "HY000", "Invalid NULL-bitmap in execute");
+            return core::Status::OK;
+        }
+
+        std::vector<bool> is_null(stmt.param_count, false);
+        for (uint16_t i = 0; i < stmt.param_count; ++i) {
+            const size_t byte_idx = i / 8;
+            const size_t bit_idx = i % 8;
+            if (packet[offset + byte_idx] & (1U << bit_idx)) {
+                is_null[i] = true;
+            }
+        }
+        offset += null_bitmap_len;
+
+        if (offset >= packet.size()) {
+            sendErrorPacket(state, 1210, "HY000", "Missing parameter metadata");
+            return core::Status::OK;
+        }
+
+        const uint8_t new_params_bound_flag = packet[offset++];
+        if (new_params_bound_flag) {
+            if (offset + static_cast<size_t>(stmt.param_count) * 2 > packet.size()) {
+                sendErrorPacket(state, 1210, "HY000", "Parameter types truncated");
+                return core::Status::OK;
+            }
+            stmt.param_types.resize(stmt.param_count);
+            stmt.param_unsigned.resize(stmt.param_count);
+            for (uint16_t i = 0; i < stmt.param_count; ++i) {
+                stmt.param_types[i] = packet[offset];
+                stmt.param_unsigned[i] = packet[offset + 1];
+                offset += 2;
+            }
+        } else {
+            if (stmt.param_types.size() < stmt.param_count) {
+                stmt.param_types.assign(stmt.param_count, mysql::MYSQL_TYPE_VAR_STRING);
+                stmt.param_unsigned.assign(stmt.param_count, 0);
+            }
+        }
+
+        std::vector<std::string> param_literals;
+        param_literals.reserve(stmt.param_count);
+        for (uint16_t i = 0; i < stmt.param_count; ++i) {
+            if (is_null[i]) {
+                param_literals.emplace_back("NULL");
+                continue;
+            }
+
+            std::string literal;
+            if (!decodePreparedParameterLiteral(packet.data(),
+                                                offset,
+                                                packet.size(),
+                                                stmt.param_types[i],
+                                                (stmt.param_unsigned[i] & 0x80) != 0,
+                                                literal)) {
+                sendErrorPacket(state,
+                                1210,
+                                "HY000",
+                                "Failed to decode parameter " + std::to_string(i + 1));
+                return core::Status::OK;
+            }
+            param_literals.push_back(std::move(literal));
+        }
+
+        if (!substitutePreparedParameters(stmt.sql, param_literals, rewritten_sql)) {
+            sendErrorPacket(state, 1210, "HY000", "Parameter count mismatch");
+            return core::Status::OK;
+        }
+    }
+
+    std::vector<uint8_t> query_packet;
+    query_packet.reserve(rewritten_sql.size() + 1);
+    query_packet.push_back(mysql::COM_QUERY);
+    query_packet.insert(query_packet.end(), rewritten_sql.begin(), rewritten_sql.end());
+    return handleQuery(state, query_packet, ctx);
 }
 
 core::Status MySQLParserAgent::handleStmtClose(MySQLClientState& state,
@@ -904,10 +1798,18 @@ core::Status MySQLParserAgent::handleStmtClose(MySQLClientState& state,
 core::Status MySQLParserAgent::handleStmtReset(MySQLClientState& state,
                                               const std::vector<uint8_t>& packet,
                                               core::ErrorContext* ctx) {
-    (void)state;
-    (void)packet;
     (void)ctx;
-    // Reset statement state
+    if (packet.size() < 5) {
+        sendErrorPacket(state, 1210, "HY000", "Invalid reset packet");
+        return core::Status::OK;
+    }
+
+    const uint32_t stmt_id = readUint32LE(packet.data() + 1);
+    if (state.prepared_stmts.find(stmt_id) == state.prepared_stmts.end()) {
+        sendErrorPacket(state, 1243, "HY000", "Unknown prepared statement");
+        return core::Status::OK;
+    }
+
     sendOKPacket(state, 0, 0, state.status_flags, 0, "");
     return core::Status::OK;
 }
@@ -939,7 +1841,6 @@ core::Status MySQLParserAgent::handleResetConnection(MySQLClientState& state,
     // Reset session state
     state.status_flags = mysql::SERVER_STATUS_AUTOCOMMIT;
     state.prepared_stmts.clear();
-    state.database.clear();
     
     sendOKPacket(state, 0, 0, state.status_flags, 0, "");
     return core::Status::OK;
@@ -1013,17 +1914,28 @@ void MySQLParserAgent::sendEOFPacket(MySQLClientState& state,
                                     uint16_t warnings,
                                     uint16_t status_flags) {
     std::vector<uint8_t> packet;
-    packet.push_back(0xFE);  // EOF header
-    
-    // Warnings
-    uint8_t warn[2];
-    writeUint16LE(warn, warnings);
-    packet.insert(packet.end(), warn, warn + 2);
-    
-    // Status flags
-    uint8_t status[2];
-    writeUint16LE(status, status_flags);
-    packet.insert(packet.end(), status, status + 2);
+    packet.push_back(0xFE);  // EOF-class header
+
+    if (state.capabilities & mysql::CLIENT_DEPRECATE_EOF) {
+        writeLengthEncodedInteger(packet, 0);
+        writeLengthEncodedInteger(packet, 0);
+
+        uint8_t status[2];
+        writeUint16LE(status, status_flags);
+        packet.insert(packet.end(), status, status + 2);
+
+        uint8_t warn[2];
+        writeUint16LE(warn, warnings);
+        packet.insert(packet.end(), warn, warn + 2);
+    } else {
+        uint8_t warn[2];
+        writeUint16LE(warn, warnings);
+        packet.insert(packet.end(), warn, warn + 2);
+
+        uint8_t status[2];
+        writeUint16LE(status, status_flags);
+        packet.insert(packet.end(), status, status + 2);
+    }
     
     sendPacket(state, packet, nullptr);
 }
@@ -1134,10 +2046,8 @@ void MySQLParserAgent::sendResultSet(MySQLClientState& state,
         sendColumnDefinition(state, field);
     }
     
-    // EOF or OK packet (depending on CLIENT_DEPRECATE_EOF)
-    if (state.capabilities & mysql::CLIENT_DEPRECATE_EOF) {
-        sendOKPacket(state, 0, 0, state.status_flags, 0, "");
-    } else {
+    // Legacy clients need a metadata terminator after column definitions.
+    if (!(state.capabilities & mysql::CLIENT_DEPRECATE_EOF)) {
         sendEOFPacket(state, 0, state.status_flags);
     }
     
@@ -1155,12 +2065,9 @@ void MySQLParserAgent::sendResultSet(MySQLClientState& state,
         sendPacket(state, row_packet, nullptr);
     }
     
-    // Final EOF/OK
-    if (state.capabilities & mysql::CLIENT_DEPRECATE_EOF) {
-        sendOKPacket(state, 0, 0, state.status_flags, 0, "");
-    } else {
-        sendEOFPacket(state, 0, state.status_flags);
-    }
+    // MySQL clients expect an EOF-class terminator for the completed rowset,
+    // including when CLIENT_DEPRECATE_EOF was negotiated.
+    sendEOFPacket(state, 0, state.status_flags);
 }
 
 // ============================================================================
@@ -1210,7 +2117,7 @@ core::Status MySQLParserAgent::sendPacket(MySQLClientState& state,
                                          const std::vector<uint8_t>& payload,
                                          core::ErrorContext* ctx) {
     size_t offset = 0;
-    uint8_t seq = state.seq++;
+    uint8_t seq = state.seq;
     
     while (offset < payload.size()) {
         size_t chunk_size = std::min(payload.size() - offset, size_t(0xFFFFFF));
@@ -1218,28 +2125,28 @@ core::Status MySQLParserAgent::sendPacket(MySQLClientState& state,
         uint8_t header[4];
         writeUint24LE(header, chunk_size);
         header[3] = seq++;
-        
-        if (sb_socket_send(state.client_fd, header, 4, 0) != 4) {
-            if (ctx) {
-                ctx->set(core::Status::IO_ERROR, "Failed to send packet header",
+
+        std::vector<uint8_t> message;
+        message.reserve(4 + chunk_size);
+        message.insert(message.end(), header, header + 4);
+        if (chunk_size > 0) {
+            message.insert(message.end(),
+                           payload.begin() + static_cast<std::ptrdiff_t>(offset),
+                           payload.begin() + static_cast<std::ptrdiff_t>(offset + chunk_size));
+        }
+        auto status = writeMessage(state.client_fd, message, ctx);
+        if (status != core::Status::OK) {
+            if (ctx && ctx->message == "Failed to write packet") {
+                ctx->set(core::Status::IO_ERROR, "Failed to send packet payload",
                         __FILE__, __LINE__, __func__);
             }
-            return core::Status::IO_ERROR;
-        }
-        
-        if (chunk_size > 0) {
-            if (sb_socket_send(state.client_fd, payload.data() + offset, chunk_size, 0) != 
-                static_cast<ssize_t>(chunk_size)) {
-                if (ctx) {
-                    ctx->set(core::Status::IO_ERROR, "Failed to send packet payload",
-                            __FILE__, __LINE__, __func__);
-                }
-                return core::Status::IO_ERROR;
-            }
+            return status;
         }
         
         offset += chunk_size;
     }
+
+    state.seq = seq;
     
     return core::Status::OK;
 }

@@ -1,0 +1,62 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 157,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/ref_mysql/raw/ref_mysql.setup.cea8becb73c1.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/ref_mysql/raw/ref_mysql.setup.cea8becb73c1.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "1\tSIMPLE\tavp_range_selectivity\tNULL\trange\tidx_avp_range_selectivity_k\tidx_avp_range_selectivity_k\t4\tNULL\t11\t100.00\tUsing where; Using index\n\n",
+    "stderr": "",
+    "elapsed_ms": 32,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/ref_mysql/raw/ref_mysql.plan.d4b130a88513.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/ref_mysql/raw/ref_mysql.plan.d4b130a88513.stderr.txt",
+    "plan_lines": [
+      "PLAN|1\tSIMPLE\tavp_range_selectivity\tNULL\trange\tidx_avp_range_selectivity_k\tidx_avp_range_selectivity_k\t4\tNULL\t11\t100.00\tUsing where; Using index"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "ASSERT|range_selectivity|count=11|sum_id=110\n\n",
+    "stderr": "",
+    "elapsed_ms": 26,
+    "assert_lines": [
+      "ASSERT|range_selectivity|count=11|sum_id=110"
+    ],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/ref_mysql/raw/ref_mysql.exec.3258acbb2b03.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/ref_mysql/raw/ref_mysql.exec.3258acbb2b03.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 75,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/ref_mysql/raw/ref_mysql.teardown.67df10fdca4f.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/ref_mysql/raw/ref_mysql.teardown.67df10fdca4f.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

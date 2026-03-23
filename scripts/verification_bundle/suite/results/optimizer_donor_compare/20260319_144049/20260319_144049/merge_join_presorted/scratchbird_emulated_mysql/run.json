@@ -1,0 +1,65 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 467,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.setup.52c8ecfb02ae.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.setup.52c8ecfb02ae.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "EXACT",
+    "message": "",
+    "stdout": "1\tSIMPLE\tb\tNULL\tALL\tNULL\tNULL\tNULL\tNULL\t1000\t100.00\tScratchBird scan_family=SEQ_SCAN; capability=EXACT; lookup=COVERING_ONLY\n1\tSIMPLE\ta\tNULL\tALL\tNULL\tNULL\tNULL\tNULL\t1000\t100.00\tScratchBird scan_family=SEQ_SCAN; capability=EXACT; lookup=COVERING_ONLY\n\n",
+    "stderr": "",
+    "elapsed_ms": 239,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.plan.a1172e2241f1.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.plan.a1172e2241f1.stderr.txt",
+    "plan_lines": [
+      "PLAN|1\tSIMPLE\tb\tNULL\tALL\tNULL\tNULL\tNULL\tNULL\t1000\t100.00\tScratchBird scan_family=SEQ_SCAN; capability=EXACT; lookup=COVERING_ONLY",
+      "PLAN|1\tSIMPLE\ta\tNULL\tALL\tNULL\tNULL\tNULL\tNULL\t1000\t100.00\tScratchBird scan_family=SEQ_SCAN; capability=EXACT; lookup=COVERING_ONLY"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "ASSERT|merge_join_presorted|k=10|a=m10a|b=m10b\nASSERT|merge_join_presorted|k=20|a=m20a|b=m20b\nASSERT|merge_join_presorted|k=30|a=m30a|b=m30b\n\n",
+    "stderr": "",
+    "elapsed_ms": 292,
+    "assert_lines": [
+      "ASSERT|merge_join_presorted|k=10|a=m10a|b=m10b",
+      "ASSERT|merge_join_presorted|k=20|a=m20a|b=m20b",
+      "ASSERT|merge_join_presorted|k=30|a=m30a|b=m30b"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.exec.253644da705b.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.exec.253644da705b.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 218,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.teardown.22fbf17092b5.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_144049/20260319_144049/merge_join_presorted/scratchbird_emulated_mysql/raw/scratchbird_emulated_mysql.teardown.22fbf17092b5.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

@@ -6,8 +6,6 @@
 
 namespace scratchbird::protocol::sbwp {
 namespace {
-const uint8_t kMagicBytes[4] = {'S', 'B', 'W', 'P'};
-
 void setError(core::ErrorContext* ctx, const char* msg) {
     if (ctx) {
         ctx->message = msg ? msg : "";
@@ -132,7 +130,7 @@ std::vector<uint8_t> encodeMessage(const MessageHeader& header,
                                    const std::vector<uint8_t>& payload) {
     std::vector<uint8_t> buf;
     buf.resize(kHeaderSize + payload.size());
-    std::memcpy(buf.data(), kMagicBytes, sizeof(kMagicBytes));
+    writeU32(buf, 0, kProtocolMagic);
     buf[4] = kProtocolMajor;
     buf[5] = kProtocolMinor;
     buf[6] = static_cast<uint8_t>(header.type);
@@ -154,7 +152,8 @@ core::Status decodeHeader(const std::vector<uint8_t>& header_bytes,
         setError(ctx, "Invalid header length");
         return core::Status::PROTOCOL_VIOLATION;
     }
-    if (std::memcmp(header_bytes.data(), kMagicBytes, sizeof(kMagicBytes)) != 0) {
+    uint32_t magic = readU32(header_bytes.data());
+    if (magic != kProtocolMagic) {
         setError(ctx, "Invalid protocol magic");
         return core::Status::PROTOCOL_VIOLATION;
     }

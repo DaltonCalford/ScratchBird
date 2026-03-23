@@ -11,8 +11,12 @@
 namespace scratchbird::optimizer
 {
 
-    inline constexpr uint32_t kRuntimePlanPayloadVersion = 20;
-    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v21";
+    inline constexpr uint32_t kRuntimePlanPayloadVersion = 23;
+    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v24";
+    inline constexpr const char *kOptimizerProofSurfaceContractId =
+        "sb_optimizer_proof_surface/v1";
+    inline constexpr const char *kAdaptiveFeedbackCalibrationStoreContractId =
+        "sb_runtime_learning_calibration_store/v1";
     inline constexpr const char *kRewriteBeforeSearchContractId =
         "sb_rewrite_before_search/v1";
     inline constexpr const char *kAccessPathTaggingContractId =
@@ -66,6 +70,7 @@ namespace scratchbird::optimizer
         std::string native_trust_class;
         std::string locator_granularity;
         std::string family_capability_contract_id;
+        std::string capability_tier;
         std::string publication_model;
         std::string mga_certification_class;
         bool supports_exact = false;
@@ -301,6 +306,10 @@ namespace scratchbird::optimizer
         double estimation_error_ratio = 1.0;
         double correction_factor = 1.0;
         double cost_reweight_factor = 1.0;
+        std::string calibration_store_contract_id =
+            kAdaptiveFeedbackCalibrationStoreContractId;
+        std::string calibration_store_state = "EMPTY";
+        bool calibration_fail_closed = true;
         uint32_t calibration_profile_version = 0;
         std::string last_plan_hash;
         std::string calibration_profile_id;
@@ -468,6 +477,11 @@ namespace scratchbird::optimizer
         std::string join_search_owner_pass_id = "P09_JOIN_ORDER_PLAN";
         std::string result_shape_finalize_pass_id =
             "P10_RESULT_SHAPE_FINALIZE";
+        std::string proof_surface_contract_id =
+            kOptimizerProofSurfaceContractId;
+        bool proof_surface_complete = false;
+        uint32_t proof_surface_claim_count = 0;
+        std::string proof_surface_json;
         std::string diagnostics_payload_json;
         bool parameter_sensitive = false;
         uint64_t join_search_base_candidate_count = 0;

@@ -37,8 +37,19 @@
 #include "scratchbird/network/connection_handler.h"
 #include "scratchbird/network/socket.h"
 #include "scratchbird/network/socket_types.h"
-#include "scratchbird/server/config_parser.h"
+#include "scratchbird/ipc/parser_agent.h"
 #include "scratchbird/protocol/adapters/protocol_adapter.h"
+#if defined(SB_PARSER_TARGET_FIREBIRD)
+#include "scratchbird/ipc/firebird_parser_agent.h"
+#include "scratchbird/sblr/firebird_query_compiler.h"
+#elif defined(SB_PARSER_TARGET_POSTGRESQL)
+#include "scratchbird/ipc/postgresql_parser_agent.h"
+#include "scratchbird/sblr/postgresql_query_compiler.h"
+#elif defined(SB_PARSER_TARGET_MYSQL)
+#include "scratchbird/ipc/mysql_parser_agent.h"
+#include "scratchbird/sblr/mysql_query_compiler.h"
+#endif
+#include "scratchbird/server/config_parser.h"
 #include "scratchbird/security/parser_auth_policy.h"
 #include "scratchbird/version.h"
 
@@ -55,6 +66,26 @@
 
 #ifndef SB_PARSER_NAME
 #define SB_PARSER_NAME "sb_parser"
+#endif
+
+#ifndef SB_PARSER_PROFILE_ID
+#define SB_PARSER_PROFILE_ID ""
+#endif
+
+#ifndef SB_PARSER_PARSER_PACKAGE
+#define SB_PARSER_PARSER_PACKAGE ""
+#endif
+
+#ifndef SB_PARSER_COMPILER_PACKAGE
+#define SB_PARSER_COMPILER_PACKAGE ""
+#endif
+
+#ifndef SB_PARSER_RUNTIME_PACKAGE
+#define SB_PARSER_RUNTIME_PACKAGE ""
+#endif
+
+#ifndef SB_PARSER_BUNDLE_CONTRACT
+#define SB_PARSER_BUNDLE_CONTRACT ""
 #endif
 
 namespace {
@@ -76,6 +107,10 @@ struct ParserConfig {
     uint32_t max_age_seconds = 0;
     bool show_help = false;
     bool show_version = false;
+    bool print_package_scaffold = false;
+    std::string compile_file;
+    std::string compile_schema;
+    std::vector<std::string> compile_search_path;
 };
 
 struct HandoffInfo {
@@ -127,6 +162,11 @@ void printUsage(const char* program) {
               << "  --max-requests <n>        Max sessions before recycle (0 = unlimited)\n"
               << "  --max-age-seconds <n>     Max lifetime before recycle (0 = unlimited)\n"
               << "  --log-level <level>       info|debug|warn|error\n"
+              << "  --compile-file <path>     Compile SQL in file to SBLR hex and exit\n"
+              << "  --compile-schema <path>   Schema root for --compile-file\n"
+              << "  --compile-search-path <csv>\n"
+              << "                            Search path for --compile-file\n"
+              << "  --print-package-scaffold  Print parser/UDR scaffold contract\n"
               << "  --help, -h                Show this help\n"
               << "  --version                 Show version\n";
 }
@@ -136,6 +176,49 @@ void printVersion() {
               << "\n";
 }
 
+void printPackageScaffold() {
+    std::cout
+        << "{\n"
+        << "  \"parser_name\": \"" << SB_PARSER_NAME << "\",\n"
+        << "  \"protocol\": \"" << SB_PARSER_PROTOCOL << "\",\n"
+        << "  \"profile_id\": \"" << SB_PARSER_PROFILE_ID << "\",\n"
+        << "  \"parser_package\": \"" << SB_PARSER_PARSER_PACKAGE << "\",\n"
+        << "  \"compiler_udr_package\": \"" << SB_PARSER_COMPILER_PACKAGE << "\",\n"
+        << "  \"emulation_udr_package\": \"" << SB_PARSER_RUNTIME_PACKAGE << "\",\n"
+        << "  \"bundle_contract_id\": \"" << SB_PARSER_BUNDLE_CONTRACT << "\"\n"
+        << "}\n";
+}
+
+std::vector<std::string> splitCsvList(const std::string& csv) {
+    std::vector<std::string> parts;
+    std::string current;
+    for (char ch : csv) {
+        if (ch == ',') {
+            if (!current.empty()) {
+                parts.push_back(current);
+                current.clear();
+            }
+            continue;
+        }
+        current.push_back(ch);
+    }
+    if (!current.empty()) {
+        parts.push_back(current);
+    }
+    return parts;
+}
+
+std::string bytesToHex(const std::vector<uint8_t>& bytes) {
+    static constexpr char kHex[] = "0123456789abcdef";
+    std::string hex;
+    hex.reserve(bytes.size() * 2);
+    for (uint8_t byte : bytes) {
+        hex.push_back(kHex[(byte >> 4) & 0x0F]);
+        hex.push_back(kHex[byte & 0x0F]);
+    }
+    return hex;
+}
+
 bool parseArgs(int argc, char* argv[], ParserConfig& config) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -143,6 +226,20 @@ bool parseArgs(int argc, char* argv[], ParserConfig& config) {
             config.show_help = true;
         } else if (arg == "--version") {
             config.show_version = true;
+        } else if (arg == "--print-package-scaffold") {
+            config.print_package_scaffold = true;
+        } else if (arg == "--compile-file" && i + 1 < argc) {
+            config.compile_file = argv[++i];
+        } else if (arg.rfind("--compile-file=", 0) == 0) {
+            config.compile_file = arg.substr(15);
+        } else if (arg == "--compile-schema" && i + 1 < argc) {
+            config.compile_schema = argv[++i];
+        } else if (arg.rfind("--compile-schema=", 0) == 0) {
+            config.compile_schema = arg.substr(17);
+        } else if (arg == "--compile-search-path" && i + 1 < argc) {
+            config.compile_search_path = splitCsvList(argv[++i]);
+        } else if (arg.rfind("--compile-search-path=", 0) == 0) {
+            config.compile_search_path = splitCsvList(arg.substr(22));
         } else if (arg == "--control-socket" && i + 1 < argc) {
             config.control_socket = argv[++i];
         } else if (arg.rfind("--control-socket=", 0) == 0) {
@@ -218,6 +315,15 @@ bool parseArgs(int argc, char* argv[], ParserConfig& config) {
 }
 
 bool validateConfig(const ParserConfig& config) {
+    if (!config.compile_file.empty()) {
+        std::ifstream in(config.compile_file);
+        if (!in.good()) {
+            std::cerr << "Compile file not readable: " << config.compile_file << "\n";
+            return false;
+        }
+        return true;
+    }
+
     if (config.control_socket.empty()) {
         std::cerr << "Missing --control-socket\n";
         return false;
@@ -292,6 +398,74 @@ bool loadTLSSettings(const std::string& path,
     }
 
     return true;
+}
+
+int runCompileMode(const ParserConfig& config) {
+    std::ifstream in(config.compile_file, std::ios::binary);
+    if (!in) {
+        std::cerr << "Failed to open compile file: " << config.compile_file << "\n";
+        return 1;
+    }
+
+    std::ostringstream sql_buffer;
+    sql_buffer << in.rdbuf();
+    const std::string sql = sql_buffer.str();
+    if (sql.empty()) {
+        std::cerr << "Compile input is empty\n";
+        return 1;
+    }
+
+#if defined(SB_PARSER_TARGET_FIREBIRD)
+    scratchbird::sblr::FirebirdQueryCompiler compiler(nullptr);
+    compiler.setDefaultSchema(config.compile_schema);
+    if (!config.compile_search_path.empty()) {
+        compiler.setSearchPath(config.compile_search_path);
+    } else if (!config.compile_schema.empty()) {
+        compiler.setSearchPath({config.compile_schema});
+    }
+    auto result = compiler.compile(sql);
+    if (!result.success()) {
+        std::cerr << (result.errors().empty() ? "Firebird compile failed"
+                                              : result.errors().front())
+                  << "\n";
+        return 1;
+    }
+    std::cout << bytesToHex(result.bytecode());
+    return 0;
+#elif defined(SB_PARSER_TARGET_POSTGRESQL)
+    scratchbird::sblr::PostgreSQLQueryCompiler compiler(nullptr);
+    compiler.setDefaultSchema(config.compile_schema);
+    if (!config.compile_search_path.empty()) {
+        compiler.setSearchPath(config.compile_search_path);
+    } else if (!config.compile_schema.empty()) {
+        compiler.setSearchPath({config.compile_schema});
+    }
+    auto result = compiler.compile(sql);
+    if (!result.success()) {
+        std::cerr << (result.errors().empty() ? "PostgreSQL compile failed"
+                                              : result.errors().front())
+                  << "\n";
+        return 1;
+    }
+    std::cout << bytesToHex(result.bytecode());
+    return 0;
+#elif defined(SB_PARSER_TARGET_MYSQL)
+    scratchbird::sblr::MySQLQueryCompiler compiler(nullptr);
+    compiler.setDefaultSchema(config.compile_schema);
+    auto result = compiler.compile(sql);
+    if (!result.success()) {
+        std::cerr << (result.errors().empty() ? "MySQL compile failed"
+                                              : result.errors().front())
+                  << "\n";
+        return 1;
+    }
+    std::cout << bytesToHex(result.bytecode());
+    return 0;
+#else
+    (void)config;
+    std::cerr << "This parser binary does not support standalone compilation\n";
+    return 1;
+#endif
 }
 
 uint64_t makeWorkerId() {
@@ -541,9 +715,58 @@ bool flushWrites(scratchbird::network::Connection& conn) {
     return true;
 }
 
+#if defined(SB_PARSER_TARGET_FIREBIRD) || defined(SB_PARSER_TARGET_POSTGRESQL) || defined(SB_PARSER_TARGET_MYSQL)
+std::unique_ptr<scratchbird::ipc::ParserAgent> createConfiguredParserAgent(
+    const ParserConfig& config) {
+    scratchbird::ipc::ParserAgentConfig agent_config;
+    agent_config.name = SB_PARSER_NAME;
+    agent_config.protocol = config.protocol;
+    agent_config.ipc_endpoint = config.engine_endpoint;
+    agent_config.max_connections = 1;
+    agent_config.io_threads = 0;
+    agent_config.enable_ssl = config.tls_context && config.tls_settings.enabled;
+    agent_config.options["default_database"] = config.default_database;
+    agent_config.options["database_path"] = config.database_path;
+#if defined(SB_PARSER_TARGET_FIREBIRD)
+    return std::make_unique<scratchbird::ipc::FirebirdParserAgent>(agent_config);
+#elif defined(SB_PARSER_TARGET_POSTGRESQL)
+    return std::make_unique<scratchbird::ipc::PostgreSQLParserAgent>(agent_config);
+#else
+    return std::make_unique<scratchbird::ipc::MySQLParserAgent>(agent_config);
+#endif
+}
+#endif
+
 uint32_t runSession(const ParserConfig& config,
                     const HandoffInfo& info,
                     scratchbird::network::socket_t client_fd) {
+#if defined(SB_PARSER_TARGET_FIREBIRD) || defined(SB_PARSER_TARGET_POSTGRESQL) || defined(SB_PARSER_TARGET_MYSQL)
+    (void)info;
+    auto agent = createConfiguredParserAgent(config);
+    if (!agent) {
+        closeSocketFd(client_fd);
+        return static_cast<uint32_t>(scratchbird::core::Status::NOT_SUPPORTED);
+    }
+
+    scratchbird::core::ErrorContext parser_ctx;
+    auto status = agent->runAcceptedClient(client_fd, &parser_ctx);
+    if (status != scratchbird::core::Status::OK &&
+        status != scratchbird::core::Status::CONNECTION_CLOSED) {
+        std::cerr << "[parser_debug] " << config.protocol
+                  << " parser status=" << static_cast<int>(status)
+                  << " message=" << parser_ctx.message << "\n";
+    }
+    return status == scratchbird::core::Status::OK
+        ? 0
+        : static_cast<uint32_t>(status);
+#else
+    scratchbird::network::ProtocolType protocol_type =
+        scratchbird::network::ProtocolType::AUTO_DETECT;
+    if (!tryParseProtocolType(config.protocol, protocol_type)) {
+        closeSocketFd(client_fd);
+        return static_cast<uint32_t>(scratchbird::core::Status::NOT_SUPPORTED);
+    }
+
     auto family = detectAddressFamily(client_fd);
     auto socket = scratchbird::network::Socket::fromFd(
         client_fd, family, scratchbird::network::SocketType::STREAM);
@@ -571,12 +794,6 @@ uint32_t runSession(const ParserConfig& config,
         });
     };
 
-    scratchbird::network::ProtocolType protocol_type =
-        scratchbird::network::ProtocolType::AUTO_DETECT;
-    if (!tryParseProtocolType(config.protocol, protocol_type)) {
-        conn.close(scratchbird::network::CloseReason::PROTOCOL_ERROR);
-        return static_cast<uint32_t>(scratchbird::core::Status::NOT_SUPPORTED);
-    }
     conn.setProtocol(protocol_type);
 
     scratchbird::protocol::ProtocolAdapterConfig adapter_config;
@@ -617,14 +834,21 @@ uint32_t runSession(const ParserConfig& config,
         return static_cast<uint32_t>(scratchbird::core::Status::NOT_SUPPORTED);
     }
 
+    auto closeSession = [&](scratchbird::network::CloseReason reason,
+                            uint32_t status_code) -> uint32_t {
+        adapter->onConnectionClosed(&conn, reason);
+        conn.close(reason);
+        return status_code;
+    };
+
     auto status = adapter->initializeConnection(&conn);
     if (status != scratchbird::core::Status::OK) {
-        conn.close(scratchbird::network::CloseReason::PROTOCOL_ERROR);
-        return static_cast<uint32_t>(status);
+        return closeSession(scratchbird::network::CloseReason::PROTOCOL_ERROR,
+                            static_cast<uint32_t>(status));
     }
     if (!flushWrites(conn)) {
-        conn.close(scratchbird::network::CloseReason::IO_ERROR);
-        return static_cast<uint32_t>(scratchbird::core::Status::IO_ERROR);
+        return closeSession(scratchbird::network::CloseReason::IO_ERROR,
+                            static_cast<uint32_t>(scratchbird::core::Status::IO_ERROR));
     }
 
     if (!info.initial_bytes.empty()) {
@@ -637,21 +861,18 @@ uint32_t runSession(const ParserConfig& config,
         if (need_read) {
             auto bytes = conn.readIntoBuffer();
             if (bytes < 0) {
-                conn.close(scratchbird::network::CloseReason::IO_ERROR);
-                return static_cast<uint32_t>(scratchbird::core::Status::IO_ERROR);
+                return closeSession(scratchbird::network::CloseReason::IO_ERROR,
+                                    static_cast<uint32_t>(scratchbird::core::Status::IO_ERROR));
             }
             if (bytes == 0) {
-                if (conn.isClosing()) {
-                    break;
-                }
-                continue;
+                return closeSession(scratchbird::network::CloseReason::CLIENT_DISCONNECT, 0);
             }
         }
 
         status = adapter->handleData(&conn);
         if (!flushWrites(conn)) {
-            conn.close(scratchbird::network::CloseReason::IO_ERROR);
-            return static_cast<uint32_t>(scratchbird::core::Status::IO_ERROR);
+            return closeSession(scratchbird::network::CloseReason::IO_ERROR,
+                                static_cast<uint32_t>(scratchbird::core::Status::IO_ERROR));
         }
 
         if (status == scratchbird::core::Status::OK) {
@@ -666,11 +887,15 @@ uint32_t runSession(const ParserConfig& config,
 
         adapter->sendError(&conn, "Protocol error");
         flushWrites(conn);
-        conn.close(scratchbird::network::CloseReason::PROTOCOL_ERROR);
-        return static_cast<uint32_t>(status);
+        return closeSession(scratchbird::network::CloseReason::PROTOCOL_ERROR,
+                            static_cast<uint32_t>(status));
     }
 
-    return 0;
+    return closeSession(g_shutdown.load(std::memory_order_acquire)
+                            ? scratchbird::network::CloseReason::SERVER_SHUTDOWN
+                            : scratchbird::network::CloseReason::NORMAL,
+                        0);
+#endif
 }
 
 int runParser(ParserConfig& config) {
@@ -899,8 +1124,15 @@ int main(int argc, char* argv[]) {
         printVersion();
         return 0;
     }
+    if (config.print_package_scaffold) {
+        printPackageScaffold();
+        return 0;
+    }
     if (!validateConfig(config)) {
         return 1;
+    }
+    if (!config.compile_file.empty()) {
+        return runCompileMode(config);
     }
 
     std::signal(SIGINT, handleSignal);

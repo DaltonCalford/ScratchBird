@@ -50,6 +50,33 @@ wait_port() {
   return 1
 }
 
+ensure_firebird_reference_db() {
+  if ! command -v isql-fb >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local fb_dsn="127.0.0.1/${REF_FB_PORT}:${REF_FB_DB}"
+  local attempt
+  for attempt in $(seq 1 30); do
+    if cat <<SQL | isql-fb "${fb_dsn}" -user "${REF_FB_USER}" -password "${REF_FB_PASSWORD}" >/dev/null 2>&1
+SELECT 1 FROM RDB\$DATABASE;
+QUIT;
+SQL
+    then
+      return 0
+    fi
+
+    cat <<SQL | isql-fb -user "${REF_FB_USER}" -password "${REF_FB_PASSWORD}" >/dev/null 2>&1 || true
+CREATE DATABASE '${fb_dsn}' USER '${REF_FB_USER}' PASSWORD '${REF_FB_PASSWORD}';
+QUIT;
+SQL
+    sleep 1
+  done
+
+  echo "Failed to create or attach reference Firebird database: ${fb_dsn}" >&2
+  return 1
+}
+
 require_docker() {
   if [[ -z "${DOCKER_BIN}" ]]; then
     echo "Docker is required to start reference containers but is not available." >&2
@@ -132,13 +159,7 @@ start_reference_containers() {
   wait_port 127.0.0.1 "${REF_MY_PORT}" 90
   wait_port 127.0.0.1 "${REF_FB_PORT}" 90
 
-  # Ensure Firebird reference database exists.
-  if command -v isql-fb >/dev/null 2>&1; then
-    cat <<SQL | isql-fb -user "${REF_FB_USER}" -password "${REF_FB_PASSWORD}" >/dev/null 2>&1 || true
-CREATE DATABASE '127.0.0.1/${REF_FB_PORT}:${REF_FB_DB}' USER '${REF_FB_USER}' PASSWORD '${REF_FB_PASSWORD}';
-QUIT;
-SQL
-  fi
+  ensure_firebird_reference_db
 }
 
 stop_reference_containers() {

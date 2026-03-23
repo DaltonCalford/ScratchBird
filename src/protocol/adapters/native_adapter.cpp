@@ -18,7 +18,13 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/lsm_compression.h"
 #include "scratchbird/core/telemetry.h"
+#include "scratchbird/parser/v3_compiler.h"
 #include "scratchbird/parser/parser_v3.h"
+#include "scratchbird/sblr/bytecode_validator.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
+#include "scratchbird/sblr/v3_container.h"
+#include "scratchbird/sblr/v3_opcode_identity.h"
+#include "scratchbird/sblr/v3_payloads.h"
 #include "scratchbird/server/ipc_server.h"
 
 #include <algorithm>
@@ -110,6 +116,138 @@ uint64_t readU64(const uint8_t* data) {
         value |= static_cast<uint64_t>(data[i]) << (8 * i);
     }
     return value;
+}
+
+bool isZeroUuid(const core::ID& id) {
+    for (uint8_t byte : id.bytes) {
+        if (byte != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+struct CurrentConnectionContextGuard {
+    core::ConnectionContext* previous = nullptr;
+    bool changed = false;
+
+    explicit CurrentConnectionContextGuard(core::ConnectionContext* current)
+        : previous(core::ConnectionContext::getCurrent()) {
+        if (current && current != previous) {
+            core::ConnectionContext::setCurrent(current);
+            changed = true;
+        }
+    }
+
+    ~CurrentConnectionContextGuard() {
+        if (changed) {
+            core::ConnectionContext::setCurrent(previous);
+        }
+    }
+};
+
+core::Status compileNativeSqlToSblr(core::Database* db,
+                                    core::ConnectionContext* conn_ctx,
+                                    const core::ID& current_schema_id,
+                                    const std::string& sql,
+                                    std::vector<uint8_t>& bytecode_out,
+                                    std::string& error_out) {
+    if (sql.empty()) {
+        error_out = "Native SQL text is empty";
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    if (db != nullptr) {
+        CurrentConnectionContextGuard ctx_guard(conn_ctx);
+        sblr::QueryCompilerV3 compiler(db);
+        if (!isZeroUuid(current_schema_id)) {
+            compiler.setCurrentSchemaId(current_schema_id);
+        } else if (conn_ctx != nullptr) {
+            compiler.setCurrentSchemaId(conn_ctx->getCurrentSchemaId());
+        }
+
+        auto result = compiler.compile(sql);
+        if (!result.success()) {
+            error_out = result.errors().empty()
+                ? "Native SQL to SBLR lowering failed"
+                : result.errors().front();
+            return core::Status::INVALID_ARGUMENT;
+        }
+
+        bytecode_out = result.bytecode();
+        return core::Status::OK;
+    }
+
+    parser::v3::Compiler compiler;
+    auto result = compiler.compile(sql);
+    if (!result.ok) {
+        error_out = result.error.empty()
+            ? "Native SQL to SBLR lowering failed"
+            : result.error;
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    bytecode_out = std::move(result.bytecode);
+    return core::Status::OK;
+}
+
+struct ParsedNativeQueryRequest {
+    std::string sql;
+    std::vector<uint8_t> bytecode;
+    uint8_t flags = 0;
+    uint32_t max_rows = 0;
+    uint32_t timeout_ms = 0;
+    bool has_bytecode = false;
+};
+
+core::Status parseLegacyNativeQueryPayload(const std::vector<uint8_t>& payload,
+                                           ParsedNativeQueryRequest& request,
+                                           core::ErrorContext* ctx) {
+    if (payload.size() < 12) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Invalid QUERY payload");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    const uint32_t legacy_flags = readU32(payload.data());
+    request.flags = static_cast<uint8_t>(legacy_flags & 0xFFu);
+    request.max_rows = readU32(payload.data() + 4);
+    request.timeout_ms = readU32(payload.data() + 8);
+
+    size_t offset = 12;
+    while (offset < payload.size() && payload[offset] != 0) {
+        request.sql.push_back(static_cast<char>(payload[offset]));
+        ++offset;
+    }
+
+    return core::Status::OK;
+}
+
+core::Status parseNativeQueryRequest(const std::vector<uint8_t>& payload,
+                                     ParsedNativeQueryRequest& request,
+                                     core::ErrorContext* ctx) {
+    request = ParsedNativeQueryRequest{};
+
+    Message query_message(MessageType::QUERY);
+    const uint8_t* payload_data = payload.empty() ? nullptr : payload.data();
+    auto status = query_message.setPayload(payload_data, payload.size());
+    if (status == core::Status::OK) {
+        uint8_t session_id[16]{};
+        status = ProtocolCodec::parseQuery(query_message,
+                                           session_id,
+                                           request.sql,
+                                           request.flags,
+                                           &request.bytecode,
+                                           ctx);
+        if (status == core::Status::OK) {
+            request.has_bytecode =
+                (request.flags & static_cast<uint8_t>(QueryFlags::BYTECODE)) != 0;
+            return core::Status::OK;
+        }
+    }
+
+    request = ParsedNativeQueryRequest{};
+    return parseLegacyNativeQueryPayload(payload, request, ctx);
 }
 
 std::string toUpperAscii(std::string value) {
@@ -751,6 +889,109 @@ bool resolveNativeStartupAuthMethod(const std::map<std::string, std::string>& pa
     return true;
 }
 
+bool shouldTraceNativeBytecode() {
+    return isTruthyEnv(std::getenv("SCRATCHBIRD_TRACE_NATIVE_BYTECODE"));
+}
+
+bool shouldTraceNativeTxn() {
+    return isTruthyEnv(std::getenv("SCRATCHBIRD_TRACE_NATIVE_TXN"));
+}
+
+std::string hexPreview(const std::vector<uint8_t>& bytes, size_t max_bytes = 32) {
+    static const char kHex[] = "0123456789abcdef";
+    std::string out;
+    const size_t preview_len = std::min(bytes.size(), max_bytes);
+    out.reserve(preview_len * 2 + 16);
+    for (size_t i = 0; i < preview_len; ++i) {
+        const uint8_t byte = bytes[i];
+        out.push_back(kHex[(byte >> 4) & 0x0F]);
+        out.push_back(kHex[byte & 0x0F]);
+    }
+    if (bytes.size() > preview_len) {
+        out.append("...");
+    }
+    return out;
+}
+
+void traceNativeBytecode(const char* stage,
+                         const std::string& sql,
+                         const std::vector<uint8_t>& bytecode) {
+    if (!shouldTraceNativeBytecode()) {
+        return;
+    }
+
+    core::ErrorContext validate_ctx;
+    const core::Status validate_status = sblr::validateBytecode(bytecode, &validate_ctx);
+
+    std::string root_symbol = "<unavailable>";
+    std::string root_err;
+    scratchbird::sblr::v3::Container container;
+    if (!scratchbird::sblr::v3::decodeContainer(bytecode.data(),
+                                                bytecode.size(),
+                                                container,
+                                                root_err)) {
+        root_symbol = std::string("container_decode_failed: ") +
+            (root_err.empty() ? "unknown" : root_err);
+    } else {
+        size_t offset = 0;
+        scratchbird::sblr::v3::Instruction version_inst;
+        scratchbird::sblr::v3::Instruction root_inst;
+        scratchbird::sblr::v3::DecodeError decode_err;
+        const bool decoded_version =
+            scratchbird::sblr::v3::decodeInstructionWithSchema(container.bytecode_stream.data(),
+                                                               container.bytecode_stream.size(),
+                                                               offset,
+                                                               version_inst,
+                                                               decode_err);
+        const bool decoded_root =
+            decoded_version &&
+            scratchbird::sblr::v3::decodeInstructionWithSchema(container.bytecode_stream.data(),
+                                                               container.bytecode_stream.size(),
+                                                               offset,
+                                                               root_inst,
+                                                               decode_err);
+        if (!decoded_version || !decoded_root) {
+            root_symbol = std::string("root_decode_failed: ") +
+                (decode_err.message.empty() ? "unknown" : decode_err.message);
+        } else {
+            root_symbol = scratchbird::sblr::v3::canonicalOpcodeSymbolForOpcode(root_inst.opcode);
+            if (root_symbol.empty()) {
+                root_symbol = scratchbird::sblr::v3::opcodeName(root_inst.opcode);
+            }
+        }
+    }
+
+    std::fprintf(stderr,
+                 "[native_bytecode] stage=%s sql=%s size=%zu validate=%d validate_msg=%s root=%s preview=%s\n",
+                 stage ? stage : "<null>",
+                 sql.c_str(),
+                 bytecode.size(),
+                 static_cast<int>(validate_status),
+                 validate_ctx.message.empty() ? "<none>" : validate_ctx.message.c_str(),
+                 root_symbol.c_str(),
+                 hexPreview(bytecode).c_str());
+    std::fflush(stderr);
+}
+
+void traceNativeTxn(const char* stage,
+                    const client::Connection* client,
+                    core::Status status = core::Status::OK,
+                    const core::ErrorContext* ctx = nullptr) {
+    if (!shouldTraceNativeTxn()) {
+        return;
+    }
+
+    std::fprintf(stderr,
+                 "[native_txn] stage=%s connected=%d auto_commit=%d in_txn=%d status=%d err=%s\n",
+                 stage ? stage : "<null>",
+                 client && client->isConnected() ? 1 : 0,
+                 client ? (client->getAutoCommit() ? 1 : 0) : -1,
+                 client ? (client->inTransaction() ? 1 : 0) : -1,
+                 static_cast<int>(status),
+                 (ctx && !ctx->message.empty()) ? ctx->message.c_str() : "<none>");
+    std::fflush(stderr);
+}
+
 std::string formatUuid(const uint8_t* bytes, size_t length) {
     static const char kHex[] = "0123456789abcdef";
     std::string out;
@@ -1095,15 +1336,51 @@ NativeAdapter::NativeAdapter(const ProtocolAdapterConfig& config)
 
 NativeAdapter::~NativeAdapter() = default;
 
+void NativeAdapter::onConnectionClosed(network::Connection* conn,
+                                       network::CloseReason reason) {
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
+    subscribed_channels_.clear();
+    native_prepared_statements_.clear();
+    prepared_statement_param_types_.clear();
+    portals_.clear();
+    remote_password_.clear();
+    auth_in_progress_ = false;
+    scram_pending_ = false;
+    cancel_requested_ = false;
+    cancel_target_sequence_ = 0;
+    copy_direction_ = CopyDirection::NONE;
+    copy_buffer_.clear();
+    copy_stream_id_ = 0;
+    copy_total_bytes_ = 0;
+    copy_out_window_bytes_ = 0;
+    copy_in_window_bytes_ = 0;
+    copy_in_window_grant_ = 0;
+    copy_in_low_watermark_ = 0;
+    copy_out_paused_ = false;
+    stream_window_bytes_ = 0;
+    stream_paused_ = false;
+    native_state_ = NativeProtocolState::INITIAL;
+    ProtocolAdapter::onConnectionClosed(conn, reason);
+}
+
 auto NativeAdapter::bindAuthenticatedSessionContext(core::ErrorContext* ctx) -> core::Status {
     refreshTransactionStateFromContext();
     if (!connection_ctx_) {
-        in_transaction_ = true;
+        if (!config_.engine_endpoint.empty() && client_) {
+            in_transaction_ = client_->inTransaction();
+        } else {
+            in_transaction_ = false;
+        }
         transaction_id_ = 0;
         return core::Status::OK;
     }
 
-    connection_ctx_->setAutocommitMode(true);
+    const bool autocommit_enabled =
+        !config_.engine_endpoint.empty() && client_ ? client_->getAutoCommit() : true;
+    connection_ctx_->setAutocommitMode(autocommit_enabled);
 
     core::Database* db = engineDatabase();
     auto* catalog = db ? db->catalog_manager() : nullptr;
@@ -1136,10 +1413,37 @@ auto NativeAdapter::bindAuthenticatedSessionContext(core::ErrorContext* ctx) -> 
         connection_ctx_->set_search_path(session_info.search_path);
     }
 
+    auto normalize_mode = [](std::string value) {
+        std::transform(value.begin(),
+                       value.end(),
+                       value.begin(),
+                       [](unsigned char ch) {
+                           return static_cast<char>(std::tolower(ch));
+                       });
+        return value;
+    };
+
     core::CatalogManager::SchemaInfo schema_info;
     if (catalog->getSchema(session_info.current_schema_id, schema_info, nullptr) ==
         core::Status::OK) {
-        connection_ctx_->set_current_schema(schema_info.schema_name);
+        const std::string current_schema_path =
+            schema_info.full_path.empty() ? schema_info.schema_name : schema_info.full_path;
+        const std::string emulation_mode = normalize_mode(connection_ctx_->emulationMode());
+        const bool native_v3_mode =
+            emulation_mode.empty() || emulation_mode == "native" ||
+            emulation_mode == "scratchbird" ||
+            emulation_mode == "scratchbird_native" ||
+            emulation_mode == "scratchbird_v3";
+        bool remapped_native_schema = false;
+
+        if (native_v3_mode && current_schema_path == "users.public") {
+            connection_ctx_->set_current_schema("public");
+            remapped_native_schema = true;
+        }
+
+        if (!remapped_native_schema) {
+            connection_ctx_->set_current_schema(current_schema_path);
+        }
     }
 
     connection_ctx_->setSessionContext(session_info.session_id,
@@ -1154,9 +1458,8 @@ auto NativeAdapter::bindAuthenticatedSessionContext(core::ErrorContext* ctx) -> 
 
 void NativeAdapter::refreshTransactionStateFromContext() {
     if (!config_.engine_endpoint.empty()) {
-        if (in_transaction_) {
-            transaction_id_ = 0;
-        }
+        in_transaction_ = client_ && client_->inTransaction();
+        transaction_id_ = 0;
         return;
     }
     if (!connection_ctx_) {
@@ -1164,30 +1467,6 @@ void NativeAdapter::refreshTransactionStateFromContext() {
     }
     transaction_id_ = connection_ctx_->getCurrentXid();
     in_transaction_ = transaction_id_ != 0;
-}
-
-core::Status NativeAdapter::executeRemoteTxnControl(network::Connection* conn,
-                                                    const std::string& sql,
-                                                    const std::string& sqlstate,
-                                                    const std::string& fallback_error) {
-    ResultContext result;
-    auto status = executeRemoteQuery(sql, nullptr, result);
-    if (status != core::Status::OK || result.has_error) {
-        const uint32_t error_code =
-            result.has_error ? result.error_code : static_cast<uint32_t>(status);
-        sendQueryError(conn,
-                       error_code,
-                       result.sqlstate.empty() ? sqlstate : result.sqlstate,
-                       result.error_message.empty() ? fallback_error : result.error_message);
-        sendReady(conn);
-        return sendBuffer(conn);
-    }
-
-    in_transaction_ = true;
-    transaction_id_ = 0;
-    sendTransactionStatus(conn, true);
-    sendReady(conn);
-    return sendBuffer(conn);
 }
 
 // ============================================================================
@@ -1539,6 +1818,13 @@ core::Status NativeAdapter::handleConnectRequest(network::Connection* conn) {
 core::Status NativeAdapter::handleDisconnect(network::Connection* conn) {
     native_state_ = NativeProtocolState::CLOSING;
     subscribed_channels_.clear();
+    // The native front door keeps a nested engine client session while the
+    // outer network connection is alive. Release it immediately on disconnect
+    // so repeated short-lived native sessions do not leak ProcArray slots.
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
     conn->close(network::CloseReason::CLIENT_DISCONNECT);
     return core::Status::OK;
 }
@@ -1651,30 +1937,31 @@ core::Status NativeAdapter::handleAuthRequest(network::Connection* conn) {
 core::Status NativeAdapter::handleQuery(network::Connection* conn) {
     native_state_ = NativeProtocolState::QUERY_PROCESSING;
     const auto& payload = current_message_.body;
-    if (payload.size() < 12) {
+    ParsedNativeQueryRequest query_request;
+    core::ErrorContext parse_ctx;
+    const auto parse_status = parseNativeQueryRequest(payload, query_request, &parse_ctx);
+    if (parse_status != core::Status::OK) {
         sendQueryError(conn,
                        static_cast<uint32_t>(core::Status::PROTOCOL_VIOLATION),
                        "42000",
-                       "Invalid QUERY payload");
+                       parse_ctx.message.empty() ? "Invalid QUERY payload" : parse_ctx.message);
         native_state_ = NativeProtocolState::READY;
         return sendBuffer(conn);
     }
-    uint32_t flags = readU32(payload.data());
-    (void)flags;
-    uint32_t max_rows = readU32(payload.data() + 4);
-    uint32_t timeout_ms = readU32(payload.data() + 8);
-    (void)timeout_ms;
-    std::string query;
-    size_t offset = 12;
-    while (offset < payload.size() && payload[offset] != 0) {
-        query.push_back(static_cast<char>(payload[offset]));
-        ++offset;
+
+    if (query_request.has_bytecode && query_request.bytecode.empty()) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(core::Status::PROTOCOL_VIOLATION),
+                       "42000",
+                       "Bytecode QUERY payload is empty");
+        native_state_ = NativeProtocolState::READY;
+        return sendBuffer(conn);
     }
 
     bool from_stdin = false;
     bool to_stdout = false;
     CopyFormat copy_format = CopyFormat::TEXT;
-    if (parseCopyQuery(query, from_stdin, to_stdout, &copy_format)) {
+    if (parseCopyQuery(query_request.sql, from_stdin, to_stdout, &copy_format)) {
         sendQueryError(conn, static_cast<uint32_t>(core::Status::NOT_SUPPORTED),
                       "0A000", "COPY is not yet supported over SBWP");
         native_state_ = NativeProtocolState::READY;
@@ -1683,11 +1970,14 @@ core::Status NativeAdapter::handleQuery(network::Connection* conn) {
 
     // Execute query
     QueryContext query_ctx;
-    query_ctx.query = query;
+    query_ctx.query = query_request.sql;
 
     ResultContext result;
     if (!config_.engine_endpoint.empty()) {
-        auto exec_status = executeRemoteQuery(query, nullptr, result);
+        const std::vector<uint8_t>* bytecode = query_request.has_bytecode
+            ? &query_request.bytecode
+            : nullptr;
+        auto exec_status = executeRemoteQuery(query_request.sql, bytecode, result);
         if (exec_status != core::Status::OK) {
             native_state_ = NativeProtocolState::READY;
             auto send_status = sendQueryResult(conn, result);
@@ -1696,13 +1986,34 @@ core::Status NativeAdapter::handleQuery(network::Connection* conn) {
             }
             return sendBuffer(conn);
         }
+    } else if (query_request.has_bytecode) {
+        core::ErrorContext ctx;
+        auto status = ensureEngine(&ctx);
+        if (status != core::Status::OK) {
+            result.has_error = true;
+            result.error_code = static_cast<uint32_t>(status);
+            result.sqlstate = "58000";
+            result.error_message = ctx.message.empty()
+                ? "Failed to initialize native execution context"
+                : ctx.message;
+        } else {
+            status = executeBytecode(query_request.sql, query_request.bytecode, result, &ctx);
+            if (status != core::Status::OK) {
+                result.has_error = true;
+                result.error_code = static_cast<uint32_t>(status);
+                result.sqlstate = "42000";
+                result.error_message = ctx.message.empty()
+                    ? "Bytecode execution failed"
+                    : ctx.message;
+            }
+        }
     } else {
         executeQuery(query_ctx, result);
     }
 
-    applySelectAliasesFromSql(query_ctx.query, result);
+    applySelectAliasesFromSql(query_request.sql, result);
 
-    if (max_rows > 0 && result.rows.size() > max_rows) {
+    if (query_request.max_rows > 0 && result.rows.size() > query_request.max_rows) {
         PortalState portal;
         portal.statement_name.clear();
         portal.bound = true;
@@ -1717,7 +2028,7 @@ core::Status NativeAdapter::handleQuery(network::Connection* conn) {
         portals_[""] = std::move(portal);
 
         auto& portal_ref = portals_[""];
-        auto status = sendPortalResults(conn, portal_ref, max_rows, true);
+        auto status = sendPortalResults(conn, portal_ref, query_request.max_rows, true);
         if (portal_ref.completed) {
             portals_.erase("");
         }
@@ -2306,10 +2617,22 @@ core::Status NativeAdapter::handleDescribe(network::Connection* conn) {
 
 core::Status NativeAdapter::handleBeginTransaction(network::Connection* conn) {
     if (!config_.engine_endpoint.empty()) {
-        sendQueryError(conn,
-                       static_cast<uint32_t>(core::Status::INVALID_TRANSACTION_STATE),
-                       "25001",
-                       "Transaction already active");
+        core::ErrorContext ctx;
+        auto status = ensureRemoteClient(&ctx);
+        if (status == core::Status::OK) {
+            status = client_->beginTransaction(&ctx);
+        }
+        if (status != core::Status::OK) {
+            sendQueryError(conn,
+                           static_cast<uint32_t>(status),
+                           "25000",
+                           ctx.message.empty() ? "Failed to begin transaction" : ctx.message);
+            sendReady(conn);
+            return sendBuffer(conn);
+        }
+        in_transaction_ = client_->inTransaction();
+        transaction_id_ = 0;
+        sendTransactionStatus(conn, in_transaction_);
         sendReady(conn);
         return sendBuffer(conn);
     }
@@ -2327,7 +2650,25 @@ core::Status NativeAdapter::handleBeginTransaction(network::Connection* conn) {
 
 core::Status NativeAdapter::handleCommit(network::Connection* conn) {
     if (!config_.engine_endpoint.empty()) {
-        return executeRemoteTxnControl(conn, "COMMIT", "25000", "Failed to commit transaction");
+        core::ErrorContext ctx;
+        auto status = ensureRemoteClient(&ctx);
+        traceNativeTxn("commit_before", client_.get(), status, &ctx);
+        if (status == core::Status::OK) {
+            status = client_->commit(&ctx);
+            traceNativeTxn("commit_after", client_.get(), status, &ctx);
+        }
+        if (status != core::Status::OK) {
+            sendQueryError(conn,
+                           static_cast<uint32_t>(status),
+                           "25000",
+                           ctx.message.empty() ? "Failed to commit transaction" : ctx.message);
+        } else {
+            in_transaction_ = client_->inTransaction();
+            transaction_id_ = 0;
+            sendTransactionStatus(conn, in_transaction_);
+        }
+        sendReady(conn);
+        return sendBuffer(conn);
     }
     refreshTransactionStateFromContext();
     auto status = commitTransaction();
@@ -2344,7 +2685,23 @@ core::Status NativeAdapter::handleCommit(network::Connection* conn) {
 
 core::Status NativeAdapter::handleRollback(network::Connection* conn) {
     if (!config_.engine_endpoint.empty()) {
-        return executeRemoteTxnControl(conn, "ROLLBACK", "25000", "Failed to rollback transaction");
+        core::ErrorContext ctx;
+        auto status = ensureRemoteClient(&ctx);
+        if (status == core::Status::OK) {
+            status = client_->rollback(&ctx);
+        }
+        if (status != core::Status::OK) {
+            sendQueryError(conn,
+                           static_cast<uint32_t>(status),
+                           "25000",
+                           ctx.message.empty() ? "Failed to rollback transaction" : ctx.message);
+        } else {
+            in_transaction_ = client_->inTransaction();
+            transaction_id_ = 0;
+            sendTransactionStatus(conn, in_transaction_);
+        }
+        sendReady(conn);
+        return sendBuffer(conn);
     }
     refreshTransactionStateFromContext();
     auto status = rollbackTransaction();
@@ -2375,10 +2732,22 @@ core::Status NativeAdapter::handleSavepoint(network::Connection* conn) {
     std::string name(reinterpret_cast<const char*>(payload.data() + 4), name_len);
 
     if (!config_.engine_endpoint.empty()) {
-        return executeRemoteTxnControl(conn,
-                                       "SAVEPOINT " + quoteSqlIdentifier(name),
-                                       "3B000",
-                                       "Failed to create savepoint");
+        core::ErrorContext ctx;
+        auto status = ensureRemoteClient(&ctx);
+        if (status == core::Status::OK) {
+            status = client_->savepoint(name, &ctx);
+        }
+        if (status != core::Status::OK) {
+            sendQueryError(conn,
+                           static_cast<uint32_t>(status),
+                           "3B000",
+                           ctx.message.empty() ? "Failed to create savepoint" : ctx.message);
+        } else {
+            in_transaction_ = client_->inTransaction();
+            sendTransactionStatus(conn, in_transaction_);
+        }
+        sendReady(conn);
+        return sendBuffer(conn);
     }
 
     refreshTransactionStateFromContext();
@@ -2409,10 +2778,22 @@ core::Status NativeAdapter::handleReleaseSavepoint(network::Connection* conn) {
     std::string name(reinterpret_cast<const char*>(payload.data() + 4), name_len);
 
     if (!config_.engine_endpoint.empty()) {
-        return executeRemoteTxnControl(conn,
-                                       "RELEASE SAVEPOINT " + quoteSqlIdentifier(name),
-                                       "3B000",
-                                       "Failed to release savepoint");
+        core::ErrorContext ctx;
+        auto status = ensureRemoteClient(&ctx);
+        if (status == core::Status::OK) {
+            status = client_->releaseSavepoint(name, &ctx);
+        }
+        if (status != core::Status::OK) {
+            sendQueryError(conn,
+                           static_cast<uint32_t>(status),
+                           "3B000",
+                           ctx.message.empty() ? "Failed to release savepoint" : ctx.message);
+        } else {
+            in_transaction_ = client_->inTransaction();
+            sendTransactionStatus(conn, in_transaction_);
+        }
+        sendReady(conn);
+        return sendBuffer(conn);
     }
 
     refreshTransactionStateFromContext();
@@ -2443,10 +2824,22 @@ core::Status NativeAdapter::handleRollbackTo(network::Connection* conn) {
     std::string name(reinterpret_cast<const char*>(payload.data() + 4), name_len);
 
     if (!config_.engine_endpoint.empty()) {
-        return executeRemoteTxnControl(conn,
-                                       "ROLLBACK TO SAVEPOINT " + quoteSqlIdentifier(name),
-                                       "3B000",
-                                       "Failed to rollback to savepoint");
+        core::ErrorContext ctx;
+        auto status = ensureRemoteClient(&ctx);
+        if (status == core::Status::OK) {
+            status = client_->rollbackTo(name, &ctx);
+        }
+        if (status != core::Status::OK) {
+            sendQueryError(conn,
+                           static_cast<uint32_t>(status),
+                           "3B000",
+                           ctx.message.empty() ? "Failed to rollback to savepoint" : ctx.message);
+        } else {
+            in_transaction_ = client_->inTransaction();
+            sendTransactionStatus(conn, in_transaction_);
+        }
+        sendReady(conn);
+        return sendBuffer(conn);
     }
 
     refreshTransactionStateFromContext();
@@ -2986,9 +3379,14 @@ core::Status NativeAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     client_config_.connect_timeout_ms = config_.read_timeout_ms;
     client_config_.read_timeout_ms = config_.read_timeout_ms;
     client_config_.write_timeout_ms = config_.write_timeout_ms;
-    client_config_.auto_commit = true;
+    // The native front door exposes explicit transaction lifecycle to clients,
+    // so the engine-side client must keep statements inside a real transaction
+    // until the adapter forwards COMMIT/ROLLBACK.
+    client_config_.auto_commit = false;
     client_config_.auto_start_server = false;
-    client_config_.connect_client_flags = config_.connect_client_flags;
+    client_config_.connect_client_flags =
+        static_cast<uint16_t>(config_.connect_client_flags |
+                              protocol::CONNECT_FLAG_NO_DORMANT_DETACH);
     client_config_.has_bound_db_uuid = config_.has_bound_db_uuid;
     client_config_.bound_db_uuid = config_.bound_db_uuid;
     client_config_.manual_auth = !username_.empty() && remote_password_.empty();
@@ -3033,6 +3431,7 @@ core::Status NativeAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     for (int attempt = 0; attempt < 5; ++attempt) {
         client_ = std::make_unique<client::Connection>();
         status = client_->connect(client_config_, ctx);
+        traceNativeTxn("ensure_remote_client_connect", client_.get(), status, ctx);
         if (status == core::Status::OK) {
             return core::Status::OK;
         }
@@ -3074,14 +3473,36 @@ core::Status NativeAdapter::executeRemoteQuery(const std::string& sql,
     }
 
     client::ResultSet rs;
-    if (bytecode) {
-        status = client_->executeBytecode(*bytecode, sql, &rs, &ctx);
-    } else {
-        // In front-door remote mode the listener is not the execution engine and may
-        // not have a local database context. Forward raw SQL to the bound engine
-        // session so compilation happens against the real attached database.
-        status = client_->executeQuery(sql, &rs, &ctx);
+    std::vector<uint8_t> compiled_bytecode;
+    const std::vector<uint8_t>* bytecode_to_execute = bytecode;
+    if (bytecode_to_execute == nullptr) {
+        std::string compile_error;
+        const core::ID current_schema_id = connection_ctx_
+            ? connection_ctx_->getCurrentSchemaId()
+            : core::ID{};
+        status = compileNativeSqlToSblr(engineDatabase(),
+                                        connection_ctx_.get(),
+                                        current_schema_id,
+                                        sql,
+                                        compiled_bytecode,
+                                        compile_error);
+        if (status != core::Status::OK) {
+            result.has_error = true;
+            result.error_code = static_cast<uint32_t>(status);
+            result.sqlstate = "42000";
+            result.error_message = compile_error.empty()
+                ? "Failed to compile native SQL to SBLR"
+                : compile_error;
+            return status;
+        }
+        bytecode_to_execute = &compiled_bytecode;
     }
+
+    traceNativeBytecode("before_send", sql, *bytecode_to_execute);
+    traceNativeTxn("execute_remote_before_send", client_.get(), core::Status::OK, &ctx);
+
+    status = client_->executeBytecode(*bytecode_to_execute, sql, &rs, &ctx);
+    traceNativeTxn("execute_remote_after_send", client_.get(), status, &ctx);
 
     if (status != core::Status::OK) {
         result.has_error = true;
@@ -3342,8 +3763,18 @@ core::Status NativeAdapter::handleCopyFail(network::Connection* conn) {
 
 core::Status NativeAdapter::flushWriteBuffer(network::Connection* conn,
                                              std::chrono::milliseconds max_wait) {
+    if (conn == nullptr) {
+        return core::Status::INVALID_ARGUMENT;
+    }
+
     auto start = std::chrono::steady_clock::now();
     auto* socket = conn ? conn->getSocket() : nullptr;
+    if (socket == nullptr) {
+        // Unit adapters often run against an in-memory connection with no live socket.
+        // Preserve the buffered SBWP frames so the harness can inspect them.
+        return core::Status::OK;
+    }
+
     while (conn->hasPendingWrites()) {
         auto written = conn->writeFromBuffer();
         if (written < 0) {

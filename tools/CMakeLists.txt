@@ -4,6 +4,14 @@
 add_executable(sb_timezone_loader sb_timezone_loader.cpp)
 
 target_link_libraries(sb_timezone_loader PRIVATE scratchbird_link_group)
+if(NOT WIN32)
+    target_link_libraries(sb_timezone_loader PRIVATE
+        "-Wl,--start-group"
+        scratchbird_core
+        scratchbird_sblr
+        "-Wl,--end-group"
+    )
+endif()
 
 target_include_directories(sb_timezone_loader PRIVATE
     ${CMAKE_SOURCE_DIR}/include

@@ -20,7 +20,11 @@
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/parser/v3_compiler.h"
 #include "scratchbird/security/parser_auth_policy.h"
+#include "scratchbird/sblr/dynamic_sql_bridge.h"
 #include "scratchbird/sblr/postgresql_query_compiler.h"
+#include "scratchbird/sblr/v3_codec.h"
+#include "scratchbird/sblr/v3_container.h"
+#include "scratchbird/sblr/v3_opcodes.generated.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/client/connection.h"
 
@@ -460,6 +464,28 @@ PostgresqlAdapter::~PostgresqlAdapter() {
     unregisterBackend();
 }
 
+void PostgresqlAdapter::onConnectionClosed(network::Connection* conn,
+                                           network::CloseReason reason) {
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
+    search_path_set_ = false;
+    sync_pending_ = false;
+    pending_operations_.clear();
+    copy_context_ = CopyContext{};
+    statements_.clear();
+    portals_.clear();
+    client_parameters_.clear();
+    database_name_.clear();
+    username_.clear();
+    pg_schema_id_ = core::ID{};
+    scram_step_ = 0;
+    txn_failed_ = false;
+    pg_state_ = PgProtocolState::STARTUP;
+    ProtocolAdapter::onConnectionClosed(conn, reason);
+}
+
 void PostgresqlAdapter::registerBackend() {
     std::lock_guard<std::mutex> lock(backend_registry_mutex_);
     backend_registry_[backend_pid_] = BackendEntry{this, backend_secret_key_};
@@ -825,6 +851,73 @@ core::Status PostgresqlAdapter::executeRemoteQuery(const QueryContext& query,
                      bytecode.size(),
                      static_cast<unsigned long long>(digest),
                      head_hex.str().c_str());
+        sblr::v3::Container debug_container;
+        std::string decode_error;
+        if (sblr::v3::decodeContainer(bytecode.data(),
+                                      bytecode.size(),
+                                      debug_container,
+                                      decode_error)) {
+            size_t off = 0;
+            sblr::v3::Instruction root_inst;
+            bool have_root = false;
+            while (off < debug_container.bytecode_stream.size()) {
+                sblr::v3::Instruction decoded;
+                sblr::v3::DecodeError derr;
+                if (!sblr::v3::decodeInstruction(debug_container.bytecode_stream.data(),
+                                                 debug_container.bytecode_stream.size(),
+                                                 off,
+                                                 decoded,
+                                                 derr)) {
+                    break;
+                }
+                if (decoded.opcode != 0x0002 && decoded.opcode != 0x0001) {
+                    root_inst = std::move(decoded);
+                    have_root = true;
+                    break;
+                }
+            }
+            if (have_root) {
+                const auto* root_obj =
+                    std::get_if<sblr::v3::Value::Object>(&root_inst.payload.data);
+                std::fprintf(stderr,
+                             "[pg_wire] compiled root opcode=0x%04x has_payload_obj=%d\n",
+                             static_cast<unsigned>(root_inst.opcode),
+                             root_obj != nullptr ? 1 : 0);
+                if (root_obj != nullptr) {
+                    const bool root_has_plan = root_obj->find("plan") != root_obj->end();
+                    const bool root_has_plan_text =
+                        root_obj->find("plan_text") != root_obj->end();
+                    const auto query_it = root_obj->find("query");
+                    bool query_has_plan = false;
+                    bool query_has_plan_text = false;
+                    if (query_it != root_obj->end()) {
+                        if (const auto* query_ptr =
+                                std::get_if<sblr::v3::Value::InstrPtr>(&query_it->second.data);
+                            query_ptr != nullptr && *query_ptr != nullptr) {
+                            if (const auto* query_obj =
+                                    std::get_if<sblr::v3::Value::Object>(
+                                        &(**query_ptr).payload.data);
+                                query_obj != nullptr) {
+                                query_has_plan =
+                                    query_obj->find("plan") != query_obj->end();
+                                query_has_plan_text =
+                                    query_obj->find("plan_text") != query_obj->end();
+                            }
+                        }
+                    }
+                    std::fprintf(stderr,
+                                 "[pg_wire] compiled explain payload root_has_plan=%d root_has_plan_text=%d query_has_plan=%d query_has_plan_text=%d\n",
+                                 root_has_plan ? 1 : 0,
+                                 root_has_plan_text ? 1 : 0,
+                                 query_has_plan ? 1 : 0,
+                                 query_has_plan_text ? 1 : 0);
+                }
+            }
+        } else {
+            std::fprintf(stderr,
+                         "[pg_wire] compiled bytecode decode failed err=%s\n",
+                         decode_error.c_str());
+        }
         std::fflush(stderr);
     }
 
@@ -2575,8 +2668,16 @@ core::Status PostgresqlAdapter::ensurePostgresSystemCatalog(core::ErrorContext* 
     auto ensure_view = [&](const std::string& name, const std::string& definition) -> core::Status {
         // Always replace stale bootstrap placeholders so emulation metadata
         // reflects current virtual catalog surfaces.
-        return catalog->createView(schema_info.schema_id, name, definition, true,
-                                   false, false, {}, core::ID{}, ctx);
+        auto status = catalog->createView(schema_info.schema_id, name, definition, true,
+                                          false, false, {}, core::ID{}, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        return scratchbird::sblr::persistViewExecutionMetadataFromSql(engineDatabase(),
+                                                                      schema_info.schema_id,
+                                                                      name,
+                                                                      definition,
+                                                                      ctx);
     };
 
     // Compatibility bridge views for PostgreSQL system-catalog aliases.
@@ -2656,7 +2757,7 @@ core::Status PostgresqlAdapter::compileQuery(const std::string& sql,
                                              std::vector<uint8_t>& bytecode_out,
                                              std::string& error_out) {
     // Keep PostgreSQL compilation deterministic and rooted in the selected DB handle.
-    sblr::PostgreSQLQueryCompiler compiler(nullptr);
+    sblr::PostgreSQLQueryCompiler compiler(engineDatabase());
     std::string selected_database;
     if (!resolveDatabaseSelection(database_name_, selected_database)) {
         if (config_.enforce_bound_database &&
@@ -2680,6 +2781,9 @@ core::Status PostgresqlAdapter::compileQuery(const std::string& sql,
         core::ErrorContext schema_ctx;
         applyPostgresqlSessionSchemaContext(db_name, &schema_ctx);
     }
+    if (connection_ctx_ != nullptr) {
+        compiler.setCurrentSchema(connection_ctx_->getCurrentSchemaId());
+    }
     compiler.setDefaultSchema(schema_root.empty() ? db_name : schema_root);
     if (pgWireDebugEnabled()) {
         std::fprintf(stderr,
@@ -2690,6 +2794,19 @@ core::Status PostgresqlAdapter::compileQuery(const std::string& sql,
         std::fflush(stderr);
     }
     auto result = compiler.compile(sql);
+    if (pgWireDebugEnabled()) {
+        for (const auto& warning : result.warnings()) {
+            std::fprintf(stderr,
+                         "[pg_wire] compileQuery warning=%s\n",
+                         warning.c_str());
+        }
+        for (const auto& error : result.errors()) {
+            std::fprintf(stderr,
+                         "[pg_wire] compileQuery error=%s\n",
+                         error.c_str());
+        }
+        std::fflush(stderr);
+    }
     if (!result.success()) {
         error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();
         return core::Status::INVALID_ARGUMENT;

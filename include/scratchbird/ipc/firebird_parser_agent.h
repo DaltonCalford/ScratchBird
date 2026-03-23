@@ -24,9 +24,95 @@
 #include "scratchbird/ipc/parser_agent.h"
 #include "scratchbird/core/types.h"
 #include <atomic>
+#include <deque>
+#include <optional>
+#include <unordered_map>
 
 namespace scratchbird {
 namespace ipc {
+
+struct FBMessageFieldDesc {
+    uint8_t type_opcode = 0;
+    int8_t scale = 0;
+    uint16_t length = 0;
+    uint16_t subtype = 0;
+    bool not_nullable = false;
+    uint32_t sql_type_override = 0;
+};
+
+struct FBSqldaVarDesc {
+    std::string field_name;
+    std::string relation_schema;
+    std::string relation_name;
+    std::string owner_name;
+    std::string relation_alias;
+    std::string alias_name;
+};
+
+struct FBProjectionBinding {
+    uint8_t message_number = 0;
+    uint16_t value_index = 0;
+    std::optional<uint16_t> null_index;
+};
+
+struct FBInputBinding {
+    uint8_t message_number = 0;
+    uint16_t value_index = 0;
+    std::optional<uint16_t> null_index;
+};
+
+struct FBCompiledRequestState {
+    std::string stmt_name;
+    std::unordered_map<uint8_t, std::vector<FBMessageFieldDesc>> message_fields;
+    std::unordered_map<uint8_t, std::vector<FBProjectionBinding>> projection_bindings;
+    std::vector<FBInputBinding> input_bindings;
+    std::vector<std::optional<std::string>> bound_params;
+    std::vector<bool> bound_param_nulls;
+    bool input_values_ready = false;
+    std::deque<std::vector<std::optional<std::string>>> pending_rows;
+    bool execution_complete = false;
+    bool portal_active = false;
+    bool statement_prepared = false;
+};
+
+struct FBDsqlStatementState {
+    std::string stmt_name;
+    std::string cursor_name;
+    std::string sql_text;
+    std::vector<uint8_t> compiled_bytecode;
+    std::unordered_map<uint8_t, std::vector<FBMessageFieldDesc>> input_message_fields;
+    std::unordered_map<uint8_t, std::vector<FBMessageFieldDesc>> output_message_fields;
+    std::vector<FBSqldaVarDesc> input_sqlda_fields;
+    std::vector<FBSqldaVarDesc> output_sqlda_fields;
+    std::vector<std::string> output_field_names;
+    std::vector<std::optional<std::string>> bound_params;
+    std::vector<bool> bound_param_nulls;
+    std::deque<std::vector<std::optional<std::string>>> pending_rows;
+    uint64_t select_count = 0;
+    uint64_t insert_count = 0;
+    uint64_t update_count = 0;
+    uint64_t delete_count = 0;
+    int64_t current_fetch_index = -1;
+    bool execution_complete = false;
+    bool portal_active = false;
+    bool statement_prepared = false;
+    bool engine_statement_prepared = false;
+};
+
+struct FBTransactionState {
+    uint32_t transaction_id = 0;
+    uint32_t oldest_interesting = 0;
+    uint32_t oldest_snapshot = 0;
+    uint32_t oldest_active = 0;
+    uint8_t isolation_mode = 2;
+    uint8_t read_committed_mode = 0;
+    bool read_only = false;
+    uint32_t lock_timeout = 0;
+    uint64_t snapshot_number = 0;
+    bool prepared = false;
+    std::string prepare_description;
+    std::string database_path;
+};
 
 /**
  * Client state for Firebird protocol
@@ -41,21 +127,26 @@ struct FBClientState {
     };
     
     int client_fd = -1;
+    uint32_t client_id = 0;
+    uint32_t session_id = 0;
     State state = CONNECTING;
     
     // Protocol info
     uint32_t protocol_version = 0;
     uint32_t accept_version = 0;
+    uint32_t accept_type = 0;
     uint32_t last_op = 0;
     
     // Connection info
     std::string database;
+    std::string emulated_schema_root;
     std::string username;
     std::string auth_plugin;
     std::vector<uint8_t> auth_data;
     
     // Handles
     uint32_t handle = 0;
+    uint32_t attachment_id = 0;
     
     // Wire encryption
     bool wire_encrypted = false;
@@ -63,6 +154,10 @@ struct FBClientState {
     
     // Scramble for auth
     std::vector<uint8_t> scramble;
+    std::unordered_map<uint32_t, FBCompiledRequestState> compiled_requests;
+    std::unordered_map<uint32_t, FBDsqlStatementState> dsql_statements;
+    std::unordered_map<uint32_t, FBTransactionState> transactions;
+    bool pending_catalog_refresh = false;
 };
 
 /**
@@ -132,17 +227,55 @@ public:
                              const std::vector<uint8_t>& packet,
                              core::ErrorContext* ctx);
     
-    core::Status handleDetach(core::ErrorContext* ctx);
+    core::Status handleDetach(FBClientState& state,
+                             const std::vector<uint8_t>& packet,
+                             core::ErrorContext* ctx);
     
     // Statement operations
     core::Status handleCompile(FBClientState& state,
                               const std::vector<uint8_t>& packet,
                               core::ErrorContext* ctx);
+
+    core::Status handleAllocateStatement(FBClientState& state,
+                                        const std::vector<uint8_t>& packet,
+                                        core::ErrorContext* ctx);
+
+    core::Status handlePrepareStatement(FBClientState& state,
+                                       const std::vector<uint8_t>& packet,
+                                       core::ErrorContext* ctx);
+
+    core::Status handleExecImmediate(FBClientState& state,
+                                    const std::vector<uint8_t>& packet,
+                                    bool want_sql_response,
+                                    core::ErrorContext* ctx);
+
+    core::Status handleExecuteStatement(FBClientState& state,
+                                       const std::vector<uint8_t>& packet,
+                                       bool want_sql_response,
+                                       core::ErrorContext* ctx);
+
+    core::Status handleFetchStatement(FBClientState& state,
+                                     const std::vector<uint8_t>& packet,
+                                     bool scroll,
+                                     core::ErrorContext* ctx);
+
+    core::Status handleFreeStatement(FBClientState& state,
+                                    const std::vector<uint8_t>& packet,
+                                    core::ErrorContext* ctx);
+
+    core::Status handleSetCursor(FBClientState& state,
+                                const std::vector<uint8_t>& packet,
+                                core::ErrorContext* ctx);
     
     core::Status handleStart(FBClientState& state,
                             const std::vector<uint8_t>& packet,
                             bool want_response,
                             core::ErrorContext* ctx);
+
+    core::Status handleStartWithSend(FBClientState& state,
+                                    const std::vector<uint8_t>& packet,
+                                    bool want_response,
+                                    core::ErrorContext* ctx);
     
     core::Status handleReceive(FBClientState& state,
                               const std::vector<uint8_t>& packet,
@@ -152,9 +285,13 @@ public:
                            const std::vector<uint8_t>& packet,
                            core::ErrorContext* ctx);
     
-    core::Status handleUnwind(core::ErrorContext* ctx);
-    
-    core::Status handleRelease(core::ErrorContext* ctx);
+    core::Status handleUnwind(FBClientState& state,
+                             const std::vector<uint8_t>& packet,
+                             core::ErrorContext* ctx);
+
+    core::Status handleRelease(FBClientState& state,
+                              const std::vector<uint8_t>& packet,
+                              core::ErrorContext* ctx);
     
     // Transaction operations
     core::Status handleTransaction(FBClientState& state,
@@ -162,14 +299,22 @@ public:
                                   core::ErrorContext* ctx);
     
     core::Status handleCommit(FBClientState& state,
+                             const std::vector<uint8_t>& packet,
                              bool retaining,
                              core::ErrorContext* ctx);
     
     core::Status handleRollback(FBClientState& state,
+                               const std::vector<uint8_t>& packet,
                                bool retaining,
                                core::ErrorContext* ctx);
     
-    core::Status handlePrepare(core::ErrorContext* ctx);
+    core::Status handlePrepare(FBClientState& state,
+                              const std::vector<uint8_t>& packet,
+                              core::ErrorContext* ctx);
+
+    core::Status handlePrepare2(FBClientState& state,
+                               const std::vector<uint8_t>& packet,
+                               core::ErrorContext* ctx);
     
     // Information operations
     core::Status handleInfo(FBClientState& state,
@@ -304,6 +449,35 @@ public:
                                          uint32_t fb_type);
 
 private:
+    core::Status cleanupAttachmentState(FBClientState& state,
+                                       core::ErrorContext* ctx);
+
+    core::Status executeCompiledInternalQuery(
+        FBClientState& state,
+        const std::string& sql_text,
+        std::vector<std::string>* column_names_out,
+        std::deque<std::vector<std::optional<std::string>>>* rows_out,
+        core::ErrorContext* ctx);
+
+    core::Status ensureEngineSession(FBClientState& state,
+                                     bool create_database_bootstrap,
+                                     core::ErrorContext* ctx);
+    core::Status executeSessionSql(FBClientState& state,
+                                   const std::string& sql,
+                                   bool ignore_exists_error,
+                                   const char* failure_message,
+                                   core::ErrorContext* ctx);
+    core::Status ensureVirtualCatalogBinding(FBClientState& state,
+                                             core::ErrorContext* ctx);
+    core::Status refreshCommittedCatalogState(FBClientState& state,
+                                              core::ErrorContext* ctx);
+
+    core::Status closeEngineObject(FBClientState& state,
+                                  uint32_t request_id_seed,
+                                  char type,
+                                  const std::string& name,
+                                  core::ErrorContext* ctx);
+
     // Handle generation
     static uint32_t generateHandle();
 };

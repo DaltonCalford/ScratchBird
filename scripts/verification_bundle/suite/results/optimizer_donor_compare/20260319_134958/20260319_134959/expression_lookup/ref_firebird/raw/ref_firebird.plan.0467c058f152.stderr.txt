@@ -1,0 +1,5 @@
+Statement failed, SQLSTATE = 08001
+I/O error during "open" operation for file "/firebird/data/ref_verify_firebird.fdb"
+-Error while trying to open file
+-No such file or directory
+After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.plan.sql

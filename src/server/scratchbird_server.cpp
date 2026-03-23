@@ -15,6 +15,7 @@
 
 #include "scratchbird/server/scratchbird_server.h"
 #include "scratchbird/server/daemon.h"
+#include "scratchbird/ipc/engine_ipc_session_handler.h"
 
 #include <iostream>
 #include <fstream>
@@ -25,6 +26,17 @@
 
 namespace scratchbird {
 namespace server {
+
+namespace {
+
+std::string deriveParserIpcEndpoint(const std::string& engine_endpoint) {
+    if (engine_endpoint.empty()) {
+        return std::string();
+    }
+    return engine_endpoint + ".parser_v1";
+}
+
+}
 
 // ============================================================================
 // ScratchBirdServer Implementation
@@ -88,6 +100,29 @@ core::Status ScratchBirdServer::start(core::ErrorContext* ctx) {
         return status;
     }
 
+    {
+        scratchbird::ipc::IPCServerConfig parser_ipc_config;
+        parser_ipc_config.endpoint = deriveParserIpcEndpoint(getIPCPath());
+        parser_ipc_config.max_sessions = config_.max_connections;
+        parser_ipc_config.max_workers = 4;
+        parser_listener_ = std::make_unique<scratchbird::ipc::IPCServer>(
+            parser_ipc_config,
+            std::make_unique<scratchbird::ipc::EngineIPCSessionHandler>(database_.get()));
+        status = parser_listener_->start(ctx);
+        if (status != core::Status::OK) {
+            if (ctx && ctx->message.empty()) {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to start parser IPC listener");
+            }
+            if (listener_) {
+                listener_->close();
+                listener_.reset();
+            }
+            database_->close();
+            state_ = ServerState::STOPPED;
+            return status;
+        }
+    }
+
     // Write PID file
     status = writePIDFile(ctx);
     if (status != core::Status::OK) {
@@ -136,6 +171,10 @@ core::Status ScratchBirdServer::start(core::ErrorContext* ctx) {
     }
 
     // Stop listener
+    if (parser_listener_) {
+        parser_listener_->stop(nullptr);
+        parser_listener_.reset();
+    }
     if (listener_) {
         listener_->close();
     }
@@ -182,6 +221,9 @@ void ScratchBirdServer::shutdown() {
     }
 
     // Wake up accept loop by closing listener
+    if (parser_listener_) {
+        parser_listener_->stop(nullptr);
+    }
     if (listener_) {
         listener_->close();
     }

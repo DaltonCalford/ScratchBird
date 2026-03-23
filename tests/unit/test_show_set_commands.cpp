@@ -174,6 +174,7 @@ TEST_F(ShowSetCommandsTest, ShowTableParsing)
     EXPECT_TRUE(compileSucceeds("SHOW TABLE users"));
     EXPECT_TRUE(compileSucceeds("SHOW TABLE my_table"));
     EXPECT_TRUE(compileSucceeds("SHOW TABLE \"CaseSensitiveTable\""));
+    EXPECT_TRUE(compileSucceeds("SHOW TABLE users.public.audit_log"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowTableBytecode)
@@ -259,6 +260,7 @@ TEST_F(ShowSetCommandsTest, ShowViewParsing)
 {
     EXPECT_TRUE(compileSucceeds("SHOW VIEW v_active_users"));
     EXPECT_TRUE(compileSucceeds("SHOW VIEW my_view"));
+    EXPECT_TRUE(compileSucceeds("SHOW VIEW users.public.v_active_users"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowViewBytecode)
@@ -577,9 +579,52 @@ TEST_F(ShowSetCommandsTest, SetLocalTimeoutBytecode)
 TEST_F(ShowSetCommandsTest, ShowTablesStillWorks)
 {
     EXPECT_TRUE(compileSucceeds("SHOW TABLES"));
+    EXPECT_TRUE(compileSucceeds("SHOW TABLES FROM users.public"));
     auto bc = generateBytecode("SHOW TABLES");
     ASSERT_FALSE(bc.empty());
     EXPECT_TRUE(bytecodeContainsV3Opcode(bc, scratchbird::sblr::v3::Opcode::SBLR3_SHOW_TABLES));
+}
+
+TEST_F(ShowSetCommandsTest, QualifiedShowCommandsExecuteAgainstNestedSchemaPaths)
+{
+    ASSERT_TRUE(compileAndExecute("CREATE SCHEMA users.public").success());
+    ASSERT_TRUE(compileAndExecute(
+        "CREATE TABLE users.public.v3_show_table (id INTEGER PRIMARY KEY, payload VARCHAR(32))")
+                    .success());
+    ASSERT_TRUE(compileAndExecute(
+        "CREATE VIEW users.public.v3_show_view AS "
+        "SELECT id, payload FROM users.public.v3_show_table")
+                    .success());
+
+    auto show_tables = compileAndExecute("SHOW TABLES FROM users.public");
+    ASSERT_TRUE(show_tables.success()) << show_tables.error();
+    ASSERT_TRUE(show_tables.hasResultSet());
+    ASSERT_NE(show_tables.resultSet(), nullptr);
+
+    bool found_table = false;
+    for (size_t row = 0; row < show_tables.resultSet()->rowCount(); ++row)
+    {
+        if (show_tables.resultSet()->getValue(row, 0).toString() == "v3_show_table")
+        {
+            found_table = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_table);
+
+    auto show_table = compileAndExecute("SHOW TABLE users.public.v3_show_table");
+    ASSERT_TRUE(show_table.success()) << show_table.error();
+    ASSERT_TRUE(show_table.hasResultSet());
+    ASSERT_NE(show_table.resultSet(), nullptr);
+    ASSERT_GT(show_table.resultSet()->rowCount(), 0u);
+    EXPECT_EQ(show_table.resultSet()->getValue(0, 1).toString(), "v3_show_table");
+
+    auto show_view = compileAndExecute("SHOW VIEW users.public.v3_show_view");
+    ASSERT_TRUE(show_view.success()) << show_view.error();
+    ASSERT_TRUE(show_view.hasResultSet());
+    ASSERT_NE(show_view.resultSet(), nullptr);
+    ASSERT_GT(show_view.resultSet()->rowCount(), 0u);
+    EXPECT_EQ(show_view.resultSet()->getValue(0, 1).toString(), "v3_show_view");
 }
 
 TEST_F(ShowSetCommandsTest, ShowDatabasesStillWorks)

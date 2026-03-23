@@ -313,6 +313,12 @@ void ConnectionManager::closeConnection(ConnectionId id, CloseReason reason) {
         event_loop_->remove(conn->getFd());
     }
 
+    if (conn) {
+        if (auto handler = getProtocolHandler(conn->getProtocol())) {
+            handler->onConnectionClosed(conn.get(), reason);
+        }
+    }
+
     // Close connection
     if (conn) {
         conn->close(reason);
@@ -358,7 +364,7 @@ void ConnectionManager::handleEvent(ConnectionId id, EventType events) {
             closeConnection(id, CloseReason::IO_ERROR);
             return;
         }
-        if (bytes == 0 && conn->getState() == ConnectionState::CLOSING) {
+        if (bytes == 0) {
             closeConnection(id, CloseReason::CLIENT_DISCONNECT);
             return;
         }

@@ -20,9 +20,9 @@ WHERE schema_name = 'sec_owner_schema'
   AND schema_owner = CURRENT_USER;
 
 SELECT 'ASSERT|sec_owner|table_owner_current|' || CAST(COUNT(*) AS VARCHAR(20))
-FROM pg_class c
-JOIN pg_namespace n ON n.oid = c.relnamespace
-JOIN pg_roles r ON r.oid = c.relowner
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_catalog.pg_roles r ON r.oid = c.relowner
 WHERE n.nspname = 'sec_owner_schema'
   AND c.relname = 'v3_sec_owner_table'
   AND r.rolname = CURRENT_USER;

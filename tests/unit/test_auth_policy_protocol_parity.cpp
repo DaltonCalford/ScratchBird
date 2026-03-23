@@ -16,12 +16,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
 
 #ifndef _WIN32
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -486,6 +488,65 @@ TEST_F(AuthPolicyProtocolParityTest, MySqlParserBridgeAllowsPasswordCompatUnderS
 
         server_thread.stop();
     }
+}
+
+TEST_F(AuthPolicyProtocolParityTest, BootstrapPasswordSessionCanDropBootstrapSeededUserAndCommit) {
+    if (!scratchbird::testing::networkTestsEnabled()) {
+        GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+    }
+
+    const std::string token = "bootstrap-password-session-token";
+    const std::string token_path = db_path_ + ".bootstrap.token";
+    {
+        std::ofstream out(token_path);
+        ASSERT_TRUE(out.is_open());
+        out << token << "\n";
+    }
+#ifndef _WIN32
+    ASSERT_EQ(::chmod(token_path.c_str(), S_IRUSR | S_IWUSR), 0);
+#endif
+
+    ScopedEnvVar token_env("SCRATCHBIRD_BOOTSTRAP_TOKEN_FILE", token_path);
+    ScopedEnvVar owner_uid_env("SCRATCHBIRD_BOOTSTRAP_REQUIRE_OWNER_UID", "0");
+
+    const std::string socket_path = makeUniqueSocketPath("bootstrap_password_session");
+    SessionThreadHarness server_thread(db_.get(), socket_path);
+
+    ErrorContext ctx;
+    core::Status start_status = server_thread.start(&ctx);
+    if (start_status != core::Status::OK && isNetworkRestrictedError(ctx)) {
+        GTEST_SKIP() << "Socket setup restricted: " << ctx.message;
+    }
+    ASSERT_EQ(start_status, core::Status::OK) << ctx.message;
+
+    ConnectionConfig config;
+    config.database_name = "auth_policy_protocol_parity";
+    config.client_name = "scratchbird_client";
+    config.username = "bootstrap_admin";
+    config.password = token;
+    config.preferred_auth_methods = {AuthMethod::PASSWORD};
+    config.auto_start_server = false;
+    config.auto_commit = false;
+    config.ipc_method = IPCMethod::UNIX_SOCKET;
+    config.socket_path = socket_path;
+
+    Connection conn;
+    ASSERT_EQ(conn.connect(config, &ctx), core::Status::OK)
+        << "ctx=" << ctx.message << " last_error=" << conn.getLastError();
+
+    int64_t rows_affected = 0;
+    ASSERT_EQ(conn.execute("DROP USER IF EXISTS SysArch", &rows_affected, &ctx), core::Status::OK)
+        << "ctx=" << ctx.message << " last_error=" << conn.getLastError();
+    ASSERT_EQ(conn.execute("DROP USER IF EXISTS postgres", &rows_affected, &ctx), core::Status::OK)
+        << "ctx=" << ctx.message << " last_error=" << conn.getLastError();
+    EXPECT_TRUE(conn.inTransaction());
+
+    EXPECT_EQ(conn.commit(&ctx), core::Status::OK)
+        << "ctx=" << ctx.message << " last_error=" << conn.getLastError();
+
+    conn.disconnect();
+    server_thread.stop();
+    std::remove(token_path.c_str());
 }
 
 TEST_F(AuthPolicyProtocolParityTest, TokenOnlyPolicyDeniesPasswordProfiles) {

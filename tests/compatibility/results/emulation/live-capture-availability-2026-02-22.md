@@ -1,4 +1,4 @@
-Last updated: 2026-03-18
+Last updated: 2026-03-22
 
 # Live Capture Availability Summary
 
@@ -11,5 +11,6 @@ Last updated: 2026-03-18
 - `postgresql` native capture: `ok`
 - `postgresql` emulated capture: `ok`
 - `firebird` native capture: `unavailable`
-- `firebird` emulated capture: `ok`
+- `firebird` emulated capture: `unavailable`
 - `firebird` native issue: `Native endpoint unavailable: [Errno 111] Connection refused`
+- `firebird` emulated issue: `[Errno 104] Connection reset by peer`

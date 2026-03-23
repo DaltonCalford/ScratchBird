@@ -21,7 +21,8 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/posix_compat.h"
 #include "scratchbird/security/parser_auth_policy.h"
-#include "scratchbird/sblr/firebird_query_compiler.h"
+#include "scratchbird/udr/dialect_compiler_udr.h"
+#include "scratchbird/udr/firebird_emulation_udr.h"
 
 #include <cstring>
 #include <cstdlib>
@@ -81,125 +82,6 @@ void clearErrorContextSuccess(core::ErrorContext* ctx) {
     ctx->function = nullptr;
 }
 
-struct FirebirdDatabaseSpec {
-    std::string server;
-    std::string file_path;
-};
-
-FirebirdDatabaseSpec parseFirebirdDatabaseSpec(std::string_view spec) {
-    FirebirdDatabaseSpec result;
-    result.file_path = std::string(spec);
-
-    size_t colon = result.file_path.find(':');
-    if (colon != std::string::npos) {
-        bool is_drive = (colon == 1 &&
-                         std::isalpha(static_cast<unsigned char>(result.file_path[0])) &&
-                         result.file_path.size() > 2 &&
-                         (result.file_path[2] == '\\' || result.file_path[2] == '/'));
-        if (!is_drive) {
-            result.server = result.file_path.substr(0, colon);
-            result.file_path.erase(0, colon + 1);
-        }
-    }
-
-    return result;
-}
-
-std::vector<std::string> splitFirebirdPathComponents(std::string_view path) {
-    std::string working(path);
-    std::vector<std::string> components;
-
-    if (working.size() >= 2 && std::isalpha(static_cast<unsigned char>(working[0])) &&
-        working[1] == ':') {
-        std::string drive(1, static_cast<char>(std::tolower(static_cast<unsigned char>(working[0]))));
-        components.push_back(drive);
-        working.erase(0, 2);
-    }
-
-    while (!working.empty() && (working.front() == '/' || working.front() == '\\')) {
-        working.erase(working.begin());
-    }
-
-    std::string current;
-    for (char ch : working) {
-        if (ch == '/' || ch == '\\') {
-            if (!current.empty()) {
-                components.push_back(current);
-                current.clear();
-            }
-        } else {
-            current.push_back(ch);
-        }
-    }
-    if (!current.empty()) {
-        components.push_back(current);
-    }
-
-    if (!components.empty()) {
-        components.pop_back();
-    }
-
-    return components;
-}
-
-std::string deriveFirebirdDatabaseName(std::string_view file_path) {
-    size_t last_sep = file_path.find_last_of("/\\");
-    std::string base = (last_sep == std::string_view::npos)
-        ? std::string(file_path)
-        : std::string(file_path.substr(last_sep + 1));
-
-    if (base.empty()) {
-        return base;
-    }
-
-    size_t dot = base.find_last_of('.');
-    if (dot != std::string::npos && dot + 1 < base.size()) {
-        std::string ext = base.substr(dot + 1);
-        for (char& ch : ext) {
-            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-        }
-        if (ext == "fdb" || ext == "gdb" || ext == "sbdb") {
-            base = base.substr(0, dot);
-        }
-    }
-
-    return base;
-}
-
-std::string buildEmulatedFirebirdSchemaPath(const std::string& server,
-                                            const std::vector<std::string>& path_components,
-                                            const std::string& db_name) {
-    std::string schema = "emulated.firebird." + server;
-    for (const auto& comp : path_components) {
-        if (!comp.empty()) {
-            schema.push_back('.');
-            schema += comp;
-        }
-    }
-    if (!db_name.empty()) {
-        schema.push_back('.');
-        schema += db_name;
-    }
-    return schema;
-}
-
-std::string buildLegacyEmulatedFirebirdSchemaPath(const std::string& server,
-                                                  const std::vector<std::string>& path_components,
-                                                  const std::string& db_name) {
-    std::string schema = "remote.emulation.firebird." + server;
-    for (const auto& comp : path_components) {
-        if (!comp.empty()) {
-            schema.push_back('.');
-            schema += comp;
-        }
-    }
-    if (!db_name.empty()) {
-        schema.push_back('.');
-        schema += db_name;
-    }
-    return schema;
-}
-
 constexpr const char* kFirebirdLegacyPasswordSalt = "9z";
 constexpr const char* kFirebirdLegacyEncField = "firebird_legacy_enc";
 constexpr const char* kFirebirdLegacySecretPrefix = "{fb_legacy_enc}";
@@ -214,10 +96,9 @@ void logFirebirdAuthDebug(const std::string& message) {
     }
 
     const char* path = std::getenv("SCRATCHBIRD_FB_AUTH_DEBUG_LOG");
-    if (path == nullptr || *path == '\0') {
-        return;
-    }
-    std::ofstream out(path, std::ios::app);
+    const char* effective_path =
+        (path != nullptr && *path != '\0') ? path : "/tmp/sb_fb_auth_debug.log";
+    std::ofstream out(effective_path, std::ios::app);
     if (!out.is_open()) {
         return;
     }
@@ -433,10 +314,34 @@ core::Status parseBlr(const std::vector<uint8_t>& blr,
                 field.length = 4;
                 break;
             }
+            case 28: { // blr_sql_time_tz
+                field.dtype = opcode;
+                field.scale = 0;
+                field.length = 6;
+                break;
+            }
+            case 30: { // blr_ex_time_tz
+                field.dtype = opcode;
+                field.scale = 0;
+                field.length = 8;
+                break;
+            }
             case 35: { // blr_timestamp
                 field.dtype = opcode;
                 field.scale = 0;
                 field.length = 8;
+                break;
+            }
+            case 29: { // blr_timestamp_tz
+                field.dtype = opcode;
+                field.scale = 0;
+                field.length = 10;
+                break;
+            }
+            case 31: { // blr_ex_timestamp_tz
+                field.dtype = opcode;
+                field.scale = 0;
+                field.length = 12;
                 break;
             }
             case 23: { // blr_bool
@@ -481,11 +386,6 @@ core::Status parseBlr(const std::vector<uint8_t>& blr,
         }
 
         fields_out.push_back(field);
-    }
-
-    if (!require(1) || blr[idx] != 255) {  // blr_end
-        error_out = "Missing BLR end marker";
-        return core::Status::INVALID_ARGUMENT;
     }
 
     // Compute message length as sum of field lengths plus NULL indicators
@@ -642,6 +542,57 @@ FirebirdStatement::BlrField columnToBlrField(const ProtocolCodec::ColumnInfo& co
         }
     }
     return field;
+}
+
+std::string rewriteFirebirdSingleRowCompatibilityQuery(const std::string& sql) {
+    auto trim = [](std::string_view in) {
+        size_t start = 0;
+        while (start < in.size() && std::isspace(static_cast<unsigned char>(in[start]))) {
+            ++start;
+        }
+        size_t end = in.size();
+        while (end > start && std::isspace(static_cast<unsigned char>(in[end - 1]))) {
+            --end;
+        }
+        return in.substr(start, end - start);
+    };
+
+    std::string_view normalized = trim(sql);
+    if (!normalized.empty() && normalized.back() == ';') {
+        normalized.remove_suffix(1);
+        normalized = trim(normalized);
+    }
+
+    std::string upper;
+    upper.reserve(normalized.size());
+    for (char ch : normalized) {
+        upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
+    }
+
+    constexpr std::string_view kSelect = "SELECT ";
+    constexpr std::string_view kFromRdbDatabase = " FROM RDB$DATABASE";
+    if (upper.rfind(kSelect, 0) != 0) {
+        return sql;
+    }
+
+    const size_t from_pos = upper.find(kFromRdbDatabase);
+    if (from_pos == std::string::npos) {
+        return sql;
+    }
+
+    const size_t suffix_pos = from_pos + kFromRdbDatabase.size();
+    for (size_t i = suffix_pos; i < upper.size(); ++i) {
+        if (!std::isspace(static_cast<unsigned char>(upper[i]))) {
+            return sql;
+        }
+    }
+
+    std::string_view select_list = trim(normalized.substr(kSelect.size(), from_pos - kSelect.size()));
+    if (select_list.empty()) {
+        return sql;
+    }
+
+    return "SELECT " + std::string(select_list);
 }
 
 constexpr int32_t kWireDateEpochMjd = 51544;  // 2000-01-01 in MJD
@@ -1025,6 +976,27 @@ FirebirdAdapter::FirebirdAdapter(const ProtocolAdapterConfig& config)
 
 FirebirdAdapter::~FirebirdAdapter() = default;
 
+void FirebirdAdapter::onConnectionClosed(network::Connection* conn,
+                                         network::CloseReason reason) {
+    allow_proxy_session_auth_ = false;
+    remote_password_.clear();
+    remote_password_enc_.clear();
+    attach_auth_pending_ = false;
+    pending_attach_db_path_.clear();
+    firebird_schema_id_ = core::ID{};
+    firebird_schema_name_.clear();
+    dpb_auth_plugin_name_.clear();
+    dpb_specific_auth_data_.clear();
+    auth_plugin_name_.clear();
+    auth_data_.clear();
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
+    fb_state_ = FirebirdProtocolState::INITIAL;
+    ProtocolAdapter::onConnectionClosed(conn, reason);
+}
+
 void FirebirdAdapter::setRemoteCredentials(const std::string& username,
                                            const std::string& password) {
     username_ = username;
@@ -1332,17 +1304,6 @@ core::Status FirebirdAdapter::sendProtocolError(network::Connection* conn,
 }
 
 core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx) {
-    if (!engineDatabase()) {
-        SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT, "Database not initialized");
-        return core::Status::INVALID_ARGUMENT;
-    }
-
-    auto* catalog = engineDatabase()->catalog_manager();
-    if (!catalog) {
-        SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT, "Catalog manager not available");
-        return core::Status::INVALID_ARGUMENT;
-    }
-
     std::string schema_binding = database_name_;
     if (schema_binding.empty()) {
         schema_binding = config_.default_database;
@@ -1351,635 +1312,23 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
         schema_binding = database_path_.string();
     }
 
-    FirebirdDatabaseSpec spec = parseFirebirdDatabaseSpec(schema_binding);
-    std::string server = spec.server.empty() ? "localhost" : spec.server;
-    std::string db_name = deriveFirebirdDatabaseName(spec.file_path);
-    if (db_name.empty()) {
-        db_name = "default";
-    }
-    auto path_components = splitFirebirdPathComponents(spec.file_path);
-    auto schema_name = buildEmulatedFirebirdSchemaPath(server, path_components, db_name);
-    auto legacy_schema_name = buildLegacyEmulatedFirebirdSchemaPath(server, path_components, db_name);
-    firebird_schema_name_ = schema_name;
-    {
-        std::ostringstream oss;
-        oss << "ensureFirebirdSystemTables binding source=" << schema_binding
-            << " schema=" << schema_name
-            << " legacy_schema=" << legacy_schema_name;
-        logFirebirdAuthDebug(oss.str());
+    udr::FirebirdVirtualCatalogRequest request{};
+    request.profile_id = "firebirdsql";
+    request.database_binding = schema_binding;
+
+    udr::FirebirdVirtualCatalogResponse response{};
+    core::ErrorContext udr_ctx;
+    auto status = udr::ensureFirebirdVirtualCatalog(engineDatabase(), request, response, &udr_ctx);
+    if (status != core::Status::OK) {
+        if (!udr_ctx.message.empty()) {
+            copyErrorContextFields(ctx, udr_ctx);
+        }
+        return status;
     }
 
-    core::CatalogManager::SchemaInfo fb_schema;
-    core::ErrorContext schema_probe_ctx;
-    auto status = catalog->getSchema(schema_name, fb_schema, &schema_probe_ctx);
-    {
-        std::ostringstream oss;
-        oss << "ensureFirebirdSystemTables getSchema status=" << static_cast<int>(status)
-            << " schema=" << schema_name;
-        logFirebirdAuthDebug(oss.str());
-    }
-    if (status != core::Status::OK) {
-        if (status == core::Status::INVALID_ARGUMENT || status == core::Status::NOT_FOUND) {
-            core::ErrorContext legacy_ctx;
-            if (catalog->getSchema(legacy_schema_name, fb_schema, &legacy_ctx) == core::Status::OK) {
-                firebird_schema_name_ = legacy_schema_name;
-                status = core::Status::OK;
-                logFirebirdAuthDebug("ensureFirebirdSystemTables using legacy schema path");
-            }
-        }
-    }
-    if (status != core::Status::OK) {
-        if (status != core::Status::INVALID_ARGUMENT && status != core::Status::NOT_FOUND) {
-            return status;
-        }
-        core::ID schema_id;
-        status = catalog->createSchemaPath(schema_name,
-                                           core::CatalogManager::SchemaType::REMOTE_EMULATED,
-                                           schema_id,
-                                           ctx);
-        {
-            std::ostringstream oss;
-            oss << "ensureFirebirdSystemTables createSchemaPath status="
-                << static_cast<int>(status)
-                << " schema=" << schema_name;
-            logFirebirdAuthDebug(oss.str());
-        }
-        if (status != core::Status::OK) {
-            return status;
-        }
-        status = catalog->getSchema(schema_id, fb_schema, ctx);
-        {
-            std::ostringstream oss;
-            oss << "ensureFirebirdSystemTables getSchemaById status="
-                << static_cast<int>(status)
-                << " schema_id=" << schema_id.toString();
-            logFirebirdAuthDebug(oss.str());
-        }
-        if (status != core::Status::OK) {
-            return status;
-        }
-    }
-    firebird_schema_id_ = fb_schema.schema_id;
+    firebird_schema_name_ = response.schema_name;
+    firebird_schema_id_ = response.schema_id;
     applyFirebirdSessionSchemaContext(ctx);
-
-    auto ensure_view = [&](const std::string& name,
-                           const std::string& definition,
-                           const std::vector<std::string>& column_names = {}) -> core::Status {
-        core::CatalogManager::ViewInfo view_info;
-        core::ErrorContext probe_ctx;
-        auto s = catalog->getView(fb_schema.schema_id, name, view_info, &probe_ctx);
-        if (s == core::Status::OK) {
-            return core::Status::OK;
-        }
-        if (s != core::Status::INVALID_ARGUMENT && s != core::Status::NOT_FOUND) {
-            if (!probe_ctx.message.empty()) {
-                copyErrorContextFields(ctx, probe_ctx);
-            }
-            return s;
-        }
-        core::ErrorContext create_ctx;
-        auto create_status = catalog->createView(fb_schema.schema_id,
-                                                 name,
-                                                 definition,
-                                                 false,
-                                                 false,
-                                                 false,
-                                                 column_names,
-                                                 core::ID{},
-                                                 &create_ctx);
-        if (create_status != core::Status::OK && !create_ctx.message.empty()) {
-            copyErrorContextFields(ctx, create_ctx);
-        }
-        return create_status;
-    };
-
-    ensure_view("RDB$DATABASE",
-                "SELECT 1 AS DUMMY",
-                {"DUMMY"});
-
-    auto escape_literal = [](const std::string& in) {
-        std::string out;
-        out.reserve(in.size() + 8);
-        for (char c : in) {
-            out.push_back(c);
-            if (c == '\'') out.push_back('\'');
-        }
-        return out;
-    };
-
-    std::vector<core::CatalogManager::TableInfo> tables;
-    catalog->listTables(fb_schema.schema_id, tables, ctx);
-
-    std::unordered_map<core::ID, core::CatalogManager::TableInfo, core::IDHash> table_by_id;
-    std::unordered_map<std::string, std::string> table_by_name;  // lowercase -> canonical
-    for (const auto& t : tables) {
-        table_by_id.emplace(t.table_id, t);
-        std::string key = t.table_name;
-        std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-        table_by_name.emplace(key, t.table_name);
-    }
-
-    std::unordered_map<core::ID, std::vector<core::CatalogManager::ColumnInfo>, core::IDHash> columns_by_table;
-    for (const auto& t : tables) {
-        std::vector<core::CatalogManager::ColumnInfo> cols;
-        catalog->getColumns(t.table_id, cols, ctx);
-        columns_by_table.emplace(t.table_id, std::move(cols));
-    }
-
-    // Build RDB$RELATIONS
-    std::string rel_sql;
-    if (tables.empty()) {
-        rel_sql = "SELECT NULL AS RDB$RELATION_NAME, NULL AS RDB$SYSTEM_FLAG, NULL AS RDB$VIEW_BLR WHERE 1 = 0";
-    } else {
-        std::ostringstream ss;
-        bool first = true;
-        for (const auto& t : tables) {
-            if (!first) ss << " UNION ALL ";
-            ss << "SELECT '" << escape_literal(t.table_name) << "' AS RDB$RELATION_NAME, 0 AS RDB$SYSTEM_FLAG, NULL AS RDB$VIEW_BLR";
-            first = false;
-        }
-        rel_sql = ss.str();
-    }
-    ensure_view("RDB$RELATIONS", rel_sql);
-
-    // Build RDB$RELATION_FIELDS and RDB$FIELDS
-    std::string rel_fields_sql;
-    std::string fields_sql;
-    {
-        std::ostringstream rf, f;
-        bool rf_first = true;
-        bool f_first = true;
-        std::unordered_set<std::string> seen_fields;
-        for (const auto& t : tables) {
-            auto it = columns_by_table.find(t.table_id);
-            if (it == columns_by_table.end()) {
-                continue;
-            }
-            const auto& cols = it->second;
-            for (const auto& col : cols) {
-                if (!rf_first) rf << " UNION ALL ";
-                rf << "SELECT '" << escape_literal(col.column_name) << "' AS RDB$FIELD_NAME, '"
-                   << escape_literal(t.table_name) << "' AS RDB$RELATION_NAME, "
-                   << static_cast<int>(col.ordinal) << " AS RDB$FIELD_POSITION, "
-                   << (col.nullable ? 0 : 1) << " AS RDB$NULL_FLAG";
-                rf_first = false;
-
-                std::string field_key = col.column_name;
-                if (seen_fields.insert(field_key).second) {
-                    if (!f_first) f << " UNION ALL ";
-                    uint32_t length = col.type_precision ? col.type_precision : (col.max_length ? col.max_length : 0);
-                    f << "SELECT '" << escape_literal(col.column_name) << "' AS RDB$FIELD_NAME, "
-                      << static_cast<int>(col.data_type) << " AS RDB$FIELD_TYPE, "
-                      << "0 AS RDB$FIELD_SUB_TYPE, "
-                      << length << " AS RDB$FIELD_LENGTH, "
-                      << length << " AS RDB$SEGMENT_LENGTH, "
-                      << (col.nullable ? 0 : 1) << " AS RDB$NULL_FLAG, "
-                      << (col.default_value.empty() ? "NULL" : ("'" + escape_literal(col.default_value) + "'")) << " AS RDB$DEFAULT_SOURCE";
-                    f_first = false;
-                }
-            }
-        }
-        if (rf_first) {
-            rel_fields_sql = "SELECT NULL AS RDB$FIELD_NAME, NULL AS RDB$RELATION_NAME, NULL AS RDB$FIELD_POSITION, NULL AS RDB$NULL_FLAG WHERE 1 = 0";
-        } else {
-            rel_fields_sql = rf.str();
-        }
-        if (f_first) {
-            fields_sql = "SELECT NULL AS RDB$FIELD_NAME, NULL AS RDB$FIELD_TYPE, NULL AS RDB$FIELD_SUB_TYPE, NULL AS RDB$FIELD_LENGTH, NULL AS RDB$SEGMENT_LENGTH, NULL AS RDB$NULL_FLAG, NULL AS RDB$DEFAULT_SOURCE WHERE 1 = 0";
-        } else {
-            fields_sql = f.str();
-        }
-    }
-
-    ensure_view("RDB$DATABASE", "SELECT DUMMY FROM RDB$DATABASE");
-    // Build RDB$INDICES and RDB$INDEX_SEGMENTS
-    std::string indices_sql;
-    std::string index_segments_sql;
-    {
-        std::ostringstream idx_ss;
-        std::ostringstream seg_ss;
-        bool idx_first = true;
-        bool seg_first = true;
-        for (const auto& t : tables) {
-            std::vector<core::CatalogManager::IndexInfo> indexes;
-            auto s = catalog->listIndexesForTable(t.table_id, indexes, ctx);
-            if (s != core::Status::OK) {
-                continue;
-            }
-            auto col_it = columns_by_table.find(t.table_id);
-            for (const auto& idx : indexes) {
-                if (!idx_first) idx_ss << " UNION ALL ";
-                idx_ss << "SELECT '" << escape_literal(idx.index_name) << "' AS RDB$INDEX_NAME, '"
-                       << escape_literal(t.table_name) << "' AS RDB$RELATION_NAME, "
-                       << (idx.is_unique ? 1 : 0) << " AS RDB$UNIQUE_FLAG, 0 AS RDB$INDEX_TYPE";
-                idx_first = false;
-
-                if (col_it == columns_by_table.end()) {
-                    continue;
-                }
-                for (size_t pos = 0; pos < idx.column_ids.size(); ++pos) {
-                    const auto& col_id = idx.column_ids[pos];
-                    std::string col_name = "COLUMN_" + std::to_string(pos);
-                    for (const auto& col : col_it->second) {
-                        if (col.column_id == col_id) {
-                            col_name = col.column_name;
-                            break;
-                        }
-                    }
-                    if (!seg_first) seg_ss << " UNION ALL ";
-                    seg_ss << "SELECT '" << escape_literal(idx.index_name) << "' AS RDB$INDEX_NAME, '"
-                           << escape_literal(col_name) << "' AS RDB$FIELD_NAME, "
-                           << static_cast<int>(pos) << " AS RDB$FIELD_POSITION";
-                    seg_first = false;
-                }
-            }
-        }
-
-        if (idx_first) {
-            indices_sql = "SELECT NULL AS RDB$INDEX_NAME, NULL AS RDB$RELATION_NAME, NULL AS RDB$UNIQUE_FLAG, NULL AS RDB$INDEX_TYPE WHERE 1 = 0";
-        } else {
-            indices_sql = idx_ss.str();
-        }
-
-        if (seg_first) {
-            index_segments_sql = "SELECT NULL AS RDB$INDEX_NAME, NULL AS RDB$FIELD_NAME, NULL AS RDB$FIELD_POSITION WHERE 1 = 0";
-        } else {
-            index_segments_sql = seg_ss.str();
-        }
-    }
-
-    // Build RDB$RELATION_CONSTRAINTS, RDB$CHECK_CONSTRAINTS, RDB$REF_CONSTRAINTS
-    std::string relation_constraints_sql;
-    std::string check_constraints_sql;
-    std::string ref_constraints_sql;
-    {
-        std::ostringstream rc, cc, rf;
-        bool rc_first = true;
-        bool cc_first = true;
-        bool rf_first = true;
-
-        auto constraint_type = [](core::CatalogManager::ConstraintType type) -> std::string {
-            switch (type) {
-                case core::CatalogManager::ConstraintType::PRIMARY_KEY: return "PRIMARY KEY";
-                case core::CatalogManager::ConstraintType::UNIQUE: return "UNIQUE";
-                case core::CatalogManager::ConstraintType::FOREIGN_KEY: return "FOREIGN KEY";
-                case core::CatalogManager::ConstraintType::CHECK: return "CHECK";
-                case core::CatalogManager::ConstraintType::NOT_NULL: return "NOT NULL";
-                case core::CatalogManager::ConstraintType::EXCLUSION: return "EXCLUSION";
-            }
-            return "UNKNOWN";
-        };
-
-        auto fk_action = [](core::CatalogManager::FKAction action) -> std::string {
-            switch (action) {
-                case core::CatalogManager::FKAction::NO_ACTION: return "NO ACTION";
-                case core::CatalogManager::FKAction::RESTRICT: return "RESTRICT";
-                case core::CatalogManager::FKAction::CASCADE: return "CASCADE";
-                case core::CatalogManager::FKAction::SET_NULL: return "SET NULL";
-                case core::CatalogManager::FKAction::SET_DEFAULT: return "SET DEFAULT";
-            }
-            return "NO ACTION";
-        };
-
-        auto fk_match = [](core::CatalogManager::FKMatchType match) -> std::string {
-            switch (match) {
-                case core::CatalogManager::FKMatchType::FULL: return "FULL";
-                case core::CatalogManager::FKMatchType::PARTIAL: return "PARTIAL";
-                case core::CatalogManager::FKMatchType::SIMPLE:
-                default: return "SIMPLE";
-            }
-        };
-
-        auto find_matching_constraint = [&](const core::CatalogManager::ConstraintInfo& fk) -> std::string {
-            if (fk.referenced_table_id == core::ID{}) {
-                return {};
-            }
-            std::vector<core::CatalogManager::ConstraintInfo> target;
-            if (catalog->getConstraintsByType(fk.referenced_table_id,
-                                              core::CatalogManager::ConstraintType::PRIMARY_KEY,
-                                              target, ctx) != core::Status::OK) {
-                target.clear();
-            }
-            if (target.empty()) {
-                catalog->getConstraintsByType(fk.referenced_table_id,
-                                              core::CatalogManager::ConstraintType::UNIQUE,
-                                              target, ctx);
-            }
-            for (const auto& c : target) {
-                if (c.column_names == fk.referenced_columns) {
-                    return c.constraint_name;
-                }
-            }
-            return {};
-        };
-
-        for (const auto& t : tables) {
-            std::vector<core::CatalogManager::ConstraintInfo> constraints;
-            auto s = catalog->getConstraintsForTable(t.table_id, constraints, ctx);
-            if (s != core::Status::OK) {
-                continue;
-            }
-
-            for (const auto& c : constraints) {
-                if (!rc_first) rc << " UNION ALL ";
-                rc << "SELECT '" << escape_literal(c.constraint_name) << "' AS RDB$CONSTRAINT_NAME, '"
-                   << constraint_type(c.constraint_type) << "' AS RDB$CONSTRAINT_TYPE, '"
-                   << escape_literal(t.table_name) << "' AS RDB$RELATION_NAME, "
-                   << "'" << escape_literal(c.constraint_name) << "' AS RDB$INDEX_NAME, "
-                   << (c.is_deferrable ? 1 : 0) << " AS RDB$DEFERRABLE, "
-                   << (c.initially_deferred ? 1 : 0) << " AS RDB$INITIALLY_DEFERRED";
-                rc_first = false;
-
-                if (c.constraint_type == core::CatalogManager::ConstraintType::CHECK) {
-                    if (!cc_first) cc << " UNION ALL ";
-                    cc << "SELECT '" << escape_literal(c.constraint_name) << "' AS RDB$CONSTRAINT_NAME, "
-                       << "'" << escape_literal(c.constraint_name) << "' AS RDB$TRIGGER_NAME";
-                    cc_first = false;
-                } else if (c.constraint_type == core::CatalogManager::ConstraintType::FOREIGN_KEY) {
-                    auto ref = find_matching_constraint(c);
-                    if (!rf_first) rf << " UNION ALL ";
-                    rf << "SELECT '" << escape_literal(c.constraint_name) << "' AS RDB$CONSTRAINT_NAME, "
-                       << (ref.empty() ? "NULL" : ("'" + escape_literal(ref) + "'")) << " AS RDB$CONST_NAME_UQ, "
-                       << "'" << fk_match(c.match_type) << "' AS RDB$MATCH_OPTION, "
-                       << "'" << fk_action(c.on_update) << "' AS RDB$UPDATE_RULE, "
-                       << "'" << fk_action(c.on_delete) << "' AS RDB$DELETE_RULE";
-                    rf_first = false;
-                }
-            }
-        }
-
-        if (rc_first) {
-            relation_constraints_sql = "SELECT NULL AS RDB$CONSTRAINT_NAME, NULL AS RDB$CONSTRAINT_TYPE, NULL AS RDB$RELATION_NAME, NULL AS RDB$INDEX_NAME, NULL AS RDB$DEFERRABLE, NULL AS RDB$INITIALLY_DEFERRED WHERE 1 = 0";
-        } else {
-            relation_constraints_sql = rc.str();
-        }
-
-        if (cc_first) {
-            check_constraints_sql = "SELECT NULL AS RDB$CONSTRAINT_NAME, NULL AS RDB$TRIGGER_NAME WHERE 1 = 0";
-        } else {
-            check_constraints_sql = cc.str();
-        }
-
-        if (rf_first) {
-            ref_constraints_sql = "SELECT NULL AS RDB$CONSTRAINT_NAME, NULL AS RDB$CONST_NAME_UQ, NULL AS RDB$MATCH_OPTION, NULL AS RDB$UPDATE_RULE, NULL AS RDB$DELETE_RULE WHERE 1 = 0";
-        } else {
-            ref_constraints_sql = rf.str();
-        }
-    }
-
-    ensure_view("RDB$FIELDS", fields_sql);
-    ensure_view("RDB$FORMATS", "SELECT NULL AS RDB$FORMAT, NULL AS RDB$RELATION_ID WHERE 1 = 0");
-    ensure_view("RDB$TYPES", "SELECT NULL AS RDB$TYPE, NULL AS RDB$FIELD_NAME WHERE 1 = 0");
-    ensure_view("RDB$RELATION_FIELDS", rel_fields_sql);
-    ensure_view("RDB$INDICES", indices_sql,
-                {"RDB$INDEX_NAME", "RDB$RELATION_NAME", "RDB$UNIQUE_FLAG", "RDB$INDEX_TYPE"});
-    ensure_view("RDB$INDEX_SEGMENTS", index_segments_sql,
-                {"RDB$INDEX_NAME", "RDB$FIELD_NAME", "RDB$FIELD_POSITION"});
-    ensure_view("RDB$RELATION_CONSTRAINTS", relation_constraints_sql,
-                {"RDB$CONSTRAINT_NAME", "RDB$CONSTRAINT_TYPE", "RDB$RELATION_NAME",
-                 "RDB$INDEX_NAME", "RDB$DEFERRABLE", "RDB$INITIALLY_DEFERRED"});
-    ensure_view("RDB$CHECK_CONSTRAINTS", check_constraints_sql);
-    ensure_view("RDB$REF_CONSTRAINTS", ref_constraints_sql);
-
-    // Build RDB$TRIGGERS
-    std::string triggers_sql;
-    {
-        std::ostringstream tr;
-        bool tr_first = true;
-        for (const auto& t : tables) {
-            std::vector<core::CatalogManager::TriggerInfo> triggers;
-            auto s = catalog->listAllTriggersForTable(t.table_id, triggers, ctx);
-            if (s != core::Status::OK) {
-                continue;
-            }
-            int32_t seq = 0;
-            for (const auto& trig : triggers) {
-                if (!trig.enabled) {
-                    continue;
-                }
-                auto emit_trigger = [&](int32_t trigger_type) {
-                    if (!tr_first) tr << " UNION ALL ";
-                    tr << "SELECT '" << escape_literal(trig.trigger_name) << "' AS RDB$TRIGGER_NAME, '"
-                       << escape_literal(t.table_name) << "' AS RDB$RELATION_NAME, "
-                       << seq++ << " AS RDB$TRIGGER_SEQUENCE, "
-                       << trigger_type << " AS RDB$TRIGGER_TYPE";
-                    tr_first = false;
-                };
-
-                auto has_event = [&](core::CatalogManager::TriggerEvent event) {
-                    return (trig.event_mask &
-                            (1u << static_cast<uint8_t>(event))) != 0;
-                };
-
-                if (trig.timing == core::CatalogManager::TriggerTiming::BEFORE) {
-                    if (has_event(core::CatalogManager::TriggerEvent::INSERT)) {
-                        emit_trigger(1);
-                    }
-                    if (has_event(core::CatalogManager::TriggerEvent::UPDATE)) {
-                        emit_trigger(3);
-                    }
-                    if (has_event(core::CatalogManager::TriggerEvent::DELETE)) {
-                        emit_trigger(5);
-                    }
-                } else if (trig.timing == core::CatalogManager::TriggerTiming::AFTER) {
-                    if (has_event(core::CatalogManager::TriggerEvent::INSERT)) {
-                        emit_trigger(2);
-                    }
-                    if (has_event(core::CatalogManager::TriggerEvent::UPDATE)) {
-                        emit_trigger(4);
-                    }
-                    if (has_event(core::CatalogManager::TriggerEvent::DELETE)) {
-                        emit_trigger(6);
-                    }
-                }
-            }
-        }
-        if (tr_first) {
-            triggers_sql = "SELECT NULL AS RDB$TRIGGER_NAME, NULL AS RDB$RELATION_NAME, NULL AS RDB$TRIGGER_SEQUENCE, NULL AS RDB$TRIGGER_TYPE WHERE 1 = 0";
-        } else {
-            triggers_sql = tr.str();
-        }
-    }
-    ensure_view("RDB$TRIGGERS", triggers_sql);
-
-    // Build RDB$PROCEDURES and RDB$PROCEDURE_PARAMETERS
-    std::string procedures_sql;
-    std::string procedure_params_sql;
-    {
-        std::vector<core::CatalogManager::ProcedureInfo> procedures;
-        auto s = catalog->listProcedures(procedures, ctx);
-        if (s != core::Status::OK) {
-            procedures.clear();
-        }
-        std::ostringstream proc_ss;
-        std::ostringstream param_ss;
-        bool proc_first = true;
-        bool param_first = true;
-        for (const auto& proc : procedures) {
-            uint32_t output_count = 0;
-            for (const auto& p : proc.parameters) {
-                if (p.mode == core::CatalogManager::ParameterMode::OUT ||
-                    p.mode == core::CatalogManager::ParameterMode::INOUT) {
-                    ++output_count;
-                }
-            }
-            if (!proc_first) proc_ss << " UNION ALL ";
-            proc_ss << "SELECT '" << escape_literal(proc.name) << "' AS RDB$PROCEDURE_NAME, "
-                    << output_count << " AS RDB$PROCEDURE_OUTPUTS";
-            proc_first = false;
-
-            for (size_t i = 0; i < proc.parameters.size(); ++i) {
-                const auto& p = proc.parameters[i];
-                int param_type = 0;
-                switch (p.mode) {
-                    case core::CatalogManager::ParameterMode::IN: param_type = 0; break;
-                    case core::CatalogManager::ParameterMode::OUT: param_type = 1; break;
-                    case core::CatalogManager::ParameterMode::INOUT: param_type = 2; break;
-                }
-                if (!param_first) param_ss << " UNION ALL ";
-                param_ss << "SELECT '" << escape_literal(proc.name) << "' AS RDB$PROCEDURE_NAME, '"
-                         << escape_literal(p.name) << "' AS RDB$PARAMETER_NAME, "
-                         << param_type << " AS RDB$PARAMETER_TYPE, "
-                         << "'" << escape_literal(p.name) << "' AS RDB$FIELD_SOURCE, "
-                         << static_cast<int>(i) << " AS RDB$PARAMETER_NUMBER";
-                param_first = false;
-            }
-        }
-        if (proc_first) {
-            procedures_sql = "SELECT NULL AS RDB$PROCEDURE_NAME, NULL AS RDB$PROCEDURE_OUTPUTS WHERE 1 = 0";
-        } else {
-            procedures_sql = proc_ss.str();
-        }
-        if (param_first) {
-            procedure_params_sql = "SELECT NULL AS RDB$PROCEDURE_NAME, NULL AS RDB$PARAMETER_NAME, NULL AS RDB$PARAMETER_TYPE, NULL AS RDB$FIELD_SOURCE, NULL AS RDB$PARAMETER_NUMBER WHERE 1 = 0";
-        } else {
-            procedure_params_sql = param_ss.str();
-        }
-    }
-
-    auto view_status = ensure_view("RDB$PROCEDURES", procedures_sql);
-    if (view_status != core::Status::OK) {
-        return view_status;
-    }
-    view_status = ensure_view("RDB$PROCEDURE_PARAMETERS", procedure_params_sql);
-    if (view_status != core::Status::OK) {
-        return view_status;
-    }
-
-    // Build RDB$VIEW_RELATIONS (map views to their base relations if known; otherwise list view names)
-    auto to_lower = [](std::string s) {
-        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-        return s;
-    };
-
-    auto extract_from_clause = [&](const std::string& definition) -> std::vector<std::string> {
-        std::vector<std::string> result;
-        if (definition.empty()) {
-            return result;
-        }
-        std::string def_lower = to_lower(definition);
-        auto pos = def_lower.find(" from ");
-        if (pos == std::string::npos) {
-            return result;
-        }
-        pos += 6;  // move past " from "
-        while (pos < def_lower.size()) {
-            while (pos < def_lower.size() && std::isspace(static_cast<unsigned char>(def_lower[pos]))) {
-                ++pos;
-            }
-            if (pos >= def_lower.size()) break;
-            size_t start = pos;
-            while (pos < def_lower.size()) {
-                char c = def_lower[pos];
-                if (std::isspace(static_cast<unsigned char>(c)) || c == ',' || c == ';') {
-                    break;
-                }
-                ++pos;
-            }
-            if (pos > start) {
-                result.emplace_back(definition.substr(start, pos - start));
-            }
-            while (pos < def_lower.size() && def_lower[pos] != ',' && def_lower[pos] != ';') {
-                ++pos;
-            }
-            if (pos < def_lower.size() && (def_lower[pos] == ',' || def_lower[pos] == ';')) {
-                ++pos;
-            } else {
-                break;
-            }
-        }
-        return result;
-    };
-
-    std::string view_relations_sql;
-    {
-        std::vector<core::CatalogManager::ViewInfo> views;
-        auto s = catalog->listViewsForSchema(fb_schema.schema_id, views, ctx);
-        if (s != core::Status::OK) {
-            views.clear();
-        }
-        std::ostringstream vr;
-        bool vr_first = true;
-        for (const auto& v : views) {
-            // Attempt to resolve base relations from dependency graph
-            std::vector<core::CatalogManager::DependencyInfo> deps;
-            if (catalog->getDependenciesFor(v.view_id, deps, ctx) != core::Status::OK) {
-                deps.clear();
-            }
-            size_t emitted = 0;
-            for (const auto& dep : deps) {
-                if (dep.dependent_type != core::CatalogManager::ObjectType::VIEW ||
-                    dep.referenced_type != core::CatalogManager::ObjectType::TABLE) {
-                    continue;
-                }
-                std::string rel_name;
-                auto t_it = table_by_id.find(dep.referenced_object_id);
-                if (t_it != table_by_id.end()) {
-                    rel_name = t_it->second.table_name;
-                }
-                if (!vr_first) vr << " UNION ALL ";
-                vr << "SELECT '" << escape_literal(v.name) << "' AS RDB$VIEW_NAME, "
-                   << (rel_name.empty() ? "NULL" : ("'" + escape_literal(rel_name) + "'"))
-                   << " AS RDB$RELATION_NAME";
-                vr_first = false;
-                ++emitted;
-            }
-            if (emitted == 0 && !v.definition.empty()) {
-                auto bases = extract_from_clause(v.definition);
-                for (const auto& base : bases) {
-                    std::string rel_name;
-                    auto name_key = to_lower(base);
-                    auto by_name = table_by_name.find(name_key);
-                    if (by_name != table_by_name.end()) {
-                        rel_name = by_name->second;
-                    } else {
-                        rel_name = base;
-                    }
-                    if (!vr_first) vr << " UNION ALL ";
-                    vr << "SELECT '" << escape_literal(v.name) << "' AS RDB$VIEW_NAME, '"
-                       << escape_literal(rel_name) << "' AS RDB$RELATION_NAME";
-                    vr_first = false;
-                    ++emitted;
-                }
-            }
-            if (emitted == 0) {
-                if (!vr_first) vr << " UNION ALL ";
-                vr << "SELECT '" << escape_literal(v.name) << "' AS RDB$VIEW_NAME, NULL AS RDB$RELATION_NAME";
-                vr_first = false;
-            }
-        }
-        if (vr_first) {
-            view_relations_sql = "SELECT NULL AS RDB$VIEW_NAME, NULL AS RDB$RELATION_NAME WHERE 1 = 0";
-        } else {
-            view_relations_sql = vr.str();
-        }
-    }
-    view_status = ensure_view("RDB$VIEW_RELATIONS",
-                              view_relations_sql,
-                              {"RDB$VIEW_NAME", "RDB$RELATION_NAME"});
-    if (view_status != core::Status::OK) {
-        return view_status;
-    }
 
     if (connection_ctx_) {
         core::ErrorContext commit_ctx;
@@ -2038,36 +1387,93 @@ void FirebirdAdapter::applyFirebirdSessionSchemaContextForTest(core::ErrorContex
 core::Status FirebirdAdapter::compileQuery(const std::string& sql,
                                            std::vector<uint8_t>& bytecode_out,
                                            std::string& error_out) {
+    core::Database* compile_db = nullptr;
     core::ErrorContext ctx;
-    auto status = ensureEngine(&ctx);
-    if (status != core::Status::OK) {
-        error_out = ctx.message;
-        return status;
+    if (config_.engine_endpoint.empty()) {
+        auto status = ensureEngine(&ctx);
+        if (status != core::Status::OK) {
+            error_out = ctx.message;
+            return status;
+        }
+
+        status = ensureFirebirdSystemTables(&ctx);
+        if (status != core::Status::OK) {
+            error_out = ctx.message.empty() ? "Failed to initialize Firebird system tables" : ctx.message;
+            return status;
+        }
+        compile_db = engineDatabase();
     }
 
-    status = ensureFirebirdSystemTables(&ctx);
-    if (status != core::Status::OK) {
-        error_out = ctx.message.empty() ? "Failed to initialize Firebird system tables" : ctx.message;
-        return status;
+    sblr::DialectCompilerRequest request{};
+    request.request_id = core::generateUuidV7();
+    request.module_name = "firebird_emulation";
+    request.session.profile_id = "firebirdsql";
+    request.session.dialect_tag = "firebird";
+    request.session.current_schema_id = firebird_schema_id_;
+    request.session.current_schema_name = firebird_schema_name_;
+    request.session.search_path = firebird_schema_name_.empty()
+                                      ? std::vector<std::string>{}
+                                      : std::vector<std::string>{firebird_schema_name_};
+    request.session.emulated_schema_root = firebird_schema_name_;
+    if (connection_ctx_ != nullptr) {
+        request.session.principal_id = connection_ctx_->getCurrentUserId();
+        request.session.active_role_id = connection_ctx_->getActiveRoleId();
+        request.session.auth_key_id = connection_ctx_->authKeyId();
+        request.session.transaction_id =
+            std::max<uint64_t>(1, connection_ctx_->getCurrentXid());
     }
+    request.payload.assign(sql.begin(), sql.end());
 
-    sblr::FirebirdQueryCompiler compiler(engineDatabase());
-    if (firebird_schema_id_ != core::ID{}) {
-        compiler.setCurrentSchema(firebird_schema_id_);
+    sblr::DialectCompilerResponse response{};
+    auto status = sblr::compileDialectToSblr(compile_db, request, response, &ctx);
+    if (status != core::Status::OK || !response.success) {
+        error_out = !response.errors.empty()
+                        ? response.errors.front()
+                        : (ctx.message.empty() ? std::string("Compilation failed") : ctx.message);
+        std::ostringstream oss;
+        oss << "compileQuery failed sql=" << sql << " err=" << error_out;
+        logFirebirdAuthDebug(oss.str());
+        return status == core::Status::OK ? core::Status::INVALID_ARGUMENT : status;
     }
-    auto result = compiler.compile(sql);
-    if (!result.success()) {
-        error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();
-        return core::Status::INVALID_ARGUMENT;
-    }
-    bytecode_out = result.bytecode();
+    bytecode_out = std::move(response.bytecode);
     return core::Status::OK;
 }
 
 core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     auto apply_firebird_search_path = [&]() -> core::Status {
-        if (!client_ || firebird_schema_name_.empty()) {
+        if (!client_) {
             return core::Status::OK;
+        }
+
+        auto derive_canonical_schema_root = [&]() -> std::string {
+            std::string source_spec = database_name_;
+            if (source_spec.empty()) {
+                source_spec = client_config_.database_name;
+            }
+            if (source_spec.empty()) {
+                source_spec = config_.default_database;
+            }
+            if (source_spec.empty()) {
+                return {};
+            }
+
+            udr::FirebirdSchemaBindingRequest request{};
+            request.profile_id = "firebirdsql";
+            request.database_binding = source_spec;
+            udr::FirebirdSchemaBindingResponse response{};
+            core::ErrorContext derive_ctx;
+            if (udr::deriveFirebirdSchemaBinding(request, response, &derive_ctx) !=
+                core::Status::OK) {
+                return {};
+            }
+            return response.schema_name;
+        };
+
+        if (firebird_schema_name_.empty()) {
+            firebird_schema_name_ = derive_canonical_schema_root();
+        }
+        if (firebird_schema_name_.empty()) {
+            return core::Status::INVALID_ARGUMENT;
         }
 
         auto escape_literal = [](const std::string& in) {
@@ -2112,18 +1518,60 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
                 return core::Status::INVALID_ARGUMENT;
             }
 
-            std::string create_sql = "CREATE DATABASE '" + escape_literal(source_spec) + "'";
-            sblr::FirebirdQueryCompiler compiler(engineDatabase());
-            if (firebird_schema_id_ != core::ID{}) {
-                compiler.setCurrentSchema(firebird_schema_id_);
-            }
-            auto compile_result = compiler.compile(create_sql);
-            if (!compile_result.success()) {
+            udr::FirebirdLifecycleSqlRequest lifecycle_request{};
+            lifecycle_request.profile_id = "firebirdsql";
+            lifecycle_request.operation =
+                udr::FirebirdEmulationLifecycleOperation::CREATE_DATABASE;
+            lifecycle_request.database_spec = source_spec;
+            udr::FirebirdLifecycleSqlResponse lifecycle_response{};
+            core::ErrorContext lifecycle_ctx;
+            const auto lifecycle_status =
+                udr::renderFirebirdLifecycleSql(lifecycle_request,
+                                                lifecycle_response,
+                                                &lifecycle_ctx);
+            if (lifecycle_status != core::Status::OK) {
                 if (ctx) {
-                    const auto& errors = compile_result.errors();
-                    const std::string message = errors.empty()
+                    const std::string message = lifecycle_ctx.message.empty()
+                        ? "Failed to build Firebird emulation database bootstrap DDL"
+                        : lifecycle_ctx.message;
+                    ctx->set(lifecycle_status,
+                             message.c_str(),
+                             __FILE__, __LINE__, __func__);
+                }
+                return lifecycle_status;
+            }
+            sblr::DialectCompilerRequest request{};
+            request.request_id = core::generateUuidV7();
+            request.module_name = "firebird_emulation";
+            request.session.profile_id = "firebirdsql";
+            request.session.dialect_tag = "firebird";
+            request.session.current_schema_id = firebird_schema_id_;
+            request.session.current_schema_name = firebird_schema_name_;
+            request.session.search_path = firebird_schema_name_.empty()
+                                              ? std::vector<std::string>{}
+                                              : std::vector<std::string>{firebird_schema_name_};
+            request.session.emulated_schema_root = firebird_schema_name_;
+            if (connection_ctx_ != nullptr) {
+                request.session.principal_id = connection_ctx_->getCurrentUserId();
+                request.session.active_role_id = connection_ctx_->getActiveRoleId();
+                request.session.auth_key_id = connection_ctx_->authKeyId();
+                request.session.transaction_id =
+                    std::max<uint64_t>(1, connection_ctx_->getCurrentXid());
+            }
+            request.payload.assign(lifecycle_response.sql.begin(), lifecycle_response.sql.end());
+
+            sblr::DialectCompilerResponse compile_result{};
+            core::ErrorContext compile_ctx;
+            const core::Status compile_status = sblr::compileDialectToSblr(
+                (!engineDatabase() || !config_.engine_endpoint.empty()) ? nullptr : engineDatabase(),
+                request,
+                compile_result,
+                &compile_ctx);
+            if (compile_status != core::Status::OK || !compile_result.success) {
+                if (ctx) {
+                    const std::string message = compile_result.errors.empty()
                         ? "Failed to compile Firebird emulation database bootstrap DDL"
-                        : errors.front();
+                        : compile_result.errors.front();
                     ctx->set(core::Status::INVALID_ARGUMENT,
                              message.c_str(),
                              __FILE__, __LINE__, __func__);
@@ -2132,8 +1580,8 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
             }
 
             client::ResultSet rs;
-            return client_->executeBytecode(compile_result.bytecode(),
-                                            create_sql,
+            return client_->executeBytecode(compile_result.bytecode,
+                                            lifecycle_response.sql,
                                             &rs,
                                             ctx);
         };
@@ -2152,20 +1600,6 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
             add_candidate(firebird_schema_name_);
             add_candidate(build_legacy_schema_path(firebird_schema_name_));
 
-            std::string source_spec = database_name_;
-            if (source_spec.empty()) {
-                source_spec = client_config_.database_name;
-            }
-            FirebirdDatabaseSpec spec = parseFirebirdDatabaseSpec(source_spec);
-            std::string server = spec.server.empty() ? "localhost" : spec.server;
-            std::string db_name = deriveFirebirdDatabaseName(spec.file_path);
-            if (!db_name.empty()) {
-                add_candidate("emulated.firebird." + server + ".databases." + db_name);
-                add_candidate("emulated.firebird." + db_name);
-                add_candidate("remote.emulation.firebird." + server + ".databases." + db_name);
-                add_candidate("remote.emulation.firebird." + db_name);
-            }
-
             return candidates;
         };
 
@@ -2176,6 +1610,7 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
                 core::Status status = set_search_path(candidate);
                 if (status == core::Status::OK) {
                     firebird_schema_name_ = candidate;
+                    applyFirebirdSessionSchemaContext(nullptr);
                     std::ostringstream oss;
                     oss << "ensureRemoteClient search_path set schema=" << candidate;
                     logFirebirdAuthDebug(oss.str());
@@ -2347,20 +1782,26 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
 core::Status FirebirdAdapter::executeRemoteQuery(const QueryContext& query,
                                                  ResultContext& result,
                                                  core::ErrorContext* ctx) {
-    auto status = ensureEngine(ctx);
-    if (status != core::Status::OK) {
-        result.has_error = true;
-        result.error_code = static_cast<uint32_t>(mapStatusToFirebird(status));
-        result.error_message = ctx ? ctx->message : "Failed to initialize engine";
-        return status;
-    }
+    const bool remote_bridge_only = !config_.engine_endpoint.empty();
+    const std::string effective_sql = rewriteFirebirdSingleRowCompatibilityQuery(query.query);
 
-    status = ensureFirebirdSystemTables(ctx);
-    if (status != core::Status::OK) {
-        result.has_error = true;
-        result.error_code = static_cast<uint32_t>(mapStatusToFirebird(status));
-        result.error_message = ctx ? ctx->message : "Failed to initialize Firebird catalogs";
-        return status;
+    auto status = core::Status::OK;
+    if (!remote_bridge_only) {
+        status = ensureEngine(ctx);
+        if (status != core::Status::OK) {
+            result.has_error = true;
+            result.error_code = static_cast<uint32_t>(mapStatusToFirebird(status));
+            result.error_message = ctx ? ctx->message : "Failed to initialize engine";
+            return status;
+        }
+
+        status = ensureFirebirdSystemTables(ctx);
+        if (status != core::Status::OK) {
+            result.has_error = true;
+            result.error_code = static_cast<uint32_t>(mapStatusToFirebird(status));
+            result.error_message = ctx ? ctx->message : "Failed to initialize Firebird catalogs";
+            return status;
+        }
     }
 
     status = ensureRemoteClient(ctx);
@@ -2374,7 +1815,7 @@ core::Status FirebirdAdapter::executeRemoteQuery(const QueryContext& query,
     client::ResultSet rs;
     std::vector<uint8_t> bytecode;
     std::string compile_error;
-    auto compile_status = compileQuery(query.query, bytecode, compile_error);
+    auto compile_status = compileQuery(effective_sql, bytecode, compile_error);
     if (compile_status != core::Status::OK) {
         result.has_error = true;
         result.error_code = static_cast<uint32_t>(mapStatusToFirebird(compile_status));
@@ -2382,7 +1823,7 @@ core::Status FirebirdAdapter::executeRemoteQuery(const QueryContext& query,
         return compile_status;
     }
 
-    if (isFirebirdCatalogQuery(query.query)) {
+    if (!remote_bridge_only) {
         core::ID previous_user_id{};
         core::ID previous_role_id{};
         bool previous_is_superuser = false;
@@ -2401,7 +1842,7 @@ core::Status FirebirdAdapter::executeRemoteQuery(const QueryContext& query,
                 connection_ctx_->set_search_path({firebird_schema_name_});
             }
 
-            if (!previous_is_superuser) {
+            if (isFirebirdCatalogQuery(query.query) && !previous_is_superuser) {
                 // Firebird metadata catalogs are globally readable in native Firebird.
                 // Elevate local fallback metadata reads to mirror that behavior.
                 connection_ctx_->setCurrentUser(previous_user_id, true);
@@ -2426,12 +1867,24 @@ core::Status FirebirdAdapter::executeRemoteQuery(const QueryContext& query,
             return core::Status::OK;
         }
 
-        std::ostringstream oss;
-        oss << "executeRemoteQuery local Firebird catalog fallback failed status="
-            << static_cast<int>(local_status)
-            << " has_error=" << (local_result.has_error ? 1 : 0)
-            << " err=" << local_result.error_message;
-        logFirebirdAuthDebug(oss.str());
+        {
+            std::ostringstream oss;
+            oss << "executeRemoteQuery local Firebird execution failed status="
+                << static_cast<int>(local_status)
+                << " has_error=" << (local_result.has_error ? 1 : 0)
+                << " err=" << local_result.error_message
+                << " sql=" << query.query;
+            logFirebirdAuthDebug(oss.str());
+        }
+
+        if (isFirebirdCatalogQuery(query.query)) {
+            std::ostringstream oss;
+            oss << "executeRemoteQuery local Firebird catalog fallback failed status="
+                << static_cast<int>(local_status)
+                << " has_error=" << (local_result.has_error ? 1 : 0)
+                << " err=" << local_result.error_message;
+            logFirebirdAuthDebug(oss.str());
+        }
     }
 
     status = client_->executeBytecode(bytecode, query.query, &rs, ctx);
@@ -2689,6 +2142,17 @@ core::Status FirebirdAdapter::completeAttach(network::Connection* conn,
         logical_database = config_.default_database.empty() ? "default" : config_.default_database;
     }
     database_name_ = logical_database;
+    if (firebird_schema_name_.empty()) {
+        udr::FirebirdSchemaBindingRequest request{};
+        request.profile_id = "firebirdsql";
+        request.database_binding = logical_database;
+        udr::FirebirdSchemaBindingResponse response{};
+        core::ErrorContext derive_ctx;
+        if (udr::deriveFirebirdSchemaBinding(request, response, &derive_ctx) ==
+            core::Status::OK) {
+            firebird_schema_name_ = response.schema_name;
+        }
+    }
 
     std::string selected_database;
     if (config_.enforce_bound_database && !config_.default_database.empty()) {
@@ -2760,6 +2224,7 @@ core::Status FirebirdAdapter::completeAttach(network::Connection* conn,
             << " selected=" << engine_database_name_;
         logFirebirdAuthDebug(oss.str());
     }
+    applyFirebirdSessionSchemaContext(nullptr);
 
     return sendBuffer(conn);
 }
@@ -2825,20 +2290,28 @@ core::Status FirebirdAdapter::handleDropDatabase(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
-    auto escape_literal = [](const std::string& in) {
-        std::string out;
-        out.reserve(in.size());
-        for (char ch : in) {
-            if (ch == '\'') {
-                out.push_back('\'');
-            }
-            out.push_back(ch);
-        }
-        return out;
-    };
+    udr::FirebirdLifecycleSqlRequest lifecycle_request{};
+    lifecycle_request.profile_id = "firebirdsql";
+    lifecycle_request.operation =
+        udr::FirebirdEmulationLifecycleOperation::DROP_DATABASE;
+    lifecycle_request.database_spec = database_name_;
+    udr::FirebirdLifecycleSqlResponse lifecycle_response{};
+    core::ErrorContext lifecycle_ctx;
+    auto lifecycle_status = udr::renderFirebirdLifecycleSql(lifecycle_request,
+                                                            lifecycle_response,
+                                                            &lifecycle_ctx);
+    if (lifecycle_status != core::Status::OK) {
+        std::string message = lifecycle_ctx.message.empty()
+            ? "DROP DATABASE failed"
+            : lifecycle_ctx.message;
+        sendErrorResponse(conn,
+                          firebird::ErrorCode::isc_bad_db_handle,
+                          message);
+        return sendBuffer(conn);
+    }
 
     QueryContext ctx;
-    ctx.query = "DROP DATABASE '" + escape_literal(database_name_) + "'";
+    ctx.query = lifecycle_response.sql;
 
     ResultContext result;
     core::ErrorContext err;
@@ -2882,6 +2355,13 @@ core::Status FirebirdAdapter::handleTransaction(network::Connection* conn) {
 
     uint32_t db_handle = readUInt32(current_packet_.data() + offset);
     offset += 4;
+    {
+        std::ostringstream oss;
+        oss << "handleTransaction db=" << db_handle
+            << " active_before=" << active_transactions_.size()
+            << " current=" << current_transaction_;
+        logFirebirdAuthDebug(oss.str());
+    }
 
     if (db_handle != db_handle_) {
         std::ostringstream oss;
@@ -2932,6 +2412,13 @@ core::Status FirebirdAdapter::handleCommit(network::Connection* conn) {
     size_t offset = 4;
 
     uint32_t tr_handle = readUInt32(current_packet_.data() + offset);
+    {
+        std::ostringstream oss;
+        oss << "handleCommit tr=" << tr_handle
+            << " active_before=" << active_transactions_.size()
+            << " current=" << current_transaction_;
+        logFirebirdAuthDebug(oss.str());
+    }
 
     if (active_transactions_.find(tr_handle) == active_transactions_.end()) {
         sendErrorResponse(conn, firebird::ErrorCode::isc_bad_tr_handle, "Invalid transaction handle");
@@ -3103,6 +2590,13 @@ core::Status FirebirdAdapter::handlePrepareStatement(network::Connection* conn) 
 
     // SQL statement
     std::string sql = readString(current_packet_.data(), offset, current_packet_.size());
+    {
+        std::ostringstream oss;
+        oss << "handlePrepareStatement tr=" << tr_handle
+            << " stmt=" << stmt_handle
+            << " sql=" << sql;
+        logFirebirdAuthDebug(oss.str());
+    }
 
     // Info-item request buffer (statement metadata request items)
     std::vector<uint8_t> items = readBuffer(current_packet_.data(), offset, current_packet_.size());
@@ -3131,7 +2625,10 @@ core::Status FirebirdAdapter::handlePrepareStatement(network::Connection* conn) 
     std::string upper_sql = sql;
     for (char& c : upper_sql) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
 
-    if (upper_sql.find("SELECT") == 0) {
+    const bool is_select_like =
+        upper_sql.find("SELECT") == 0 || upper_sql.find("WITH ") == 0;
+
+    if (is_select_like) {
         it->second.type = firebird::StatementType::TYPE_SELECT;
     } else if (upper_sql.find("INSERT") == 0) {
         it->second.type = firebird::StatementType::TYPE_INSERT;
@@ -3141,6 +2638,37 @@ core::Status FirebirdAdapter::handlePrepareStatement(network::Connection* conn) 
         it->second.type = firebird::StatementType::TYPE_DELETE;
     } else {
         it->second.type = firebird::StatementType::TYPE_DDL;
+    }
+
+    if (it->second.type == firebird::StatementType::TYPE_SELECT &&
+        sql.find('?') == std::string::npos) {
+        QueryContext preview_query;
+        preview_query.query = sql;
+
+        ResultContext preview_result;
+        core::ErrorContext preview_ctx;
+        auto preview_status = executeRemoteQuery(preview_query, preview_result, &preview_ctx);
+        if (preview_status == core::Status::OK && !preview_result.has_error) {
+            it->second.columns = preview_result.columns;
+            if (it->second.output_fields.empty() && !it->second.columns.empty()) {
+                it->second.output_fields.reserve(it->second.columns.size());
+                for (const auto& col : it->second.columns) {
+                    it->second.output_fields.push_back(columnToBlrField(col));
+                }
+                it->second.output_message_length =
+                    estimateOutputMessageLength(it->second.output_fields);
+            }
+        } else {
+            std::ostringstream oss;
+            oss << "handlePrepareStatement preview failed status="
+                << static_cast<int>(preview_status)
+                << " has_error=" << (preview_result.has_error ? 1 : 0)
+                << " err="
+                << (!preview_result.error_message.empty() ? preview_result.error_message
+                                                          : preview_ctx.message)
+                << " sql=" << sql;
+            logFirebirdAuthDebug(oss.str());
+        }
     }
 
     std::vector<uint8_t> data;
@@ -3171,6 +2699,12 @@ core::Status FirebirdAdapter::handleExecute(network::Connection* conn) {
 
     uint32_t tr_handle = readUInt32(current_packet_.data() + offset);
     offset += 4;
+    {
+        std::ostringstream oss;
+        oss << "handleExecute stmt=" << stmt_handle
+            << " tr=" << tr_handle;
+        logFirebirdAuthDebug(oss.str());
+    }
 
     // BLR for input parameters (if any)
     std::vector<uint8_t> input_blr = readBuffer(current_packet_.data(), offset, current_packet_.size());
@@ -3189,7 +2723,12 @@ core::Status FirebirdAdapter::handleExecute(network::Connection* conn) {
     }
 
     // Parse input BLR if provided
-    if (!input_blr.empty()) {
+    const bool query_has_bind_markers = it->second.query.find('?') != std::string::npos;
+
+    if (!query_has_bind_markers) {
+        it->second.input_fields.clear();
+        it->second.input_message_length = 0;
+    } else if (!input_blr.empty()) {
         std::string blr_err;
         auto parse_status = parseBlr(input_blr, it->second.input_fields,
                                      it->second.input_message_length, blr_err);
@@ -3359,12 +2898,46 @@ core::Status FirebirdAdapter::handleExecImmediate(network::Connection* conn) {
     (void)dialect;
 
     std::string sql = readString(current_packet_.data(), offset, current_packet_.size());
+    {
+        std::ostringstream oss;
+        oss << "handleExecImmediate tr=" << tr_handle
+            << " dialect=" << dialect
+            << " sql=" << sql;
+        logFirebirdAuthDebug(oss.str());
+    }
 
     // op_exec_immediate does not carry a database handle; the second field is
     // statement/object id and is often zero for direct execution paths.
     if (tr_handle != 0 && active_transactions_.find(tr_handle) == active_transactions_.end()) {
-        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_tr_handle, "Invalid transaction handle");
-        return sendBuffer(conn);
+        if (!active_transactions_.empty() && current_transaction_ != 0) {
+            active_transactions_.insert(tr_handle);
+            std::ostringstream oss;
+            oss << "handleExecImmediate aliased unknown tr=" << tr_handle
+                << " onto current_transaction=" << current_transaction_;
+            logFirebirdAuthDebug(oss.str());
+        } else {
+            core::ErrorContext tx_ctx;
+            auto tx_status = ensureRemoteClient(&tx_ctx);
+            if (tx_status != core::Status::OK) {
+                sendErrorResponse(conn,
+                                  firebird::ErrorCode::isc_unavailable,
+                                  "Failed to connect engine");
+                return sendBuffer(conn);
+            }
+            tx_status = client_->beginTransaction(&tx_ctx);
+            if (tx_status != core::Status::OK) {
+                sendErrorResponse(conn,
+                                  firebird::ErrorCode::isc_unavailable,
+                                  "Failed to start transaction");
+                return sendBuffer(conn);
+            }
+            current_transaction_ = tr_handle;
+            active_transactions_.insert(tr_handle);
+            std::ostringstream oss;
+            oss << "handleExecImmediate auto-started backend transaction for tr="
+                << tr_handle;
+            logFirebirdAuthDebug(oss.str());
+        }
     }
 
     // Execute immediately (no BLR parsing here yet)
@@ -3381,7 +2954,13 @@ core::Status FirebirdAdapter::handleExecImmediate(network::Connection* conn) {
         sendErrorResponse(conn, code, message.empty() ? "Query failed" : message, result.sqlstate);
     } else {
         std::vector<uint8_t> data;
-        sendResponse(conn, 0, static_cast<uint64_t>(result.rows_affected), data);
+        uint32_t response_tr_handle = 0;
+        if (tr_handle != 0 && active_transactions_.find(tr_handle) != active_transactions_.end()) {
+            response_tr_handle = tr_handle;
+        } else if (current_transaction_ != 0) {
+            response_tr_handle = current_transaction_;
+        }
+        sendResponse(conn, response_tr_handle, static_cast<uint64_t>(result.rows_affected), data);
     }
 
     return sendBuffer(conn);
@@ -3600,6 +3179,11 @@ core::Status FirebirdAdapter::handleInfoSql(network::Connection* conn) {
 
     uint32_t stmt_handle = readUInt32(current_packet_.data() + offset);
     offset += 4;
+    {
+        std::ostringstream oss;
+        oss << "handleInfoSql stmt=" << stmt_handle;
+        logFirebirdAuthDebug(oss.str());
+    }
 
     // Incarnation (currently ignored)
     if (offset + 4 <= current_packet_.size()) {
@@ -3796,11 +3380,37 @@ core::Status FirebirdAdapter::handleInfoSql(network::Connection* conn) {
                 case 16:
                     dc.sql_type = firebird::SqlType::SQL_INT64;
                     break;
+                case 10:
+                    dc.sql_type = firebird::SqlType::SQL_FLOAT;
+                    break;
+                case 27:
+                    dc.sql_type = firebird::SqlType::SQL_DOUBLE;
+                    break;
+                case 12:
+                    dc.sql_type = firebird::SqlType::SQL_TYPE_DATE;
+                    break;
+                case 13:
+                    dc.sql_type = firebird::SqlType::SQL_TYPE_TIME;
+                    break;
+                case 23:
+                    dc.sql_type = firebird::SqlType::SQL_BOOLEAN;
+                    break;
                 case 14:
                     dc.sql_type = firebird::SqlType::SQL_TEXT;
                     break;
                 case 37:
                     dc.sql_type = firebird::SqlType::SQL_VARYING;
+                    break;
+                case 28:
+                case 30:
+                    dc.sql_type = firebird::SqlType::SQL_TIME_TZ;
+                    break;
+                case 35:
+                    dc.sql_type = firebird::SqlType::SQL_TIMESTAMP;
+                    break;
+                case 29:
+                case 31:
+                    dc.sql_type = firebird::SqlType::SQL_TIMESTAMP_TZ;
                     break;
                 default:
                     dc.sql_type = firebird::SqlType::SQL_VARYING;
@@ -4339,9 +3949,11 @@ WireType FirebirdAdapter::firebirdTypeToWireType(uint16_t type) {
         case firebird::SqlType::SQL_BLOB: return WireType::BYTEA;
         case firebird::SqlType::SQL_TYPE_DATE: return WireType::DATE;
         case firebird::SqlType::SQL_TYPE_TIME:
-        case firebird::SqlType::SQL_TIME_TZ: return WireType::TIME;
+        case firebird::SqlType::SQL_TIME_TZ:
+        case firebird::SqlType::SQL_TIME_TZ_EX: return WireType::TIME;
         case firebird::SqlType::SQL_TIMESTAMP:
-        case firebird::SqlType::SQL_TIMESTAMP_TZ: return WireType::TIMESTAMP;
+        case firebird::SqlType::SQL_TIMESTAMP_TZ:
+        case firebird::SqlType::SQL_TIMESTAMP_TZ_EX: return WireType::TIMESTAMP;
         default: return WireType::VARCHAR;
     }
 }

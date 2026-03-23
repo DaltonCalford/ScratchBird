@@ -49,21 +49,19 @@ PostgreSQL tests cover comprehensive SQL functionality:
 
 ## Running Tests
 
-**Prerequisites:** Build CLI clients in the `ScratchBird-driver` repository first. This runner requires `sb_pg_isql` for PostgreSQL wire-protocol parity. Generic `sb_isql` is native-protocol only and is rejected for this lane.
+**Prerequisites:** Use the donor PostgreSQL `psql` client for this lane. Generic `sb_isql` is native-protocol only and is rejected for emulated PostgreSQL verification.
 
-Once the PostgreSQL CLI is available:
+Once the donor `psql` binary is available:
 
 ```bash
 # Run a single test
-sb_pg_isql -h localhost -p 5432 -U postgres -d testdb \
-  -f converted/core/select.sql \
-  -o results/select.out
+psql -h localhost -p 5432 -U postgres -d testdb \
+  -f converted/core/select.sql > results/select.out
 
 # Run all tests
 for test in converted/core/*.sql; do
-  sb_pg_isql -h localhost -p 5432 -U postgres -d testdb \
-    -f "$test" \
-    -o "results/$(basename $test .sql).out"
+  psql -h localhost -p 5432 -U postgres -d testdb \
+    -f "$test" > "results/$(basename "$test" .sql).out"
 done
 ```
 
@@ -133,7 +131,7 @@ Upstream skip evidence is emitted to:
 Current deferred upstream test:
 - `cluster` (deferred until ScratchBird CLUSTER functionality is implemented).
 
-If `sb_pg_isql` is unavailable, set `SCRATCHBIRD_PG_ISQL` to a valid `sb_pg_isql` path after building FDW CLI wrappers; generic `sb_isql` fallback is intentionally blocked.
+Set `SCRATCHBIRD_PG_PSQL_BIN` to an explicit donor `psql` path when auto-detection is not sufficient. `SCRATCHBIRD_PG_ISQL` remains a legacy alias, but it must still point to donor `psql`, not to a ScratchBird wrapper client.
 
 ## Test Format
 
@@ -142,7 +140,7 @@ PostgreSQL tests are mostly pure SQL with minimal directives:
 - Metadata header with test name and original path
 - Standard SQL statements
 - Comments (-- style)
-- Some tests use psql meta-commands (\\d, \\dt, etc.) - these will need special handling
+- Some tests use `psql` meta-commands (`\\d`, `\\dt`, etc.) and therefore must stay on the donor `psql` tool
 
 Expected output files are in the `expected/` directory, copied from PostgreSQL's `.out` files.
 
@@ -157,7 +155,7 @@ Some PostgreSQL tests have multiple expected output files for different platform
 - PostgreSQL tests are already in SQL format, so conversion is mostly metadata addition
 - Original `.out` files are copied to `expected/` directory with `.expected` extension
 - Tests are designed to be run in a specific order (some depend on prior test state)
-- Some tests use psql-specific features (meta-commands) that need special handling in `sb_pg_isql`
+- Some tests use `psql`-specific features (meta-commands) that need special handling in the donor `psql` lane
 
 ## Test Organization
 

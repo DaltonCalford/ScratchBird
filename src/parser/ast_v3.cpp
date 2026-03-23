@@ -44,6 +44,7 @@ void CreateProcedureStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateTriggerStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreatePackageStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateUserStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void AlterUserStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateRoleStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateGroupStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreatePolicyStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -101,6 +102,9 @@ void CopyStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void MergeStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ExecuteProcedureStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ExecuteStatementStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void PrepareStatementStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ExecutePreparedStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DeallocatePreparedStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 
 // Transaction statements
 void StartTransactionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -323,6 +327,7 @@ const char* astKindToString(ASTKind kind) {
         case ASTKind::CreateTriggerStmt: return "CreateTriggerStmt";
         case ASTKind::CreatePackageStmt: return "CreatePackageStmt";
         case ASTKind::CreateUserStmt: return "CreateUserStmt";
+        case ASTKind::AlterUserStmt: return "AlterUserStmt";
         case ASTKind::CreateRoleStmt: return "CreateRoleStmt";
         case ASTKind::CreateExceptionStmt: return "CreateExceptionStmt";
         case ASTKind::CreateTypeStmt: return "CreateTypeStmt";
@@ -349,6 +354,9 @@ const char* astKindToString(ASTKind kind) {
         case ASTKind::MergeStmt: return "MergeStmt";
         case ASTKind::ExecuteProcedureStmt: return "ExecuteProcedureStmt";
         case ASTKind::ExecuteStatementStmt: return "ExecuteStatementStmt";
+        case ASTKind::PrepareStatementStmt: return "PrepareStatementStmt";
+        case ASTKind::ExecutePreparedStmt: return "ExecutePreparedStmt";
+        case ASTKind::DeallocatePreparedStmt: return "DeallocatePreparedStmt";
 
         // Transaction
         case ASTKind::StartTransactionStmt: return "StartTransactionStmt";

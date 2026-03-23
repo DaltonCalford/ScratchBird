@@ -217,6 +217,12 @@ public:
     core::Status initializeConnection(network::Connection* conn) override;
 
     /**
+     * Release adapter-owned session state when the front-door connection closes.
+     */
+    void onConnectionClosed(network::Connection* conn,
+                            network::CloseReason reason) override;
+
+    /**
      * Send error to client
      */
     void sendError(network::Connection* conn, const std::string& message,

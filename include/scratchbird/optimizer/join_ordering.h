@@ -227,6 +227,11 @@ private:
 
     // DP helper methods
     DPFrontier generateSubsetPlans(RelationSet subset, core::ErrorContext* ctx);
+    DPFrontier enumerateJoinAlternatives(const DPEntry& left_entry,
+                                         const DPEntry& right_entry,
+                                         const JoinEdge& edge,
+                                         core::ErrorContext* ctx,
+                                         bool preserve_orientation = false);
     DPEntry costJoin(const DPEntry& left_entry, const DPEntry& right_entry,
                      const JoinEdge& edge, core::ErrorContext* ctx,
                      bool preserve_orientation = false);

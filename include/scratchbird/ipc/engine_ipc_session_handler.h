@@ -86,16 +86,43 @@ public:
     core::Status onSimpleQuery(uint32_t session_id,
                               const std::string& sql,
                               core::ErrorContext* ctx = nullptr) override;
+
+    core::Status onCompiledQuery(uint32_t session_id,
+                                const std::vector<uint8_t>& bytecode,
+                                const std::string& original_sql,
+                                core::ErrorContext* ctx = nullptr) override;
     
     core::Status onParse(uint32_t session_id,
                         const std::string& stmt_name,
                         const std::string& sql,
                         core::ErrorContext* ctx = nullptr) override;
+
+    core::Status onCompiledParse(uint32_t session_id,
+                                const std::string& stmt_name,
+                                const std::vector<uint8_t>& bytecode,
+                                const std::string& original_sql,
+                                core::ErrorContext* ctx = nullptr) override;
     
     core::Status onBind(uint32_t session_id,
                        const std::string& portal_name,
                        const std::string& stmt_name,
+                       const std::vector<std::optional<std::string>>& params,
+                       const std::vector<bool>& param_nulls,
                        core::ErrorContext* ctx = nullptr) override;
+
+    core::Status onBind(uint32_t session_id,
+                       const std::string& portal_name,
+                       const std::string& stmt_name,
+                       core::ErrorContext* ctx) {
+        static const std::vector<std::optional<std::string>> kEmptyParams;
+        static const std::vector<bool> kEmptyNulls;
+        return onBind(session_id,
+                      portal_name,
+                      stmt_name,
+                      kEmptyParams,
+                      kEmptyNulls,
+                      ctx);
+    }
     
     core::Status onExecute(uint32_t session_id,
                           const std::string& portal_name,
@@ -204,6 +231,10 @@ public:
     core::Status sendNotification(uint32_t session_id,
                                  const std::string& channel,
                                  const std::string& payload) override;
+
+    core::Status drainOutboundMessages(uint32_t session_id,
+                                      std::vector<IPCMessage>& messages,
+                                      core::ErrorContext* ctx = nullptr) override;
     
     // ========================================================================
     // Statistics and Management
@@ -242,6 +273,7 @@ private:
     
     // Helper methods
     EngineSessionState* getSession(uint32_t session_id);
+    core::Status enqueueOutboundMessage(uint32_t session_id, IPCMessage&& msg);
     
     // COPY streaming helpers
     core::Status processCopyDataStream(EngineSessionState* session,

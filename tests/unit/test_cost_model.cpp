@@ -319,6 +319,80 @@ TEST(CostModelTest, MergeJoinComparisonBeatsHashJoinWhenInputsAreAlreadyOrdered)
     EXPECT_LT(merge.total_cost, hash.total_cost);
 }
 
+TEST(CostModelTest, HashJoinComparisonBeatsMergeJoinWhenInputsRequireSorts)
+{
+    auto model = defaultModel();
+
+    const auto outer = model.costSeqScan(32, 1000, 0.0);
+    const auto inner = model.costSeqScan(32, 1000, 0.0);
+
+    const auto hash =
+        model.costHashJoin(outer, inner, 1000, 1000, 0.01, scratchbird::parser::JoinType::INNER);
+    const auto merge =
+        model.costMergeJoin(outer,
+                            inner,
+                            1000,
+                            1000,
+                            0.01,
+                            false,
+                            false,
+                            scratchbird::parser::JoinType::INNER);
+
+    EXPECT_EQ(hash.rows, merge.rows);
+    EXPECT_LT(hash.total_cost, merge.total_cost);
+}
+
+TEST(CostModelTest, HashJoinComparisonBeatsMergeJoinForTinyUnorderedInputs)
+{
+    auto model = defaultModel();
+
+    const auto outer = model.costSeqScan(1, 3, 0.0);
+    const auto inner = model.costSeqScan(1, 3, 0.0);
+
+    const auto hash =
+        model.costHashJoin(outer, inner, 3, 3, 0.1, scratchbird::parser::JoinType::INNER);
+    const auto merge =
+        model.costMergeJoin(outer,
+                            inner,
+                            3,
+                            3,
+                            0.1,
+                            false,
+                            false,
+                            scratchbird::parser::JoinType::INNER);
+
+    EXPECT_EQ(hash.rows, merge.rows);
+    EXPECT_LT(hash.total_cost, merge.total_cost);
+}
+
+TEST(CostModelTest, HashJoinComparisonBeatsMergeJoinForDuplicateHeavyUnorderedInputs)
+{
+    auto model = defaultModel();
+
+    const auto outer = model.costSeqScan(32, 1000, 0.0);
+    const auto inner = model.costSeqScan(32, 1000, 0.0);
+
+    const auto hash =
+        model.costHashJoin(outer,
+                           inner,
+                           1000,
+                           1000,
+                           2.0 / 9.0,
+                           scratchbird::parser::JoinType::INNER);
+    const auto merge =
+        model.costMergeJoin(outer,
+                            inner,
+                            1000,
+                            1000,
+                            2.0 / 9.0,
+                            false,
+                            false,
+                            scratchbird::parser::JoinType::INNER);
+
+    EXPECT_EQ(hash.rows, merge.rows);
+    EXPECT_LT(hash.total_cost, merge.total_cost);
+}
+
 TEST(CostModelTest, HashJoinCostMarksSpillWhenBuildSideExceedsBudget)
 {
     CostParameters small_params;

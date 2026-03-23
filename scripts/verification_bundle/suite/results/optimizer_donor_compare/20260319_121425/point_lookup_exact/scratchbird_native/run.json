@@ -1,0 +1,63 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\nRows affected: 0\nRows affected: 0\nRows affected: 0\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 233,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/scratchbird_native/raw/scratchbird_native.setup.17229a429e13.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/scratchbird_native/raw/scratchbird_native.setup.17229a429e13.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n\nError: V3 EXPLAIN plan payload invalid\nStopping due to error (SET BAIL is ON)\n",
+    "stderr": "",
+    "elapsed_ms": 210,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/scratchbird_native/raw/scratchbird_native.plan.b2f7eb9e3644.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/scratchbird_native/raw/scratchbird_native.plan.b2f7eb9e3644.stderr.txt",
+    "plan_lines": [
+      "PLAN|Error: V3 EXPLAIN plan payload invalid",
+      "PLAN|Stopping due to error (SET BAIL is ON)"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "+------------------------------------------------+\n| expr1                                          |\n+------------------------------------------------+\n| ASSERT|point_lookup_exact|count=0|payload=NULL |\n+------------------------------------------------+\n(1 row)\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 276,
+    "assert_lines": [
+      "ASSERT|point_lookup_exact|count=0|payload=NULL"
+    ],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/scratchbird_native/raw/scratchbird_native.exec.2393ef92855a.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/scratchbird_native/raw/scratchbird_native.exec.2393ef92855a.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 247,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/scratchbird_native/raw/scratchbird_native.teardown.8d6665612818.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/scratchbird_native/raw/scratchbird_native.teardown.8d6665612818.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

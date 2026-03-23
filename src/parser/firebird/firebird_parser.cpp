@@ -196,6 +196,7 @@ bool Parser::isExpressionStart() const {
         case TokenType::KW_CURRENT_USER:
         case TokenType::KW_CURRENT_ROLE:
         case TokenType::KW_CURRENT_CONNECTION:
+        case TokenType::KW_CURRENT_SCHEMA:
         case TokenType::KW_CURRENT_TRANSACTION:
             return true;
         default:
@@ -228,10 +229,12 @@ bool Parser::isNonReservedKeyword() const {
         case TokenType::KW_FIRST:
         case TokenType::KW_SKIP:
         case TokenType::KW_COUNT:
+        case TokenType::KW_COALESCE:
         case TokenType::KW_AVG:
         case TokenType::KW_SUM:
         case TokenType::KW_KEY:
         case TokenType::KW_LEVEL:
+        case TokenType::KW_LOWER:
         case TokenType::KW_MAX:
         case TokenType::KW_MIN:
         case TokenType::KW_POSITION:
@@ -1180,6 +1183,12 @@ Expression* Parser::parsePrimaryExpression() {
         advance();
         auto* expr = allocate<ast::FunctionCallExpr>();
         expr->function_path.components.push_back(string_pool_.intern("CURRENT_DATE"));
+        return expr;
+    }
+    if (checkKeyword(TokenType::KW_CURRENT_SCHEMA)) {
+        advance();
+        auto* expr = allocate<ast::FunctionCallExpr>();
+        expr->function_path.components.push_back(string_pool_.intern("CURRENT_SCHEMA"));
         return expr;
     }
     if (checkKeyword(TokenType::KW_CURRENT_TIME)) {
@@ -2168,7 +2177,7 @@ Statement* Parser::parseCreateDatabase() {
     }
 
     FirebirdDatabaseSpec spec = parseFirebirdDatabaseSpec(db_path_text);
-    std::string server = spec.server.empty() ? "localhost" : spec.server;
+    std::string server = spec.server.empty() ? "firebird_localhost" : spec.server;
     std::string db_name = deriveFirebirdDatabaseName(spec.file_path);
     if (db_name.empty()) {
         error("Database name is empty");
@@ -2638,7 +2647,7 @@ Statement* Parser::parseDropDatabase() {
     }
 
     FirebirdDatabaseSpec spec = parseFirebirdDatabaseSpec(db_path_text);
-    std::string server = spec.server.empty() ? "localhost" : spec.server;
+    std::string server = spec.server.empty() ? "firebird_localhost" : spec.server;
     std::string db_name = deriveFirebirdDatabaseName(spec.file_path);
     if (db_name.empty()) {
         error("Database name is empty");
@@ -2701,7 +2710,7 @@ Statement* Parser::parseAlterDatabase() {
     }
 
     FirebirdDatabaseSpec spec = parseFirebirdDatabaseSpec(db_path_text);
-    std::string server = spec.server.empty() ? "localhost" : spec.server;
+    std::string server = spec.server.empty() ? "firebird_localhost" : spec.server;
     std::string db_name = deriveFirebirdDatabaseName(spec.file_path);
     if (db_name.empty()) {
         error("Database name is empty");
@@ -2947,32 +2956,44 @@ ast::CreateIndexStmt* Parser::parseCreateIndexImpl(bool unique, bool descending)
     consume(TokenType::KW_ON, "Expected ON after index name");
     stmt->table_path = parseSchemaPath();
 
-    // Column list
-    consume(TokenType::LEFT_PAREN, "Expected '(' after table name");
+    if (matchKeyword(TokenType::KW_COMPUTED)) {
+        consume(TokenType::KW_BY, "Expected BY after COMPUTED");
+        consume(TokenType::LEFT_PAREN, "Expected '(' after COMPUTED BY");
 
-    do {
         ast::IndexColumn col;
-
-        // Could be column name or expression
-        if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-            col.column = parseIdentifier();
-        } else {
-            col.expr = parseExpression();
-        }
-
+        col.expr = parseExpression();
         col.ascending = !descending;
-
-        // Optional ASC/DESC per column
-        if (matchKeyword(TokenType::KW_ASC) || matchKeyword(TokenType::KW_ASCENDING)) {
-            col.ascending = true;
-        } else if (matchKeyword(TokenType::KW_DESC) || matchKeyword(TokenType::KW_DESCENDING)) {
-            col.ascending = false;
-        }
-
         stmt->columns.push_back(col);
-    } while (match(TokenType::COMMA));
 
-    consume(TokenType::RIGHT_PAREN, "Expected ')' after column list");
+        consume(TokenType::RIGHT_PAREN, "Expected ')' after computed index expression");
+    } else {
+        // Column list
+        consume(TokenType::LEFT_PAREN, "Expected '(' after table name");
+
+        do {
+            ast::IndexColumn col;
+
+            // Could be column name or expression
+            if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+                col.column = parseIdentifier();
+            } else {
+                col.expr = parseExpression();
+            }
+
+            col.ascending = !descending;
+
+            // Optional ASC/DESC per column
+            if (matchKeyword(TokenType::KW_ASC) || matchKeyword(TokenType::KW_ASCENDING)) {
+                col.ascending = true;
+            } else if (matchKeyword(TokenType::KW_DESC) || matchKeyword(TokenType::KW_DESCENDING)) {
+                col.ascending = false;
+            }
+
+            stmt->columns.push_back(col);
+        } while (match(TokenType::COMMA));
+
+        consume(TokenType::RIGHT_PAREN, "Expected ')' after column list");
+    }
 
     // Optional WHERE clause (partial index)
     if (matchKeyword(TokenType::KW_WHERE)) {

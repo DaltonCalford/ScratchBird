@@ -1,0 +1,1 @@
+psql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/point_lookup_exact.setup.sql:1: NOTICE:  table "avp_point_lookup_exact" does not exist, skipping

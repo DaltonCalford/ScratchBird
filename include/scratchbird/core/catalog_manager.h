@@ -562,6 +562,14 @@ public:
             FAST = 2            // Fast refresh using change log
         };
 
+        struct ViewColumnBinding
+        {
+            std::string view_column;
+            ID base_table_id{};
+            std::string base_column;
+            bool writable = false;
+        };
+
         // View information (ALPHA Phase 1 - Views)
         struct ViewInfo {
             ID view_id;
@@ -569,11 +577,15 @@ public:
             std::string name;
             bool name_is_delimited = false;    // True if name was double-quoted (case-sensitive)
             ID owner_id;
-            std::string definition;  // SELECT query text
+            std::string definition;  // Original SQL text retained for reference/introspection only
+            std::string source_dialect;  // Canonical dialect/profile id for the original SQL text
+            std::vector<uint8_t> compiled_query_sblr;  // Canonical execution form for the stored view body
+            std::vector<uint8_t> native_compiled_code;  // Optional SBLR->native artifact bytes
             bool check_option;
             bool security_definer = false;    // SECURITY DEFINER view
             bool security_barrier = false;    // SECURITY BARRIER view
             std::vector<std::string> column_names;  // Optional explicit columns
+            std::vector<ViewColumnBinding> insert_bindings;  // Persisted view-column to base-column map
             uint64_t created_time;
             uint64_t last_modified_time;
             TempMetadataScope temp_metadata_scope = TempMetadataScope::NONE;
@@ -1112,7 +1124,10 @@ public:
             std::string description;
             JobClass job_class = JobClass::UNSPECIFIED;
             JobType job_type = JobType::SQL;
-            std::string job_sql;
+            std::string job_sql;  // Original SQL text retained for reference/introspection only
+            std::vector<uint8_t> bytecode;  // Canonical SBLR execution form for SQL jobs
+            std::string source_dialect;  // Canonical dialect/profile id for the original SQL text
+            std::vector<uint8_t> native_compiled_code;  // Optional SBLR->native artifact bytes
             ID procedure_uuid;
             std::string external_command;
             ScheduleKind schedule_kind = ScheduleKind::CRON;
@@ -7545,6 +7560,12 @@ public:
                         ErrorContext* ctx = nullptr,
                         const TempObjectOptions* temp_opts = nullptr,
                         bool with_data = true) -> Status;
+        auto setViewExecutionMetadata(const ID& view_id,
+                                      const std::vector<uint8_t>& compiled_query_sblr,
+                                      const std::vector<ViewColumnBinding>& insert_bindings,
+                                      const std::string& source_dialect = std::string(),
+                                      const std::vector<uint8_t>& native_compiled_code = {},
+                                      ErrorContext* ctx = nullptr) -> Status;
 
         auto dropView(const ID& view_id, bool cascade,
                       ErrorContext* ctx = nullptr) -> Status;
@@ -12025,6 +12046,8 @@ public:
             SqlSecurity sql_security = SqlSecurity::INVOKER;  // Phase 3.1
             std::vector<uint8_t> bytecode;  // Compiled SBLR bytecode
             std::string source_text;        // Original PSQL source
+            std::string source_dialect;     // Canonical dialect/profile id for the original SQL text
+            std::vector<uint8_t> native_compiled_code;  // Optional SBLR->native artifact bytes
             std::vector<std::pair<ID, ObjectType>> referenced_objects;  // Dependency targets
             uint64_t created_time = 0;
             uint64_t modified_time = 0;
@@ -12048,6 +12071,8 @@ public:
             SqlSecurity sql_security = SqlSecurity::INVOKER;  // Phase 3.1
             std::vector<uint8_t> bytecode;  // Compiled SBLR bytecode
             std::string source_text;        // Original PSQL source
+            std::string source_dialect;     // Canonical dialect/profile id for the original SQL text
+            std::vector<uint8_t> native_compiled_code;  // Optional SBLR->native artifact bytes
             std::vector<std::pair<ID, ObjectType>> referenced_objects;  // Dependency targets
             uint64_t created_time = 0;
             uint64_t modified_time = 0;

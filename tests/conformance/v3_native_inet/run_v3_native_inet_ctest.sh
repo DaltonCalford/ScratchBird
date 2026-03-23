@@ -11,10 +11,15 @@ if [[ ! -x "${DEFAULT_ISQL}" ]]; then
   if [[ -x "${ALT_ISQL}" ]]; then
     DEFAULT_ISQL="${ALT_ISQL}"
   else
-    DRIVER_ISQL="${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_isql"
-    if [[ -x "${DRIVER_ISQL}" ]]; then
-      DEFAULT_ISQL="${DRIVER_ISQL}"
-    fi
+    for DRIVER_ISQL in \
+      "${DRIVER_DIR}/build/tracks/p3/drivers/cli/sb_isql" \
+      "${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_isql"
+    do
+      if [[ -x "${DRIVER_ISQL}" ]]; then
+        DEFAULT_ISQL="${DRIVER_ISQL}"
+        break
+      fi
+    done
   fi
 fi
 

@@ -1,0 +1,63 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 13,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/ref_duckdb/raw/ref_duckdb.setup.c92695f5338b.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/ref_duckdb/raw/ref_duckdb.setup.c92695f5338b.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "WHERE",
+    "message": "                                    ^",
+    "stdout": "\nCatalog Error: Table with name avp_point_lookup_exact does not exist!\nDid you mean \"pg_tablespace\"?\n\nLINE 1: EXPLAIN SELECT payload FROM avp_point_lookup_exact WHERE k = 73;\n                                    ^\n",
+    "stderr": "",
+    "elapsed_ms": 10,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/ref_duckdb/raw/ref_duckdb.plan.1198d43e1f93.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/ref_duckdb/raw/ref_duckdb.plan.1198d43e1f93.stderr.txt",
+    "plan_lines": [
+      "PLAN|Catalog Error: Table with name avp_point_lookup_exact does not exist!",
+      "PLAN|Did you mean \"pg_tablespace\"?",
+      "PLAN|LINE 1: EXPLAIN SELECT payload FROM avp_point_lookup_exact WHERE k = 73;",
+      "PLAN|^"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "00000",
+    "message": "             ^",
+    "stdout": "\nCatalog Error: Table with name avp_point_lookup_exact does not exist!\nDid you mean \"pg_tablespace\"?\n\nLINE 2: FROM avp_point_lookup_exact\n             ^\n",
+    "stderr": "",
+    "elapsed_ms": 8,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/ref_duckdb/raw/ref_duckdb.exec.2d3e69b6d5c2.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/ref_duckdb/raw/ref_duckdb.exec.2d3e69b6d5c2.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 10,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/ref_duckdb/raw/ref_duckdb.teardown.1cd080ec9738.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/point_lookup_exact/ref_duckdb/raw/ref_duckdb.teardown.1cd080ec9738.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

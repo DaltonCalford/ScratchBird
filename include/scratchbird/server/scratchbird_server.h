@@ -35,6 +35,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/signal_control.h"
+#include "scratchbird/ipc/ipc_server.h"
 #include "scratchbird/server/daemon.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/server/server_session.h"
@@ -284,6 +285,7 @@ private:
 
     std::unique_ptr<core::Database> database_;      // Database instance
     std::unique_ptr<IPCServer> listener_;           // IPC listener
+    std::unique_ptr<scratchbird::ipc::IPCServer> parser_listener_; // External parser IPC listener
     std::unique_ptr<core::SignalControl> signal_control_; // Runtime signal adapter
     SessionManager session_manager_;                // Session manager
 

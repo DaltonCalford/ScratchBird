@@ -20,7 +20,9 @@
 
 #include "scratchbird/ipc/engine_ipc_session_handler.h"
 #include "scratchbird/sblr/executor.h"
+#include "scratchbird/sblr/bytecode_validator.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/connection_context.h"
 
 #include <sstream>
 #include <iomanip>
@@ -30,9 +32,229 @@
 #include <cstdlib>
 #include <algorithm>
 #include <cctype>
+#include <deque>
+#include <fstream>
+#include <iostream>
 
 namespace scratchbird {
 namespace ipc {
+
+namespace {
+
+std::string boundedString(const char* value, size_t max_len) {
+    size_t len = 0;
+    while (len < max_len && value[len] != '\0') {
+        ++len;
+    }
+    return std::string(value, len);
+}
+
+std::string dialectTagForApplication(const std::string& application) {
+    std::string normalized;
+    normalized.reserve(application.size());
+    for (unsigned char c : application) {
+        normalized.push_back(static_cast<char>(std::tolower(c)));
+    }
+
+    if (normalized.find("firebird") != std::string::npos) {
+        return "firebird";
+    }
+    if (normalized.find("postgres") != std::string::npos) {
+        return "postgresql";
+    }
+    if (normalized.find("mysql") != std::string::npos) {
+        return "mysql";
+    }
+    return "scratchbird";
+}
+
+std::string emulationModeForDialectTag(const std::string& dialect_tag) {
+    return dialect_tag == "scratchbird" ? "native" : dialect_tag;
+}
+
+std::string mysqlCompileOs() {
+#if defined(_WIN32)
+    return "Win64";
+#elif defined(__APPLE__)
+    return "macOS";
+#elif defined(__linux__)
+    return "Linux";
+#else
+    return "Unknown";
+#endif
+}
+
+std::string mysqlCompileMachine() {
+#if defined(__x86_64__) || defined(_M_X64)
+    return "x86_64";
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    return "aarch64";
+#elif defined(__i386__) || defined(_M_IX86)
+    return "x86";
+#else
+    return "unknown";
+#endif
+}
+
+const char* postgresqlServerVersion() {
+    return "15.4 (ScratchBird 1.0)";
+}
+
+void seedDialectSessionVariables(core::ConnectionContext* conn_ctx,
+                                 const std::string& dialect_tag) {
+    if (conn_ctx == nullptr) {
+        return;
+    }
+
+    if (dialect_tag == "mysql") {
+        conn_ctx->setSessionVariable("VERSION", "8.0.32-ScratchBird");
+        conn_ctx->setSessionVariable("VERSION_COMMENT", "ScratchBird MySQL emulation");
+        conn_ctx->setSessionVariable("VERSION_COMPILE_OS", mysqlCompileOs());
+        conn_ctx->setSessionVariable("VERSION_COMPILE_MACHINE", mysqlCompileMachine());
+        conn_ctx->setSessionVariable("CHARACTER_SET_CLIENT", "utf8mb4");
+        conn_ctx->setSessionVariable("CHARACTER_SET_CONNECTION", "utf8mb4");
+        conn_ctx->setSessionVariable("CHARACTER_SET_RESULTS", "utf8mb4");
+        conn_ctx->setSessionVariable("COLLATION_CONNECTION", "utf8mb4_general_ci");
+        conn_ctx->setSessionVariable("OPTIMIZER_SWITCH", "index_merge=on");
+        conn_ctx->setSessionVariable("SQL_MODE", "");
+    } else if (dialect_tag == "postgresql") {
+        conn_ctx->setSessionVariable("SERVER_VERSION", postgresqlServerVersion());
+        conn_ctx->setSessionVariable("SERVER_ENCODING", "UTF8");
+        conn_ctx->setSessionVariable("CLIENT_ENCODING", "UTF8");
+        conn_ctx->setSessionVariable("DATESTYLE", "ISO, MDY");
+        conn_ctx->setSessionVariable("TIMEZONE", "UTC");
+        conn_ctx->setSessionVariable("INTEGER_DATETIMES", "on");
+        conn_ctx->setSessionVariable("STANDARD_CONFORMING_STRINGS", "on");
+    }
+}
+
+bool equalsIgnoreCaseAscii(const std::string& lhs, const char* rhs) {
+    if (rhs == nullptr) {
+        return false;
+    }
+    const size_t rhs_len = std::strlen(rhs);
+    if (lhs.size() != rhs_len) {
+        return false;
+    }
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(lhs[i])) !=
+            std::tolower(static_cast<unsigned char>(rhs[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string joinSearchPath(const std::vector<std::string>& search_path) {
+    std::ostringstream out;
+    for (size_t i = 0; i < search_path.size(); ++i) {
+        if (i != 0) {
+            out << ",";
+        }
+        out << search_path[i];
+    }
+    return out.str();
+}
+
+void appendIpcDebugLine(const std::string& line) {
+    std::ofstream out("/tmp/sb_ipc_debug.log", std::ios::app);
+    if (!out) {
+        return;
+    }
+    out << line << '\n';
+}
+
+bool compiledQueryIpcTraceEnabled() {
+    static const bool enabled = []() {
+        const char* value = std::getenv("SCRATCHBIRD_TRACE_COMPILED_QUERY_IPC");
+        if (value == nullptr || value[0] == '\0') {
+            return false;
+        }
+        std::string normalized(value);
+        std::transform(normalized.begin(),
+                       normalized.end(),
+                       normalized.begin(),
+                       [](unsigned char ch) {
+                           return static_cast<char>(std::toupper(ch));
+                       });
+        return normalized != "0" &&
+               normalized != "FALSE" &&
+               normalized != "NO" &&
+               normalized != "OFF";
+    }();
+    return enabled;
+}
+
+std::string summarizeBytecode(const std::vector<uint8_t>& bytecode) {
+    auto hex_slice = [&](size_t begin, size_t end) {
+        std::ostringstream out;
+        out << std::hex << std::setfill('0');
+        for (size_t i = begin; i < end; ++i) {
+            if (i != begin) {
+                out << ' ';
+            }
+            out << std::setw(2) << static_cast<unsigned>(bytecode[i]);
+        }
+        return out.str();
+    };
+
+    if (bytecode.size() <= 32) {
+        return hex_slice(0, bytecode.size());
+    }
+
+    return hex_slice(0, 16) + " ... " +
+           hex_slice(bytecode.size() - 16, bytecode.size());
+}
+
+core::Status rejectEngineSqlTextPath(uint32_t session_id,
+                                     const char* action,
+                                     EngineIPCSessionHandler* handler,
+                                     core::ErrorContext* ctx) {
+    const std::string message =
+        std::string("Engine IPC ") + action +
+        " SQL-text path is disabled; parser agents must send precompiled SBLR "
+        "with COMPILED_QUERY/COMPILED_PARSE";
+    if (ctx != nullptr) {
+        ctx->set(core::Status::NOT_SUPPORTED,
+                 message.c_str(),
+                 __FILE__, __LINE__, __func__);
+    }
+    return handler->sendError(session_id, "0A000", message);
+}
+
+struct ConnectionContextGuard {
+    core::ConnectionContext* previous = nullptr;
+    bool changed = false;
+
+    explicit ConnectionContextGuard(core::ConnectionContext* current)
+        : previous(core::ConnectionContext::getCurrent()) {
+        if (current != nullptr && current != previous) {
+            core::ConnectionContext::setCurrent(current);
+            changed = true;
+        }
+    }
+
+    ~ConnectionContextGuard() {
+        if (changed) {
+            core::ConnectionContext::setCurrent(previous);
+        }
+    }
+};
+
+void syncSessionTransactionState(core::ConnectionContext* conn_ctx,
+                                 bool& in_transaction_out,
+                                 bool& autocommit_out) {
+    if (conn_ctx == nullptr) {
+        in_transaction_out = false;
+        autocommit_out = true;
+        return;
+    }
+
+    in_transaction_out = conn_ctx->getCurrentXid() != 0;
+    autocommit_out = conn_ctx->autocommitMode() && !conn_ctx->autocommitSuspended();
+}
+
+}  // namespace
 
 // ============================================================================
 // Prepared Statement Cache Entry with LRU
@@ -303,6 +525,8 @@ struct EngineSessionState {
     // Session metadata
     std::chrono::steady_clock::time_point created_at;
     std::chrono::steady_clock::time_point last_activity;
+    std::deque<IPCMessage> outbound_messages;
+    std::mutex outbound_mutex;
     
     EngineSessionState() : stmt_cache(std::make_unique<StatementCache>()) {}
 };
@@ -334,6 +558,18 @@ EngineSessionState* EngineIPCSessionHandler::getSession(uint32_t session_id) {
     return nullptr;
 }
 
+core::Status EngineIPCSessionHandler::enqueueOutboundMessage(uint32_t session_id,
+                                                             IPCMessage&& msg) {
+    EngineSessionState* session = getSession(session_id);
+    if (!session) {
+        return core::Status::NOT_FOUND;
+    }
+
+    std::lock_guard<std::mutex> lock(session->outbound_mutex);
+    session->outbound_messages.push_back(std::move(msg));
+    return core::Status::OK;
+}
+
 // ============================================================================
 // Lifecycle Methods
 // ============================================================================
@@ -353,16 +589,130 @@ core::Status EngineIPCSessionHandler::onAttach(uint32_t session_id,
     
     auto session = std::make_unique<EngineSessionState>();
     session->session_id = session_id;
-    session->database_name = startup.database;
-    session->username = startup.user;
+    session->database_name = boundedString(startup.database, sizeof(startup.database));
+    session->username = boundedString(startup.user, sizeof(startup.user));
     session->database = database_;
     session->created_at = std::chrono::steady_clock::now();
     session->last_activity = session->created_at;
-    // Create executor (ConnectionContext is optional for basic queries)
+
+    const std::string application =
+        boundedString(startup.application, sizeof(startup.application));
+    const std::string dialect_tag = dialectTagForApplication(application);
+    const std::string emulation_mode = emulationModeForDialectTag(dialect_tag);
+
+    auto connect_status = database_->connect(session->conn_ctx, ctx);
+    if (connect_status != core::Status::OK || !session->conn_ctx) {
+        if (ctx && ctx->message.empty()) {
+            ctx->set(connect_status != core::Status::OK ? connect_status
+                                                        : core::Status::CONNECTION_FAILURE,
+                     "Failed to initialize IPC engine connection context",
+                     __FILE__, __LINE__, __func__);
+        }
+        return connect_status != core::Status::OK ? connect_status
+                                                  : core::Status::CONNECTION_FAILURE;
+    }
+
+    session->conn_ctx->setAutocommitMode(true);
+    session->conn_ctx->set_dialect_tag(dialect_tag);
+    if (!application.empty()) {
+        session->conn_ctx->setSessionVariable("APPLICATION_NAME", application);
+    }
+    seedDialectSessionVariables(session->conn_ctx.get(), dialect_tag);
+
+    auto* catalog = database_->catalog_manager();
+    if (session->username.empty()) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_ARGUMENT,
+                     "IPC attach requires a session user",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_ARGUMENT;
+    }
+    if (!catalog) {
+        if (ctx) {
+            ctx->set(core::Status::INTERNAL_ERROR,
+                     "Catalog manager unavailable for IPC attach",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INTERNAL_ERROR;
+    }
+
+    core::CatalogManager::UserInfo user_info;
+    core::ErrorContext user_ctx;
+    auto user_status = catalog->getUserByName(session->username, user_info, &user_ctx);
+    if (user_status != core::Status::OK) {
+        std::string message = user_ctx.message.empty()
+                                  ? "IPC attach user not found: " + session->username
+                                  : user_ctx.message;
+        if (ctx) {
+            ctx->set(user_status, message.c_str(), __FILE__, __LINE__, __func__);
+        }
+        return user_status;
+    }
+    if (!user_info.is_active) {
+        std::string message = "IPC attach user is disabled: " + session->username;
+        if (ctx) {
+            ctx->set(core::Status::PERMISSION_DENIED,
+                     message.c_str(),
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::PERMISSION_DENIED;
+    }
+
+    const bool firebird_sysdba_override =
+        dialect_tag == "firebird" && equalsIgnoreCaseAscii(session->username, "SYSDBA");
+    session->conn_ctx->setCurrentUser(user_info.user_id,
+                                      user_info.is_superuser || firebird_sysdba_override);
+
+    core::CatalogManager::SessionInfo session_info;
+    core::ErrorContext session_ctx;
+    auto session_status = catalog->createSession(user_info.user_id,
+                                                 session->conn_ctx->authKeyId(),
+                                                 emulation_mode,
+                                                 session_info,
+                                                 &session_ctx);
+    if (session_status != core::Status::OK) {
+        const std::string message =
+            session_ctx.message.empty() ? "Failed to create IPC catalog session"
+                                        : session_ctx.message;
+        if (ctx) {
+            ctx->set(session_status, message.c_str(), __FILE__, __LINE__, __func__);
+        }
+        return session_status;
+    }
+
+    session->conn_ctx->setCurrentSchemaId(session_info.current_schema_id);
+    if (!session_info.search_path.empty()) {
+        session->conn_ctx->set_search_path(session_info.search_path);
+    }
+
+    core::CatalogManager::SchemaInfo schema_info;
+    if (catalog->getSchema(session_info.current_schema_id, schema_info, nullptr) ==
+        core::Status::OK) {
+        std::string schema_path;
+        if (catalog->getSchemaPath(session_info.current_schema_id, schema_path, nullptr) !=
+                core::Status::OK ||
+            schema_path.empty()) {
+            schema_path = schema_info.schema_name;
+        }
+        session->conn_ctx->set_current_schema(schema_path);
+        if (session_info.search_path.empty() && !schema_path.empty()) {
+            session->conn_ctx->set_search_path({schema_path});
+        }
+    }
+
+    session->conn_ctx->setSessionContext(session_info.session_id,
+                                         session->conn_ctx->authKeyId(),
+                                         session_info.emulation_mode,
+                                         session_info.policy_epoch_global,
+                                         session_info.policy_epoch_table);
+
+    syncSessionTransactionState(session->conn_ctx.get(),
+                                session->in_transaction,
+                                session->autocommit);
+
     session->executor = std::make_unique<sblr::Executor>(database_);
-    
-    // Note: ConnectionContext will be initialized when ProcArray integration is complete
-    // For now, executor works without it for basic operations
+    session->executor->setConnectionContext(session->conn_ctx.get());
     
     sessions_[session_id] = std::move(session);
     
@@ -387,6 +737,7 @@ core::Status EngineIPCSessionHandler::onDetach(uint32_t session_id,
         auto& executor = it->second->executor;
         if (executor) {
             std::vector<uint8_t> rollback_bytecode = {static_cast<uint8_t>(sblr::Opcode::ROLLBACK)};
+            ConnectionContextGuard ctx_guard(it->second->conn_ctx.get());
             executor->execute(rollback_bytecode);
         }
     }
@@ -411,16 +762,138 @@ core::Status EngineIPCSessionHandler::onSimpleQuery(uint32_t session_id,
         return core::Status::NOT_FOUND;
     }
 
-    (void)session;
-    (void)sql;
-    if (ctx) {
-        ctx->set(core::Status::NOT_SUPPORTED,
-                 "Engine IPC SQL text path is disabled; submit precompiled SBLR bytecode",
-                 __FILE__, __LINE__, __func__);
+    if (sql.empty()) {
+        if (ctx != nullptr) {
+            ctx->set(core::Status::INVALID_ARGUMENT,
+                     "IPC SQL text path requires a non-empty statement",
+                     __FILE__, __LINE__, __func__);
+        }
+        return sendError(session_id, "22023", "IPC SQL text path requires a non-empty statement");
     }
-    return sendError(session_id,
-                     "0A000",
-                     "Engine IPC SQL text path is disabled; submit precompiled SBLR bytecode");
+
+    return rejectEngineSqlTextPath(session_id, "simple-query", this, ctx);
+}
+
+core::Status EngineIPCSessionHandler::onCompiledQuery(uint32_t session_id,
+                                                      const std::vector<uint8_t>& bytecode,
+                                                      const std::string& original_sql,
+                                                      core::ErrorContext* ctx) {
+    EngineSessionState* session = getSession(session_id);
+    if (!session) {
+        if (ctx) {
+            ctx->set(core::Status::NOT_FOUND,
+                    "Session not found", __FILE__, __LINE__, __func__);
+        }
+        return core::Status::NOT_FOUND;
+    }
+
+    if (bytecode.empty()) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_ARGUMENT,
+                    "Compiled query bytecode is empty", __FILE__, __LINE__, __func__);
+        }
+        return sendError(session_id, "22023", "Compiled query bytecode is empty");
+    }
+
+    if (compiledQueryIpcTraceEnabled()) {
+        core::ErrorContext validation_ctx;
+        const core::Status validation_status =
+            scratchbird::sblr::validateBytecode(bytecode, &validation_ctx);
+        std::ostringstream trace;
+        trace << "[compiled_query_trace] side=engine"
+              << " session=" << session_id
+              << " dialect="
+              << (session->conn_ctx ? session->conn_ctx->dialect_tag() : std::string())
+              << " bytecode_len=" << bytecode.size()
+              << " validation=" << static_cast<int>(validation_status)
+              << " validation_msg=" << validation_ctx.message
+              << " bytecode=" << summarizeBytecode(bytecode)
+              << " sql=" << original_sql;
+        appendIpcDebugLine(trace.str());
+    }
+
+    if (session->conn_ctx &&
+        equalsIgnoreCaseAscii(session->conn_ctx->dialect_tag(), "firebird")) {
+        std::ostringstream trace;
+        trace << "[ipc_debug] compiled_query session=" << session_id
+              << " sql=" << original_sql
+              << " current_schema=" << session->conn_ctx->current_schema()
+              << " search_path=" << joinSearchPath(session->conn_ctx->search_path());
+        appendIpcDebugLine(trace.str());
+    }
+
+    ConnectionContextGuard ctx_guard(session->conn_ctx.get());
+    auto exec_result = session->executor->execute(bytecode);
+    if (!exec_result.success()) {
+        return sendError(session_id, "XX000", exec_result.error());
+    }
+
+    if (exec_result.hasResultSet()) {
+        auto* rs = exec_result.resultSet();
+        if (session->conn_ctx &&
+            equalsIgnoreCaseAscii(session->conn_ctx->dialect_tag(), "firebird") &&
+            original_sql.find("CURRENT_SCHEMA") != std::string::npos &&
+            rs->rowCount() > 0) {
+            std::ostringstream trace;
+            trace << "[ipc_debug] result session=" << session_id
+                  << " sql=" << original_sql;
+            for (size_t col = 0; col < rs->columnCount(); ++col) {
+                trace << " col" << col << "=" << rs->getValue(0, col).toString();
+            }
+            appendIpcDebugLine(trace.str());
+        }
+        std::vector<IPCFieldDesc> fields;
+        for (size_t i = 0; i < rs->columnCount(); ++i) {
+            IPCFieldDesc field{};
+            std::strncpy(field.name, rs->columnName(i).c_str(), sizeof(field.name) - 1);
+            field.name[sizeof(field.name) - 1] = '\0';
+            field.type_oid = static_cast<uint32_t>(rs->columnType(i));
+            fields.push_back(field);
+        }
+
+        auto status = sendRowDescription(session_id, fields);
+        if (status != core::Status::OK) {
+            return status;
+        }
+
+        for (size_t row = 0; row < rs->rowCount(); ++row) {
+            std::vector<std::optional<std::string>> values;
+            for (size_t col = 0; col < rs->columnCount(); ++col) {
+                const auto& val = rs->getValue(row, col);
+                if (val.isNull()) {
+                    values.push_back(std::nullopt);
+                } else {
+                    values.push_back(val.toString());
+                }
+            }
+            status = sendDataRow(session_id, values);
+            if (status != core::Status::OK) {
+                return status;
+            }
+        }
+
+        return sendCommandComplete(session_id,
+                                   "SELECT " + std::to_string(rs->rowCount()),
+                                   rs->rowCount());
+    }
+
+    std::string tag = "OK";
+    const uint64_t affected = exec_result.affectedCount();
+    if (!original_sql.empty()) {
+        std::string upper_sql = original_sql;
+        for (auto& c : upper_sql) {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        if (upper_sql.find("INSERT") == 0) {
+            tag = "INSERT 0 " + std::to_string(affected);
+        } else if (upper_sql.find("UPDATE") == 0) {
+            tag = "UPDATE " + std::to_string(affected);
+        } else if (upper_sql.find("DELETE") == 0) {
+            tag = "DELETE " + std::to_string(affected);
+        }
+    }
+
+    return sendCommandComplete(session_id, tag, affected);
 }
 
 core::Status EngineIPCSessionHandler::onParse(uint32_t session_id,
@@ -436,22 +909,74 @@ core::Status EngineIPCSessionHandler::onParse(uint32_t session_id,
         return core::Status::NOT_FOUND;
     }
 
-    (void)session;
-    (void)stmt_name;
-    (void)sql;
-    if (ctx) {
-        ctx->set(core::Status::NOT_SUPPORTED,
-                 "Engine IPC parse path is disabled; parser must manage SQL->SBLR compilation",
-                 __FILE__, __LINE__, __func__);
+    if (stmt_name.empty()) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_ARGUMENT,
+                    "Statement name is required for IPC SQL parse",
+                    __FILE__, __LINE__, __func__);
+        }
+        return sendError(session_id, "22023", "Statement name is required for IPC SQL parse");
     }
-    return sendError(session_id,
-                     "0A000",
-                     "Engine IPC parse path is disabled; parser must manage SQL->SBLR compilation");
+    if (sql.empty()) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_ARGUMENT,
+                    "IPC SQL parse requires a non-empty statement",
+                    __FILE__, __LINE__, __func__);
+        }
+        return sendError(session_id, "22023", "IPC SQL parse requires a non-empty statement");
+    }
+
+    return rejectEngineSqlTextPath(session_id, "parse", this, ctx);
+}
+
+core::Status EngineIPCSessionHandler::onCompiledParse(uint32_t session_id,
+                                                      const std::string& stmt_name,
+                                                      const std::vector<uint8_t>& bytecode,
+                                                      const std::string& original_sql,
+                                                      core::ErrorContext* ctx) {
+    EngineSessionState* session = getSession(session_id);
+    if (!session) {
+        if (ctx) {
+            ctx->set(core::Status::NOT_FOUND,
+                    "Session not found", __FILE__, __LINE__, __func__);
+        }
+        return core::Status::NOT_FOUND;
+    }
+
+    if (stmt_name.empty()) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_ARGUMENT,
+                    "Statement name is required for compiled parse",
+                    __FILE__, __LINE__, __func__);
+        }
+        return sendError(session_id, "22023", "Statement name is required for compiled parse");
+    }
+
+    if (bytecode.empty()) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_ARGUMENT,
+                    "Compiled parse bytecode is empty", __FILE__, __LINE__, __func__);
+        }
+        return sendError(session_id, "22023", "Compiled parse bytecode is empty");
+    }
+
+    auto prepared = std::make_unique<PreparedStatement>();
+    prepared->name = stmt_name;
+    prepared->sql = original_sql;
+    prepared->bytecode = bytecode;
+    prepared->created_at = std::chrono::steady_clock::now();
+    prepared->last_used = prepared->created_at;
+    prepared->is_valid = true;
+
+    session->stmt_cache->put(stmt_name, std::move(prepared));
+    return core::Status::OK;
 }
 
 core::Status EngineIPCSessionHandler::onBind(uint32_t session_id,
                                             const std::string& portal_name,
                                             const std::string& stmt_name,
+                                            const std::vector<std::optional<std::string>>& params,
+                                            const std::vector<bool>& param_nulls,
                                             core::ErrorContext* ctx) {
     EngineSessionState* session = getSession(session_id);
     if (!session) {
@@ -473,6 +998,8 @@ core::Status EngineIPCSessionHandler::onBind(uint32_t session_id,
     portal->name = portal_name;
     portal->stmt_name = stmt_name;
     portal->is_open = true;
+    portal->bound_params = params;
+    portal->param_nulls = param_nulls;
     
     // Store portal
     {
@@ -540,7 +1067,19 @@ core::Status EngineIPCSessionHandler::onExecute(uint32_t session_id,
         }
         session->executor->setParameters(params, portal->param_nulls);
     }
+
+    if (session->conn_ctx &&
+        equalsIgnoreCaseAscii(session->conn_ctx->dialect_tag(), "firebird")) {
+        std::ostringstream trace;
+        trace << "[ipc_debug] execute session=" << session_id
+              << " portal=" << portal_name
+              << " stmt=" << (stmt ? stmt->sql : std::string())
+              << " current_schema=" << session->conn_ctx->current_schema()
+              << " search_path=" << joinSearchPath(session->conn_ctx->search_path());
+        appendIpcDebugLine(trace.str());
+    }
     
+    ConnectionContextGuard ctx_guard(session->conn_ctx.get());
     auto exec_result = session->executor->execute(bytecode);
     
     if (!exec_result.success()) {
@@ -550,6 +1089,20 @@ core::Status EngineIPCSessionHandler::onExecute(uint32_t session_id,
     // Handle result
     if (exec_result.hasResultSet()) {
         auto* rs = exec_result.resultSet();
+        if (session->conn_ctx &&
+            equalsIgnoreCaseAscii(session->conn_ctx->dialect_tag(), "firebird") &&
+            stmt != nullptr &&
+            stmt->sql.find("CURRENT_SCHEMA") != std::string::npos &&
+            rs->rowCount() > 0) {
+            std::ostringstream trace;
+            trace << "[ipc_debug] portal_result session=" << session_id
+                  << " portal=" << portal_name
+                  << " stmt=" << stmt->sql;
+            for (size_t col = 0; col < rs->columnCount(); ++col) {
+                trace << " col" << col << "=" << rs->getValue(0, col).toString();
+            }
+            appendIpcDebugLine(trace.str());
+        }
         
         // If this is the first execute, send row description
         if (!portal->result_set) {
@@ -702,14 +1255,16 @@ core::Status EngineIPCSessionHandler::onCommit(uint32_t session_id,
     
     // Execute COMMIT in engine
     std::vector<uint8_t> commit_bytecode = {static_cast<uint8_t>(sblr::Opcode::COMMIT)};
+    ConnectionContextGuard ctx_guard(session->conn_ctx.get());
     auto result = session->executor->execute(commit_bytecode);
-    
-    session->in_transaction = false;
-    session->autocommit = true;
     
     if (!result.success()) {
         return sendError(session_id, "XX000", result.error());
     }
+
+    syncSessionTransactionState(session->conn_ctx.get(),
+                                session->in_transaction,
+                                session->autocommit);
     
     return sendTxnComplete(session_id);
 }
@@ -731,14 +1286,16 @@ core::Status EngineIPCSessionHandler::onRollback(uint32_t session_id,
     
     // Execute ROLLBACK in engine
     std::vector<uint8_t> rollback_bytecode = {static_cast<uint8_t>(sblr::Opcode::ROLLBACK)};
+    ConnectionContextGuard ctx_guard(session->conn_ctx.get());
     auto result = session->executor->execute(rollback_bytecode);
-    
-    session->in_transaction = false;
-    session->autocommit = true;
     
     if (!result.success()) {
         return sendError(session_id, "XX000", result.error());
     }
+
+    syncSessionTransactionState(session->conn_ctx.get(),
+                                session->in_transaction,
+                                session->autocommit);
     
     return sendTxnComplete(session_id);
 }
@@ -923,101 +1480,194 @@ core::Status EngineIPCSessionHandler::onUnsubscribe(uint32_t session_id,
 
 core::Status EngineIPCSessionHandler::sendRowDescription(uint32_t session_id,
                                                         const std::vector<IPCFieldDesc>& fields) {
-    // This would queue the message for the session
-    // Implementation depends on how IPCServer routes messages
-    (void)session_id;
-    (void)fields;
-    return core::Status::OK;
+    IPCMessage msg(IPCMessageType::ROW_DESCRIPTION, session_id);
+    IPCRowDescriptionPayload payload{};
+    payload.num_fields = static_cast<uint16_t>(fields.size());
+    msg.payload.resize(sizeof(payload) + fields.size() * sizeof(IPCFieldDesc));
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    if (!fields.empty()) {
+        std::memcpy(msg.payload.data() + sizeof(payload),
+                    fields.data(),
+                    fields.size() * sizeof(IPCFieldDesc));
+    }
+    return enqueueOutboundMessage(session_id, std::move(msg));
 }
 
 core::Status EngineIPCSessionHandler::sendDataRow(uint32_t session_id,
                                                  const std::vector<std::optional<std::string>>& values) {
-    (void)session_id;
-    (void)values;
-    return core::Status::OK;
+    IPCMessage msg(IPCMessageType::DATA_ROW, session_id);
+    IPCDataRowPayload payload{};
+    payload.num_fields = static_cast<uint16_t>(values.size());
+
+    size_t payload_size = sizeof(payload);
+    for (const auto& value : values) {
+        payload_size += sizeof(int32_t);
+        if (value.has_value()) {
+            payload_size += value->size();
+        }
+    }
+
+    msg.payload.resize(payload_size);
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    size_t offset = sizeof(payload);
+    for (const auto& value : values) {
+        int32_t len = value.has_value() ? static_cast<int32_t>(value->size()) : -1;
+        std::memcpy(msg.payload.data() + offset, &len, sizeof(len));
+        offset += sizeof(len);
+        if (value.has_value() && !value->empty()) {
+            std::memcpy(msg.payload.data() + offset, value->data(), value->size());
+            offset += value->size();
+        }
+    }
+    return enqueueOutboundMessage(session_id, std::move(msg));
 }
 
 core::Status EngineIPCSessionHandler::sendCommandComplete(uint32_t session_id,
                                                          const std::string& tag,
                                                          uint64_t rows_affected) {
-    (void)session_id;
-    (void)tag;
-    (void)rows_affected;
-    return core::Status::OK;
+    IPCMessage msg(IPCMessageType::COMMAND_COMPLETE, session_id);
+    IPCCommandCompletePayload payload{};
+    std::strncpy(payload.tag, tag.c_str(), sizeof(payload.tag) - 1);
+    payload.tag[sizeof(payload.tag) - 1] = '\0';
+    payload.rows_affected = rows_affected;
+    payload.last_insert_id = 0;
+    msg.payload.resize(sizeof(payload));
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    return enqueueOutboundMessage(session_id, std::move(msg));
 }
 
 core::Status EngineIPCSessionHandler::sendError(uint32_t session_id,
                                                const char* sqlstate,
                                                const std::string& message) {
-    (void)session_id;
-    (void)sqlstate;
-    (void)message;
-    return core::Status::OK;
+    IPCMessage msg(IPCMessageType::ERROR_RESPONSE, session_id);
+    IPCErrorPayload payload{};
+    std::strncpy(payload.sqlstate, sqlstate != nullptr ? sqlstate : "XX000",
+                 sizeof(payload.sqlstate) - 1);
+    payload.sqlstate[sizeof(payload.sqlstate) - 1] = '\0';
+    std::strncpy(payload.message, message.c_str(), sizeof(payload.message) - 1);
+    payload.message[sizeof(payload.message) - 1] = '\0';
+    msg.payload.resize(sizeof(payload));
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    return enqueueOutboundMessage(session_id, std::move(msg));
 }
 
 core::Status EngineIPCSessionHandler::sendNotice(uint32_t session_id,
                                                 const std::string& message) {
-    (void)session_id;
-    (void)message;
-    return core::Status::OK;
+    IPCMessage msg(IPCMessageType::NOTICE, session_id);
+    IPCErrorPayload payload{};
+    std::strncpy(payload.sqlstate, "00000", sizeof(payload.sqlstate) - 1);
+    std::strncpy(payload.message, message.c_str(), sizeof(payload.message) - 1);
+    msg.payload.resize(sizeof(payload));
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    return enqueueOutboundMessage(session_id, std::move(msg));
 }
 
 core::Status EngineIPCSessionHandler::sendReady(uint32_t session_id,
                                                uint32_t server_features) {
-    (void)session_id;
-    (void)server_features;
-    return core::Status::OK;
+    IPCMessage msg(IPCMessageType::READY, session_id);
+    IPCReadyPayload payload{};
+    payload.session_id = session_id;
+    payload.server_features = server_features;
+    std::strncpy(payload.server_version, "ScratchBird IPC/1.1",
+                 sizeof(payload.server_version) - 1);
+    msg.payload.resize(sizeof(payload));
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    return enqueueOutboundMessage(session_id, std::move(msg));
 }
 
 core::Status EngineIPCSessionHandler::sendParseComplete(uint32_t session_id) {
-    (void)session_id;
-    return core::Status::OK;
+    IPCMessage msg(IPCMessageType::PARSE_COMPLETE, session_id);
+    return enqueueOutboundMessage(session_id, std::move(msg));
 }
 
 core::Status EngineIPCSessionHandler::sendBindComplete(uint32_t session_id) {
-    (void)session_id;
-    return core::Status::OK;
+    IPCMessage msg(IPCMessageType::BIND_COMPLETE, session_id);
+    return enqueueOutboundMessage(session_id, std::move(msg));
 }
 
 core::Status EngineIPCSessionHandler::sendCloseComplete(uint32_t session_id) {
-    (void)session_id;
-    return core::Status::OK;
+    IPCMessage msg(IPCMessageType::CLOSE_COMPLETE, session_id);
+    return enqueueOutboundMessage(session_id, std::move(msg));
 }
 
 core::Status EngineIPCSessionHandler::sendCopyInRequest(uint32_t session_id) {
-    (void)session_id;
-    return core::Status::OK;
+    IPCMessage msg(IPCMessageType::COPY_IN_REQUEST, session_id);
+    IPCCopyInRequestPayload payload{};
+    payload.format = 0;
+    payload.num_columns = 0;
+    msg.payload.resize(sizeof(payload));
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    return enqueueOutboundMessage(session_id, std::move(msg));
 }
 
 core::Status EngineIPCSessionHandler::sendCopyOutResponse(uint32_t session_id) {
-    (void)session_id;
-    return core::Status::OK;
+    IPCMessage msg(IPCMessageType::COPY_OUT_RESPONSE, session_id);
+    IPCCopyOutResponsePayload payload{};
+    payload.format = 0;
+    payload.num_columns = 0;
+    msg.payload.resize(sizeof(payload));
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    return enqueueOutboundMessage(session_id, std::move(msg));
 }
 
 core::Status EngineIPCSessionHandler::sendCopyData(uint32_t session_id,
                                                   const uint8_t* data, size_t len) {
-    (void)session_id;
-    (void)data;
-    (void)len;
-    return core::Status::OK;
+    IPCMessage msg(IPCMessageType::COPY_DATA, session_id);
+    IPCCopyDataPayload payload{};
+    payload.chunk_id = 0;
+    payload.length = static_cast<uint32_t>(len);
+    msg.payload.resize(sizeof(payload) + len);
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    if (len > 0 && data != nullptr) {
+        std::memcpy(msg.payload.data() + sizeof(payload), data, len);
+    }
+    return enqueueOutboundMessage(session_id, std::move(msg));
 }
 
 core::Status EngineIPCSessionHandler::sendCopyComplete(uint32_t session_id) {
-    (void)session_id;
-    return core::Status::OK;
+    IPCMessage msg(IPCMessageType::COPY_COMPLETE, session_id);
+    return enqueueOutboundMessage(session_id, std::move(msg));
 }
 
 core::Status EngineIPCSessionHandler::sendTxnComplete(uint32_t session_id) {
-    (void)session_id;
-    return core::Status::OK;
+    IPCMessage msg(IPCMessageType::TXN_COMPLETE, session_id);
+    return enqueueOutboundMessage(session_id, std::move(msg));
 }
 
 core::Status EngineIPCSessionHandler::sendNotification(uint32_t session_id,
                                                       const std::string& channel,
                                                       const std::string& payload) {
-    (void)session_id;
-    (void)channel;
-    (void)payload;
+    IPCMessage msg(IPCMessageType::NOTIFY_DELIVER, session_id);
+    IPCNotifyPayload notify{};
+    notify.channel_id = 0;
+    std::strncpy(notify.channel, channel.c_str(), sizeof(notify.channel) - 1);
+    notify.channel[sizeof(notify.channel) - 1] = '\0';
+    std::strncpy(notify.payload, payload.c_str(), sizeof(notify.payload) - 1);
+    notify.payload[sizeof(notify.payload) - 1] = '\0';
+    notify.timestamp = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+    msg.payload.resize(sizeof(notify));
+    std::memcpy(msg.payload.data(), &notify, sizeof(notify));
+    return enqueueOutboundMessage(session_id, std::move(msg));
+}
+
+core::Status EngineIPCSessionHandler::drainOutboundMessages(uint32_t session_id,
+                                                            std::vector<IPCMessage>& messages,
+                                                            core::ErrorContext* ctx) {
+    EngineSessionState* session = getSession(session_id);
+    if (!session) {
+        if (ctx) {
+            ctx->set(core::Status::NOT_FOUND,
+                    "Session not found", __FILE__, __LINE__, __func__);
+        }
+        return core::Status::NOT_FOUND;
+    }
+
+    std::lock_guard<std::mutex> lock(session->outbound_mutex);
+    while (!session->outbound_messages.empty()) {
+        messages.push_back(std::move(session->outbound_messages.front()));
+        session->outbound_messages.pop_front();
+    }
     return core::Status::OK;
 }
 
@@ -1067,6 +1717,7 @@ core::Status EngineIPCSessionHandler::processCopyDataStream(EngineSessionState* 
                         
                         if (!bytecode.empty()) {
                             // Execute the bytecode
+                            ConnectionContextGuard ctx_guard(session->conn_ctx.get());
                             auto result = session->executor->execute(bytecode);
                             if (!result.success()) {
                                 if (ctx) {
@@ -1096,6 +1747,7 @@ core::Status EngineIPCSessionHandler::processCopyDataStream(EngineSessionState* 
             batch);
         
         if (!bytecode.empty()) {
+            ConnectionContextGuard ctx_guard(session->conn_ctx.get());
             auto result = session->executor->execute(bytecode);
             if (!result.success()) {
                 if (ctx) {

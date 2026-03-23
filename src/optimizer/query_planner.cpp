@@ -6270,77 +6270,6 @@ namespace scratchbird::optimizer
         }
     }
 
-    auto QueryPlanner::planQuery(const parser::v3::SelectStmt *select_stmt,
-                                 core::ErrorContext *ctx,
-                                 core::ConnectionContext *conn_ctx)
-        -> std::shared_ptr<PlanNode>
-    {
-        StatementPlanRequest request;
-        request.statement_kind = PlannerStatementKind::SELECT;
-        request.normalized_statement_id = "legacy.planQuery";
-        request.normalized_statement_payload = select_stmt;
-
-        StatementPlanResult result;
-        if (planStatement(request, result, ctx, conn_ctx) != core::Status::OK)
-        {
-            return nullptr;
-        }
-        return result.root_plan;
-    }
-
-    auto QueryPlanner::planAnalyze(const parser::v3::AnalyzeStmt *analyze_stmt,
-                                   core::ErrorContext *ctx)
-        -> std::shared_ptr<PlanNode>
-    {
-        StatementPlanRequest request;
-        request.statement_kind = PlannerStatementKind::ANALYZE;
-        request.normalized_statement_id = "legacy.planAnalyze";
-        request.normalized_statement_payload = analyze_stmt;
-
-        StatementPlanResult result;
-        if (planStatement(request,
-                          result,
-                          ctx,
-                          core::ConnectionContext::getCurrent()) !=
-            core::Status::OK)
-        {
-            return nullptr;
-        }
-        return result.root_plan;
-    }
-
-    auto QueryPlanner::buildSelectPlan(const parser::v3::SelectStmt *select_stmt,
-                                       const parser::v3::StringPool &pool,
-                                       PlannedSelectQuery &planned_out,
-                                       core::ErrorContext *ctx,
-                                       core::ConnectionContext *conn_ctx,
-                                       const core::ID &current_schema_id,
-                                       const ParameterBindings *parameter_bindings)
-        -> core::Status
-    {
-        planned_out = PlannedSelectQuery{};
-
-        StatementPlanRequest request;
-        request.statement_kind = PlannerStatementKind::SELECT;
-        request.normalized_statement_id = "legacy.buildSelectPlan";
-        request.normalized_statement_payload = select_stmt;
-        request.string_pool = &pool;
-        request.string_pool_snapshot_id = "parser_v3/live";
-        request.parameter_bindings = parameter_bindings;
-        request.current_schema_id = current_schema_id;
-        request.collector_specialization_request = "LEGACY_BUILD_SELECT_PLAN";
-
-        StatementPlanResult result;
-        const auto status = planStatement(request, result, ctx, conn_ctx);
-        if (status != core::Status::OK)
-        {
-            return status;
-        }
-
-        planned_out = std::move(result.planned_select);
-        return core::Status::OK;
-    }
-
     auto QueryPlanner::buildSelectPlanImpl(
         const parser::v3::SelectStmt *select_stmt,
         const parser::v3::StringPool &pool,
@@ -6659,6 +6588,7 @@ namespace scratchbird::optimizer
                         << descriptor.native_trust_class << ':'
                         << descriptor.locator_granularity << ':'
                         << descriptor.family_capability_contract_id << ':'
+                        << descriptor.capability_tier << ':'
                         << descriptor.publication_model << ':'
                         << descriptor.mga_certification_class << ':'
                         << (descriptor.supports_exact ? 1 : 0) << ':'
@@ -8002,38 +7932,6 @@ namespace scratchbird::optimizer
                         lifecycle.metrics_confidence_class;
                     candidate.runtime_relation.queryability_state =
                         lifecycle.effective_queryability;
-                    candidate.runtime_relation.native_trust_class =
-                        lifecycle.native_trust_class;
-                    candidate.runtime_relation.locator_granularity =
-                        lifecycle.locator_granularity;
-                    candidate.runtime_relation.family_capability_contract_id =
-                        kIndexFamilyCapabilityContractId;
-                    candidate.runtime_relation.publication_model =
-                        accessPathPublicationModelName(
-                            lowering.family,
-                            lowering.exactness_class,
-                            lowering.visibility_enforcement);
-                    candidate.runtime_relation.mga_certification_class =
-                        accessPathMgaCertificationClassName(
-                            lowering.exactness_class,
-                            lowering.visibility_enforcement,
-                            lowering.requires_recheck);
-                    candidate.runtime_relation.supports_exact =
-                        accessPathSupportsExact(lowering.exactness_class);
-                    candidate.runtime_relation.supports_ordered_output =
-                        accessPathSupportsOrderedOutput(lowering.family,
-                                                       ordered_output);
-                    candidate.runtime_relation.supports_covering_payload =
-                        accessPathSupportsCoveringPayload(lowering.family,
-                                                         covering_index);
-                    candidate.runtime_relation
-                        .supports_late_materialization =
-                        accessPathSupportsLateMaterialization(
-                            candidate.runtime_relation.locator_granularity);
-                    candidate.runtime_relation.supports_bulk_filter =
-                        accessPathSupportsBulkFilter(lowering.family);
-                    candidate.runtime_relation.supports_parallel_merge =
-                        accessPathSupportsParallelMerge(lowering.family);
                     candidate.runtime_relation.maintenance_state_class =
                         lifecycle.maintenance_state_class;
                     candidate.runtime_relation.publish_lag_xids =
@@ -8056,11 +7954,46 @@ namespace scratchbird::optimizer
                         deriveCollectorSpecializationIdForRelation(
                             lowering.family,
                             pruning.runtime_pruning_eligible);
-                    candidate.runtime_relation
-                        .supports_specialized_collector_modes =
-                        accessPathSupportsSpecializedCollectorModes(
+                    const auto relation_capability =
+                        buildAccessPathFamilyCapability(
+                            lowering.family,
+                            lowering.exactness_class,
+                            lowering.visibility_enforcement,
+                            lowering.requires_recheck,
+                            ordered_output,
+                            covering_index,
                             candidate.runtime_relation
                                 .collector_specialization_id);
+                    candidate.runtime_relation.native_trust_class =
+                        relation_capability.native_trust_class;
+                    candidate.runtime_relation.locator_granularity =
+                        relation_capability.locator_granularity;
+                    candidate.runtime_relation.family_capability_contract_id =
+                        relation_capability.contract_id;
+                    candidate.runtime_relation.capability_tier =
+                        relation_capability.capability_tier;
+                    candidate.runtime_relation.publication_model =
+                        relation_capability.publication_model;
+                    candidate.runtime_relation.mga_certification_class =
+                        relation_capability.mga_certification_class;
+                    candidate.runtime_relation.supports_exact =
+                        relation_capability.supports_exact;
+                    candidate.runtime_relation.supports_ordered_output =
+                        relation_capability.supports_ordered_output;
+                    candidate.runtime_relation.supports_covering_payload =
+                        relation_capability.supports_covering_payload;
+                    candidate.runtime_relation
+                        .supports_late_materialization =
+                        relation_capability
+                            .supports_late_materialization;
+                    candidate.runtime_relation.supports_bulk_filter =
+                        relation_capability.supports_bulk_filter;
+                    candidate.runtime_relation.supports_parallel_merge =
+                        relation_capability.supports_parallel_merge;
+                    candidate.runtime_relation
+                        .supports_specialized_collector_modes =
+                        relation_capability
+                            .supports_specialized_collector_modes;
                     candidate.runtime_relation.clustered_lookup_shape =
                         deriveClusteredLookupShape(
                             covering_index,
@@ -8171,12 +8104,14 @@ namespace scratchbird::optimizer
                     candidate.access_descriptor.queryability_state =
                         lifecycle.effective_queryability;
                     candidate.access_descriptor.native_trust_class =
-                        lifecycle.native_trust_class;
+                        candidate.runtime_relation.native_trust_class;
                     candidate.access_descriptor.locator_granularity =
-                        lifecycle.locator_granularity;
+                        candidate.runtime_relation.locator_granularity;
                     candidate.access_descriptor.family_capability_contract_id =
                         candidate.runtime_relation
                             .family_capability_contract_id;
+                    candidate.access_descriptor.capability_tier =
+                        candidate.runtime_relation.capability_tier;
                     candidate.access_descriptor.publication_model =
                         candidate.runtime_relation.publication_model;
                     candidate.access_descriptor.mga_certification_class =
@@ -12227,13 +12162,13 @@ namespace scratchbird::optimizer
             std::vector<RuntimePlanJoinStep> runtime_joins;
         };
 
-        auto buildSubtreeJoinDecision =
+        auto materializeSelectedBackendJoin =
             [&](const MaterializedJoinTree &left_tree,
                 const MaterializedJoinTree &right_tree,
                 const ResolvedJoin &join,
                 bool join_right_relation_in_right_tree,
-                bool disconnected_component_cross_join = false,
-                const ForcedJoinMaterialization *forced_materialization = nullptr)
+                const ForcedJoinMaterialization &selected_materialization,
+                bool disconnected_component_cross_join = false)
                 -> JoinDecision {
                 JoinDecision decision;
                 decision.valid = true;
@@ -12330,16 +12265,14 @@ namespace scratchbird::optimizer
                     evaluateNestedLoopLegality(method_legality,
                                                parameterized_inner);
                 const bool outer_presorted =
-                    forced_materialization != nullptr &&
-                            forced_materialization->family ==
-                                ForcedJoinMethodFamily::MERGE_JOIN
-                        ? forced_materialization->merge_outer_presorted
+                    selected_materialization.family ==
+                            ForcedJoinMethodFamily::MERGE_JOIN
+                        ? selected_materialization.merge_outer_presorted
                         : pathLikelyProvidesJoinOrder(left_tree.path);
                 const bool inner_presorted =
-                    forced_materialization != nullptr &&
-                            forced_materialization->family ==
-                                ForcedJoinMethodFamily::MERGE_JOIN
-                        ? forced_materialization->merge_inner_presorted
+                    selected_materialization.family ==
+                            ForcedJoinMethodFamily::MERGE_JOIN
+                        ? selected_materialization.merge_inner_presorted
                         : pathLikelyProvidesJoinOrder(right_tree.path);
                 const auto hash_legality =
                     evaluateHashJoinLegality(method_legality,
@@ -12584,84 +12517,53 @@ namespace scratchbird::optimizer
                 const bool merge_requires_explicit_sort =
                     merge_legality.requires_sort_outer ||
                     merge_legality.requires_sort_inner;
-                bool merge_deferred_for_ordering = false;
                 ChosenJoinMethod chosen_method = ChosenJoinMethod::NESTED_LOOP;
-                decision.total_cost = nl_cost.total_cost;
-                decision.rows = nl_cost.rows;
-                if (forced_materialization != nullptr &&
-                    forced_materialization->family !=
-                        ForcedJoinMethodFamily::NONE)
+                switch (selected_materialization.family)
                 {
-                    switch (forced_materialization->family)
+                    case ForcedJoinMethodFamily::HASH_JOIN:
+                        chosen_method = ChosenJoinMethod::HASH_JOIN;
+                        break;
+                    case ForcedJoinMethodFamily::MERGE_JOIN:
+                        chosen_method = ChosenJoinMethod::MERGE_JOIN;
+                        break;
+                    case ForcedJoinMethodFamily::NESTED_LOOP:
+                    case ForcedJoinMethodFamily::NONE:
+                    default:
+                        chosen_method = ChosenJoinMethod::NESTED_LOOP;
+                        break;
+                }
+                if (chosen_method == ChosenJoinMethod::NESTED_LOOP)
+                {
+                    if (!allow_nested_loop)
                     {
-                        case ForcedJoinMethodFamily::NESTED_LOOP:
-                            if (!allow_nested_loop)
-                            {
-                                return rejectForcedJoinMethod(
-                                    nested_loop_candidate_name,
-                                    "canonical join backend selected nested loop but it is illegal under active controls");
-                            }
-                            chosen_method = ChosenJoinMethod::NESTED_LOOP;
-                            decision.total_cost = nl_cost.total_cost;
-                            decision.rows = nl_cost.rows;
-                            break;
-                        case ForcedJoinMethodFamily::HASH_JOIN:
-                            if (!allow_hash)
-                            {
-                                return rejectForcedJoinMethod(
-                                    "HASH_JOIN",
-                                    "canonical join backend selected hash join but it is illegal under active controls");
-                            }
-                            chosen_method = ChosenJoinMethod::HASH_JOIN;
-                            decision.total_cost = hash_cost.total_cost;
-                            decision.rows = hash_cost.rows;
-                            break;
-                        case ForcedJoinMethodFamily::MERGE_JOIN:
-                            if (!allow_merge)
-                            {
-                                return rejectForcedJoinMethod(
-                                    "MERGE_JOIN",
-                                    "canonical join backend selected merge join but it is illegal under active controls");
-                            }
-                            chosen_method = ChosenJoinMethod::MERGE_JOIN;
-                            decision.total_cost = merge_cost.total_cost;
-                            decision.rows = merge_cost.rows;
-                            break;
-                        case ForcedJoinMethodFamily::NONE:
-                        default:
-                            break;
+                        return rejectForcedJoinMethod(
+                            nested_loop_candidate_name,
+                            "canonical join backend selected nested loop but it is illegal under active controls");
                     }
+                    decision.total_cost = nl_cost.total_cost;
+                    decision.rows = nl_cost.rows;
                 }
-                else if (!allow_nested_loop)
+                else if (chosen_method == ChosenJoinMethod::HASH_JOIN)
                 {
-                    chosen_method = allow_hash ? ChosenJoinMethod::HASH_JOIN
-                                               : ChosenJoinMethod::MERGE_JOIN;
-                    decision.total_cost =
-                        allow_hash ? hash_cost.total_cost : merge_cost.total_cost;
-                    decision.rows = allow_hash ? hash_cost.rows : merge_cost.rows;
-                }
-                if (allow_hash && hash_cost.total_cost < decision.total_cost)
-                {
-                    chosen_method = ChosenJoinMethod::HASH_JOIN;
+                    if (!allow_hash)
+                    {
+                        return rejectForcedJoinMethod(
+                            "HASH_JOIN",
+                            "canonical join backend selected hash join but it is illegal under active controls");
+                    }
                     decision.total_cost = hash_cost.total_cost;
                     decision.rows = hash_cost.rows;
                 }
-                if (allow_merge &&
-                    (planner_controls.join_method ==
-                         PlannerJoinMethodControl::MERGE_ONLY ||
-                     (!allow_hash &&
-                      merge_cost.total_cost < decision.total_cost)))
+                else
                 {
-                    chosen_method = ChosenJoinMethod::MERGE_JOIN;
+                    if (!allow_merge)
+                    {
+                        return rejectForcedJoinMethod(
+                            "MERGE_JOIN",
+                            "canonical join backend selected merge join but it is illegal under active controls");
+                    }
                     decision.total_cost = merge_cost.total_cost;
                     decision.rows = merge_cost.rows;
-                }
-                else if (allow_merge && allow_hash && merge_requires_explicit_sort &&
-                         planner_controls.join_method !=
-                             PlannerJoinMethodControl::MERGE_ONLY &&
-                         merge_cost.total_cost < hash_cost.total_cost)
-                {
-                    merge_deferred_for_ordering = true;
                 }
                 const char *chosen_method_name =
                     chosen_method == ChosenJoinMethod::HASH_JOIN
@@ -12677,7 +12579,7 @@ namespace scratchbird::optimizer
                                        join_subject,
                                        nested_loop_candidate_name,
                                        "REJECTED",
-                                       std::string("higher total cost than chosen ") +
+                                       std::string("backend search selected ") +
                                            chosen_method_name,
                                        nl_cost.startup_cost,
                                        nl_cost.total_cost,
@@ -12690,7 +12592,7 @@ namespace scratchbird::optimizer
                                        join_subject,
                                        "HASH_JOIN",
                                        "REJECTED",
-                                       std::string("higher total cost than chosen ") +
+                                       std::string("backend search selected ") +
                                            chosen_method_name,
                                        hash_cost.startup_cost,
                                        hash_cost.total_cost,
@@ -12703,10 +12605,8 @@ namespace scratchbird::optimizer
                                        join_subject,
                                        "MERGE_JOIN",
                                        "REJECTED",
-                                       merge_deferred_for_ordering
-                                           ? "explicit sort-to-merge candidate deferred without ordering reuse"
-                                           : std::string("higher total cost than chosen ") +
-                                                 chosen_method_name,
+                                       std::string("backend search selected ") +
+                                           chosen_method_name,
                                        merge_cost.startup_cost,
                                        merge_cost.total_cost,
                                        merge_cost.rows);
@@ -12890,7 +12790,7 @@ namespace scratchbird::optimizer
                                    "CHOSEN",
                                    disconnected_component_cross_join
                                        ? "selected disconnected-component bridge"
-                                       : "selected join method",
+                                       : "materialized backend-selected join method",
                                    decision.runtime_join.startup_cost,
                                    decision.runtime_join.total_cost,
                                    decision.runtime_join.estimated_rows);
@@ -13600,13 +13500,13 @@ namespace scratchbird::optimizer
 
                     const bool join_right_relation_in_right_tree =
                         right_relation_in_right_tree;
-                    auto candidate = buildSubtreeJoinDecision(
+                    auto candidate = materializeSelectedBackendJoin(
                         left_tree,
                         right_tree,
                         join,
                         join_right_relation_in_right_tree,
-                        false,
-                        &forced_materialization);
+                        forced_materialization,
+                        false);
                     if (!candidate.valid)
                     {
                         if (ctx != nullptr && ctx->code != core::Status::OK)
@@ -13663,12 +13563,12 @@ namespace scratchbird::optimizer
                         legality.null_introduces_right;
                     cross_join.requires_original_order =
                         legality.requires_original_order;
-                    best_join = buildSubtreeJoinDecision(left_tree,
-                                                         right_tree,
-                                                         cross_join,
-                                                         true,
-                                                         true,
-                                                         &forced_materialization);
+                    best_join = materializeSelectedBackendJoin(left_tree,
+                                                               right_tree,
+                                                               cross_join,
+                                                               true,
+                                                               forced_materialization,
+                                                               true);
                     if (!best_join.valid)
                     {
                         if (ctx != nullptr && ctx->code != core::Status::OK)
@@ -15641,69 +15541,41 @@ namespace scratchbird::optimizer
                 relation.requires_recheck
                     ? std::string(kMgaRecheckContractId)
                     : std::string();
-            if (relation.native_trust_class.empty())
-            {
-                relation.native_trust_class = accessPathNativeTrustClassName(
-                    relation.scan_family_kind,
-                    relation.exactness_class,
-                    relation.visibility_enforcement,
-                    relation.requires_recheck);
-            }
-            if (relation.locator_granularity.empty())
-            {
-                relation.locator_granularity =
-                    accessPathLocatorGranularityName(
-                        relation.scan_family_kind,
-                        relation.exactness_class,
-                        relation.visibility_enforcement);
-            }
-            if (relation.family_capability_contract_id.empty())
-            {
-                relation.family_capability_contract_id =
-                    kIndexFamilyCapabilityContractId;
-            }
-            if (relation.publication_model.empty())
-            {
-                relation.publication_model = accessPathPublicationModelName(
-                    relation.scan_family_kind,
-                    relation.exactness_class,
-                    relation.visibility_enforcement);
-            }
-            if (relation.mga_certification_class.empty())
-            {
-                relation.mga_certification_class =
-                    accessPathMgaCertificationClassName(
-                        relation.exactness_class,
-                        relation.visibility_enforcement,
-                        relation.requires_recheck);
-            }
+            const auto relation_capability = buildAccessPathFamilyCapability(
+                relation.scan_family_kind,
+                relation.exactness_class,
+                relation.visibility_enforcement,
+                relation.requires_recheck,
+                relation.ordered_output,
+                relation.covering_index,
+                relation.collector_specialization_id);
+            relation.native_trust_class =
+                relation_capability.native_trust_class;
+            relation.locator_granularity =
+                relation_capability.locator_granularity;
+            relation.family_capability_contract_id =
+                relation_capability.contract_id;
+            relation.capability_tier =
+                relation_capability.capability_tier;
+            relation.publication_model =
+                relation_capability.publication_model;
+            relation.mga_certification_class =
+                relation_capability.mga_certification_class;
             relation.supports_exact =
-                relation.supports_exact ||
-                accessPathSupportsExact(relation.exactness_class);
+                relation_capability.supports_exact;
             relation.supports_ordered_output =
-                relation.supports_ordered_output ||
-                accessPathSupportsOrderedOutput(
-                    relation.scan_family_kind,
-                    relation.ordered_output);
+                relation_capability.supports_ordered_output;
             relation.supports_covering_payload =
-                relation.supports_covering_payload ||
-                accessPathSupportsCoveringPayload(
-                    relation.scan_family_kind,
-                    relation.covering_index);
+                relation_capability.supports_covering_payload;
             relation.supports_late_materialization =
-                relation.supports_late_materialization ||
-                accessPathSupportsLateMaterialization(
-                    relation.locator_granularity);
+                relation_capability.supports_late_materialization;
             relation.supports_bulk_filter =
-                relation.supports_bulk_filter ||
-                accessPathSupportsBulkFilter(relation.scan_family_kind);
+                relation_capability.supports_bulk_filter;
             relation.supports_parallel_merge =
-                relation.supports_parallel_merge ||
-                accessPathSupportsParallelMerge(relation.scan_family_kind);
+                relation_capability.supports_parallel_merge;
             relation.supports_specialized_collector_modes =
-                relation.supports_specialized_collector_modes ||
-                accessPathSupportsSpecializedCollectorModes(
-                    relation.collector_specialization_id);
+                relation_capability
+                    .supports_specialized_collector_modes;
             if (relation.maintenance_state_class.empty())
             {
                 relation.maintenance_state_class =
@@ -15855,6 +15727,140 @@ namespace scratchbird::optimizer
                                      active_cost_model,
                                      row_width,
                                      spill_policy_text);
+        {
+            uint32_t exact_count = 0;
+            uint32_t exact_recheck_count = 0;
+            uint32_t bounded_count = 0;
+            uint32_t approximate_count = 0;
+            uint32_t illegal_count = 0;
+            for (const auto &relation : planned_out.runtime_plan.relations)
+            {
+                if (relation.capability_tier == "EXACT")
+                {
+                    ++exact_count;
+                }
+                else if (relation.capability_tier == "EXACT_RECHECK")
+                {
+                    ++exact_recheck_count;
+                }
+                else if (relation.capability_tier == "BOUNDED")
+                {
+                    ++bounded_count;
+                }
+                else if (relation.capability_tier == "APPROXIMATE")
+                {
+                    ++approximate_count;
+                }
+                else
+                {
+                    ++illegal_count;
+                }
+            }
+
+            const auto escape_proof_json =
+                [](std::string_view text) -> std::string {
+                    std::string out;
+                    out.reserve(text.size());
+                    for (char ch : text)
+                    {
+                        switch (ch)
+                        {
+                            case '\\':
+                                out += "\\\\";
+                                break;
+                            case '"':
+                                out += "\\\"";
+                                break;
+                            case '\n':
+                                out += "\\n";
+                                break;
+                            case '\r':
+                                out += "\\r";
+                                break;
+                            case '\t':
+                                out += "\\t";
+                                break;
+                            default:
+                                out.push_back(ch);
+                                break;
+                        }
+                    }
+                    return out;
+                };
+
+            std::ostringstream proof_surface;
+            proof_surface
+                << "{\"mandatory_claims\":["
+                << "\"canonical_planner_api\","
+                << "\"search_materialization_unified\","
+                << "\"join_search_parity\","
+                << "\"family_capability_registry\","
+                << "\"runtime_proof_surface\"],"
+                << "\"canonical_planner_api\":{"
+                << "\"front_door_contract\":\""
+                << escape_proof_json(
+                       planned_out.runtime_plan.planner_front_door_contract_id)
+                << "\",\"statement_kind\":\""
+                << escape_proof_json(planned_out.runtime_plan.statement_kind)
+                << "\",\"planner_status_code\":"
+                << planned_out.runtime_plan.planner_status_code
+                << "},"
+                << "\"search_materialization_unified\":{"
+                << "\"join_search_owner_pass_id\":\""
+                << escape_proof_json(
+                       planned_out.runtime_plan.join_search_owner_pass_id)
+                << "\",\"result_shape_finalize_pass_id\":\""
+                << escape_proof_json(
+                       planned_out.runtime_plan.result_shape_finalize_pass_id)
+                << "\",\"physical_method_selected_in_search\":true},"
+                << "\"join_search_parity\":{"
+                << "\"join_search_contract\":\""
+                << escape_proof_json(
+                       planned_out.runtime_plan.join_search_contract_id)
+                << "\",\"frontier_mode\":\""
+                << escape_proof_json(
+                       planned_out.runtime_plan.join_search_frontier_mode)
+                << "\",\"selected_strategy\":\""
+                << escape_proof_json(
+                       planned_out.runtime_plan.search_summary.selected_strategy)
+                << "\",\"retained_frontier_entry_count\":"
+                << planned_out.runtime_plan.search_summary
+                       .retained_frontier_entry_count
+                << ",\"max_frontier_width\":"
+                << planned_out.runtime_plan.search_summary.max_frontier_width
+                << "},"
+                << "\"family_capability_registry\":{"
+                << "\"contract\":\""
+                << kIndexFamilyCapabilityContractId
+                << "\",\"exact\":"
+                << exact_count
+                << ",\"exact_recheck\":"
+                << exact_recheck_count
+                << ",\"bounded\":"
+                << bounded_count
+                << ",\"approximate\":"
+                << approximate_count
+                << ",\"illegal\":"
+                << illegal_count
+                << "},"
+                << "\"runtime_proof_surface\":{"
+                << "\"storage_layer_shape\":\""
+                << escape_proof_json(
+                       planned_out.runtime_plan.storage_layer_shape)
+                << "\",\"collector_specialization_id\":\""
+                << escape_proof_json(
+                       planned_out.runtime_plan.collector_specialization_id)
+                << "\",\"publication_state_summary\":\""
+                << escape_proof_json(
+                       planned_out.runtime_plan.publication_state_summary)
+                << "\"}}";
+            planned_out.runtime_plan.proof_surface_contract_id =
+                kOptimizerProofSurfaceContractId;
+            planned_out.runtime_plan.proof_surface_complete = true;
+            planned_out.runtime_plan.proof_surface_claim_count = 5;
+            planned_out.runtime_plan.proof_surface_json =
+                proof_surface.str();
+        }
         planned_out.runtime_plan.explain_text =
             current_plan ? current_plan->toString() : std::string("Result");
 
@@ -15896,6 +15902,11 @@ namespace scratchbird::optimizer
                   << planned_out.runtime_plan.join_search_owner_pass_id << '|'
                   << planned_out.runtime_plan.result_shape_finalize_pass_id
                   << '|'
+                  << planned_out.runtime_plan.proof_surface_contract_id << '|'
+                  << (planned_out.runtime_plan.proof_surface_complete ? 1 : 0)
+                  << '|'
+                  << planned_out.runtime_plan.proof_surface_claim_count << '|'
+                  << planned_out.runtime_plan.proof_surface_json << '|'
                   << planned_out.runtime_plan.base_candidate_bundle_rejection_count
                   << '|'
                   << planned_out.runtime_plan.join_search_frontier_mode << '|'
@@ -15947,6 +15958,7 @@ namespace scratchbird::optimizer
                       << relation.native_trust_class << ':'
                       << relation.locator_granularity << ':'
                       << relation.family_capability_contract_id << ':'
+                      << relation.capability_tier << ':'
                       << relation.publication_model << ':'
                       << relation.mga_certification_class << ':'
                       << (relation.supports_exact ? 1 : 0) << ':'

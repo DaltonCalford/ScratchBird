@@ -1,0 +1,63 @@
+{
+  "setup": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08006",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 08006\nUnable to complete network request to host \"127.0.0.1\".\n-Failed to establish a connection.\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql\n",
+    "stderr": "",
+    "elapsed_ms": 4,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_firebird/raw/ref_firebird.setup.f87228b1eab6.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_firebird/raw/ref_firebird.setup.f87228b1eab6.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08006",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.plan.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 08006\nUnable to complete network request to host \"127.0.0.1\".\n-Failed to establish a connection.\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.plan.sql\n",
+    "stderr": "",
+    "elapsed_ms": 4,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_firebird/raw/ref_firebird.plan.513e1c4e4d0b.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_firebird/raw/ref_firebird.plan.513e1c4e4d0b.stderr.txt",
+    "plan_lines": [
+      "PLAN|Statement failed, SQLSTATE = 08006",
+      "PLAN|Unable to complete network request to host \"127.0.0.1\".",
+      "PLAN|-Failed to establish a connection.",
+      "PLAN|After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.plan.sql"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08006",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.exec.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 08006\nUnable to complete network request to host \"127.0.0.1\".\n-Failed to establish a connection.\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.exec.sql\n",
+    "stderr": "",
+    "elapsed_ms": 4,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_firebird/raw/ref_firebird.exec.7995591ff044.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_firebird/raw/ref_firebird.exec.7995591ff044.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08006",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.teardown.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 08006\nUnable to complete network request to host \"127.0.0.1\".\n-Failed to establish a connection.\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.teardown.sql\n",
+    "stderr": "",
+    "elapsed_ms": 3,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_firebird/raw/ref_firebird.teardown.b7b4701a9d9f.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/ordered_limit_topk/ref_firebird/raw/ref_firebird.teardown.b7b4701a9d9f.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

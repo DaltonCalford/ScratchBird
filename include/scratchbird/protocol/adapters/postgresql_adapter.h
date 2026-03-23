@@ -301,6 +301,8 @@ protected:
 
     core::Status parseMessage(network::Connection* conn) override;
     core::Status processMessage(network::Connection* conn) override;
+    void onConnectionClosed(network::Connection* conn,
+                            network::CloseReason reason) override;
     core::Status sendGreeting(network::Connection* conn) override;
     core::Status processAuthentication(network::Connection* conn) override;
     core::Status sendAuthResult(network::Connection* conn,

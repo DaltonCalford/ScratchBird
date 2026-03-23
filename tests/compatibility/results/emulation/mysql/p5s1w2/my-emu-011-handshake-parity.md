@@ -1,4 +1,4 @@
-Last updated: 2026-03-18
+Last updated: 2026-03-22
 
 # MY-EMU-011 Handshake Parity
 
@@ -7,7 +7,7 @@ Last updated: 2026-03-18
 - Emulated endpoint: `127.0.0.1:13306`
 - Native capture: `unavailable`
 - Emulated capture: `ok`
-- Emulated server_version: `8.4.8`
+- Emulated server_version: `8.0.32-ScratchBird`
 - Native issue: `Native endpoint unavailable: [Errno 111] Connection refused`
 
 ## Comparison

@@ -1,0 +1,64 @@
+{
+  "setup": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08001",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 08001\nI/O error during \"open\" operation for file \"/firebird/data/ref_verify_firebird.fdb\"\n-Error while trying to open file\n-No such file or directory\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.setup.sql\n",
+    "stderr": "",
+    "elapsed_ms": 69,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/range_selectivity/ref_firebird/raw/ref_firebird.setup.ba6b25e404e2.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/range_selectivity/ref_firebird/raw/ref_firebird.setup.ba6b25e404e2.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08001",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.plan.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 08001\nI/O error during \"open\" operation for file \"/firebird/data/ref_verify_firebird.fdb\"\n-Error while trying to open file\n-No such file or directory\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.plan.sql\n",
+    "stderr": "",
+    "elapsed_ms": 73,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/range_selectivity/ref_firebird/raw/ref_firebird.plan.9150724bc140.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/range_selectivity/ref_firebird/raw/ref_firebird.plan.9150724bc140.stderr.txt",
+    "plan_lines": [
+      "PLAN|Statement failed, SQLSTATE = 08001",
+      "PLAN|I/O error during \"open\" operation for file \"/firebird/data/ref_verify_firebird.fdb\"",
+      "PLAN|-Error while trying to open file",
+      "PLAN|-No such file or directory",
+      "PLAN|After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.plan.sql"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08001",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.exec.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 08001\nI/O error during \"open\" operation for file \"/firebird/data/ref_verify_firebird.fdb\"\n-Error while trying to open file\n-No such file or directory\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.exec.sql\n",
+    "stderr": "",
+    "elapsed_ms": 78,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/range_selectivity/ref_firebird/raw/ref_firebird.exec.5ca16b02391c.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/range_selectivity/ref_firebird/raw/ref_firebird.exec.5ca16b02391c.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08001",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.teardown.sql",
+    "stdout": "\nStatement failed, SQLSTATE = 08001\nI/O error during \"open\" operation for file \"/firebird/data/ref_verify_firebird.fdb\"\n-Error while trying to open file\n-No such file or directory\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.teardown.sql\n",
+    "stderr": "",
+    "elapsed_ms": 72,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/range_selectivity/ref_firebird/raw/ref_firebird.teardown.0d260562863e.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134958/20260319_134959/range_selectivity/ref_firebird/raw/ref_firebird.teardown.0d260562863e.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

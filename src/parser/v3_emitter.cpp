@@ -1,5 +1,6 @@
 #include "scratchbird/parser/v3_emitter.h"
 
+#include "scratchbird/parser/v3_compiler.h"
 #include <algorithm>
 #include <charconv>
 #include <cerrno>
@@ -118,6 +119,28 @@ bool parseDoubleToken(std::string_view raw, double& out) {
         return false;
     }
     return true;
+}
+
+bool compilePsqlBodyToBytes(std::string_view body,
+                            scratchbird::sblr::v3::Value::Bytes& out,
+                            std::string& err) {
+    Parser parser(body);
+    auto parse_result = parser.parsePsqlBody();
+    if (!parse_result.success() || parse_result.statement() == nullptr) {
+        if (!parse_result.errors().empty()) {
+            err = parse_result.errors().front().message;
+        } else {
+            err = "parse failed";
+        }
+        return false;
+    }
+
+    V3Emitter emitter(parser.stringPool());
+    scratchbird::sblr::v3::Container container;
+    if (!emitter.emitStatementToContainer(parse_result.statement(), container, err)) {
+        return false;
+    }
+    return scratchbird::sblr::v3::encodeContainer(container, out, err);
 }
 
 uint64_t privilegeToCatalogMask(PrivilegeType privilege) {
@@ -842,6 +865,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitStatement(parser::v3::Statemen
         case parser::v3::ASTKind::AlterTypeStmt:
         case parser::v3::ASTKind::AlterPolicyStmt:
         case parser::v3::ASTKind::AlterSystemStmt:
+        case parser::v3::ASTKind::AlterUserStmt:
         case parser::v3::ASTKind::AlterJobStmt:
         case parser::v3::ASTKind::RenameObjectStmt:
         case parser::v3::ASTKind::MoveObjectStmt:
@@ -897,6 +921,9 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitStatement(parser::v3::Statemen
         case parser::v3::ASTKind::SweepDatabaseStmt:
         case parser::v3::ASTKind::ExecuteJobStmt:
         case parser::v3::ASTKind::CancelJobRunStmt:
+        case parser::v3::ASTKind::PrepareStatementStmt:
+        case parser::v3::ASTKind::ExecutePreparedStmt:
+        case parser::v3::ASTKind::DeallocatePreparedStmt:
         case parser::v3::ASTKind::AST_DOC_PATH_FILTER:
         case parser::v3::ASTKind::AST_TS_BUCKET_AGG:
         case parser::v3::ASTKind::AST_SEARCH_QUERY_DSL:
@@ -1193,6 +1220,9 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitUpdate(parser::v3::UpdateStmt*
     if (stmt->from) payload["from"] = toTableRef(stmt->from);
     payload["joins"] = toJoins(stmt->joins);
     if (stmt->where) payload["where"] = Value(makeInstr(emitExpression(stmt->where)));
+    if (stmt->ignore_errors) {
+        payload["ignore_errors"] = Value(true);
+    }
     if (stmt->consistency_level != parser::v3::StringPool::INVALID_ID) {
         payload["consistency"] = toIdent(stmt->consistency_level);
     }
@@ -1450,6 +1480,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             uint64_t flags = 0;
             if (s->if_not_exists) flags |= 0x0001;
             if (s->unlogged) flags |= 0x0002;
+            if (s->or_replace) flags |= 0x0004;
             payload["flags"] = Value(flags);
             payload["temp_type"] = Value(uint64_t(static_cast<uint8_t>(s->temp_type)));
             payload["on_commit"] = Value(uint64_t(static_cast<uint8_t>(s->on_commit)));
@@ -1764,7 +1795,14 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             payload["language"] = Value(std::string("SQL"));
             if (s->body != parser::v3::StringPool::INVALID_ID) {
                 std::string body(pool_.get(s->body));
+                scratchbird::sblr::v3::Value::Bytes body_bytecode;
+                std::string body_err;
+                if (!compilePsqlBodyToBytes(body, body_bytecode, body_err)) {
+                    fail("CREATE FUNCTION body compile failed: " + body_err);
+                    return {};
+                }
                 payload["body"] = Value(Value::Bytes(body.begin(), body.end()));
+                payload["body_bytecode"] = Value(std::move(body_bytecode));
             }
             payload["options"] = Value(Value::Object{
                 {"count", Value(uint64_t(0))},
@@ -1795,7 +1833,14 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             payload["language"] = Value(std::string("SQL"));
             if (s->body != parser::v3::StringPool::INVALID_ID) {
                 std::string body(pool_.get(s->body));
+                scratchbird::sblr::v3::Value::Bytes body_bytecode;
+                std::string body_err;
+                if (!compilePsqlBodyToBytes(body, body_bytecode, body_err)) {
+                    fail("CREATE PROCEDURE body compile failed: " + body_err);
+                    return {};
+                }
                 payload["body"] = Value(Value::Bytes(body.begin(), body.end()));
+                payload["body_bytecode"] = Value(std::move(body_bytecode));
             }
             payload["options"] = Value(Value::Object{
                 {"count", Value(uint64_t(0))},
@@ -1821,7 +1866,14 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             }
             if (s->body != parser::v3::StringPool::INVALID_ID) {
                 std::string body(pool_.get(s->body));
+                scratchbird::sblr::v3::Value::Bytes body_bytecode;
+                std::string body_err;
+                if (!compilePsqlBodyToBytes(body, body_bytecode, body_err)) {
+                    fail("CREATE TRIGGER body compile failed: " + body_err);
+                    return {};
+                }
                 payload["body"] = Value(Value::Bytes(body.begin(), body.end()));
+                payload["body_bytecode"] = Value(std::move(body_bytecode));
             }
             inst.payload = Value(std::move(payload));
             return inst;
@@ -2043,24 +2095,85 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             inst.flags = 0;
             Value::Object payload;
             payload["name"] = toIdent(s->job_name);
+            payload["job_type"] = Value(uint64_t(static_cast<uint8_t>(s->job_type)));
+            payload["schedule_kind"] =
+                Value(uint64_t(static_cast<uint8_t>(s->schedule_kind)));
             if (s->schedule_kind == parser::v3::JobScheduleKind::CRON) {
                 payload["schedule"] = Value(std::string(pool_.get(s->cron_expression)));
+                if (s->cron_expression != parser::v3::StringPool::INVALID_ID) {
+                    payload["cron_expression"] =
+                        Value(std::string(pool_.get(s->cron_expression)));
+                }
             } else if (s->schedule_kind == parser::v3::JobScheduleKind::AT) {
                 payload["schedule"] = Value(std::string(pool_.get(s->at_timestamp)));
+                if (s->at_timestamp != parser::v3::StringPool::INVALID_ID) {
+                    payload["at_timestamp"] =
+                        Value(std::string(pool_.get(s->at_timestamp)));
+                }
             } else {
                 payload["schedule"] = Value(std::to_string(s->interval_seconds));
+                payload["interval_seconds"] = Value(int64_t(s->interval_seconds));
+                if (s->starts_at != parser::v3::StringPool::INVALID_ID) {
+                    payload["starts_at"] = Value(std::string(pool_.get(s->starts_at)));
+                }
+                if (s->ends_at != parser::v3::StringPool::INVALID_ID) {
+                    payload["ends_at"] = Value(std::string(pool_.get(s->ends_at)));
+                }
             }
             if (s->job_type == parser::v3::JobType::SQL && s->job_sql != parser::v3::StringPool::INVALID_ID) {
                 std::string body(pool_.get(s->job_sql));
-                payload["command"] = Value(Value::Bytes(body.begin(), body.end()));
+                Compiler compiler;
+                auto compile_result = compiler.compile(body);
+                if (!compile_result.ok) {
+                    fail("CREATE JOB SQL body compile failed: " + compile_result.error);
+                    return {};
+                }
+                payload["job_sql"] = Value(std::move(body));
+                payload["command"] = Value(
+                    Value::Bytes(compile_result.bytecode.begin(), compile_result.bytecode.end()));
             } else if (s->job_type == parser::v3::JobType::PROCEDURE &&
                        s->procedure_name != parser::v3::StringPool::INVALID_ID) {
                 std::string body(pool_.get(s->procedure_name));
+                payload["procedure_name"] = Value(body);
                 payload["command"] = Value(Value::Bytes(body.begin(), body.end()));
             } else if (s->job_type == parser::v3::JobType::EXTERNAL &&
                        s->external_command != parser::v3::StringPool::INVALID_ID) {
                 std::string body(pool_.get(s->external_command));
+                payload["external_command"] = Value(body);
                 payload["command"] = Value(Value::Bytes(body.begin(), body.end()));
+            }
+            if (s->has_max_retries) payload["max_retries"] = Value(uint64_t(s->max_retries));
+            if (s->has_retry_backoff) {
+                payload["retry_backoff_seconds"] = Value(uint64_t(s->retry_backoff_seconds));
+            }
+            if (s->has_timeout) payload["timeout_seconds"] = Value(uint64_t(s->timeout_seconds));
+            if (s->has_on_completion) {
+                payload["on_completion"] =
+                    Value(uint64_t(static_cast<uint8_t>(s->on_completion)));
+            }
+            if (s->has_run_as && s->run_as_role != parser::v3::StringPool::INVALID_ID) {
+                payload["run_as_role"] = Value(std::string(pool_.get(s->run_as_role)));
+            }
+            if (s->has_description && s->description != parser::v3::StringPool::INVALID_ID) {
+                payload["description"] = Value(std::string(pool_.get(s->description)));
+            }
+            if (s->has_state) {
+                payload["state"] = Value(uint64_t(static_cast<uint8_t>(s->state)));
+            }
+            if (s->job_class != parser::v3::StringPool::INVALID_ID) {
+                payload["job_class"] = Value(std::string(pool_.get(s->job_class)));
+            }
+            if (s->partition_strategy != parser::v3::StringPool::INVALID_ID) {
+                payload["partition_strategy"] =
+                    Value(std::string(pool_.get(s->partition_strategy)));
+            }
+            if (s->partition_expression != parser::v3::StringPool::INVALID_ID) {
+                payload["partition_expression"] =
+                    Value(std::string(pool_.get(s->partition_expression)));
+            }
+            if (s->partition_shard != parser::v3::StringPool::INVALID_ID) {
+                payload["partition_shard"] =
+                    Value(std::string(pool_.get(s->partition_shard)));
             }
             payload["has_measurement"] = Value(s->has_measurement);
             Value::Object measurement_options;
@@ -2076,6 +2189,13 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
                 measurement_options[std::move(key)] = Value(std::move(value));
             }
             payload["measurement_options"] = Value(std::move(measurement_options));
+            Value::List depends_on;
+            for (auto dep : s->depends_on) {
+                depends_on.push_back(toIdent(dep));
+            }
+            payload["depends_on"] = Value(std::move(depends_on));
+            payload["or_alter"] = Value(s->or_alter);
+            payload["recreate"] = Value(s->recreate);
             payload["options"] = Value(Value::Object{
                 {"count", Value(uint64_t(0))},
                 {"key", Value(std::string())},
@@ -3188,15 +3308,28 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
             if (s->has_job_body) {
                 payload["job_type"] = Value(uint64_t(static_cast<uint8_t>(s->job_type)));
                 if (s->job_type == parser::v3::JobType::SQL && s->job_sql != parser::v3::StringPool::INVALID_ID) {
-                    payload["job_sql"] = Value(std::string(pool_.get(s->job_sql)));
+                    std::string body(pool_.get(s->job_sql));
+                    Compiler compiler;
+                    auto compile_result = compiler.compile(body);
+                    if (!compile_result.ok) {
+                        fail("ALTER JOB SQL body compile failed: " + compile_result.error);
+                        return {};
+                    }
+                    payload["job_sql"] = Value(std::move(body));
+                    payload["command"] = Value(
+                        Value::Bytes(compile_result.bytecode.begin(), compile_result.bytecode.end()));
                 }
                 if (s->job_type == parser::v3::JobType::PROCEDURE &&
                     s->procedure_name != parser::v3::StringPool::INVALID_ID) {
-                    payload["procedure_name"] = toIdent(s->procedure_name);
+                    std::string body(pool_.get(s->procedure_name));
+                    payload["procedure_name"] = Value(body);
+                    payload["command"] = Value(Value::Bytes(body.begin(), body.end()));
                 }
                 if (s->job_type == parser::v3::JobType::EXTERNAL &&
                     s->external_command != parser::v3::StringPool::INVALID_ID) {
-                    payload["external_command"] = Value(std::string(pool_.get(s->external_command)));
+                    std::string body(pool_.get(s->external_command));
+                    payload["external_command"] = Value(body);
+                    payload["command"] = Value(Value::Bytes(body.begin(), body.end()));
                 }
             }
             if (s->has_state) payload["state"] = Value(uint64_t(static_cast<uint8_t>(s->state)));
@@ -3242,6 +3375,38 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
                 }
             }
             payload["drop_secret"] = Value(s->drop_secret);
+            inst.payload = Value(std::move(payload));
+            return inst;
+        }
+        case parser::v3::ASTKind::AlterUserStmt: {
+            auto* s = static_cast<parser::v3::AlterUserStmt*>(stmt);
+            Instruction inst;
+            inst.opcode = op(Opcode::SBLR3_ALTER_USER);
+            inst.flags = 0;
+            Value::Object payload;
+            payload["name"] = toIdent(s->user_name);
+            Value::List options;
+            if (s->has_password && s->password != parser::v3::StringPool::INVALID_ID) {
+                Value::Object opt;
+                opt["key"] = Value(std::string("PASSWORD"));
+                opt["value"] = Value(makeInstr(
+                    makeStringLiteralInstruction(std::string(pool_.get(s->password)))));
+                options.push_back(Value(std::move(opt)));
+            }
+            if (s->change_superuser) {
+                Value::Object opt;
+                opt["key"] = Value(std::string("SUPERUSER"));
+                opt["value"] = Value(makeInstr(makeBoolLiteralInstruction(s->is_superuser)));
+                options.push_back(Value(std::move(opt)));
+            }
+            if (s->rename_user && s->new_user_name != parser::v3::StringPool::INVALID_ID) {
+                Value::Object opt;
+                opt["key"] = Value(std::string("RENAME_TO"));
+                opt["value"] = Value(makeInstr(
+                    makeStringLiteralInstruction(std::string(pool_.get(s->new_user_name)))));
+                options.push_back(Value(std::move(opt)));
+            }
+            payload["options"] = Value(std::move(options));
             inst.payload = Value(std::move(payload));
             return inst;
         }
@@ -3895,6 +4060,17 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSetShowReset(parser::v3::State
     auto setValueInstr = [&](Instruction value) {
         payload["value"] = Value(makeInstr(std::move(value)));
     };
+    auto setValuesFromExpressions = [&](const std::vector<parser::v3::Expression*>& exprs) {
+        if (exprs.empty()) {
+            return;
+        }
+        Value::List values;
+        values.reserve(exprs.size());
+        for (auto* expr : exprs) {
+            values.emplace_back(Value(makeInstr(emitExpression(expr))));
+        }
+        payload["values"] = Value(std::move(values));
+    };
     auto setValueStringId = [&](parser::v3::StringPool::StringId id) {
         if (id != parser::v3::StringPool::INVALID_ID) {
             setValueInstr(makeStringLiteral(std::string(pool_.get(id))));
@@ -4018,8 +4194,12 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSetShowReset(parser::v3::State
             default:
                 inst.opcode = op(Opcode::SBLR3_SET_VARIABLE);
                 payload["key"] = normalizeKey(s->name);
-                if (!s->is_default && s->value) {
-                    setValueInstr(emitExpression(s->value));
+                if (!s->is_default) {
+                    if (!s->values.empty()) {
+                        setValuesFromExpressions(s->values);
+                    } else if (s->value) {
+                        setValueInstr(emitExpression(s->value));
+                    }
                 }
                 break;
         }
@@ -4333,6 +4513,37 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitUtility(parser::v3::Statement*
             }
             Value::Object payload;
             payload["run_id"] = Value(run_id);
+            inst.payload = Value(std::move(payload));
+            return inst;
+        }
+        case parser::v3::ASTKind::PrepareStatementStmt: {
+            auto* s = static_cast<parser::v3::PrepareStatementStmt*>(stmt);
+            inst.opcode = op(Opcode::SBLR3_PREPARE_STMT);
+            Value::Object payload;
+            payload["name"] = toIdent(s->statement_name);
+            if (s->sql) {
+                payload["sql"] = Value(makeInstr(emitExpression(s->sql)));
+            }
+            inst.payload = Value(std::move(payload));
+            return inst;
+        }
+        case parser::v3::ASTKind::ExecutePreparedStmt: {
+            auto* s = static_cast<parser::v3::ExecutePreparedStmt*>(stmt);
+            inst.opcode = op(Opcode::SBLR3_EXECUTE_PREPARED);
+            Value::Object payload;
+            payload["name"] = toIdent(s->statement_name);
+            payload["params"] = toExprList(s->parameters);
+            inst.payload = Value(std::move(payload));
+            return inst;
+        }
+        case parser::v3::ASTKind::DeallocatePreparedStmt: {
+            auto* s = static_cast<parser::v3::DeallocatePreparedStmt*>(stmt);
+            inst.opcode = op(Opcode::SBLR3_DEALLOCATE_PREPARED);
+            Value::Object payload;
+            payload["all"] = Value(s->all);
+            if (!s->all && s->statement_name != parser::v3::StringPool::INVALID_ID) {
+                payload["name"] = toIdent(s->statement_name);
+            }
             inst.payload = Value(std::move(payload));
             return inst;
         }
@@ -5533,6 +5744,8 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitFunctionCall(parser::v3::Funct
     inst.flags = 0;
 
     std::string name = toUpper(pool_.get(expr->function_path.objectName()));
+    const std::string resolved_name =
+        schemaPathToString(expr->function_path, pool_);
     if (name == "VALUES") {
         inst.opcode = op(Opcode::SBLR3_INSERTED_COLUMN_REF);
         Value::Object payload;
@@ -5742,7 +5955,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitFunctionCall(parser::v3::Funct
     }
     payload["args"] = toExprList(expr->arguments);
     if (inst.opcode == op(Opcode::SBLR3_EXPR_FUNCTION_CALL)) {
-        payload["name"] = Value(name);
+        payload["name"] = Value(resolved_name);
     }
     if (expr->is_window && expr->window) {
         payload["window"] = toWindowSpec(expr->window);

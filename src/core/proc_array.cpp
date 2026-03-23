@@ -247,7 +247,6 @@ namespace scratchbird::core
         pthread_rwlock_unlock(&array->array_lock);
 
         pthread_mutex_unlock(&array->alloc_lock);
-
         *proc_id_out = proc_id;
         return Status::OK;
     }
@@ -288,7 +287,6 @@ namespace scratchbird::core
         pthread_rwlock_unlock(&array->array_lock);
 
         pthread_mutex_unlock(&array->alloc_lock);
-
         return Status::OK;
     }
 

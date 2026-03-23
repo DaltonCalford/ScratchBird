@@ -1,0 +1,63 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 17,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_131640/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.setup.b44019a04594.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_131640/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.setup.b44019a04594.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "ORDER",
+    "message": "                                  ^",
+    "stdout": "\nCatalog Error: Table with name avp_ordered_limit_topk does not exist!\nDid you mean \"pg_depend\"?\n\nLINE 1: EXPLAIN SELECT id, k FROM avp_ordered_limit_topk ORDER BY k, id LIMIT 4;\n                                  ^\n",
+    "stderr": "",
+    "elapsed_ms": 15,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_131640/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.plan.59cea2dae666.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_131640/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.plan.59cea2dae666.stderr.txt",
+    "plan_lines": [
+      "PLAN|Catalog Error: Table with name avp_ordered_limit_topk does not exist!",
+      "PLAN|Did you mean \"pg_depend\"?",
+      "PLAN|LINE 1: EXPLAIN SELECT id, k FROM avp_ordered_limit_topk ORDER BY k, id LIMIT 4;",
+      "PLAN|^"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "00000",
+    "message": "             ^",
+    "stdout": "\nCatalog Error: Table with name avp_ordered_limit_topk does not exist!\nDid you mean \"pg_depend\"?\n\nLINE 2: FROM avp_ordered_limit_topk\n             ^\n",
+    "stderr": "",
+    "elapsed_ms": 9,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_131640/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.exec.afccb4b01d0c.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_131640/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.exec.afccb4b01d0c.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 8,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_131640/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.teardown.da3c11596897.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_131640/ordered_limit_topk/ref_duckdb/raw/ref_duckdb.teardown.da3c11596897.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

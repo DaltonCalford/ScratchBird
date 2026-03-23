@@ -1,0 +1,65 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 126,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/ordered_limit_topk/ref_mysql/raw/ref_mysql.setup.aa23c6aa1f96.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/ordered_limit_topk/ref_mysql/raw/ref_mysql.setup.aa23c6aa1f96.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "1\tSIMPLE\tavp_ordered_limit_topk\tNULL\tindex\tNULL\tidx_avp_ordered_limit_topk_k\t4\tNULL\t4\t100.00\tUsing index\n\n",
+    "stderr": "",
+    "elapsed_ms": 36,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/ordered_limit_topk/ref_mysql/raw/ref_mysql.plan.6f3c66cf63be.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/ordered_limit_topk/ref_mysql/raw/ref_mysql.plan.6f3c66cf63be.stderr.txt",
+    "plan_lines": [
+      "PLAN|1\tSIMPLE\tavp_ordered_limit_topk\tNULL\tindex\tNULL\tidx_avp_ordered_limit_topk_k\t4\tNULL\t4\t100.00\tUsing index"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "ASSERT|ordered_limit_topk|id=3|k=10\nASSERT|ordered_limit_topk|id=5|k=10\nASSERT|ordered_limit_topk|id=8|k=10\nASSERT|ordered_limit_topk|id=4|k=20\n\n",
+    "stderr": "",
+    "elapsed_ms": 30,
+    "assert_lines": [
+      "ASSERT|ordered_limit_topk|id=3|k=10",
+      "ASSERT|ordered_limit_topk|id=5|k=10",
+      "ASSERT|ordered_limit_topk|id=8|k=10",
+      "ASSERT|ordered_limit_topk|id=4|k=20"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/ordered_limit_topk/ref_mysql/raw/ref_mysql.exec.3890109d6f55.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/ordered_limit_topk/ref_mysql/raw/ref_mysql.exec.3890109d6f55.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 65,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/ordered_limit_topk/ref_mysql/raw/ref_mysql.teardown.989fc94f18bb.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/ordered_limit_topk/ref_mysql/raw/ref_mysql.teardown.989fc94f18bb.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

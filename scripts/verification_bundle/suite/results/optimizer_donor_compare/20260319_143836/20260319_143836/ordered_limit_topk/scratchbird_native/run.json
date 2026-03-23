@@ -1,0 +1,66 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\nRows affected: 0\nRows affected: 0\nRows affected: 0\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 358,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/ordered_limit_topk/scratchbird_native/raw/scratchbird_native.setup.e64ff6b3e0ea.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/ordered_limit_topk/scratchbird_native/raw/scratchbird_native.setup.e64ff6b3e0ea.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n\nError: V3 EXPLAIN plan payload invalid\nStopping due to error (SET BAIL is ON)\n",
+    "stderr": "",
+    "elapsed_ms": 431,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/ordered_limit_topk/scratchbird_native/raw/scratchbird_native.plan.0902baac6d65.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/ordered_limit_topk/scratchbird_native/raw/scratchbird_native.plan.0902baac6d65.stderr.txt",
+    "plan_lines": [
+      "PLAN|Error: V3 EXPLAIN plan payload invalid",
+      "PLAN|Stopping due to error (SET BAIL is ON)"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "+-------------------------------------+\n| expr1                               |\n+-------------------------------------+\n| ASSERT|ordered_limit_topk|id=3|k=10 |\n| ASSERT|ordered_limit_topk|id=5|k=10 |\n| ASSERT|ordered_limit_topk|id=8|k=10 |\n| ASSERT|ordered_limit_topk|id=4|k=20 |\n+-------------------------------------+\n(4 rows)\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 310,
+    "assert_lines": [
+      "ASSERT|ordered_limit_topk|id=3|k=10",
+      "ASSERT|ordered_limit_topk|id=5|k=10",
+      "ASSERT|ordered_limit_topk|id=8|k=10",
+      "ASSERT|ordered_limit_topk|id=4|k=20"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/ordered_limit_topk/scratchbird_native/raw/scratchbird_native.exec.2d22c643d62a.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/ordered_limit_topk/scratchbird_native/raw/scratchbird_native.exec.2d22c643d62a.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 307,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/ordered_limit_topk/scratchbird_native/raw/scratchbird_native.teardown.d562ef67a4b6.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/ordered_limit_topk/scratchbird_native/raw/scratchbird_native.teardown.d562ef67a4b6.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

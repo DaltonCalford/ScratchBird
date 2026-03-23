@@ -1,0 +1,1 @@
+1	SIMPLE	avp_ordered_limit_topk	NULL	index	NULL	idx_avp_ordered_limit_topk_k	4	NULL	4	100.00	Using index

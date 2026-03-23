@@ -109,6 +109,9 @@ public:
     };
     Stats getStats() const;
 
+    // Single accepted-client entrypoint for handoff workers.
+    core::Status runAcceptedClient(int client_fd, core::ErrorContext* ctx = nullptr);
+
 protected:
     ParserAgentConfig config_;
     std::atomic<bool> running_{false};
@@ -145,6 +148,17 @@ protected:
     // IPC communication
     virtual core::Status sendToEngine(uint32_t client_id, const IPCMessage& msg,
                                      core::ErrorContext* ctx);
+    virtual core::Status sendCompiledQueryToEngine(uint32_t client_id,
+                                                   uint32_t request_id,
+                                                   const std::vector<uint8_t>& bytecode,
+                                                   const std::string& original_sql,
+                                                   core::ErrorContext* ctx);
+    virtual core::Status sendCompiledParseToEngine(uint32_t client_id,
+                                                   uint32_t request_id,
+                                                   const std::string& stmt_name,
+                                                   const std::vector<uint8_t>& bytecode,
+                                                   const std::string& original_sql,
+                                                   core::ErrorContext* ctx);
     virtual core::Status receiveFromEngine(uint32_t client_id, IPCMessage& msg,
                                           core::ErrorContext* ctx,
                                           uint32_t timeout_ms = 30000);
@@ -245,30 +259,6 @@ protected:
     virtual std::string mapSQLStateToProtocol(const char* sqlstate) = 0;
     virtual void mapProtocolErrorToSQLState(const std::vector<uint8_t>& error,
                                            char* sqlstate_out) = 0;
-};
-
-// ============================================================================
-// Forward Declarations for Emulated Parser Agents
-// Full declarations are in separate headers:
-//   - scratchbird/ipc/postgresql_parser_agent.h
-//   - scratchbird/ipc/mysql_parser_agent.h
-//   - scratchbird/ipc/firebird_parser_agent.h
-// ============================================================================
-
-class PostgreSQLParserAgent;
-class MySQLParserAgent;
-class FirebirdParserAgent;
-
-// ============================================================================
-// Parser Agent Factory
-// ============================================================================
-
-class ParserAgentFactory {
-public:
-    static std::unique_ptr<ParserAgent> create(const ParserAgentConfig& config);
-    static std::unique_ptr<ParserAgent> create(const std::string& protocol,
-                                              const std::string& listen_endpoint,
-                                              const std::string& ipc_endpoint);
 };
 
 // ============================================================================

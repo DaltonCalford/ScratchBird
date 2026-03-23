@@ -13,6 +13,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/sblr/bytecode_validator.h"
 #include "scratchbird/sblr/mysql_query_compiler.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/v3_container.h"
@@ -220,6 +221,42 @@ TEST_F(MySQLQueryCompilerTest, CompileSetVariableAcceptsEnumStyleKeywordValues) 
     ASSERT_TRUE(mixed_result.success()) << mixed_result.errors().front();
 }
 
+TEST_F(MySQLQueryCompilerTest, ShowVariablesLikeVersionCommentCompilesAndExecutes) {
+    constexpr const char* kMySqlRootSchema = "emulated.mysql.localhost.databases.main";
+
+    sblr::MySQLQueryCompiler compiler(&db_);
+    compiler.setDefaultSchema(kMySqlRootSchema);
+
+    auto compile_result = compiler.compile("SHOW VARIABLES LIKE 'version_comment'");
+    ASSERT_TRUE(compile_result.success()) << compile_result.errors().front();
+
+    core::ErrorContext validation_ctx;
+    ASSERT_EQ(scratchbird::sblr::validateBytecode(compile_result.bytecode(), &validation_ctx),
+              core::Status::OK)
+        << validation_ctx.message;
+
+    auto execute_result = executor_->execute(compile_result.bytecode());
+    ASSERT_TRUE(execute_result.success()) << execute_result.error();
+    ASSERT_TRUE(execute_result.hasResultSet());
+
+    sblr::MySQLQueryCompiler remote_compiler(nullptr);
+    remote_compiler.setDefaultSchema(kMySqlRootSchema);
+
+    auto remote_compile_result =
+        remote_compiler.compile("SHOW VARIABLES LIKE 'version_comment'");
+    ASSERT_TRUE(remote_compile_result.success()) << remote_compile_result.errors().front();
+
+    core::ErrorContext remote_validation_ctx;
+    ASSERT_EQ(scratchbird::sblr::validateBytecode(remote_compile_result.bytecode(),
+                                                  &remote_validation_ctx),
+              core::Status::OK)
+        << remote_validation_ctx.message;
+
+    auto remote_execute_result = executor_->execute(remote_compile_result.bytecode());
+    ASSERT_TRUE(remote_execute_result.success()) << remote_execute_result.error();
+    ASSERT_TRUE(remote_execute_result.hasResultSet());
+}
+
 TEST_F(MySQLQueryCompilerTest, CreateUserSupportsIdentifiedWithPluginSyntax) {
     auto create_result = compileAndExecute(
         "CREATE USER 'plugin_user'@'localhost' IDENTIFIED WITH 'sha256_password'");
@@ -243,6 +280,19 @@ TEST_F(MySQLQueryCompilerTest, SetPasswordAndRenameUserSupportMySqlAccountSyntax
     ASSERT_TRUE(rename_result.success()) << rename_result.error();
 
     auto drop_result = compileAndExecute("DROP USER 'renamed_user'@'localhost'");
+    ASSERT_TRUE(drop_result.success()) << drop_result.error();
+}
+
+TEST_F(MySQLQueryCompilerTest, CreateAndAlterUserAllowEmptyPasswordsInMySqlMode) {
+    auto create_result = compileAndExecute(
+        "CREATE USER 'empty_pwd_user'@'localhost' IDENTIFIED BY ''");
+    ASSERT_TRUE(create_result.success()) << create_result.error();
+
+    auto alter_result = compileAndExecute(
+        "ALTER USER 'empty_pwd_user'@'localhost' IDENTIFIED BY ''");
+    ASSERT_TRUE(alter_result.success()) << alter_result.error();
+
+    auto drop_result = compileAndExecute("DROP USER 'empty_pwd_user'@'localhost'");
     ASSERT_TRUE(drop_result.success()) << drop_result.error();
 }
 

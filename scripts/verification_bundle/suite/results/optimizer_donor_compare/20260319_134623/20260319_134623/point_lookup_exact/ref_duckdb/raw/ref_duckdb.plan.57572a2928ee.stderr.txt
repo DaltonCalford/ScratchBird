@@ -1,0 +1,5 @@
+Catalog Error: Table with name avp_point_lookup_exact does not exist!
+Did you mean "pg_tablespace"?
+
+LINE 1: EXPLAIN SELECT payload FROM avp_point_lookup_exact WHERE k = 73;
+                                    ^

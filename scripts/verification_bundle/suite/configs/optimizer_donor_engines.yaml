@@ -1,0 +1,225 @@
+version: 2
+defaults:
+  timeout_seconds: 300
+engines:
+  - id: scratchbird_native
+    family: scratchbird
+    mode: native
+    lane: native
+    enabled: true
+    client: sb_isql
+    client_candidates:
+      - "{repo_root}/ScratchBird-driver/build/tracks/p3/drivers/cli/sb_isql"
+      - "{repo_root}/ScratchBird/build/src/sb_isql"
+      - "{repo_root}/ScratchBird/build/src/cli/sb_isql"
+      - "{repo_root}/ScratchBird-driver/build/tracks/alpha/drivers/cli/sb_isql"
+      - "sb_isql"
+    connect:
+      host: 127.0.0.1
+      port: 13092
+      database: main
+      user: SysArch
+      password: replaceme
+      mode: local-ipc
+      ipc_method: tcp
+      sslmode: disable
+    env_overrides:
+      host: SB_VERIFY_SB_NATIVE_HOST
+      port: SB_VERIFY_SB_NATIVE_PORT
+      database: SB_VERIFY_SB_NATIVE_DB
+      user: SB_VERIFY_SB_NATIVE_USER
+      password: SB_VERIFY_SB_NATIVE_PASSWORD
+
+  - id: scratchbird_emulated_firebird
+    family: scratchbird
+    mode: emulated
+    emulates: firebird
+    lane: firebird
+    enabled: true
+    client: isql-fb
+    client_candidates:
+      - "isql-fb"
+      - "isql"
+      - "{repo_root}/firebird/gen/Release/firebird/bin/isql"
+      - "{repo_root}/firebird/gen/Debug/firebird/bin/isql"
+      - "{repo_root}/firebird/build/bin/isql"
+    connect:
+      host: 127.0.0.1
+      port: 13050
+      database: compat_firebird
+      user: SYSDBA
+      password: masterkey
+    env_overrides:
+      host: SB_VERIFY_SB_FB_HOST
+      port: SB_VERIFY_SB_FB_PORT
+      database: SB_VERIFY_SB_FB_DB
+      user: SB_VERIFY_SB_FB_USER
+      password: SB_VERIFY_SB_FB_PASSWORD
+    package_scaffold:
+      parser_candidates:
+        - "{repo_root}/ScratchBird/build/src/sb_parser_fb"
+        - "sb_parser_fb"
+      profile_id: firebirdsql
+      parser_package: sb_pkg_firebird_parser
+      compiler_udr_package: sb_pkg_firebird_compiler_udr
+      emulation_udr_package: sb_pkg_firebird_emulation_udr
+      bundle_contract_id: sb_emulation_bundle_firebirdsql/v1
+
+  - id: scratchbird_emulated_postgresql
+    family: scratchbird
+    mode: emulated
+    emulates: postgresql
+    lane: postgresql
+    enabled: true
+    client: psql
+    client_candidates:
+      - "{repo_root}/postgresql/build_codex/src/bin/psql/psql"
+      - "{repo_root}/postgresql/build_codex2/src/bin/psql/psql"
+      - "{repo_root}/postgresql/build/src/bin/psql/psql"
+      - "psql"
+    connect:
+      host: 127.0.0.1
+      port: 15432
+      database: regression
+      user: postgres
+      password: postgres
+    env_overrides:
+      host: SB_VERIFY_SB_PG_HOST
+      port: SB_VERIFY_SB_PG_PORT
+      database: SB_VERIFY_SB_PG_DB
+      user: SB_VERIFY_SB_PG_USER
+      password: SB_VERIFY_SB_PG_PASSWORD
+    package_scaffold:
+      parser_candidates:
+        - "{repo_root}/ScratchBird/build/src/sb_parser_pg"
+        - "sb_parser_pg"
+      profile_id: postgresql
+      parser_package: sb_pkg_postgresql_parser
+      compiler_udr_package: sb_pkg_postgresql_compiler_udr
+      emulation_udr_package: sb_pkg_postgresql_emulation_udr
+      bundle_contract_id: sb_emulation_bundle_postgresql/v1
+
+  - id: scratchbird_emulated_mysql
+    family: scratchbird
+    mode: emulated
+    emulates: mysql
+    lane: mysql
+    enabled: true
+    client: mysql
+    client_candidates:
+      - "{repo_root}/mysql-server/build_codex2/runtime_output_directory/mysql"
+      - "{repo_root}/mysql-server/build_codex/runtime_output_directory/mysql"
+      - "{repo_root}/mysql-server/build/runtime_output_directory/mysql"
+      - "mysql"
+    connect:
+      host: 127.0.0.1
+      port: 13306
+      database: main
+      user: root
+      password: root
+    env_overrides:
+      host: SB_VERIFY_SB_MY_HOST
+      port: SB_VERIFY_SB_MY_PORT
+      database: SB_VERIFY_SB_MY_DB
+      user: SB_VERIFY_SB_MY_USER
+      password: SB_VERIFY_SB_MY_PASSWORD
+    package_scaffold:
+      parser_candidates:
+        - "{repo_root}/ScratchBird/build/src/sb_parser_mysql"
+        - "sb_parser_mysql"
+      profile_id: mysql
+      parser_package: sb_pkg_mysql_parser
+      compiler_udr_package: sb_pkg_mysql_compiler_udr
+      emulation_udr_package: sb_pkg_mysql_emulation_udr
+      bundle_contract_id: sb_emulation_bundle_mysql/v1
+
+  - id: ref_postgresql
+    family: reference
+    mode: native
+    engine: postgresql
+    lane: postgresql
+    enabled: true
+    client: psql
+    client_candidates:
+      - "{repo_root}/postgresql/build_codex/src/bin/psql/psql"
+      - "{repo_root}/postgresql/build_codex2/src/bin/psql/psql"
+      - "{repo_root}/postgresql/build/src/bin/psql/psql"
+      - "psql"
+    connect:
+      host: 127.0.0.1
+      port: 5432
+      database: postgres
+      user: postgres
+      password: postgres
+    env_overrides:
+      host: SB_VERIFY_REF_PG_HOST
+      port: SB_VERIFY_REF_PG_PORT
+      database: SB_VERIFY_REF_PG_DB
+      user: SB_VERIFY_REF_PG_USER
+      password: SB_VERIFY_REF_PG_PASSWORD
+
+  - id: ref_duckdb
+    family: reference
+    mode: native
+    engine: duckdb
+    lane: duckdb
+    enabled: true
+    client: duckdb
+    client_candidates:
+      - "{repo_root}/duckdb/build/release/duckdb"
+      - "duckdb"
+    connect:
+      database: ":memory:"
+    env_overrides:
+      database: SB_VERIFY_REF_DUCKDB_DB
+
+  - id: ref_mysql
+    family: reference
+    mode: native
+    engine: mysql
+    lane: mysql
+    enabled: true
+    client: mysql
+    client_candidates:
+      - "{repo_root}/mysql-server/build_codex2/runtime_output_directory/mysql"
+      - "{repo_root}/mysql-server/build_codex/runtime_output_directory/mysql"
+      - "{repo_root}/mysql-server/build/runtime_output_directory/mysql"
+      - "mysql"
+    connect:
+      host: 127.0.0.1
+      port: 3306
+      database: mysql
+      user: root
+      password: root
+    env_overrides:
+      host: SB_VERIFY_REF_MY_HOST
+      port: SB_VERIFY_REF_MY_PORT
+      database: SB_VERIFY_REF_MY_DB
+      user: SB_VERIFY_REF_MY_USER
+      password: SB_VERIFY_REF_MY_PASSWORD
+
+  - id: ref_firebird
+    family: reference
+    mode: native
+    engine: firebird
+    lane: firebird
+    enabled: true
+    client: isql-fb
+    client_candidates:
+      - "isql-fb"
+      - "isql"
+      - "{repo_root}/firebird/gen/Release/firebird/bin/isql"
+      - "{repo_root}/firebird/gen/Debug/firebird/bin/isql"
+      - "{repo_root}/firebird/build/bin/isql"
+    connect:
+      host: 127.0.0.1
+      port: 3050
+      database: /firebird/data/ref_verify_firebird.fdb
+      user: SYSDBA
+      password: masterkey
+    env_overrides:
+      host: SB_VERIFY_REF_FB_HOST
+      port: SB_VERIFY_REF_FB_PORT
+      database: SB_VERIFY_REF_FB_DB
+      user: SB_VERIFY_REF_FB_USER
+      password: SB_VERIFY_REF_FB_PASSWORD

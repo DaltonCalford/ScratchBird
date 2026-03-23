@@ -12,8 +12,8 @@
 /**
  * Firebird SQL Parser
  *
- * Parser for Firebird 5.0 SQL syntax. Produces AST v3 nodes that can be
- * processed by the V3 emitter and SBLR v3 container pipeline.
+ * Parser for Firebird 5.0 SQL syntax. Produces shared canonical AST nodes
+ * that the SBLR lowering layer translates into executable SBLR.
  *
  * Key Firebird-specific syntax:
  * - FIRST/SKIP instead of LIMIT/OFFSET
@@ -88,7 +88,7 @@ struct ParseResult {
 /**
  * Firebird SQL Parser
  *
- * Parses Firebird SQL syntax and produces AST v3 nodes.
+ * Parses Firebird SQL syntax and produces shared canonical AST nodes.
  */
 class Parser {
 public:

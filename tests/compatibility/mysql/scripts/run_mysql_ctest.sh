@@ -18,6 +18,8 @@ for candidate in \
   fi
 done
 
+# Emulated MySQL verification must use donor `mysql`. `sb_isql` is native
+# ScratchBird/V3 only and is intentionally not accepted for this lane.
 MYSQL_CLI_BIN="${SCRATCHBIRD_MYSQL_CLI_BIN:-${SCRATCHBIRD_MY_ISQL:-$DEFAULT_MYSQL_CLI}}"
 CLIENT_MODE="${SCRATCHBIRD_MY_CLIENT_MODE:-auto}"
 case "$CLIENT_MODE" in
@@ -28,7 +30,7 @@ case "$CLIENT_MODE" in
     RESOLVED_CLIENT_MODE="$CLIENT_MODE"
     ;;
   *)
-    echo "Error: invalid MySQL client mode '$CLIENT_MODE' (expected auto|mysql_cli; sb_my_isql is deprecated for compare runs)." >&2
+    echo "Error: invalid MySQL client mode '$CLIENT_MODE' (expected auto|mysql_cli; wrapper clients are not accepted for compare runs)." >&2
     exit 2
     ;;
 esac
@@ -59,7 +61,7 @@ fi
 if [[ "$(basename "$MYSQL_CLI_BIN")" != "mysql" ]]; then
   cat >&2 <<EOF
 SKIP: ScratchBird MySQL wrapper clients are deprecated for compatibility compare runs.
-Provide the cloned donor mysql client via SCRATCHBIRD_MYSQL_CLI_BIN.
+Provide the cloned donor mysql client via SCRATCHBIRD_MYSQL_CLI_BIN. sb_isql is native/V3 only.
 Resolved path: ${MYSQL_CLI_BIN}
 EOF
   exit 77

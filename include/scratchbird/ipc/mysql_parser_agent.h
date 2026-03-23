@@ -49,6 +49,9 @@ struct MySQLClientState {
     
     // Connection info
     uint32_t connection_id = 0;
+    uint32_t client_id = 0;
+    uint32_t session_id = 0;
+    uint32_t request_id = 1;
     std::string username;
     std::string database;
     std::string auth_plugin;
@@ -64,8 +67,11 @@ struct MySQLClientState {
     struct PreparedStatement {
         uint32_t id = 0;
         std::string sql;
+        std::string engine_stmt_name;
         uint16_t param_count = 0;
         uint16_t column_count = 0;
+        std::vector<uint8_t> param_types;
+        std::vector<uint8_t> param_unsigned;
     };
     std::unordered_map<uint32_t, PreparedStatement> prepared_stmts;
     uint32_t stmt_counter = 0;
@@ -123,6 +129,11 @@ public:
     core::Status authenticateNativePassword(MySQLClientState& state);
     core::Status authenticateCachingSha2Password(MySQLClientState& state);
     core::Status authenticateSha256Password(MySQLClientState& state);
+    core::Status ensureEngineSession(MySQLClientState& state, core::ErrorContext* ctx);
+    core::Status compileQueryToSblr(const MySQLClientState& state,
+                                    const std::string& sql,
+                                    std::vector<uint8_t>& bytecode_out,
+                                    std::string& error_out);
     
     // ========================================================================
     // Command Handlers

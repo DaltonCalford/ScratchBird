@@ -37,6 +37,8 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/connection_context.h"
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -141,12 +143,41 @@ public:
         // Create each view
         Status first_error = Status::OK;
         for (const auto& viewDef : views) {
-            s = createEmulatedView(schema_id, viewDef, server_name, database_name, ctx);
+            s = createEmulatedView(schema_id,
+                                   schemaPath,
+                                   protocol,
+                                   viewDef,
+                                   server_name,
+                                   database_name,
+                                   ctx);
             if (s != Status::OK && first_error == Status::OK) {
                 first_error = s;
                 // Log error but continue with other views
                 // In production, might want to rollback all
             }
+        }
+
+        std::vector<CatalogManager::TableInfo> schema_tables;
+        s = catalog_->listTables(schema_id, schema_tables, ctx);
+        if (s == Status::OK) {
+            ID public_grantee{};
+            ID system_grantor{};
+            for (const auto& table : schema_tables) {
+                Status grant_status = catalog_->grantPermission(
+                    table.table_id,
+                    CatalogManager::PermissionObjectType::TABLE,
+                    public_grantee,
+                    CatalogManager::GranteeType::PUBLIC,
+                    CatalogManager::PERM_SELECT,
+                    false,
+                    system_grantor,
+                    ctx);
+                if (grant_status != Status::OK && first_error == Status::OK) {
+                    first_error = grant_status;
+                }
+            }
+        } else if (first_error == Status::OK) {
+            first_error = s;
         }
 
         return first_error;
@@ -214,17 +245,119 @@ public:
 private:
     CatalogManager* catalog_;
 
+    static std::string compilerProfileIdForProtocol(ProtocolType protocol) {
+        switch (protocol) {
+            case ProtocolType::FIREBIRD:
+                return "firebirdsql";
+            case ProtocolType::POSTGRESQL:
+                return "postgresql";
+            case ProtocolType::MYSQL:
+                return "mysql";
+            default:
+                return {};
+        }
+    }
+
+    static std::string compilerDialectTagForProtocol(ProtocolType protocol) {
+        switch (protocol) {
+            case ProtocolType::FIREBIRD:
+                return "firebird";
+            case ProtocolType::POSTGRESQL:
+                return "postgresql";
+            case ProtocolType::MYSQL:
+                return "mysql";
+            default:
+                return {};
+        }
+    }
+
+    static std::string compilerModuleNameForProtocol(ProtocolType protocol) {
+        std::string protocol_name = protocolTypeToString(protocol);
+        if (protocol_name.empty()) {
+            return {};
+        }
+        return protocol_name + "_emulation";
+    }
+
+    Status compileEmulatedViewQuery(const ID& schema_id,
+                                    const std::string& schema_path,
+                                    ProtocolType protocol,
+                                    const std::string& query,
+                                    std::vector<uint8_t>& bytecode_out,
+                                    ErrorContext* ctx);
+
     /**
      * Create a single emulated view
      */
     Status createEmulatedView(const ID& schema_id,
+                              const std::string& schema_path,
+                              ProtocolType protocol,
                               const EmulatedViewDefinition& viewDef,
                               const std::string& server_name,
                               const std::string& database_name,
                               ErrorContext* ctx) {
-        std::string query = renderViewQuery(viewDef, schema_id, server_name, database_name);
-        return catalog_->createView(schema_id, viewDef.view_name, query,
-                                    true, false, false, viewDef.columns, ID{}, ctx);
+        auto decorateError = [&](Status status, const char* stage) {
+            if (ctx != nullptr) {
+                std::string message = "Emulated view '" + viewDef.view_name + "' failed during ";
+                message += stage;
+                if (!ctx->message.empty()) {
+                    message += ": " + ctx->message;
+                }
+                ctx->set(status, message.c_str(), __FILE__, __LINE__, __func__);
+            }
+            return status;
+        };
+
+        std::string query =
+            renderViewQuery(viewDef, schema_id, schema_path, server_name, database_name);
+        std::vector<uint8_t> compiled_query_sblr;
+        Status s = compileEmulatedViewQuery(schema_id,
+                                            schema_path,
+                                            protocol,
+                                            query,
+                                            compiled_query_sblr,
+                                            ctx);
+        if (s != Status::OK) {
+            return decorateError(s, "compile");
+        }
+        s = catalog_->createView(schema_id, viewDef.view_name, query,
+                                 true, false, false, viewDef.columns, ID{}, ctx);
+        if (s != Status::OK) {
+            return decorateError(s, "create");
+        }
+
+        CatalogManager::ViewInfo view_info;
+        s = catalog_->getView(schema_id, viewDef.view_name, view_info, ctx);
+        if (s != Status::OK) {
+            return decorateError(s, "lookup");
+        }
+
+        const std::vector<CatalogManager::ViewColumnBinding> empty_insert_bindings;
+        s = catalog_->setViewExecutionMetadata(view_info.view_id,
+                                               compiled_query_sblr,
+                                               empty_insert_bindings,
+                                               "scratchbird_v3",
+                                               {},
+                                               ctx);
+        if (s != Status::OK) {
+            return decorateError(s, "metadata persist");
+        }
+
+        ID public_grantee{};
+        ID system_grantor{};
+        s = catalog_->grantPermission(view_info.view_id,
+                                      CatalogManager::PermissionObjectType::VIEW,
+                                      public_grantee,
+                                      CatalogManager::GranteeType::PUBLIC,
+                                      CatalogManager::PERM_SELECT,
+                                      false,
+                                      system_grantor,
+                                      ctx);
+        if (s != Status::OK) {
+            return decorateError(s, "permission grant");
+        }
+
+        return Status::OK;
     }
 
     static void replaceAll(std::string& text, const std::string& token,
@@ -241,14 +374,711 @@ private:
 
     static std::string renderViewQuery(const EmulatedViewDefinition& viewDef,
                                        const ID& schema_id,
+                                       const std::string& schema_path,
                                        const std::string& server_name,
                                        const std::string& database_name) {
+        auto quoteSqlLiteral = [](std::string_view text) {
+            std::string out;
+            out.reserve(text.size() + 2);
+            out.push_back('\'');
+            for (char ch : text) {
+                out.push_back(ch);
+                if (ch == '\'') {
+                    out.push_back('\'');
+                }
+            }
+            out.push_back('\'');
+            return out;
+        };
+
         std::string query = viewDef.source_query;
         std::string schema_literal = "UUID '" + schema_id.toString() + "'";
         replaceAll(query, "{schema_id}", schema_literal);
+        replaceAll(query, "{schema_path}", quoteSqlLiteral(schema_path));
         replaceAll(query, "{server_name}", server_name);
         replaceAll(query, "{database_name}", database_name);
         return query;
+    }
+
+    enum class FirebirdSeedFieldKind {
+        TEXT,
+        SMALLINT,
+        INTEGER,
+        BIGINT
+    };
+
+    struct FirebirdSeedRelationSpec {
+        const char* relation_name;
+        int relation_id;
+        int relation_type;
+        const char* view_source;
+    };
+
+    struct FirebirdSeedRelationFieldSpec {
+        const char* relation_name;
+        const char* field_name;
+        FirebirdSeedFieldKind kind;
+        int field_length;
+        int field_scale;
+        bool not_nullable;
+        bool has_charset;
+        int charset_id;
+        bool has_collation;
+        int collation_id;
+        bool has_dimensions;
+        int dimensions;
+    };
+
+    static std::string quoteSqlLiteral(std::string_view text) {
+        std::string out;
+        out.reserve(text.size() + 2);
+        out.push_back('\'');
+        for (char ch : text) {
+            out.push_back(ch);
+            if (ch == '\'') {
+                out.push_back('\'');
+            }
+        }
+        out.push_back('\'');
+        return out;
+    }
+
+    static std::string castSqlExpr(std::string_view expr, std::string_view sql_type) {
+        std::string out;
+        out.reserve(expr.size() + sql_type.size() + 16);
+        out.append("CAST(");
+        out.append(expr);
+        out.append(" AS ");
+        out.append(sql_type);
+        out.push_back(')');
+        return out;
+    }
+
+    static int firebirdSeedFieldTypeCode(FirebirdSeedFieldKind kind) {
+        switch (kind) {
+            case FirebirdSeedFieldKind::TEXT:
+                return 37;
+            case FirebirdSeedFieldKind::SMALLINT:
+                return 7;
+            case FirebirdSeedFieldKind::INTEGER:
+                return 8;
+            case FirebirdSeedFieldKind::BIGINT:
+                return 16;
+        }
+        return 37;
+    }
+
+    static std::string quoteFirebirdAliasIdentifiers(std::string sql) {
+        std::string out;
+        out.reserve(sql.size() + 64);
+
+        bool in_string = false;
+        size_t i = 0;
+        while (i < sql.size()) {
+            const char ch = sql[i];
+            if (ch == '\'') {
+                out.push_back(ch);
+                if (in_string && i + 1 < sql.size() && sql[i + 1] == '\'') {
+                    out.push_back(sql[i + 1]);
+                    i += 2;
+                    continue;
+                }
+                in_string = !in_string;
+                ++i;
+                continue;
+            }
+
+            if (!in_string &&
+                i + 2 < sql.size() &&
+                std::toupper(static_cast<unsigned char>(sql[i])) == 'A' &&
+                std::toupper(static_cast<unsigned char>(sql[i + 1])) == 'S' &&
+                std::isspace(static_cast<unsigned char>(sql[i + 2])) &&
+                (i == 0 || std::isspace(static_cast<unsigned char>(sql[i - 1])))) {
+                out.push_back(sql[i]);
+                out.push_back(sql[i + 1]);
+                i += 2;
+
+                while (i < sql.size() &&
+                       std::isspace(static_cast<unsigned char>(sql[i]))) {
+                    out.push_back(sql[i]);
+                    ++i;
+                }
+
+                const size_t alias_start = i;
+                while (i < sql.size() &&
+                       (std::isalnum(static_cast<unsigned char>(sql[i])) ||
+                        sql[i] == '_' ||
+                        sql[i] == '$')) {
+                    ++i;
+                }
+
+                if (i > alias_start) {
+                    std::string_view alias(sql.data() + alias_start, i - alias_start);
+                    if (alias.find('$') != std::string_view::npos) {
+                        out.push_back('"');
+                        out.append(alias);
+                        out.push_back('"');
+                    } else {
+                        out.append(alias);
+                    }
+                    continue;
+                }
+            }
+
+            out.push_back(ch);
+            ++i;
+        }
+
+        return out;
+    }
+
+    static std::string buildRightNestedUnionAll(const std::vector<std::string>& selects,
+                                                size_t index = 0) {
+        if (index >= selects.size()) {
+            return {};
+        }
+        if (index + 1 == selects.size()) {
+            return selects[index];
+        }
+
+        std::string out;
+        out.reserve(selects[index].size() + 32);
+        out.append(selects[index]);
+        out.append("\nUNION ALL\n(\n");
+        out.append(buildRightNestedUnionAll(selects, index + 1));
+        out.append("\n)");
+        return out;
+    }
+
+    static std::string buildFirebirdSchemaScopePredicate(std::string_view schema_name_expr) {
+        const std::string base_schema_name = "{schema_path}";
+        const std::string prefix_schema_name = "(" + base_schema_name + " || '.%')";
+        return "(" + std::string(schema_name_expr) + " = " + base_schema_name +
+               " OR " + std::string(schema_name_expr) + " LIKE " + prefix_schema_name + ")";
+    }
+
+    static std::string buildFirebirdFieldSourceExpr(std::string_view relation_name_expr,
+                                                    std::string_view field_name_expr) {
+        return "(" + std::string(relation_name_expr) + " || '$' || " +
+               std::string(field_name_expr) + ")";
+    }
+
+    static std::string buildFirebirdSearchedCase(
+        std::string_view normalized_type_expr,
+        std::initializer_list<std::pair<std::string_view, std::string_view>> mappings,
+        std::string_view default_expr) {
+        std::string out = "CASE";
+        const std::string normalized_expr(normalized_type_expr);
+        for (const auto& [type_name, value_expr] : mappings) {
+            out.append(" WHEN ");
+            out.append(normalized_expr);
+            out.append(" = ");
+            out.append(quoteSqlLiteral(type_name));
+            out.append(" THEN ");
+            out.append(value_expr);
+        }
+        out.append(" ELSE ");
+        out.append(default_expr);
+        out.append(" END");
+        return out;
+    }
+
+    static std::string buildFirebirdSingleRowSource() {
+        return " FROM sys.schemas WHERE schema_name = {schema_path}";
+    }
+
+    static std::string buildFirebirdRelationsViewSourcePrototype() {
+        return "SELECT '' AS RDB$RELATION_NAME, "
+               "0 AS RDB$RELATION_ID, "
+               "0 AS RDB$SYSTEM_FLAG, "
+               "'SYSDBA' AS RDB$OWNER_NAME, "
+               "NULL AS RDB$DESCRIPTION, "
+               "0 AS RDB$VIEW_BLR, "
+               "'' AS RDB$VIEW_SOURCE, "
+               "0 AS RDB$RELATION_COUNTS, "
+               "0 AS RDB$FORMAT, "
+               "0 AS RDB$FIELD_ID, "
+               "0 AS RDB$FLAGS, "
+               "0 AS RDB$RELATION_TYPE, "
+               "NULL AS RDB$EXTERNAL_FILE, "
+               "NULL AS RDB$EXTERNAL_DESCRIPTION, "
+               "NULL AS RDB$SECURITY_CLASS "
+               "FROM RDB$DATABASE";
+    }
+
+    static std::string buildFirebirdFieldsViewSourcePrototype() {
+        return "SELECT '' AS RDB$FIELD_NAME, "
+               "0 AS RDB$FIELD_TYPE, "
+               "0 AS RDB$FIELD_LENGTH, "
+               "0 AS RDB$FIELD_SCALE, "
+               "0 AS RDB$CHARACTER_SET_ID, "
+               "0 AS RDB$COLLATION_ID, "
+               "0 AS RDB$DIMENSIONS "
+               "FROM RDB$DATABASE";
+    }
+
+    static std::string buildFirebirdRelationFieldsViewSourcePrototype() {
+        return "SELECT '' AS RDB$RELATION_NAME, "
+               "'' AS RDB$FIELD_NAME, "
+               "'' AS RDB$FIELD_SOURCE, "
+               "0 AS RDB$FIELD_POSITION, "
+               "0 AS RDB$NULL_FLAG "
+               "FROM RDB$DATABASE";
+    }
+
+    static std::string buildFirebirdRelationsViewQuery() {
+        static const FirebirdSeedRelationSpec kSeedRelations[] = {
+            {"RDB$DATABASE", 0, 0, nullptr},
+            {"RDB$RELATIONS", 1, 1, "/* firebird emulation catalog view */"},
+            {"RDB$FIELDS", 2, 1, "/* firebird emulation catalog view */"},
+            {"RDB$RELATION_FIELDS", 3, 1, "/* firebird emulation catalog view */"},
+        };
+
+        std::vector<std::string> selects;
+
+        std::ostringstream base_sql;
+        base_sql << R"SQL(
+                SELECT
+                    t.table_name AS RDB$RELATION_NAME,
+                    0 AS RDB$RELATION_ID,
+                    0 AS RDB$SYSTEM_FLAG,
+                    'SYSDBA' AS RDB$OWNER_NAME,
+                    NULL AS RDB$DESCRIPTION,
+                    0 AS RDB$VIEW_BLR,
+                    NULL AS RDB$VIEW_SOURCE,
+                    COALESCE(t.row_count, 0) AS RDB$RELATION_COUNTS,
+                    0 AS RDB$FORMAT,
+                    0 AS RDB$FIELD_ID,
+                    0 AS RDB$FLAGS,
+                    0 AS RDB$RELATION_TYPE,
+                    NULL AS RDB$EXTERNAL_FILE,
+                    NULL AS RDB$EXTERNAL_DESCRIPTION,
+                    NULL AS RDB$SECURITY_CLASS
+                FROM sys.tables t
+                JOIN sys.schemas s ON t.schema_id = s.schema_id
+                WHERE )SQL"
+            << buildFirebirdSchemaScopePredicate("s.schema_name")
+            << R"SQL(
+            )SQL";
+        selects.push_back(base_sql.str());
+
+        for (const auto& relation : kSeedRelations) {
+            std::string relation_view_source;
+            if (std::string_view(relation.relation_name) == "RDB$RELATIONS") {
+                relation_view_source = buildFirebirdRelationsViewSourcePrototype();
+            } else if (std::string_view(relation.relation_name) == "RDB$FIELDS") {
+                relation_view_source = buildFirebirdFieldsViewSourcePrototype();
+            } else if (std::string_view(relation.relation_name) == "RDB$RELATION_FIELDS") {
+                relation_view_source = buildFirebirdRelationFieldsViewSourcePrototype();
+            } else if (relation.view_source != nullptr) {
+                relation_view_source = relation.view_source;
+            }
+
+            std::ostringstream seed_sql;
+            seed_sql << "SELECT "
+                     << quoteSqlLiteral(relation.relation_name) << " AS RDB$RELATION_NAME, "
+                     << relation.relation_id << " AS RDB$RELATION_ID, "
+                     << "1 AS RDB$SYSTEM_FLAG, "
+                     << quoteSqlLiteral("SYSDBA") << " AS RDB$OWNER_NAME, "
+                     << "NULL AS RDB$DESCRIPTION, "
+                     << "0 AS RDB$VIEW_BLR, ";
+            if (!relation_view_source.empty()) {
+                seed_sql << quoteSqlLiteral(relation_view_source);
+            } else {
+                seed_sql << "NULL";
+            }
+            seed_sql << " AS RDB$VIEW_SOURCE, "
+                     << "0 AS RDB$RELATION_COUNTS, "
+                     << "0 AS RDB$FORMAT, "
+                     << "0 AS RDB$FIELD_ID, "
+                     << "0 AS RDB$FLAGS, "
+                     << relation.relation_type << " AS RDB$RELATION_TYPE, "
+                     << "NULL AS RDB$EXTERNAL_FILE, "
+                     << "NULL AS RDB$EXTERNAL_DESCRIPTION, "
+                     << "NULL AS RDB$SECURITY_CLASS"
+                     << buildFirebirdSingleRowSource();
+            selects.push_back(seed_sql.str());
+        }
+
+        return buildRightNestedUnionAll(selects);
+    }
+
+    static std::string buildFirebirdFieldsViewQuery() {
+        static const FirebirdSeedRelationFieldSpec kSeedFields[] = {
+            {"RDB$RELATIONS", "RDB$RELATION_NAME", FirebirdSeedFieldKind::TEXT, 255, 0, true, true, 4, true, 0, false, 0},
+            {"RDB$RELATIONS", "RDB$VIEW_SOURCE", FirebirdSeedFieldKind::TEXT, 32765, 0, false, true, 4, true, 0, false, 0},
+            {"RDB$RELATIONS", "RDB$OWNER_NAME", FirebirdSeedFieldKind::TEXT, 255, 0, false, true, 4, true, 0, false, 0},
+            {"RDB$FIELDS", "RDB$FIELD_NAME", FirebirdSeedFieldKind::TEXT, 255, 0, true, true, 4, true, 0, false, 0},
+            {"RDB$FIELDS", "RDB$FIELD_TYPE", FirebirdSeedFieldKind::SMALLINT, 2, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$FIELDS", "RDB$FIELD_LENGTH", FirebirdSeedFieldKind::INTEGER, 4, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$FIELDS", "RDB$FIELD_SCALE", FirebirdSeedFieldKind::INTEGER, 4, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$FIELDS", "RDB$CHARACTER_SET_ID", FirebirdSeedFieldKind::INTEGER, 4, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$FIELDS", "RDB$COLLATION_ID", FirebirdSeedFieldKind::INTEGER, 4, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$FIELDS", "RDB$DIMENSIONS", FirebirdSeedFieldKind::INTEGER, 4, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$RELATION_FIELDS", "RDB$RELATION_NAME", FirebirdSeedFieldKind::TEXT, 255, 0, true, true, 4, true, 0, false, 0},
+            {"RDB$RELATION_FIELDS", "RDB$FIELD_NAME", FirebirdSeedFieldKind::TEXT, 255, 0, true, true, 4, true, 0, false, 0},
+            {"RDB$RELATION_FIELDS", "RDB$FIELD_SOURCE", FirebirdSeedFieldKind::TEXT, 255, 0, true, true, 4, true, 0, false, 0},
+            {"RDB$RELATION_FIELDS", "RDB$FIELD_POSITION", FirebirdSeedFieldKind::INTEGER, 4, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$RELATION_FIELDS", "RDB$NULL_FLAG", FirebirdSeedFieldKind::SMALLINT, 2, 0, false, false, 0, false, 0, false, 0},
+        };
+
+        std::vector<std::string> selects;
+        const std::string field_source_expr =
+            buildFirebirdFieldSourceExpr("t.table_name", "c.column_name");
+        const std::string normalized_type_expr = "UPPER(TRIM(c.data_type_name))";
+        const std::string field_length_case = buildFirebirdSearchedCase(
+            normalized_type_expr,
+            {
+                {"CHARACTER", "255"},
+                {"CHAR", "255"},
+                {"CHARACTER VARYING", "255"},
+                {"VARCHAR", "255"},
+                {"TEXT", "32765"},
+                {"JSON", "32765"},
+                {"JSONB", "32765"},
+                {"XML", "32765"},
+                {"UUID", "16"},
+                {"SMALLINT", "2"},
+                {"INT16", "2"},
+                {"INTEGER", "4"},
+                {"INT", "4"},
+                {"INT32", "4"},
+                {"BIGINT", "8"},
+                {"INT64", "8"},
+                {"REAL", "4"},
+                {"FLOAT32", "4"},
+                {"DOUBLE", "8"},
+                {"DOUBLE PRECISION", "8"},
+                {"FLOAT64", "8"},
+                {"NUMERIC", "8"},
+                {"DECIMAL", "8"},
+                {"DATE", "4"},
+                {"TIME", "4"},
+                {"TIMESTAMP", "8"},
+                {"BOOL", "1"},
+                {"BOOLEAN", "1"},
+                {"BYTEA", "8"},
+                {"BLOB", "8"},
+            },
+            "255");
+        const std::string field_type_case = buildFirebirdSearchedCase(
+            normalized_type_expr,
+            {
+                {"CHARACTER VARYING", "37"},
+                {"VARCHAR", "37"},
+                {"CHARACTER", "14"},
+                {"CHAR", "14"},
+                {"TEXT", "261"},
+                {"JSON", "261"},
+                {"JSONB", "261"},
+                {"XML", "261"},
+                {"UUID", "14"},
+                {"INTEGER", "8"},
+                {"INT", "8"},
+                {"INT32", "8"},
+                {"BIGINT", "16"},
+                {"INT64", "16"},
+                {"SMALLINT", "7"},
+                {"INT16", "7"},
+                {"REAL", "10"},
+                {"FLOAT32", "10"},
+                {"DOUBLE", "27"},
+                {"DOUBLE PRECISION", "27"},
+                {"FLOAT64", "27"},
+                {"NUMERIC", "16"},
+                {"DECIMAL", "16"},
+                {"DATE", "12"},
+                {"TIME", "13"},
+                {"TIMESTAMP", "35"},
+                {"BYTEA", "261"},
+                {"BLOB", "261"},
+                {"BOOL", "23"},
+                {"BOOLEAN", "23"},
+            },
+            "37");
+        const std::string field_subtype_case = buildFirebirdSearchedCase(
+            normalized_type_expr,
+            {
+                {"CHARACTER VARYING", "0"},
+                {"VARCHAR", "0"},
+                {"CHARACTER", "1"},
+                {"CHAR", "1"},
+                {"INTEGER", "0"},
+                {"INT", "0"},
+                {"INT32", "0"},
+                {"BIGINT", "1"},
+                {"INT64", "1"},
+                {"SMALLINT", "0"},
+                {"INT16", "0"},
+                {"REAL", "0"},
+                {"FLOAT32", "0"},
+                {"DOUBLE", "0"},
+                {"DOUBLE PRECISION", "0"},
+                {"FLOAT64", "0"},
+                {"NUMERIC", "2"},
+                {"DECIMAL", "2"},
+                {"DATE", "0"},
+                {"TIME", "0"},
+                {"TIMESTAMP", "0"},
+                {"BYTEA", "0"},
+                {"BLOB", "0"},
+                {"BOOL", "0"},
+                {"BOOLEAN", "0"},
+            },
+            "0");
+        const std::string character_length_case = buildFirebirdSearchedCase(
+            normalized_type_expr,
+            {
+                {"CHARACTER VARYING", "255"},
+                {"VARCHAR", "255"},
+                {"CHARACTER", "255"},
+                {"CHAR", "255"},
+            },
+            "0");
+        const std::string field_name_expr = castSqlExpr(field_source_expr, "VARCHAR(255)");
+        const std::string field_query_name_expr = castSqlExpr("0", "SMALLINT");
+        const std::string validation_blr_expr = castSqlExpr("NULL", "BLOB");
+        const std::string validation_source_expr = castSqlExpr("NULL", "TEXT");
+        const std::string computed_blr_expr = castSqlExpr("NULL", "BLOB");
+        const std::string computed_source_expr =
+            castSqlExpr("c.generation_expression", "TEXT");
+        const std::string default_value_expr = castSqlExpr("c.default_value", "TEXT");
+        const std::string default_source_expr = castSqlExpr("NULL", "TEXT");
+        const std::string field_length_expr = castSqlExpr(field_length_case, "INTEGER");
+        const std::string field_scale_expr = castSqlExpr("0", "INTEGER");
+        const std::string field_type_expr = castSqlExpr(field_type_case, "SMALLINT");
+        const std::string field_subtype_expr = castSqlExpr(field_subtype_case, "SMALLINT");
+        const std::string missing_value_expr = castSqlExpr("NULL", "TEXT");
+        const std::string missing_source_expr = castSqlExpr("NULL", "TEXT");
+        const std::string description_expr = castSqlExpr("NULL", "TEXT");
+        const std::string system_flag_expr = castSqlExpr("0", "SMALLINT");
+        const std::string query_header_expr = castSqlExpr("NULL", "TEXT");
+        const std::string segment_length_expr = castSqlExpr("0", "INTEGER");
+        const std::string edit_string_expr = castSqlExpr("NULL", "TEXT");
+        const std::string external_length_expr = castSqlExpr("0", "INTEGER");
+        const std::string external_scale_expr = castSqlExpr("0", "INTEGER");
+        const std::string external_type_expr = castSqlExpr("0", "INTEGER");
+        const std::string dimensions_expr = castSqlExpr("0", "INTEGER");
+        const std::string null_flag_expr =
+            castSqlExpr("CASE WHEN c.is_nullable THEN 0 ELSE 1 END", "SMALLINT");
+        const std::string character_length_expr =
+            castSqlExpr(character_length_case, "INTEGER");
+        const std::string collation_id_expr =
+            castSqlExpr("CASE WHEN c.collation_id = 0 THEN NULL ELSE c.collation_id END",
+                        "INTEGER");
+        const std::string charset_id_expr =
+            castSqlExpr("CASE WHEN c.charset_id IS NULL THEN NULL ELSE 4 END", "INTEGER");
+        const std::string field_precision_expr = castSqlExpr("0", "INTEGER");
+        const std::string security_class_expr = castSqlExpr("NULL", "TEXT");
+        const std::string owner_name_expr = castSqlExpr("NULL", "TEXT");
+        std::ostringstream base_sql;
+        base_sql << R"SQL(
+                SELECT
+                    )SQL" << field_name_expr << R"SQL( AS RDB$FIELD_NAME,
+                    )SQL" << field_query_name_expr << R"SQL( AS RDB$QUERY_NAME,
+                    )SQL" << validation_blr_expr << R"SQL( AS RDB$VALIDATION_BLR,
+                    )SQL" << validation_source_expr << R"SQL( AS RDB$VALIDATION_SOURCE,
+                    )SQL" << computed_blr_expr << R"SQL( AS RDB$COMPUTED_BLR,
+                    )SQL" << computed_source_expr << R"SQL( AS RDB$COMPUTED_SOURCE,
+                    )SQL" << default_value_expr << R"SQL( AS RDB$DEFAULT_VALUE,
+                    )SQL" << default_source_expr << R"SQL( AS RDB$DEFAULT_SOURCE,
+                    )SQL" << field_length_expr << R"SQL( AS RDB$FIELD_LENGTH,
+                    )SQL" << field_scale_expr << R"SQL( AS RDB$FIELD_SCALE,
+                    )SQL" << field_type_expr << R"SQL( AS RDB$FIELD_TYPE,
+                    )SQL" << field_subtype_expr << R"SQL( AS RDB$FIELD_SUB_TYPE,
+                    )SQL" << missing_value_expr << R"SQL( AS RDB$MISSING_VALUE,
+                    )SQL" << missing_source_expr << R"SQL( AS RDB$MISSING_SOURCE,
+                    )SQL" << description_expr << R"SQL( AS RDB$DESCRIPTION,
+                    )SQL" << system_flag_expr << R"SQL( AS RDB$SYSTEM_FLAG,
+                    )SQL" << query_header_expr << R"SQL( AS RDB$QUERY_HEADER,
+                    )SQL" << segment_length_expr << R"SQL( AS RDB$SEGMENT_LENGTH,
+                    )SQL" << edit_string_expr << R"SQL( AS RDB$EDIT_STRING,
+                    )SQL" << external_length_expr << R"SQL( AS RDB$EXTERNAL_LENGTH,
+                    )SQL" << external_scale_expr << R"SQL( AS RDB$EXTERNAL_SCALE,
+                    )SQL" << external_type_expr << R"SQL( AS RDB$EXTERNAL_TYPE,
+                    )SQL" << dimensions_expr << R"SQL( AS RDB$DIMENSIONS,
+                    )SQL" << null_flag_expr << R"SQL( AS RDB$NULL_FLAG,
+                    )SQL" << character_length_expr << R"SQL( AS RDB$CHARACTER_LENGTH,
+                    )SQL" << collation_id_expr << R"SQL( AS RDB$COLLATION_ID,
+                    )SQL" << charset_id_expr << R"SQL( AS RDB$CHARACTER_SET_ID,
+                    )SQL" << field_precision_expr << R"SQL( AS RDB$FIELD_PRECISION,
+                    )SQL" << security_class_expr << R"SQL( AS RDB$SECURITY_CLASS,
+                    )SQL" << owner_name_expr << R"SQL( AS RDB$OWNER_NAME
+                FROM sys.columns c
+                JOIN sys.tables t ON c.table_id = t.table_id
+                JOIN sys.schemas s ON t.schema_id = s.schema_id
+                WHERE )SQL"
+            << buildFirebirdSchemaScopePredicate("s.schema_name")
+            << R"SQL(
+            )SQL";
+        selects.push_back(base_sql.str());
+
+        for (size_t i = 0; i < std::size(kSeedFields); ++i) {
+            bool already_emitted = false;
+            for (size_t j = 0; j < i; ++j) {
+                if (std::string_view(kSeedFields[j].field_name) ==
+                    std::string_view(kSeedFields[i].field_name)) {
+                    already_emitted = true;
+                    break;
+                }
+            }
+            if (already_emitted) {
+                continue;
+            }
+
+            const auto& field = kSeedFields[i];
+            const int field_type = firebirdSeedFieldTypeCode(field.kind);
+            const int character_length =
+                field.kind == FirebirdSeedFieldKind::TEXT ? field.field_length : 0;
+
+            std::ostringstream seed_sql;
+            seed_sql << "SELECT "
+                     << "CAST(" << quoteSqlLiteral(field.field_name)
+                     << " AS VARCHAR(255)) AS RDB$FIELD_NAME, "
+                     << "CAST(0 AS SMALLINT) AS RDB$QUERY_NAME, "
+                     << "CAST(NULL AS BLOB) AS RDB$VALIDATION_BLR, "
+                     << "CAST(NULL AS TEXT) AS RDB$VALIDATION_SOURCE, "
+                     << "CAST(NULL AS BLOB) AS RDB$COMPUTED_BLR, "
+                     << "CAST(NULL AS TEXT) AS RDB$COMPUTED_SOURCE, "
+                     << "CAST(NULL AS TEXT) AS RDB$DEFAULT_VALUE, "
+                     << "CAST(NULL AS TEXT) AS RDB$DEFAULT_SOURCE, "
+                     << "CAST(" << field.field_length << " AS INTEGER) AS RDB$FIELD_LENGTH, "
+                     << "CAST(" << field.field_scale << " AS INTEGER) AS RDB$FIELD_SCALE, "
+                     << "CAST(" << field_type << " AS SMALLINT) AS RDB$FIELD_TYPE, "
+                     << "CAST(0 AS SMALLINT) AS RDB$FIELD_SUB_TYPE, "
+                     << "CAST(NULL AS TEXT) AS RDB$MISSING_VALUE, "
+                     << "CAST(NULL AS TEXT) AS RDB$MISSING_SOURCE, "
+                     << "CAST(NULL AS TEXT) AS RDB$DESCRIPTION, "
+                     << "CAST(1 AS SMALLINT) AS RDB$SYSTEM_FLAG, "
+                     << "CAST(NULL AS TEXT) AS RDB$QUERY_HEADER, "
+                     << "CAST(0 AS INTEGER) AS RDB$SEGMENT_LENGTH, "
+                     << "CAST(NULL AS TEXT) AS RDB$EDIT_STRING, "
+                     << "CAST(0 AS INTEGER) AS RDB$EXTERNAL_LENGTH, "
+                     << "CAST(0 AS INTEGER) AS RDB$EXTERNAL_SCALE, "
+                     << "CAST(0 AS INTEGER) AS RDB$EXTERNAL_TYPE, ";
+            if (field.has_dimensions) {
+                seed_sql << "CAST(" << field.dimensions << " AS INTEGER)";
+            } else {
+                seed_sql << "CAST(0 AS INTEGER)";
+            }
+            seed_sql << " AS RDB$DIMENSIONS, "
+                     << "CAST(" << (field.not_nullable ? "1" : "0")
+                     << " AS SMALLINT) AS RDB$NULL_FLAG, "
+                     << "CAST(" << character_length << " AS INTEGER) AS RDB$CHARACTER_LENGTH, ";
+            if (field.has_collation) {
+                seed_sql << "CAST(" << field.collation_id << " AS INTEGER)";
+            } else {
+                seed_sql << "CAST(NULL AS INTEGER)";
+            }
+            seed_sql << " AS RDB$COLLATION_ID, ";
+            if (field.has_charset) {
+                seed_sql << "CAST(" << field.charset_id << " AS INTEGER)";
+            } else {
+                seed_sql << "CAST(NULL AS INTEGER)";
+            }
+            seed_sql << " AS RDB$CHARACTER_SET_ID, "
+                     << "CAST(0 AS INTEGER) AS RDB$FIELD_PRECISION, "
+                     << "CAST(NULL AS TEXT) AS RDB$SECURITY_CLASS, "
+                     << "CAST(NULL AS TEXT) AS RDB$OWNER_NAME"
+                     << buildFirebirdSingleRowSource();
+            selects.push_back(seed_sql.str());
+        }
+
+        return buildRightNestedUnionAll(selects);
+    }
+
+    static std::string buildFirebirdRelationFieldsViewQuery() {
+        static const FirebirdSeedRelationFieldSpec kSeedFields[] = {
+            {"RDB$RELATIONS", "RDB$RELATION_NAME", FirebirdSeedFieldKind::TEXT, 255, 0, true, true, 4, true, 0, false, 0},
+            {"RDB$RELATIONS", "RDB$VIEW_SOURCE", FirebirdSeedFieldKind::TEXT, 32765, 0, false, true, 4, true, 0, false, 0},
+            {"RDB$RELATIONS", "RDB$OWNER_NAME", FirebirdSeedFieldKind::TEXT, 255, 0, false, true, 4, true, 0, false, 0},
+            {"RDB$FIELDS", "RDB$FIELD_NAME", FirebirdSeedFieldKind::TEXT, 255, 0, true, true, 4, true, 0, false, 0},
+            {"RDB$FIELDS", "RDB$FIELD_TYPE", FirebirdSeedFieldKind::SMALLINT, 2, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$FIELDS", "RDB$FIELD_LENGTH", FirebirdSeedFieldKind::INTEGER, 4, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$FIELDS", "RDB$FIELD_SCALE", FirebirdSeedFieldKind::INTEGER, 4, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$FIELDS", "RDB$CHARACTER_SET_ID", FirebirdSeedFieldKind::INTEGER, 4, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$FIELDS", "RDB$COLLATION_ID", FirebirdSeedFieldKind::INTEGER, 4, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$FIELDS", "RDB$DIMENSIONS", FirebirdSeedFieldKind::INTEGER, 4, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$RELATION_FIELDS", "RDB$RELATION_NAME", FirebirdSeedFieldKind::TEXT, 255, 0, true, true, 4, true, 0, false, 0},
+            {"RDB$RELATION_FIELDS", "RDB$FIELD_NAME", FirebirdSeedFieldKind::TEXT, 255, 0, true, true, 4, true, 0, false, 0},
+            {"RDB$RELATION_FIELDS", "RDB$FIELD_SOURCE", FirebirdSeedFieldKind::TEXT, 255, 0, true, true, 4, true, 0, false, 0},
+            {"RDB$RELATION_FIELDS", "RDB$FIELD_POSITION", FirebirdSeedFieldKind::INTEGER, 4, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$RELATION_FIELDS", "RDB$NULL_FLAG", FirebirdSeedFieldKind::SMALLINT, 2, 0, false, false, 0, false, 0, false, 0},
+        };
+
+        std::vector<std::string> selects;
+        const std::string relation_field_source_expr =
+            buildFirebirdFieldSourceExpr("t.table_name", "c.column_name");
+        std::ostringstream base_sql;
+        base_sql << R"SQL(
+                SELECT
+                    t.table_name AS RDB$RELATION_NAME,
+                    c.column_name AS RDB$FIELD_NAME,
+                    )SQL" << relation_field_source_expr << R"SQL( AS RDB$FIELD_SOURCE,
+                    NULL AS RDB$QUERY_NAME,
+                    NULL AS RDB$BASE_FIELD,
+                    NULL AS RDB$EDIT_STRING,
+                    c.ordinal_position AS RDB$FIELD_POSITION,
+                    NULL AS RDB$QUERY_HEADER,
+                    0 AS RDB$UPDATE_FLAG,
+                    c.ordinal_position AS RDB$FIELD_ID,
+                    NULL AS RDB$VIEW_CONTEXT,
+                    NULL AS RDB$DESCRIPTION,
+                    c.default_value AS RDB$DEFAULT_VALUE,
+                    NULL AS RDB$DEFAULT_SOURCE,
+                    0 AS RDB$SYSTEM_FLAG,
+                    NULL AS RDB$SECURITY_CLASS,
+                    NULL AS RDB$COMPLEX_NAME,
+                    CASE WHEN c.is_nullable THEN 0 ELSE 1 END AS RDB$NULL_FLAG,
+                    NULL AS RDB$COLLATION_ID,
+                    CASE WHEN c.is_identity THEN )SQL" << relation_field_source_expr << R"SQL( ELSE NULL END AS RDB$GENERATOR_NAME,
+                    NULL AS RDB$IDENTITY_TYPE
+                FROM sys.columns c
+                JOIN sys.tables t ON c.table_id = t.table_id
+                JOIN sys.schemas s ON t.schema_id = s.schema_id
+                WHERE )SQL"
+            << buildFirebirdSchemaScopePredicate("s.schema_name")
+            << R"SQL(
+            )SQL";
+        selects.push_back(base_sql.str());
+
+        std::string current_relation;
+        int position = 0;
+        for (const auto& field : kSeedFields) {
+            if (current_relation != field.relation_name) {
+                current_relation = field.relation_name;
+                position = 0;
+            }
+
+            std::ostringstream seed_sql;
+            seed_sql << "SELECT "
+                     << quoteSqlLiteral(field.relation_name) << " AS RDB$RELATION_NAME, "
+                     << quoteSqlLiteral(field.field_name) << " AS RDB$FIELD_NAME, "
+                     << quoteSqlLiteral(field.field_name) << " AS RDB$FIELD_SOURCE, "
+                     << "NULL AS RDB$QUERY_NAME, "
+                     << "NULL AS RDB$BASE_FIELD, "
+                     << "NULL AS RDB$EDIT_STRING, "
+                     << position << " AS RDB$FIELD_POSITION, "
+                     << "NULL AS RDB$QUERY_HEADER, "
+                     << "0 AS RDB$UPDATE_FLAG, "
+                     << position << " AS RDB$FIELD_ID, "
+                     << "NULL AS RDB$VIEW_CONTEXT, "
+                     << "NULL AS RDB$DESCRIPTION, "
+                     << "NULL AS RDB$DEFAULT_VALUE, "
+                     << "NULL AS RDB$DEFAULT_SOURCE, "
+                     << "1 AS RDB$SYSTEM_FLAG, "
+                     << "NULL AS RDB$SECURITY_CLASS, "
+                     << "NULL AS RDB$COMPLEX_NAME, "
+                     << (field.not_nullable ? "1" : "0") << " AS RDB$NULL_FLAG, "
+                     << "NULL AS RDB$COLLATION_ID, "
+                     << "NULL AS RDB$GENERATOR_NAME, "
+                     << "NULL AS RDB$IDENTITY_TYPE"
+                     << buildFirebirdSingleRowSource();
+            selects.push_back(seed_sql.str());
+            ++position;
+        }
+
+        return buildRightNestedUnionAll(selects);
     }
 
     // ========================================================================
@@ -261,30 +1091,18 @@ private:
     std::vector<EmulatedViewDefinition> getFirebirdViews() {
         std::vector<EmulatedViewDefinition> views;
 
+        views.push_back({
+            "RDB$DATABASE",
+            std::string("SELECT 1 AS DUMMY") + buildFirebirdSingleRowSource(),
+            {"DUMMY"},
+            {DataType::INT32},
+            "Single-row Firebird compatibility relation"
+        });
+
         // RDB$RELATIONS - Tables
         views.push_back({
             "RDB$RELATIONS",
-            R"SQL(
-                SELECT
-                    t.table_name AS RDB$RELATION_NAME,
-                    CAST(t.table_id AS INTEGER) AS RDB$RELATION_ID,
-                    CASE WHEN s.schema_name = 'sys' THEN 1 ELSE 0 END AS RDB$SYSTEM_FLAG,
-                    s.owner_name AS RDB$OWNER_NAME,
-                    t.description AS RDB$DESCRIPTION,
-                    0 AS RDB$VIEW_BLR,
-                    NULL AS RDB$VIEW_SOURCE,
-                    t.row_count AS RDB$RELATION_COUNTS,
-                    0 AS RDB$FORMAT,
-                    0 AS RDB$FIELD_ID,
-                    0 AS RDB$FLAGS,
-                    0 AS RDB$RELATION_TYPE,
-                    NULL AS RDB$EXTERNAL_FILE,
-                    NULL AS RDB$EXTERNAL_DESCRIPTION,
-                    NULL AS RDB$SECURITY_CLASS
-                FROM sys.catalog.tables t
-                JOIN sys.catalog.schemas s ON t.schema_id = s.schema_id
-                WHERE t.schema_id = {schema_id}
-            )SQL",
+            buildFirebirdRelationsViewQuery(),
             {"RDB$RELATION_NAME", "RDB$RELATION_ID", "RDB$SYSTEM_FLAG",
              "RDB$OWNER_NAME", "RDB$DESCRIPTION", "RDB$VIEW_BLR",
              "RDB$VIEW_SOURCE", "RDB$RELATION_COUNTS", "RDB$FORMAT",
@@ -301,120 +1119,55 @@ private:
         // RDB$FIELDS - Global field definitions (columns)
         views.push_back({
             "RDB$FIELDS",
-            R"SQL(
-                SELECT DISTINCT
-                    c.column_name AS RDB$FIELD_NAME,
-                    0 AS RDB$QUERY_NAME,
-                    NULL AS RDB$VALIDATION_BLR,
-                    NULL AS RDB$VALIDATION_SOURCE,
-                    NULL AS RDB$COMPUTED_BLR,
-                    c.computed_expression AS RDB$COMPUTED_SOURCE,
-                    c.default_value AS RDB$DEFAULT_VALUE,
-                    NULL AS RDB$DEFAULT_SOURCE,
-                    c.max_length AS RDB$FIELD_LENGTH,
-                    c.scale AS RDB$FIELD_SCALE,
-                    CASE c.data_type
-                        WHEN 'VARCHAR' THEN 37
-                        WHEN 'CHAR' THEN 14
-                        WHEN 'INT32' THEN 8
-                        WHEN 'INT64' THEN 16
-                        WHEN 'INT16' THEN 7
-                        WHEN 'FLOAT32' THEN 10
-                        WHEN 'FLOAT64' THEN 27
-                        WHEN 'DECIMAL' THEN 16
-                        WHEN 'DATE' THEN 12
-                        WHEN 'TIME' THEN 13
-                        WHEN 'TIMESTAMP' THEN 35
-                        WHEN 'BLOB' THEN 261
-                        WHEN 'BOOLEAN' THEN 23
-                        ELSE 37
-                    END AS RDB$FIELD_TYPE,
-                    CASE c.data_type
-                        WHEN 'VARCHAR' THEN 0
-                        WHEN 'CHAR' THEN 1
-                        WHEN 'INT32' THEN 0
-                        WHEN 'INT64' THEN 1
-                        WHEN 'INT16' THEN 0
-                        WHEN 'FLOAT32' THEN 0
-                        WHEN 'FLOAT64' THEN 0
-                        WHEN 'DECIMAL' THEN 2
-                        WHEN 'DATE' THEN 0
-                        WHEN 'TIME' THEN 0
-                        WHEN 'TIMESTAMP' THEN 0
-                        WHEN 'BLOB' THEN 0
-                        WHEN 'BOOLEAN' THEN 0
-                        ELSE 0
-                    END AS RDB$FIELD_SUB_TYPE,
-                    NULL AS RDB$MISSING_VALUE,
-                    NULL AS RDB$MISSING_SOURCE,
-                    c.description AS RDB$DESCRIPTION,
-                    0 AS RDB$SYSTEM_FLAG,
-                    NULL AS RDB$QUERY_HEADER,
-                    0 AS RDB$SEGMENT_LENGTH,
-                    NULL AS RDB$EDIT_STRING,
-                    0 AS RDB$EXTERNAL_LENGTH,
-                    0 AS RDB$EXTERNAL_SCALE,
-                    0 AS RDB$EXTERNAL_TYPE,
-                    0 AS RDB$DIMENSIONS,
-                    CASE c.nullable WHEN 1 THEN 0 ELSE 1 END AS RDB$NULL_FLAG,
-                    c.max_length * 4 AS RDB$CHARACTER_LENGTH,
-                    NULL AS RDB$COLLATION_ID,
-                    NULL AS RDB$CHARACTER_SET_ID,
-                    c.precision AS RDB$FIELD_PRECISION,
-                    NULL AS RDB$SECURITY_CLASS,
-                    NULL AS RDB$OWNER_NAME
-                FROM sys.catalog.columns c
-                JOIN sys.catalog.tables t ON c.table_id = t.table_id
-                WHERE t.schema_id = {schema_id}
-            )SQL",
-            {"RDB$FIELD_NAME", "RDB$QUERY_NAME", "RDB$FIELD_TYPE",
-             "RDB$FIELD_LENGTH", "RDB$FIELD_SCALE", "RDB$NULL_FLAG"},
-            {DataType::VARCHAR, DataType::INT16, DataType::INT16,
-             DataType::INT32, DataType::INT32, DataType::INT16},
+            buildFirebirdFieldsViewQuery(),
+            {"RDB$FIELD_NAME", "RDB$QUERY_NAME", "RDB$VALIDATION_BLR",
+             "RDB$VALIDATION_SOURCE", "RDB$COMPUTED_BLR", "RDB$COMPUTED_SOURCE",
+             "RDB$DEFAULT_VALUE", "RDB$DEFAULT_SOURCE", "RDB$FIELD_LENGTH",
+             "RDB$FIELD_SCALE", "RDB$FIELD_TYPE", "RDB$FIELD_SUB_TYPE",
+             "RDB$MISSING_VALUE", "RDB$MISSING_SOURCE", "RDB$DESCRIPTION",
+             "RDB$SYSTEM_FLAG", "RDB$QUERY_HEADER", "RDB$SEGMENT_LENGTH",
+             "RDB$EDIT_STRING", "RDB$EXTERNAL_LENGTH", "RDB$EXTERNAL_SCALE",
+             "RDB$EXTERNAL_TYPE", "RDB$DIMENSIONS", "RDB$NULL_FLAG",
+             "RDB$CHARACTER_LENGTH", "RDB$COLLATION_ID", "RDB$CHARACTER_SET_ID",
+             "RDB$FIELD_PRECISION", "RDB$SECURITY_CLASS", "RDB$OWNER_NAME"},
+            {DataType::VARCHAR, DataType::INT16, DataType::BLOB,
+             DataType::VARCHAR, DataType::BLOB, DataType::VARCHAR,
+             DataType::VARCHAR, DataType::VARCHAR, DataType::INT32,
+             DataType::INT32, DataType::INT16, DataType::INT16,
+             DataType::VARCHAR, DataType::VARCHAR, DataType::VARCHAR,
+             DataType::INT16, DataType::VARCHAR, DataType::INT32,
+             DataType::VARCHAR, DataType::INT32, DataType::INT32,
+             DataType::INT32, DataType::INT32, DataType::INT16,
+             DataType::INT32, DataType::INT32, DataType::INT32,
+             DataType::INT32, DataType::VARCHAR, DataType::VARCHAR},
             "Maps columns to Firebird RDB$FIELDS format"
         });
 
         // RDB$RELATION_FIELDS - Relation-specific field definitions
         views.push_back({
             "RDB$RELATION_FIELDS",
-            R"SQL(
-                SELECT
-                    t.table_name AS RDB$RELATION_NAME,
-                    c.column_name AS RDB$FIELD_NAME,
-                    c.column_name AS RDB$FIELD_SOURCE,
-                    NULL AS RDB$QUERY_NAME,
-                    NULL AS RDB$BASE_FIELD,
-                    NULL AS RDB$EDIT_STRING,
-                    c.ordinal AS RDB$FIELD_POSITION,
-                    NULL AS RDB$QUERY_HEADER,
-                    0 AS RDB$UPDATE_FLAG,
-                    c.ordinal AS RDB$FIELD_ID,
-                    NULL AS RDB$VIEW_CONTEXT,
-                    c.description AS RDB$DESCRIPTION,
-                    c.default_value AS RDB$DEFAULT_VALUE,
-                    NULL AS RDB$DEFAULT_SOURCE,
-                    0 AS RDB$SYSTEM_FLAG,
-                    NULL AS RDB$SECURITY_CLASS,
-                    NULL AS RDB$COMPLEX_NAME,
-                    CASE c.nullable WHEN 1 THEN 0 ELSE 1 END AS RDB$NULL_FLAG,
-                    NULL AS RDB$COLLATION_ID,
-                    c.is_identity AS RDB$GENERATOR_NAME,
-                    NULL AS RDB$IDENTITY_TYPE
-                FROM sys.catalog.columns c
-                JOIN sys.catalog.tables t ON c.table_id = t.table_id
-                WHERE t.schema_id = {schema_id}
-            )SQL",
+            buildFirebirdRelationFieldsViewQuery(),
             {"RDB$RELATION_NAME", "RDB$FIELD_NAME", "RDB$FIELD_SOURCE",
-             "RDB$FIELD_POSITION", "RDB$NULL_FLAG"},
+             "RDB$QUERY_NAME", "RDB$BASE_FIELD", "RDB$EDIT_STRING",
+             "RDB$FIELD_POSITION", "RDB$QUERY_HEADER", "RDB$UPDATE_FLAG",
+             "RDB$FIELD_ID", "RDB$VIEW_CONTEXT", "RDB$DESCRIPTION",
+             "RDB$DEFAULT_VALUE", "RDB$DEFAULT_SOURCE", "RDB$SYSTEM_FLAG",
+             "RDB$SECURITY_CLASS", "RDB$COMPLEX_NAME", "RDB$NULL_FLAG",
+             "RDB$COLLATION_ID", "RDB$GENERATOR_NAME", "RDB$IDENTITY_TYPE"},
             {DataType::VARCHAR, DataType::VARCHAR, DataType::VARCHAR,
-             DataType::INT16, DataType::INT16},
+             DataType::VARCHAR, DataType::VARCHAR, DataType::VARCHAR,
+             DataType::INT32, DataType::VARCHAR, DataType::INT16,
+             DataType::INT32, DataType::INT32, DataType::VARCHAR,
+             DataType::VARCHAR, DataType::VARCHAR, DataType::INT16,
+             DataType::VARCHAR, DataType::VARCHAR, DataType::INT16,
+             DataType::INT32, DataType::VARCHAR, DataType::INT16},
             "Maps table columns to Firebird RDB$RELATION_FIELDS format"
         });
 
         // RDB$INDICES - Indexes
         views.push_back({
             "RDB$INDICES",
-            R"SQL(
+            std::string(R"SQL(
                 SELECT
                     i.index_name AS RDB$INDEX_NAME,
                     t.table_name AS RDB$RELATION_NAME,
@@ -429,10 +1182,10 @@ private:
                     NULL AS RDB$EXPRESSION_BLR,
                     NULL AS RDB$EXPRESSION_SOURCE,
                     NULL AS RDB$STATISTICS
-                FROM sys.catalog.indexes i
-                JOIN sys.catalog.tables t ON i.table_id = t.table_id
-                WHERE t.schema_id = {schema_id}
-            )SQL",
+                FROM sys.indexes i
+                JOIN sys.tables t ON i.table_id = t.table_id
+                JOIN sys.schemas s ON t.schema_id = s.schema_id
+                WHERE )SQL") + buildFirebirdSchemaScopePredicate("s.schema_name"),
             {"RDB$INDEX_NAME", "RDB$RELATION_NAME", "RDB$INDEX_ID",
              "RDB$UNIQUE_FLAG", "RDB$SEGMENT_COUNT", "RDB$INDEX_TYPE"},
             {DataType::VARCHAR, DataType::VARCHAR, DataType::INT32,
@@ -445,26 +1198,26 @@ private:
             "RDB$PROCEDURES",
             R"SQL(
                 SELECT
-                    p.procedure_name AS RDB$PROCEDURE_NAME,
-                    CAST(p.procedure_id AS INTEGER) AS RDB$PROCEDURE_ID,
-                    ARRAY_LENGTH(p.parameters) AS RDB$PROCEDURE_INPUTS,
-                    0 AS RDB$PROCEDURE_OUTPUTS,
-                    p.description AS RDB$DESCRIPTION,
-                    NULL AS RDB$PROCEDURE_BLR,
-                    p.body AS RDB$PROCEDURE_SOURCE,
-                    NULL AS RDB$SECURITY_CLASS,
-                    p.owner_name AS RDB$OWNER_NAME,
-                    0 AS RDB$PROCEDURE_TYPE,
-                    1 AS RDB$VALID_BLR,
-                    0 AS RDB$DEBUG_INFO,
-                    NULL AS RDB$ENGINE_NAME,
-                    NULL AS RDB$ENTRYPOINT,
-                    NULL AS RDB$PACKAGE_NAME,
-                    NULL AS RDB$PRIVATE_FLAG,
-                    0 AS RDB$SYSTEM_FLAG,
-                    NULL AS RDB$SQL_SECURITY
-                FROM sys.catalog.procedures p
-                WHERE p.schema_id = {schema_id}
+                    CAST(NULL AS TEXT) AS RDB$PROCEDURE_NAME,
+                    CAST(NULL AS INTEGER) AS RDB$PROCEDURE_ID,
+                    CAST(NULL AS SMALLINT) AS RDB$PROCEDURE_INPUTS,
+                    CAST(NULL AS SMALLINT) AS RDB$PROCEDURE_OUTPUTS,
+                    CAST(NULL AS TEXT) AS RDB$DESCRIPTION,
+                    CAST(NULL AS BLOB) AS RDB$PROCEDURE_BLR,
+                    CAST(NULL AS TEXT) AS RDB$PROCEDURE_SOURCE,
+                    CAST(NULL AS TEXT) AS RDB$SECURITY_CLASS,
+                    CAST(NULL AS TEXT) AS RDB$OWNER_NAME,
+                    CAST(NULL AS SMALLINT) AS RDB$PROCEDURE_TYPE,
+                    CAST(NULL AS SMALLINT) AS RDB$VALID_BLR,
+                    CAST(NULL AS INTEGER) AS RDB$DEBUG_INFO,
+                    CAST(NULL AS TEXT) AS RDB$ENGINE_NAME,
+                    CAST(NULL AS TEXT) AS RDB$ENTRYPOINT,
+                    CAST(NULL AS TEXT) AS RDB$PACKAGE_NAME,
+                    CAST(NULL AS SMALLINT) AS RDB$PRIVATE_FLAG,
+                    CAST(NULL AS SMALLINT) AS RDB$SYSTEM_FLAG,
+                    CAST(NULL AS SMALLINT) AS RDB$SQL_SECURITY
+                FROM RDB$DATABASE
+                WHERE 1 = 0
             )SQL",
             {"RDB$PROCEDURE_NAME", "RDB$PROCEDURE_ID", "RDB$PROCEDURE_INPUTS",
              "RDB$PROCEDURE_SOURCE", "RDB$OWNER_NAME"},
@@ -478,40 +1231,23 @@ private:
             "RDB$TRIGGERS",
             R"SQL(
                 SELECT
-                    tr.trigger_name AS RDB$TRIGGER_NAME,
-                    t.table_name AS RDB$RELATION_NAME,
-                    tr.position AS RDB$TRIGGER_SEQUENCE,
-                    CASE tr.timing
-                        WHEN 'BEFORE' THEN
-                            CASE tr.event
-                                WHEN 'INSERT' THEN 1
-                                WHEN 'UPDATE' THEN 3
-                                WHEN 'DELETE' THEN 5
-                                ELSE 1
-                            END
-                        WHEN 'AFTER' THEN
-                            CASE tr.event
-                                WHEN 'INSERT' THEN 2
-                                WHEN 'UPDATE' THEN 4
-                                WHEN 'DELETE' THEN 6
-                                ELSE 2
-                            END
-                        ELSE 0
-                    END AS RDB$TRIGGER_TYPE,
-                    tr.body AS RDB$TRIGGER_SOURCE,
-                    NULL AS RDB$TRIGGER_BLR,
-                    tr.description AS RDB$DESCRIPTION,
-                    CASE tr.is_enabled WHEN 1 THEN 0 ELSE 1 END AS RDB$TRIGGER_INACTIVE,
-                    0 AS RDB$SYSTEM_FLAG,
-                    0 AS RDB$FLAGS,
-                    1 AS RDB$VALID_BLR,
-                    0 AS RDB$DEBUG_INFO,
-                    NULL AS RDB$ENGINE_NAME,
-                    NULL AS RDB$ENTRYPOINT,
-                    NULL AS RDB$SQL_SECURITY
-                FROM sys.catalog.triggers tr
-                JOIN sys.catalog.tables t ON tr.table_id = t.table_id
-                WHERE t.schema_id = {schema_id}
+                    CAST(NULL AS TEXT) AS RDB$TRIGGER_NAME,
+                    CAST(NULL AS TEXT) AS RDB$RELATION_NAME,
+                    CAST(NULL AS SMALLINT) AS RDB$TRIGGER_SEQUENCE,
+                    CAST(NULL AS SMALLINT) AS RDB$TRIGGER_TYPE,
+                    CAST(NULL AS TEXT) AS RDB$TRIGGER_SOURCE,
+                    CAST(NULL AS BLOB) AS RDB$TRIGGER_BLR,
+                    CAST(NULL AS TEXT) AS RDB$DESCRIPTION,
+                    CAST(NULL AS SMALLINT) AS RDB$TRIGGER_INACTIVE,
+                    CAST(NULL AS SMALLINT) AS RDB$SYSTEM_FLAG,
+                    CAST(NULL AS SMALLINT) AS RDB$FLAGS,
+                    CAST(NULL AS SMALLINT) AS RDB$VALID_BLR,
+                    CAST(NULL AS INTEGER) AS RDB$DEBUG_INFO,
+                    CAST(NULL AS TEXT) AS RDB$ENGINE_NAME,
+                    CAST(NULL AS TEXT) AS RDB$ENTRYPOINT,
+                    CAST(NULL AS SMALLINT) AS RDB$SQL_SECURITY
+                FROM RDB$DATABASE
+                WHERE 1 = 0
             )SQL",
             {"RDB$TRIGGER_NAME", "RDB$RELATION_NAME", "RDB$TRIGGER_SEQUENCE",
              "RDB$TRIGGER_TYPE", "RDB$TRIGGER_SOURCE", "RDB$TRIGGER_INACTIVE"},
@@ -866,6 +1602,10 @@ private:
             {DataType::INT64, DataType::INT64, DataType::TEXT, DataType::TEXT},
             "MON$CONTEXT_VARIABLES backed by sys.context_variables"
         });
+
+        for (auto& view : views) {
+            view.source_query = quoteFirebirdAliasIdentifiers(std::move(view.source_query));
+        }
 
         return views;
     }
@@ -1227,49 +1967,36 @@ private:
         views.push_back({
             "global_status",
             R"SQL(
-                SELECT 'Connections' AS VARIABLE_NAME,
-                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
-                                 WHERE metric = 'connections_total' LIMIT 1), 0) AS VARIABLE_VALUE
-                UNION ALL
-                SELECT 'Threads_connected',
-                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
-                                 WHERE metric = 'connections_active' LIMIT 1), 0)
-                UNION ALL
-                SELECT 'Threads_running',
-                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
-                                 WHERE metric = 'query_currently_running' LIMIT 1), 0)
-                UNION ALL
-                SELECT 'Com_select',
-                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
-                                 WHERE metric = 'queries_total{type=select}' LIMIT 1), 0)
-                UNION ALL
-                SELECT 'Com_insert',
-                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
-                                 WHERE metric = 'queries_total{type=insert}' LIMIT 1), 0)
-                UNION ALL
-                SELECT 'Com_update',
-                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
-                                 WHERE metric = 'queries_total{type=update}' LIMIT 1), 0)
-                UNION ALL
-                SELECT 'Com_delete',
-                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
-                                 WHERE metric = 'queries_total{type=delete}' LIMIT 1), 0)
-                UNION ALL
-                SELECT 'Innodb_buffer_pool_read_requests',
-                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
-                                 WHERE metric = 'buffer_pool_reads_total{source=cache}' LIMIT 1), 0)
-                UNION ALL
-                SELECT 'Innodb_buffer_pool_reads',
-                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
-                                 WHERE metric = 'buffer_pool_reads_total{source=disk}' LIMIT 1), 0)
-                UNION ALL
-                SELECT 'Innodb_row_lock_waits',
-                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
-                                 WHERE metric = 'lock_waits_total' LIMIT 1), 0)
-                UNION ALL
-                SELECT 'Uptime',
-                       COALESCE((SELECT CAST(value AS BIGINT) FROM sys.performance
-                                 WHERE metric = 'uptime_seconds' LIMIT 1), 0)
+                SELECT
+                    CASE p.metric
+                        WHEN 'connections_total' THEN 'Connections'
+                        WHEN 'connections_active' THEN 'Threads_connected'
+                        WHEN 'query_currently_running' THEN 'Threads_running'
+                        WHEN 'queries_total{type=select}' THEN 'Com_select'
+                        WHEN 'queries_total{type=insert}' THEN 'Com_insert'
+                        WHEN 'queries_total{type=update}' THEN 'Com_update'
+                        WHEN 'queries_total{type=delete}' THEN 'Com_delete'
+                        WHEN 'buffer_pool_reads_total{source=cache}' THEN 'Innodb_buffer_pool_read_requests'
+                        WHEN 'buffer_pool_reads_total{source=disk}' THEN 'Innodb_buffer_pool_reads'
+                        WHEN 'lock_waits_total' THEN 'Innodb_row_lock_waits'
+                        WHEN 'uptime_seconds' THEN 'Uptime'
+                        ELSE p.metric
+                    END AS VARIABLE_NAME,
+                    CAST(p.value AS BIGINT) AS VARIABLE_VALUE
+                FROM sys.performance p
+                WHERE p.metric IN (
+                    'connections_total',
+                    'connections_active',
+                    'query_currently_running',
+                    'queries_total{type=select}',
+                    'queries_total{type=insert}',
+                    'queries_total{type=update}',
+                    'queries_total{type=delete}',
+                    'buffer_pool_reads_total{source=cache}',
+                    'buffer_pool_reads_total{source=disk}',
+                    'lock_waits_total',
+                    'uptime_seconds'
+                )
             )SQL",
             {"VARIABLE_NAME", "VARIABLE_VALUE"},
             {DataType::TEXT, DataType::INT64},

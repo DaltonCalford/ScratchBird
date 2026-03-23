@@ -631,6 +631,21 @@ core::Status ProtocolAdapter::initializeConnection(network::Connection* conn) {
     return core::Status::OK;
 }
 
+void ProtocolAdapter::onConnectionClosed(network::Connection* conn,
+                                         network::CloseReason reason) {
+    (void)conn;
+    (void)reason;
+    prepared_statements_.clear();
+    database_name_.clear();
+    username_.clear();
+    user_id_ = 0;
+    transaction_id_ = 0;
+    in_transaction_ = false;
+    connection_ctx_.reset();
+    executor_.reset();
+    state_ = ProtocolState::INITIAL;
+}
+
 core::Status ProtocolAdapter::handleAuthentication(network::Connection* conn) {
     if (state_ != ProtocolState::HANDSHAKE && state_ != ProtocolState::AUTHENTICATING) {
         return core::Status::INTERNAL_ERROR;

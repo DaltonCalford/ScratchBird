@@ -1,0 +1,75 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 378,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_firebird/raw/ref_firebird.setup.97890aaa0a7c.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_firebird/raw/ref_firebird.setup.97890aaa0a7c.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "INDEX",
+    "message": "",
+    "stdout": "\nPLAN (AVP_RANGE_SELECTIVITY INDEX (IDX_AVP_RANGE_SELECTIVITY_K))\n\n          ID \n============ \n           5 \n           6 \n           7 \n           8 \n           9 \n          10 \n          11 \n          12 \n          13 \n          14 \n          15 \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 87,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_firebird/raw/ref_firebird.plan.6a078a8cd002.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_firebird/raw/ref_firebird.plan.6a078a8cd002.stderr.txt",
+    "plan_lines": [
+      "PLAN|PLAN (AVP_RANGE_SELECTIVITY INDEX (IDX_AVP_RANGE_SELECTIVITY_K))",
+      "PLAN|ID",
+      "PLAN|============",
+      "PLAN|5",
+      "PLAN|6",
+      "PLAN|7",
+      "PLAN|8",
+      "PLAN|9",
+      "PLAN|10",
+      "PLAN|11",
+      "PLAN|12",
+      "PLAN|13",
+      "PLAN|14",
+      "PLAN|15"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\nCONCATENATION                                                                   \n=============================================================================== \nASSERT|range_selectivity|count=11|sum_id=110                                    \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 92,
+    "assert_lines": [
+      "ASSERT|range_selectivity|count=11|sum_id=110"
+    ],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_firebird/raw/ref_firebird.exec.4e1dca421cb8.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_firebird/raw/ref_firebird.exec.4e1dca421cb8.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 98,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_firebird/raw/ref_firebird.teardown.1bae331bc7c0.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/range_selectivity/ref_firebird/raw/ref_firebird.teardown.1bae331bc7c0.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

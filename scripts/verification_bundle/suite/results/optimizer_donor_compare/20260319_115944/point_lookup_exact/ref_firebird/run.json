@@ -1,0 +1,65 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 300,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_firebird/raw/ref_firebird.setup.bbe2b334e139.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_firebird/raw/ref_firebird.setup.bbe2b334e139.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "INDEX",
+    "message": "",
+    "stdout": "\nPLAN (AVP_POINT_LOOKUP_EXACT INDEX (IDX_AVP_POINT_LOOKUP_EXACT_K))\n\nPAYLOAD                          \n================================ \np073                             \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 85,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_firebird/raw/ref_firebird.plan.140b5bfb9792.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_firebird/raw/ref_firebird.plan.140b5bfb9792.stderr.txt",
+    "plan_lines": [
+      "PLAN|PLAN (AVP_POINT_LOOKUP_EXACT INDEX (IDX_AVP_POINT_LOOKUP_EXACT_K))",
+      "PLAN|PAYLOAD",
+      "PLAN|================================",
+      "PLAN|p073"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\nCONCATENATION                                                                                 \n=============================================================================== \nASSERT|point_lookup_exact|count=1|payload=p073                                                \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 88,
+    "assert_lines": [
+      "ASSERT|point_lookup_exact|count=1|payload=p073"
+    ],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_firebird/raw/ref_firebird.exec.c3ec076bc31d.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_firebird/raw/ref_firebird.exec.c3ec076bc31d.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 82,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_firebird/raw/ref_firebird.teardown.bc09dedd7ffc.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_115944/point_lookup_exact/ref_firebird/raw/ref_firebird.teardown.bc09dedd7ffc.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

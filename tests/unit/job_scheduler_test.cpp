@@ -16,12 +16,14 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/workload_governance.h"
+#include "scratchbird/parser/v3_compiler.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
 #include "gtest/gtest.h"
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 
@@ -76,6 +78,16 @@ TEST(JobSchedulerDependencyGating, RequiresCompletedLatestRun) {
 
 namespace scratchbird::core {
 namespace {
+
+std::vector<uint8_t> compileSimpleSqlBytecode(const std::string& sql) {
+    scratchbird::parser::v3::Compiler compiler;
+    auto compiled = compiler.compile(sql);
+    EXPECT_TRUE(compiled.ok) << compiled.error;
+    if (!compiled.ok) {
+        return {};
+    }
+    return compiled.bytecode;
+}
 
 uint64_t nowMs() {
     auto now = std::chrono::system_clock::now().time_since_epoch();
@@ -132,6 +144,8 @@ CatalogManager::JobInfo buildSimpleJob(const std::string& name,
     job.job_name = name;
     job.job_type = CatalogManager::JobType::SQL;
     job.job_sql = "SELECT 1";
+    job.bytecode = compileSimpleSqlBytecode("SELECT 1");
+    job.source_dialect = "scratchbird_v3";
     job.schedule_kind = CatalogManager::ScheduleKind::AT;
     job.starts_at = scheduled_time;
     job.next_run_time = scheduled_time;
@@ -159,10 +173,13 @@ TEST(JobSchedulerMaintenanceSeed, JobsPresentAndEnabled) {
     ASSERT_EQ(catalog->getJobByName("daily_sweep", job, &ctx), Status::OK);
     EXPECT_EQ(job.state, CatalogManager::JobState::ENABLED);
     EXPECT_EQ(job.schedule_kind, CatalogManager::ScheduleKind::CRON);
+    EXPECT_EQ(job.job_sql, "SWEEP DATABASE");
+    EXPECT_EQ(job.source_dialect, "scratchbird_v3");
+    EXPECT_FALSE(job.bytecode.empty());
+    EXPECT_GT(job.next_run_time, job.created_at);
 
-    ASSERT_EQ(catalog->getJobByName("update_stats", job, &ctx), Status::OK);
-    EXPECT_EQ(job.state, CatalogManager::JobState::ENABLED);
-    EXPECT_EQ(job.schedule_kind, CatalogManager::ScheduleKind::CRON);
+    EXPECT_EQ(catalog->getJobByName("update_stats", job, &ctx), Status::NOT_FOUND);
+    EXPECT_EQ(catalog->getJobByName("rebuild_indexes", job, &ctx), Status::NOT_FOUND);
 
     db.close();
 }
@@ -183,6 +200,8 @@ TEST(JobSchedulerCancellation, CancelledRunSkippedBeforeExecution) {
     job.job_name = "cancel_me";
     job.job_type = CatalogManager::JobType::SQL;
     job.job_sql = "SELECT 1";
+    job.bytecode = compileSimpleSqlBytecode(job.job_sql);
+    job.source_dialect = "scratchbird_v3";
     job.schedule_kind = CatalogManager::ScheduleKind::AT;
     job.starts_at = nowMs();
     job.next_run_time = job.starts_at;
@@ -274,9 +293,7 @@ TEST(JobSchedulerExecuteNow, ManualExecutionCreatesRun) {
     }
     EXPECT_NE(run.state, CatalogManager::JobRunState::RUNNING);
     EXPECT_NE(run.state, CatalogManager::JobRunState::PENDING);
-    EXPECT_EQ(run.state, CatalogManager::JobRunState::FAILED);
-    EXPECT_NE(run.result_message.find("Job SQL text execution is disabled in engine"),
-              std::string::npos);
+    EXPECT_EQ(run.state, CatalogManager::JobRunState::COMPLETED);
 
     scheduler.stop();
     db.close();
@@ -475,12 +492,22 @@ TEST(JobSchedulerDependencies, DependentJobWaitsForCompletion) {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    ASSERT_EQ(parent_final.state, CatalogManager::JobRunState::FAILED);
-    EXPECT_NE(parent_final.result_message.find("Job SQL text execution is disabled in engine"),
-              std::string::npos);
+    ASSERT_EQ(parent_final.state, CatalogManager::JobRunState::COMPLETED);
 
-    // Dependency requires a COMPLETED upstream run. A FAILED parent must block child execution.
-    EXPECT_FALSE(waitForJobRuns(catalog, child_id, 1, 2000));
+    std::vector<CatalogManager::JobRunInfo> child_runs;
+    ASSERT_TRUE(waitForJobRuns(catalog, child_id, 1, 10000, &child_runs));
+    CatalogManager::JobRunInfo child_final;
+    auto child_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(10000);
+    while (std::chrono::steady_clock::now() < child_deadline) {
+        ASSERT_EQ(catalog->getJobRun(child_runs.front().job_run_id, child_final, &ctx), Status::OK);
+        if (child_final.state != CatalogManager::JobRunState::PENDING &&
+            child_final.state != CatalogManager::JobRunState::RUNNING) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_EQ(child_final.state, CatalogManager::JobRunState::COMPLETED);
+    EXPECT_GE(child_final.started_at, parent_final.completed_at);
 
     scheduler.stop();
     db.close();
@@ -616,13 +643,43 @@ TEST(JobSchedulerGovernance, ProcedureRunRespectsWorkloadAdmissionPolicy) {
     ASSERT_EQ(catalog->getSchema("PUBLIC", schema_info, &ctx), Status::OK) << ctx.message;
     const ID system_user = catalog->getSystemUserId(&ctx);
 
+    std::unique_ptr<ConnectionContext> ddl_conn;
+    ASSERT_EQ(db.connect(ddl_conn, &ctx), Status::OK) << ctx.message;
+    ASSERT_NE(ddl_conn, nullptr);
+    ddl_conn->setCurrentUser(system_user, true);
+    ddl_conn->setCurrentSchemaId(schema_info.schema_id);
+    ddl_conn->set_current_schema("PUBLIC");
+    ddl_conn->set_search_path({"PUBLIC"});
+    ConnectionContext::setCurrent(ddl_conn.get());
+
+    sblr::QueryCompilerV3 compiler(&db);
+    sblr::Executor executor(&db);
+    executor.setConnectionContext(ddl_conn.get());
+
+    auto create_procedure = compiler.compile(
+        "CREATE PROCEDURE proc_scheduler_governed AS "
+        "BEGIN "
+        "RETURN; "
+        "END");
+    ASSERT_TRUE(create_procedure.success())
+        << (create_procedure.errors().empty()
+                ? "Compilation failed"
+                : create_procedure.errors().front());
+    auto create_result = executor.execute(create_procedure.bytecode());
+    ASSERT_TRUE(create_result.success()) << create_result.error();
+
     CatalogManager::ProcedureInfo proc{};
-    proc.procedure_id = generateUuidV7();
-    proc.schema_id = schema_info.schema_id;
-    proc.name = "proc_scheduler_governed";
-    proc.owner_id = system_user;
-    proc.bytecode = {0x00, 0x00, static_cast<uint8_t>(scratchbird::sblr::Opcode::END)};
-    ASSERT_EQ(catalog->registerProcedure(proc, &ctx), Status::OK) << ctx.message;
+    std::vector<CatalogManager::ProcedureInfo> procedures;
+    ASSERT_EQ(catalog->listProcedures(procedures, &ctx), Status::OK) << ctx.message;
+    auto proc_it = std::find_if(
+        procedures.begin(), procedures.end(), [](const CatalogManager::ProcedureInfo& candidate) {
+            return candidate.name == "proc_scheduler_governed";
+        });
+    ASSERT_NE(proc_it, procedures.end());
+    proc = *proc_it;
+
+    ConnectionContext::setCurrent(nullptr);
+    ddl_conn.reset();
 
     CatalogManager::WorkloadClassCatalogInfo klass{};
     klass.class_id = generateUuidV7();
@@ -673,6 +730,16 @@ TEST(JobSchedulerGovernance, ProcedureRunRespectsWorkloadAdmissionPolicy) {
     ASSERT_TRUE(gate_decision.admitted) << gate_decision.detail;
     ASSERT_TRUE(gate_lease.active());
 
+    std::vector<WorkloadGovernance::AdmissionStatusRow> rows;
+    ASSERT_EQ(db.workload_governance()->snapshotAdmissionStatus(rows, &ctx), Status::OK)
+        << ctx.message;
+    auto row_it = std::find_if(
+        rows.begin(), rows.end(), [](const WorkloadGovernance::AdmissionStatusRow& row) {
+            return row.policy_name == "ap_scheduler";
+        });
+    ASSERT_NE(row_it, rows.end());
+    EXPECT_EQ(row_it->active_queries, 1u);
+
     auto job = buildSimpleJob("governed_proc_job", system_user, nowMs());
     job.job_type = CatalogManager::JobType::PROCEDURE;
     job.job_sql.clear();
@@ -694,9 +761,11 @@ TEST(JobSchedulerGovernance, ProcedureRunRespectsWorkloadAdmissionPolicy) {
 
     CatalogManager::JobRunInfo run;
     ASSERT_TRUE(waitForJobRunState(catalog, run_id, CatalogManager::JobRunState::FAILED, 10000, &run));
-    EXPECT_EQ(run.error_code, static_cast<int32_t>(Status::CONFIGURATION_LIMIT_EXCEEDED));
+    EXPECT_EQ(run.error_code, static_cast<int32_t>(Status::CONFIGURATION_LIMIT_EXCEEDED))
+        << run.result_message;
     EXPECT_NE(run.result_message.find("Admission rejected by max_concurrent_queries"),
-              std::string::npos);
+              std::string::npos)
+        << run.result_message;
 
     scheduler.stop();
     gate_lease.release();

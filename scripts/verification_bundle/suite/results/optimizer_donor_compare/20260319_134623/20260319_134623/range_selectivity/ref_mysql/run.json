@@ -1,0 +1,60 @@
+{
+  "setup": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "28000",
+    "message": "ERROR 1045 (28000): Access denied for user 'root'@'172.18.0.1' (using password: YES)",
+    "stdout": "\nERROR 1045 (28000): Access denied for user 'root'@'172.18.0.1' (using password: YES)\n",
+    "stderr": "",
+    "elapsed_ms": 33,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_mysql/raw/ref_mysql.setup.3d2f447aa5cc.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_mysql/raw/ref_mysql.setup.3d2f447aa5cc.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "28000",
+    "message": "ERROR 1045 (28000): Access denied for user 'root'@'172.18.0.1' (using password: YES)",
+    "stdout": "\nERROR 1045 (28000): Access denied for user 'root'@'172.18.0.1' (using password: YES)\n",
+    "stderr": "",
+    "elapsed_ms": 31,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_mysql/raw/ref_mysql.plan.1e08f9744057.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_mysql/raw/ref_mysql.plan.1e08f9744057.stderr.txt",
+    "plan_lines": [
+      "PLAN|ERROR 1045 (28000): Access denied for user 'root'@'172.18.0.1' (using password: YES)"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "28000",
+    "message": "ERROR 1045 (28000): Access denied for user 'root'@'172.18.0.1' (using password: YES)",
+    "stdout": "\nERROR 1045 (28000): Access denied for user 'root'@'172.18.0.1' (using password: YES)\n",
+    "stderr": "",
+    "elapsed_ms": 28,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_mysql/raw/ref_mysql.exec.f35cc8b9873d.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_mysql/raw/ref_mysql.exec.f35cc8b9873d.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "28000",
+    "message": "ERROR 1045 (28000): Access denied for user 'root'@'172.18.0.1' (using password: YES)",
+    "stdout": "\nERROR 1045 (28000): Access denied for user 'root'@'172.18.0.1' (using password: YES)\n",
+    "stderr": "",
+    "elapsed_ms": 29,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_mysql/raw/ref_mysql.teardown.39ff107a7c0c.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_134623/20260319_134623/range_selectivity/ref_mysql/raw/ref_mysql.teardown.39ff107a7c0c.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

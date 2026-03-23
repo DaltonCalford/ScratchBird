@@ -1,0 +1,72 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 1154,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/range_selectivity/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.setup.9e669ec09d1d.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/range_selectivity/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.setup.9e669ec09d1d.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n          ID \n============ \n           0 \n           0 \n           0 \n           0 \n           0 \n           0 \n           0 \n           0 \n           0 \n           0 \n           0 \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 324,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/range_selectivity/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.plan.eb8c2a912b98.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/range_selectivity/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.plan.eb8c2a912b98.stderr.txt",
+    "plan_lines": [
+      "PLAN|ID",
+      "PLAN|============",
+      "PLAN|0",
+      "PLAN|0",
+      "PLAN|0",
+      "PLAN|0",
+      "PLAN|0",
+      "PLAN|0",
+      "PLAN|0",
+      "PLAN|0",
+      "PLAN|0",
+      "PLAN|0",
+      "PLAN|0"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "08001",
+    "message": "After line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.exec.sql",
+    "stdout": "\nexpr1                          \n============================== \n\nStatement failed, SQLSTATE = 08001\nunavailable database\nAfter line 0 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/range_selectivity.exec.sql\n",
+    "stderr": "",
+    "elapsed_ms": 351,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/range_selectivity/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.exec.3a946fb4c9fd.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/range_selectivity/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.exec.3a946fb4c9fd.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 305,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/range_selectivity/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.teardown.f345af86765e.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143836/20260319_143836/range_selectivity/scratchbird_emulated_firebird/raw/scratchbird_emulated_firebird.teardown.f345af86765e.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

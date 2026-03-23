@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <optional>
+#include <queue>
 #include <string>
 #include <vector>
 #include <sys/socket.h>
@@ -51,11 +53,56 @@ public:
     using scratchbird::ipc::MySQLParserAgent::mapSQLStateToProtocol;
 };
 
+class MySqlParserAgentIpcHarness : public scratchbird::ipc::MySQLParserAgent {
+public:
+    using scratchbird::ipc::MySQLParserAgent::MySQLParserAgent;
+    using scratchbird::ipc::MySQLParserAgent::handleInitDB;
+    using scratchbird::ipc::MySQLParserAgent::handleQuery;
+
+    void queueResponse(const scratchbird::ipc::IPCMessage& msg) {
+        queued_responses_.push(msg);
+    }
+
+    const std::vector<scratchbird::ipc::IPCMessage>& sentMessages() const {
+        return sent_messages_;
+    }
+
+protected:
+    scratchbird::core::Status sendToEngine(uint32_t client_id,
+                                           const scratchbird::ipc::IPCMessage& msg,
+                                           scratchbird::core::ErrorContext* ctx) override {
+        (void)client_id;
+        (void)ctx;
+        sent_messages_.push_back(msg);
+        return scratchbird::core::Status::OK;
+    }
+
+    scratchbird::core::Status receiveFromEngine(uint32_t client_id,
+                                                scratchbird::ipc::IPCMessage& msg,
+                                                scratchbird::core::ErrorContext* ctx,
+                                                uint32_t timeout_ms) override {
+        (void)client_id;
+        (void)ctx;
+        (void)timeout_ms;
+        if (queued_responses_.empty()) {
+            return scratchbird::core::Status::IO_ERROR;
+        }
+        msg = queued_responses_.front();
+        queued_responses_.pop();
+        return scratchbird::core::Status::OK;
+    }
+
+private:
+    std::vector<scratchbird::ipc::IPCMessage> sent_messages_;
+    std::queue<scratchbird::ipc::IPCMessage> queued_responses_;
+};
+
 class PostgresqlParserAgentHarness : public scratchbird::ipc::PostgreSQLParserAgent {
 public:
     using scratchbird::ipc::PostgreSQLParserAgent::PostgreSQLParserAgent;
     using scratchbird::ipc::PostgreSQLParserAgent::mapProtocolErrorToSQLState;
     using scratchbird::ipc::PostgreSQLParserAgent::mapSQLStateToProtocol;
+    using scratchbird::ipc::PostgreSQLParserAgent::sendErrorResponse;
 };
 
 class FirebirdParserAgentHarness : public scratchbird::ipc::FirebirdParserAgent {
@@ -137,6 +184,13 @@ bool readAllFd(int fd, uint8_t* data, size_t len) {
         len -= static_cast<size_t>(n);
     }
     return true;
+}
+
+uint32_t readBe32(const uint8_t* data) {
+    return (static_cast<uint32_t>(data[0]) << 24) |
+           (static_cast<uint32_t>(data[1]) << 16) |
+           (static_cast<uint32_t>(data[2]) << 8) |
+           static_cast<uint32_t>(data[3]);
 }
 
 bool sendMySqlCommandPacket(int fd, uint8_t cmd, const std::vector<uint8_t>& args = {}) {
@@ -319,6 +373,89 @@ std::vector<uint8_t> buildFirebirdErrorResponsePacket(uint32_t gds_code,
     return packet;
 }
 
+scratchbird::ipc::IPCMessage makeReadyResponse(uint32_t session_id) {
+    scratchbird::ipc::IPCMessage msg(scratchbird::ipc::IPCMessageType::READY, session_id);
+    auto* payload = msg.getPayload<scratchbird::ipc::IPCReadyPayload>();
+    payload->session_id = session_id;
+    payload->server_features = 0;
+    std::strncpy(payload->server_version, "test", sizeof(payload->server_version) - 1);
+    payload->server_version[sizeof(payload->server_version) - 1] = '\0';
+    return msg;
+}
+
+scratchbird::ipc::IPCMessage makeRowDescriptionResponse(
+    const std::vector<std::pair<std::string, scratchbird::core::DataType>>& columns) {
+    scratchbird::ipc::IPCMessage msg(scratchbird::ipc::IPCMessageType::ROW_DESCRIPTION, 0);
+    scratchbird::ipc::IPCRowDescriptionPayload payload{};
+    payload.num_fields = static_cast<uint16_t>(columns.size());
+    msg.payload.resize(sizeof(payload) + columns.size() * sizeof(scratchbird::ipc::IPCFieldDesc));
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+
+    size_t offset = sizeof(payload);
+    for (const auto& column : columns) {
+        scratchbird::ipc::IPCFieldDesc field{};
+        std::strncpy(field.name, column.first.c_str(), sizeof(field.name) - 1);
+        field.name[sizeof(field.name) - 1] = '\0';
+        field.type_oid = static_cast<uint16_t>(column.second);
+        std::memcpy(msg.payload.data() + offset, &field, sizeof(field));
+        offset += sizeof(field);
+    }
+    return msg;
+}
+
+scratchbird::ipc::IPCMessage makeDataRowResponse(
+    const std::vector<std::optional<std::string>>& values) {
+    scratchbird::ipc::IPCMessage msg(scratchbird::ipc::IPCMessageType::DATA_ROW, 0);
+    scratchbird::ipc::IPCDataRowPayload payload{};
+    payload.num_fields = static_cast<uint16_t>(values.size());
+
+    size_t payload_size = sizeof(payload);
+    for (const auto& value : values) {
+        payload_size += sizeof(int32_t);
+        if (value) {
+            payload_size += value->size();
+        }
+    }
+
+    msg.payload.resize(payload_size);
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+
+    size_t offset = sizeof(payload);
+    for (const auto& value : values) {
+        const int32_t length = value ? static_cast<int32_t>(value->size()) : -1;
+        std::memcpy(msg.payload.data() + offset, &length, sizeof(length));
+        offset += sizeof(length);
+        if (value) {
+            std::memcpy(msg.payload.data() + offset, value->data(), value->size());
+            offset += value->size();
+        }
+    }
+    return msg;
+}
+
+scratchbird::ipc::IPCMessage makeCommandCompleteResponse(const std::string& tag,
+                                                         uint64_t rows_affected = 0,
+                                                         uint64_t last_insert_id = 0) {
+    scratchbird::ipc::IPCMessage msg(scratchbird::ipc::IPCMessageType::COMMAND_COMPLETE, 0);
+    auto* payload = msg.getPayload<scratchbird::ipc::IPCCommandCompletePayload>();
+    std::strncpy(payload->tag, tag.c_str(), sizeof(payload->tag) - 1);
+    payload->tag[sizeof(payload->tag) - 1] = '\0';
+    payload->rows_affected = rows_affected;
+    payload->last_insert_id = last_insert_id;
+    return msg;
+}
+
+std::string extractCompiledQueryOriginalSql(const scratchbird::ipc::IPCMessage& msg) {
+    const auto* payload = msg.getPayload<scratchbird::ipc::IPCCompiledQueryPayload>();
+    if (!payload) {
+        return {};
+    }
+
+    const char* sql_data = reinterpret_cast<const char*>(
+        msg.payload.data() + sizeof(scratchbird::ipc::IPCCompiledQueryPayload));
+    return std::string(sql_data, payload->original_sql_length);
+}
+
 }  // namespace
 
 TEST(EmulatedParserBoundaryContractsTest, MySqlBoundaryRejectAcceptPack) {
@@ -340,6 +477,73 @@ TEST(EmulatedParserBoundaryContractsTest, PostgresqlBoundaryRejectAcceptPack) {
     EXPECT_EQ(scratchbird::core::Status::OK, compileSql(adapter, "VACUUM"));
     EXPECT_NE(scratchbird::core::Status::OK, compileSql(adapter, "SET AUTOCOMMIT = 1"));
     EXPECT_NE(scratchbird::core::Status::OK, compileSql(adapter, "SHOW TABLES"));
+}
+
+TEST(EmulatedParserBoundaryContractsTest, PostgresqlAuthPacketsUseValidLengthPrefixes) {
+    PostgresqlParserAgentHarness agent(makeParserAgentConfig("postgresql"));
+
+    int sockets[2] = {-1, -1};
+    ASSERT_EQ(0, ::socketpair(AF_UNIX, SOCK_STREAM, 0, sockets));
+
+    scratchbird::ipc::PGClientState state;
+    state.client_fd = sockets[0];
+    state.process_id = 42;
+    state.secret_key = 99;
+    state.transaction_status = 'I';
+
+    std::array<uint8_t, 9> auth_packet{};
+    agent.sendAuthenticationCleartext(state);
+    ASSERT_TRUE(readAllFd(sockets[1], auth_packet.data(), auth_packet.size()));
+    EXPECT_EQ('R', static_cast<char>(auth_packet[0]));
+    EXPECT_EQ(8u, readBe32(auth_packet.data() + 1));
+    EXPECT_EQ(3u, readBe32(auth_packet.data() + 5));
+
+    agent.sendAuthenticationOk(state);
+    ASSERT_TRUE(readAllFd(sockets[1], auth_packet.data(), auth_packet.size()));
+    EXPECT_EQ('R', static_cast<char>(auth_packet[0]));
+    EXPECT_EQ(8u, readBe32(auth_packet.data() + 1));
+    EXPECT_EQ(0u, readBe32(auth_packet.data() + 5));
+
+    std::array<uint8_t, 13> key_packet{};
+    agent.sendBackendKeyData(state);
+    ASSERT_TRUE(readAllFd(sockets[1], key_packet.data(), key_packet.size()));
+    EXPECT_EQ('K', static_cast<char>(key_packet[0]));
+    EXPECT_EQ(12u, readBe32(key_packet.data() + 1));
+    EXPECT_EQ(42u, readBe32(key_packet.data() + 5));
+    EXPECT_EQ(99u, readBe32(key_packet.data() + 9));
+
+    std::array<uint8_t, 6> ready_packet{};
+    agent.sendReadyForQuery(state);
+    ASSERT_TRUE(readAllFd(sockets[1], ready_packet.data(), ready_packet.size()));
+    EXPECT_EQ('Z', static_cast<char>(ready_packet[0]));
+    EXPECT_EQ(5u, readBe32(ready_packet.data() + 1));
+    EXPECT_EQ('I', static_cast<char>(ready_packet[5]));
+
+    ::close(sockets[0]);
+    ::close(sockets[1]);
+}
+
+TEST(EmulatedParserBoundaryContractsTest, PostgresqlErrorPacketsUseValidLengthPrefixes) {
+    PostgresqlParserAgentHarness agent(makeParserAgentConfig("postgresql"));
+
+    int sockets[2] = {-1, -1};
+    ASSERT_EQ(0, ::socketpair(AF_UNIX, SOCK_STREAM, 0, sockets));
+
+    scratchbird::ipc::PGClientState state;
+    state.client_fd = sockets[0];
+
+    ASSERT_EQ(scratchbird::core::Status::OK,
+              agent.sendErrorResponse(state, "42P01", "missing relation"));
+
+    std::array<uint8_t, 256> err_packet{};
+    const ssize_t bytes_read = ::recv(sockets[1], err_packet.data(), err_packet.size(), 0);
+    ASSERT_GT(bytes_read, 0);
+    ASSERT_GE(bytes_read, 6);
+    EXPECT_EQ('E', static_cast<char>(err_packet[0]));
+    EXPECT_EQ(static_cast<uint32_t>(bytes_read - 1), readBe32(err_packet.data() + 1));
+
+    ::close(sockets[0]);
+    ::close(sockets[1]);
 }
 
 TEST(EmulatedParserBoundaryContractsTest, FirebirdBoundaryRejectAcceptPack) {
@@ -429,20 +633,33 @@ TEST(EmulatedParserBoundaryContractsTest, MySqlUnsupportedComRejectContractDeter
 }
 
 TEST(EmulatedParserBoundaryContractsTest, MySqlProcessKillAndCloneContracts) {
-    MySqlParserAgentHarness mysql_agent(makeParserAgentConfig("mysql"));
-
     // COM_PROCESS_KILL with non-zero thread id should route to KILL SQL path and return OK.
     {
+        MySqlParserAgentIpcHarness mysql_agent(makeParserAgentConfig("mysql"));
+        mysql_agent.queueResponse(makeReadyResponse(64));
+        mysql_agent.queueResponse(makeCommandCompleteResponse("OK"));
+
         int sockets[2] = {-1, -1};
         ASSERT_EQ(0, ::socketpair(AF_UNIX, SOCK_STREAM, 0, sockets));
 
         scratchbird::ipc::MySQLClientState state;
         state.client_fd = sockets[0];
+        state.client_id = 17;
+        state.connection_id = 23;
         state.state = scratchbird::ipc::MySQLClientState::READY;
+        state.username = "BOOTSTRAP";
+        state.status_flags = 0x0002;
 
         scratchbird::core::ErrorContext ctx;
         ASSERT_TRUE(sendMySqlCommandPacket(sockets[1], 0x0C, encodeLe32(7)));
         EXPECT_EQ(scratchbird::core::Status::OK, mysql_agent.handleCommand(state, &ctx));
+
+        ASSERT_EQ(2u, mysql_agent.sentMessages().size());
+        EXPECT_EQ(scratchbird::ipc::IPCMessageType::STARTUP,
+                  mysql_agent.sentMessages()[0].getType());
+        EXPECT_EQ(scratchbird::ipc::IPCMessageType::COMPILED_QUERY,
+                  mysql_agent.sentMessages()[1].getType());
+        EXPECT_EQ("KILL 7", extractCompiledQueryOriginalSql(mysql_agent.sentMessages()[1]));
 
         std::vector<uint8_t> payload;
         ASSERT_TRUE(recvMySqlPacketPayload(sockets[1], payload));
@@ -455,6 +672,7 @@ TEST(EmulatedParserBoundaryContractsTest, MySqlProcessKillAndCloneContracts) {
 
     // COM_CLONE should emit deterministic simulated-success OK contract with warning/info payload.
     {
+        MySqlParserAgentHarness mysql_agent(makeParserAgentConfig("mysql"));
         int sockets[2] = {-1, -1};
         ASSERT_EQ(0, ::socketpair(AF_UNIX, SOCK_STREAM, 0, sockets));
 
@@ -520,4 +738,86 @@ TEST(EmulatedParserBoundaryContractsTest, MySqlDeferredComRejectContractDetermin
         ::close(sockets[0]);
         ::close(sockets[1]);
     }
+}
+
+TEST(EmulatedParserBoundaryContractsTest, MySqlQueryUsesCompiledSblrBoundary) {
+    MySqlParserAgentIpcHarness mysql_agent(makeParserAgentConfig("mysql"));
+    mysql_agent.queueResponse(makeReadyResponse(77));
+    mysql_agent.queueResponse(makeRowDescriptionResponse({
+        {"answer", scratchbird::core::DataType::INTEGER}
+    }));
+    mysql_agent.queueResponse(makeDataRowResponse({std::string("1")}));
+    mysql_agent.queueResponse(makeCommandCompleteResponse("SELECT 1", 1));
+
+    int sockets[2] = {-1, -1};
+    ASSERT_EQ(0, ::socketpair(AF_UNIX, SOCK_STREAM, 0, sockets));
+
+    scratchbird::ipc::MySQLClientState state;
+    state.client_fd = sockets[0];
+    state.client_id = 41;
+    state.connection_id = 99;
+    state.state = scratchbird::ipc::MySQLClientState::READY;
+    state.username = "BOOTSTRAP";
+    state.database = "main";
+    state.status_flags = 0x0002;
+
+    std::vector<uint8_t> packet = {0x03, 'S', 'E', 'L', 'E', 'C', 'T', ' ', '1'};
+    scratchbird::core::ErrorContext ctx;
+    EXPECT_EQ(scratchbird::core::Status::OK, mysql_agent.handleQuery(state, packet, &ctx));
+
+    ASSERT_EQ(2u, mysql_agent.sentMessages().size());
+    EXPECT_EQ(scratchbird::ipc::IPCMessageType::STARTUP,
+              mysql_agent.sentMessages()[0].getType());
+    EXPECT_EQ(scratchbird::ipc::IPCMessageType::COMPILED_QUERY,
+              mysql_agent.sentMessages()[1].getType());
+    EXPECT_EQ("SELECT 1", extractCompiledQueryOriginalSql(mysql_agent.sentMessages()[1]));
+
+    std::vector<uint8_t> payload;
+    ASSERT_TRUE(recvMySqlPacketPayload(sockets[1], payload));
+    ASSERT_FALSE(payload.empty());
+    EXPECT_EQ(0x01, payload[0]);
+
+    ::close(sockets[0]);
+    ::close(sockets[1]);
+}
+
+TEST(EmulatedParserBoundaryContractsTest, MySqlInitDbUsesCompiledUseQueryBoundary) {
+    MySqlParserAgentIpcHarness mysql_agent(makeParserAgentConfig("mysql"));
+    mysql_agent.queueResponse(makeReadyResponse(88));
+    mysql_agent.queueResponse(makeCommandCompleteResponse("OK"));
+
+    int sockets[2] = {-1, -1};
+    ASSERT_EQ(0, ::socketpair(AF_UNIX, SOCK_STREAM, 0, sockets));
+
+    scratchbird::ipc::MySQLClientState state;
+    state.client_fd = sockets[0];
+    state.client_id = 52;
+    state.connection_id = 105;
+    state.state = scratchbird::ipc::MySQLClientState::READY;
+    state.username = "BOOTSTRAP";
+    state.status_flags = 0x0002;
+
+    const std::string db_name = "inventory";
+    std::vector<uint8_t> packet = {0x02};
+    packet.insert(packet.end(), db_name.begin(), db_name.end());
+
+    scratchbird::core::ErrorContext ctx;
+    EXPECT_EQ(scratchbird::core::Status::OK, mysql_agent.handleInitDB(state, packet, &ctx));
+
+    ASSERT_EQ(2u, mysql_agent.sentMessages().size());
+    EXPECT_EQ(scratchbird::ipc::IPCMessageType::STARTUP,
+              mysql_agent.sentMessages()[0].getType());
+    EXPECT_EQ(scratchbird::ipc::IPCMessageType::COMPILED_QUERY,
+              mysql_agent.sentMessages()[1].getType());
+    EXPECT_EQ("USE `inventory`",
+              extractCompiledQueryOriginalSql(mysql_agent.sentMessages()[1]));
+    EXPECT_EQ("inventory", state.database);
+
+    std::vector<uint8_t> payload;
+    ASSERT_TRUE(recvMySqlPacketPayload(sockets[1], payload));
+    const ParsedMySqlOk ok = parseMySqlOkPayload(payload);
+    ASSERT_TRUE(ok.is_ok);
+
+    ::close(sockets[0]);
+    ::close(sockets[1]);
 }

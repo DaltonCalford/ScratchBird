@@ -80,6 +80,8 @@ protected:
 
     core::Status parseMessage(network::Connection* conn) override;
     core::Status processMessage(network::Connection* conn) override;
+    void onConnectionClosed(network::Connection* conn,
+                            network::CloseReason reason) override;
     core::Status sendGreeting(network::Connection* conn) override;
     core::Status processAuthentication(network::Connection* conn) override;
     core::Status sendAuthResult(network::Connection* conn,
@@ -132,10 +134,6 @@ private:
     core::Status executeRemoteQuery(const std::string& sql,
                                     const std::vector<uint8_t>* bytecode,
                                     ResultContext& result);
-    core::Status executeRemoteTxnControl(network::Connection* conn,
-                                         const std::string& sql,
-                                         const std::string& sqlstate,
-                                         const std::string& fallback_error);
 
     // ========================================================================
     // Message Sending

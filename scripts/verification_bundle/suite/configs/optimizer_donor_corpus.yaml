@@ -1,0 +1,225 @@
+version: 1
+defaults:
+  timeout_seconds: 300
+  scratchbird_lane: native
+  result_prefix: ASSERT|
+  plan_prefix: PLAN|
+  metric_prefix: METRIC|
+cases:
+  - id: point_lookup_exact
+    enabled: true
+    tags: [btree, exact, point_lookup]
+    lanes: [native, postgresql, duckdb, mysql, firebird]
+    expectation: must_match
+    scratchbird_lane: native
+    intent: Exact point lookup over an indexed integer key with one matching row.
+    native_equivalence_note: ScratchBird native uses v3 SQL that preserves the same exact-point-lookup intent as the donor dialect statements.
+    normalization:
+      order_sensitive: false
+      require_plan_lines: true
+      result_prefix: ASSERT|
+      plan_prefix: PLAN|
+      metric_prefix: METRIC|
+    scoring:
+      semantics_weight: 0.50
+      plan_weight: 0.30
+      latency_weight: 0.20
+      donor_competitive_ratio_max: 1.25
+    surfaces:
+      native:
+        setup: cases/optimizer/sql/native/point_lookup_exact.setup.sql
+        plan: cases/optimizer/sql/native/point_lookup_exact.plan.sql
+        exec: cases/optimizer/sql/native/point_lookup_exact.exec.sql
+        teardown: cases/optimizer/sql/native/point_lookup_exact.teardown.sql
+      postgresql:
+        setup: cases/optimizer/sql/postgresql/point_lookup_exact.setup.sql
+        plan: cases/optimizer/sql/postgresql/point_lookup_exact.plan.sql
+        exec: cases/optimizer/sql/postgresql/point_lookup_exact.exec.sql
+        teardown: cases/optimizer/sql/postgresql/point_lookup_exact.teardown.sql
+      duckdb:
+        setup: cases/optimizer/sql/duckdb/point_lookup_exact.setup.sql
+        plan: cases/optimizer/sql/duckdb/point_lookup_exact.plan.sql
+        exec: cases/optimizer/sql/duckdb/point_lookup_exact.exec.sql
+        teardown: cases/optimizer/sql/duckdb/point_lookup_exact.teardown.sql
+      mysql:
+        setup: cases/optimizer/sql/mysql/point_lookup_exact.setup.sql
+        plan: cases/optimizer/sql/mysql/point_lookup_exact.plan.sql
+        exec: cases/optimizer/sql/mysql/point_lookup_exact.exec.sql
+        teardown: cases/optimizer/sql/mysql/point_lookup_exact.teardown.sql
+      firebird:
+        setup: cases/optimizer/sql/firebird/point_lookup_exact.setup.sql
+        plan: cases/optimizer/sql/firebird/point_lookup_exact.plan.sql
+        exec: cases/optimizer/sql/firebird/point_lookup_exact.exec.sql
+        teardown: cases/optimizer/sql/firebird/point_lookup_exact.teardown.sql
+
+  - id: range_selectivity
+    enabled: true
+    tags: [btree, range, selectivity]
+    lanes: [native, postgresql, duckdb, mysql, firebird]
+    expectation: must_match
+    scratchbird_lane: native
+    intent: Indexed inclusive range predicate over an integer key with stable aggregate assertions.
+    native_equivalence_note: ScratchBird native uses v3 SQL with the same range predicate and aggregate intent as the donor dialect statements.
+    normalization:
+      order_sensitive: false
+      require_plan_lines: true
+    scoring:
+      semantics_weight: 0.50
+      plan_weight: 0.30
+      latency_weight: 0.20
+      donor_competitive_ratio_max: 1.35
+    surfaces:
+      native:
+        setup: cases/optimizer/sql/native/range_selectivity.setup.sql
+        plan: cases/optimizer/sql/native/range_selectivity.plan.sql
+        exec: cases/optimizer/sql/native/range_selectivity.exec.sql
+        teardown: cases/optimizer/sql/native/range_selectivity.teardown.sql
+      postgresql:
+        setup: cases/optimizer/sql/postgresql/range_selectivity.setup.sql
+        plan: cases/optimizer/sql/postgresql/range_selectivity.plan.sql
+        exec: cases/optimizer/sql/postgresql/range_selectivity.exec.sql
+        teardown: cases/optimizer/sql/postgresql/range_selectivity.teardown.sql
+      duckdb:
+        setup: cases/optimizer/sql/duckdb/range_selectivity.setup.sql
+        plan: cases/optimizer/sql/duckdb/range_selectivity.plan.sql
+        exec: cases/optimizer/sql/duckdb/range_selectivity.exec.sql
+        teardown: cases/optimizer/sql/duckdb/range_selectivity.teardown.sql
+      mysql:
+        setup: cases/optimizer/sql/mysql/range_selectivity.setup.sql
+        plan: cases/optimizer/sql/mysql/range_selectivity.plan.sql
+        exec: cases/optimizer/sql/mysql/range_selectivity.exec.sql
+        teardown: cases/optimizer/sql/mysql/range_selectivity.teardown.sql
+      firebird:
+        setup: cases/optimizer/sql/firebird/range_selectivity.setup.sql
+        plan: cases/optimizer/sql/firebird/range_selectivity.plan.sql
+        exec: cases/optimizer/sql/firebird/range_selectivity.exec.sql
+        teardown: cases/optimizer/sql/firebird/range_selectivity.teardown.sql
+
+  - id: ordered_limit_topk
+    enabled: true
+    tags: [ordered, topk, limit]
+    lanes: [native, postgresql, duckdb, mysql, firebird]
+    expectation: must_match
+    scratchbird_lane: native
+    intent: Ordered top-k retrieval over an indexed sort key with deterministic limit output.
+    native_equivalence_note: ScratchBird native uses v3 ORDER BY and LIMIT syntax chosen to preserve the same top-k intent as the donor dialect statements.
+    normalization:
+      order_sensitive: true
+      require_plan_lines: true
+    scoring:
+      semantics_weight: 0.45
+      plan_weight: 0.35
+      latency_weight: 0.20
+      donor_competitive_ratio_max: 1.25
+    surfaces:
+      native:
+        setup: cases/optimizer/sql/native/ordered_limit_topk.setup.sql
+        plan: cases/optimizer/sql/native/ordered_limit_topk.plan.sql
+        exec: cases/optimizer/sql/native/ordered_limit_topk.exec.sql
+        teardown: cases/optimizer/sql/native/ordered_limit_topk.teardown.sql
+      postgresql:
+        setup: cases/optimizer/sql/postgresql/ordered_limit_topk.setup.sql
+        plan: cases/optimizer/sql/postgresql/ordered_limit_topk.plan.sql
+        exec: cases/optimizer/sql/postgresql/ordered_limit_topk.exec.sql
+        teardown: cases/optimizer/sql/postgresql/ordered_limit_topk.teardown.sql
+      duckdb:
+        setup: cases/optimizer/sql/duckdb/ordered_limit_topk.setup.sql
+        plan: cases/optimizer/sql/duckdb/ordered_limit_topk.plan.sql
+        exec: cases/optimizer/sql/duckdb/ordered_limit_topk.exec.sql
+        teardown: cases/optimizer/sql/duckdb/ordered_limit_topk.teardown.sql
+      mysql:
+        setup: cases/optimizer/sql/mysql/ordered_limit_topk.setup.sql
+        plan: cases/optimizer/sql/mysql/ordered_limit_topk.plan.sql
+        exec: cases/optimizer/sql/mysql/ordered_limit_topk.exec.sql
+        teardown: cases/optimizer/sql/mysql/ordered_limit_topk.teardown.sql
+      firebird:
+        setup: cases/optimizer/sql/firebird/ordered_limit_topk.setup.sql
+        plan: cases/optimizer/sql/firebird/ordered_limit_topk.plan.sql
+        exec: cases/optimizer/sql/firebird/ordered_limit_topk.exec.sql
+        teardown: cases/optimizer/sql/firebird/ordered_limit_topk.teardown.sql
+
+  - id: merge_join_presorted
+    enabled: true
+    tags: [join, merge, ordering]
+    lanes: [native, postgresql, duckdb, mysql, firebird]
+    expectation: must_match
+    scratchbird_lane: native
+    intent: Equality join over indexed join keys with ordered output intended to exercise merge-capable planning.
+    native_equivalence_note: ScratchBird native uses v3 join syntax with the same equality-join and ordered-output intent as the donor dialect statements.
+    normalization:
+      order_sensitive: false
+      require_plan_lines: true
+    scoring:
+      semantics_weight: 0.45
+      plan_weight: 0.35
+      latency_weight: 0.20
+      donor_competitive_ratio_max: 1.35
+    surfaces:
+      native:
+        setup: cases/optimizer/sql/native/merge_join_presorted.setup.sql
+        plan: cases/optimizer/sql/native/merge_join_presorted.plan.sql
+        exec: cases/optimizer/sql/native/merge_join_presorted.exec.sql
+        teardown: cases/optimizer/sql/native/merge_join_presorted.teardown.sql
+      postgresql:
+        setup: cases/optimizer/sql/postgresql/merge_join_presorted.setup.sql
+        plan: cases/optimizer/sql/postgresql/merge_join_presorted.plan.sql
+        exec: cases/optimizer/sql/postgresql/merge_join_presorted.exec.sql
+        teardown: cases/optimizer/sql/postgresql/merge_join_presorted.teardown.sql
+      duckdb:
+        setup: cases/optimizer/sql/duckdb/merge_join_presorted.setup.sql
+        plan: cases/optimizer/sql/duckdb/merge_join_presorted.plan.sql
+        exec: cases/optimizer/sql/duckdb/merge_join_presorted.exec.sql
+        teardown: cases/optimizer/sql/duckdb/merge_join_presorted.teardown.sql
+      mysql:
+        setup: cases/optimizer/sql/mysql/merge_join_presorted.setup.sql
+        plan: cases/optimizer/sql/mysql/merge_join_presorted.plan.sql
+        exec: cases/optimizer/sql/mysql/merge_join_presorted.exec.sql
+        teardown: cases/optimizer/sql/mysql/merge_join_presorted.teardown.sql
+      firebird:
+        setup: cases/optimizer/sql/firebird/merge_join_presorted.setup.sql
+        plan: cases/optimizer/sql/firebird/merge_join_presorted.plan.sql
+        exec: cases/optimizer/sql/firebird/merge_join_presorted.exec.sql
+        teardown: cases/optimizer/sql/firebird/merge_join_presorted.teardown.sql
+
+  - id: expression_lookup
+    enabled: true
+    tags: [expression_stats, lookup]
+    lanes: [native, postgresql, duckdb, mysql, firebird]
+    expectation: must_match
+    scratchbird_lane: native
+    intent: Expression-index-backed equality lookup on LOWER(name) with deterministic ordered output.
+    native_equivalence_note: ScratchBird native uses v3 syntax that preserves the same expression-lookup intent as the donor dialect statements.
+    normalization:
+      order_sensitive: false
+      require_plan_lines: true
+    scoring:
+      semantics_weight: 0.50
+      plan_weight: 0.30
+      latency_weight: 0.20
+      donor_competitive_ratio_max: 1.35
+    surfaces:
+      native:
+        setup: cases/optimizer/sql/native/expression_lookup.setup.sql
+        plan: cases/optimizer/sql/native/expression_lookup.plan.sql
+        exec: cases/optimizer/sql/native/expression_lookup.exec.sql
+        teardown: cases/optimizer/sql/native/expression_lookup.teardown.sql
+      postgresql:
+        setup: cases/optimizer/sql/postgresql/expression_lookup.setup.sql
+        plan: cases/optimizer/sql/postgresql/expression_lookup.plan.sql
+        exec: cases/optimizer/sql/postgresql/expression_lookup.exec.sql
+        teardown: cases/optimizer/sql/postgresql/expression_lookup.teardown.sql
+      duckdb:
+        setup: cases/optimizer/sql/duckdb/expression_lookup.setup.sql
+        plan: cases/optimizer/sql/duckdb/expression_lookup.plan.sql
+        exec: cases/optimizer/sql/duckdb/expression_lookup.exec.sql
+        teardown: cases/optimizer/sql/duckdb/expression_lookup.teardown.sql
+      mysql:
+        setup: cases/optimizer/sql/mysql/expression_lookup.setup.sql
+        plan: cases/optimizer/sql/mysql/expression_lookup.plan.sql
+        exec: cases/optimizer/sql/mysql/expression_lookup.exec.sql
+        teardown: cases/optimizer/sql/mysql/expression_lookup.teardown.sql
+      firebird:
+        setup: cases/optimizer/sql/firebird/expression_lookup.setup.sql
+        plan: cases/optimizer/sql/firebird/expression_lookup.plan.sql
+        exec: cases/optimizer/sql/firebird/expression_lookup.exec.sql
+        teardown: cases/optimizer/sql/firebird/expression_lookup.teardown.sql

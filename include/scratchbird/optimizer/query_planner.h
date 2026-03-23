@@ -154,39 +154,6 @@ namespace scratchbird::optimizer
                            core::ConnectionContext *conn_ctx = nullptr)
             -> core::Status;
 
-        /**
-         * planQuery - Generate execution plan for SELECT statement (V3 AST)
-         *
-         * @param select_stmt SELECT statement (V3 AST)
-         * @param ctx Error context
-         * @param conn_ctx Connection context
-         * @return Execution plan node tree, or nullptr on error
-         */
-        auto planQuery(const parser::v3::SelectStmt *select_stmt,
-                       core::ErrorContext *ctx = nullptr,
-                       core::ConnectionContext *conn_ctx = nullptr)
-            -> std::shared_ptr<PlanNode>;
-
-        auto buildSelectPlan(const parser::v3::SelectStmt *select_stmt,
-                             const parser::v3::StringPool &pool,
-                             PlannedSelectQuery &planned_out,
-                             core::ErrorContext *ctx = nullptr,
-                             core::ConnectionContext *conn_ctx = nullptr,
-                             const core::ID &current_schema_id = core::ID{},
-                             const ParameterBindings *parameter_bindings = nullptr)
-            -> core::Status;
-
-        /**
-         * planAnalyze - Generate execution plan for ANALYZE statement (V3 AST)
-         *
-         * @param analyze_stmt ANALYZE statement (V3 AST)
-         * @param ctx Error context
-         * @return Execution plan node tree, or nullptr on error
-         */
-        auto planAnalyze(const parser::v3::AnalyzeStmt *analyze_stmt,
-                         core::ErrorContext *ctx = nullptr)
-            -> std::shared_ptr<PlanNode>;
-
     private:
         auto buildSelectPlanImpl(const parser::v3::SelectStmt *select_stmt,
                                  const parser::v3::StringPool &pool,

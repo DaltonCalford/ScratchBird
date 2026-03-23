@@ -17,6 +17,7 @@
 #include "scratchbird/parser/mysql/mysql_parser.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/types.h"
+#include "scratchbird/sblr/ast_sblr_lowerer.h"
 #include "scratchbird/sblr/extract_element_catalog.h"
 #include <cctype>
 #include <cstdio>
@@ -29,6 +30,28 @@
 #include <unordered_set>
 
 namespace scratchbird::parser::mysql {
+
+namespace {
+bool encodeCanonicalViewQuery(parser::v3::StringPool& pool,
+                              parser::v3::SelectStmt* query,
+                              std::vector<uint8_t>& bytecode_out,
+                              std::string& error_out) {
+    bytecode_out.clear();
+    error_out.clear();
+    if (query == nullptr) {
+        error_out = "CREATE VIEW query is missing";
+        return false;
+    }
+
+    scratchbird::parser::v3::AstSblrLowerer lowerer(pool);
+    scratchbird::sblr::v3::Container container;
+    if (!lowerer.emitStatementToContainer(query, container, error_out)) {
+        return false;
+    }
+
+    return scratchbird::sblr::v3::encodeContainer(container, bytecode_out, error_out);
+}
+} // namespace
 
 // ============================================================================
 // Helper Functions for Non-Reserved Keywords
@@ -916,14 +939,16 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
         check(TokenType::KW_SAVEPOINT) || check(TokenType::KW_RELEASE)) {
         return parseTransactionStmtV3();
     }
+    if (match_on_identifier("PREPARE")) {
+        return parsePrepareStmtV3();
+    }
+    if (match_on_identifier("EXECUTE") || match_on_identifier("EXEC")) {
+        return parseExecutePreparedStmtV3();
+    }
+    if (match_on_identifier("DEALLOCATE")) {
+        return parseDeallocatePreparedStmtV3();
+    }
     if (check(TokenType::KW_SET)) {
-        Token next = lexer_.peek();
-        if (next.type == TokenType::KW_PASSWORD ||
-            (next.type == TokenType::IDENTIFIER &&
-             core::IdentifierUtils::toUpper(
-                 std::string(lexer_.stringPool().get(next.value.string_id))) == "PASSWORD")) {
-            return nullptr;
-        }
         return parseSetStmtV3();
     }
     if (check(TokenType::KW_SHOW)) {
@@ -1025,33 +1050,17 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
         return parseInsertStmtV3();
     }
     if (check(TokenType::KW_UPDATE)) {
-        // MySQL UPDATE has many dialect forms (IGNORE, multi-table joins, etc.)
-        // not fully covered in V3 yet; let legacy parser handle it.
-        return nullptr;
+        return parseUpdateStmtV3();
     }
     if (check(TokenType::KW_DELETE)) {
         return parseDeleteStmtV3();
     }
     if (check(TokenType::KW_RENAME)) {
-        Token next = lexer_.peek();
-        if (next.type == TokenType::KW_USER ||
-            (next.type == TokenType::IDENTIFIER &&
-             core::IdentifierUtils::toUpper(
-                 std::string(lexer_.stringPool().get(next.value.string_id))) == "USER")) {
-            return nullptr;
-        }
         return parseRenameStmtV3();
     }
     if (check(TokenType::IDENTIFIER) &&
         core::IdentifierUtils::toUpper(
             std::string(lexer_.stringPool().get(current_token_.value.string_id))) == "RENAME") {
-        Token next = lexer_.peek();
-        if (next.type == TokenType::KW_USER ||
-            (next.type == TokenType::IDENTIFIER &&
-             core::IdentifierUtils::toUpper(
-                 std::string(lexer_.stringPool().get(next.value.string_id))) == "USER")) {
-            return nullptr;
-        }
         return parseRenameStmtV3();
     }
     if (check(TokenType::KW_ALTER)) {
@@ -1717,6 +1726,7 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
             next.type == TokenType::KW_SQL ||
             next.type == TokenType::KW_PROCEDURE || next.type == TokenType::KW_FUNCTION ||
             next.type == TokenType::KW_TRIGGER || next.type == TokenType::KW_EVENT ||
+            next.type == TokenType::KW_USER || next.type == TokenType::KW_ROLE ||
             next.type == TokenType::KW_DEFINER ||
             next.type == TokenType::KW_INDEX || next.type == TokenType::KW_KEY ||
             next.type == TokenType::KW_UNIQUE || next.type == TokenType::KW_FULLTEXT ||
@@ -1729,6 +1739,7 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
 
     if (check(TokenType::KW_DROP)) {
         Token next = lexer_.peek();
+        bool next_is_drop_prepare = false;
         if (next.type == TokenType::KW_DATABASE || next.type == TokenType::KW_SCHEMA) {
             advance();  // consume DROP
             if (matchKeyword(TokenType::KW_DATABASE) || matchKeyword(TokenType::KW_SCHEMA)) {
@@ -1752,6 +1763,7 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
             std::string upper(ident.begin(), ident.end());
             std::transform(upper.begin(), upper.end(), upper.begin(),
                            [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+            next_is_drop_prepare = (upper == "PREPARE");
             if (upper == "TABLESPACE") {
                 advance();  // consume DROP
                 if (matchIdentifierKeyword("TABLESPACE")) {
@@ -1768,7 +1780,8 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
         if (next.type == TokenType::KW_TABLE || next.type == TokenType::KW_TEMPORARY ||
             next.type == TokenType::KW_VIEW || next.type == TokenType::KW_PROCEDURE ||
             next.type == TokenType::KW_FUNCTION || next.type == TokenType::KW_TRIGGER ||
-            next.type == TokenType::KW_EVENT) {
+            next.type == TokenType::KW_EVENT || next.type == TokenType::KW_ROLE ||
+            next.type == TokenType::KW_USER || next_is_drop_prepare) {
             advance();  // consume DROP
             if (matchKeyword(TokenType::KW_TEMPORARY)) {
                 consumeKeyword(TokenType::KW_TABLE, "Expected TABLE after DROP TEMPORARY");
@@ -1876,6 +1889,9 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
                 stmt->job_name = v3_string_pool_.intern(event_name);
                 return stmt;
             }
+            if (matchIdentifierKeyword("PREPARE")) {
+                return parseDeallocatePreparedStmtV3(true);
+            }
             if (matchKeyword(TokenType::KW_ROLE)) {
                 auto* stmt = arena()->create<parser::v3::DropRoleStmt>();
                 if (matchKeyword(TokenType::KW_IF)) {
@@ -1894,8 +1910,23 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
                     consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
                     stmt->if_exists = true;
                 }
+                auto parse_account_name = [&]() -> std::string {
+                    if (check(TokenType::STRING_LITERAL)) {
+                        std::string value(lexer_.stringPool().get(current_token_.value.string_id));
+                        advance();
+                        if (check(TokenType::USER_VARIABLE)) {
+                            advance();
+                        }
+                        return value;
+                    }
+                    std::string value = parseIdentifier();
+                    if (check(TokenType::USER_VARIABLE)) {
+                        advance();
+                    }
+                    return value;
+                };
                 do {
-                    std::string name = parseIdentifier();
+                    std::string name = parse_account_name();
                     stmt->users.push_back(buildPathFromQualified(v3_string_pool_, name));
                 } while (match(TokenType::COMMA));
                 return stmt;
@@ -2063,6 +2094,68 @@ parser::v3::Statement* Parser::parseAlterStmtV3() {
         }
         return std::string(input.substr(start, end - start));
     };
+
+    auto parse_account_name = [&]() -> std::string {
+        if (check(TokenType::STRING_LITERAL)) {
+            std::string value(lexer_.stringPool().get(current_token_.value.string_id));
+            advance();
+            if (check(TokenType::USER_VARIABLE)) {
+                advance();
+            }
+            return value;
+        }
+        std::string value = parseIdentifier();
+        if (check(TokenType::USER_VARIABLE)) {
+            advance();
+        }
+        return value;
+    };
+
+    if (matchKeyword(TokenType::KW_USER) || matchIdentifierKeyword("USER")) {
+        auto* stmt = arena()->create<parser::v3::AlterUserStmt>();
+        stmt->user_name = v3_string_pool_.intern(parse_account_name());
+
+        if (matchKeyword(TokenType::KW_IDENTIFIED)) {
+            consumeKeyword(TokenType::KW_BY, "Expected BY after IDENTIFIED");
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected string literal after IDENTIFIED BY");
+                return stmt;
+            }
+            stmt->password = v3_string_pool_.intern(
+                std::string(lexer_.stringPool().get(current_token_.value.string_id)));
+            stmt->has_password = true;
+            advance();
+            return stmt;
+        }
+
+        if (matchKeyword(TokenType::KW_PASSWORD) || matchIdentifierKeyword("PASSWORD")) {
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected string literal after PASSWORD");
+                return stmt;
+            }
+            stmt->password = v3_string_pool_.intern(
+                std::string(lexer_.stringPool().get(current_token_.value.string_id)));
+            stmt->has_password = true;
+            advance();
+            return stmt;
+        }
+
+        error("ALTER USER requires IDENTIFIED BY or PASSWORD");
+        return stmt;
+    }
+
+    if (matchKeyword(TokenType::KW_ROLE) || matchIdentifierKeyword("ROLE")) {
+        auto* stmt = arena()->create<parser::v3::RenameObjectStmt>();
+        stmt->object_type = parser::v3::DdlObjectType::ROLE;
+        stmt->object_path = buildPathFromQualified(v3_string_pool_, parseIdentifier());
+        if (matchKeyword(TokenType::KW_RENAME) || matchIdentifierKeyword("RENAME")) {
+            consumeKeyword(TokenType::KW_TO, "Expected TO after ALTER ROLE RENAME");
+            stmt->new_name = v3_string_pool_.intern(parseIdentifier());
+            return stmt;
+        }
+        error("ALTER ROLE supports RENAME TO only");
+        return stmt;
+    }
 
     if (matchKeyword(TokenType::KW_EVENT) || matchIdentifierKeyword("EVENT")) {
         auto* stmt = arena()->create<parser::v3::AlterJobStmt>();
@@ -2338,6 +2431,31 @@ parser::v3::Statement* Parser::parseRenameStmtV3(bool rename_consumed) {
     if (!rename_consumed) {
         advance();  // Consume RENAME
     }
+    auto parse_account_name = [&]() -> std::string {
+        if (check(TokenType::STRING_LITERAL)) {
+            std::string value(lexer_.stringPool().get(current_token_.value.string_id));
+            advance();
+            if (check(TokenType::USER_VARIABLE)) {
+                advance();
+            }
+            return value;
+        }
+        std::string value = parseIdentifier();
+        if (check(TokenType::USER_VARIABLE)) {
+            advance();
+        }
+        return value;
+    };
+
+    if (matchKeyword(TokenType::KW_USER) || matchIdentifierKeyword("USER")) {
+        auto* stmt = arena()->create<parser::v3::RenameObjectStmt>();
+        stmt->object_type = parser::v3::DdlObjectType::USER;
+        stmt->object_path = buildPathFromQualified(v3_string_pool_, parse_account_name());
+        consumeKeyword(TokenType::KW_TO, "Expected TO after RENAME USER");
+        stmt->new_name = v3_string_pool_.intern(parse_account_name());
+        return stmt;
+    }
+
     consumeKeyword(TokenType::KW_TABLE, "Expected TABLE after RENAME");
 
     std::string old_schema;
@@ -2791,6 +2909,19 @@ parser::v3::UpdateStmt* Parser::parseUpdateStmtV3() {
     }
 
     auto* stmt = arena()->create<parser::v3::UpdateStmt>();
+    bool ignored_priority_modifiers = false;
+
+    while (true) {
+        if (matchKeyword(TokenType::KW_LOW_PRIORITY)) {
+            ignored_priority_modifiers = true;
+            continue;
+        }
+        if (matchKeyword(TokenType::KW_IGNORE)) {
+            stmt->ignore_errors = true;
+            continue;
+        }
+        break;
+    }
 
     std::string schema;
     std::string table = parseIdentifier();
@@ -2841,6 +2972,10 @@ parser::v3::UpdateStmt* Parser::parseUpdateStmtV3() {
     if (matchKeyword(TokenType::KW_RETURNING)) {
         error("MySQL emulation does not support RETURNING on UPDATE");
         return nullptr;
+    }
+
+    if (ignored_priority_modifiers) {
+        warning("UPDATE LOW_PRIORITY is ignored in ScratchBird");
     }
 
     return stmt;
@@ -3474,8 +3609,86 @@ parser::v3::Statement* Parser::parseShowStmtV3() {
         return stmt;
     }
 
-    if (matchKeyword(TokenType::KW_VARIABLES)) {
-        stmt->show_type = parser::v3::ShowStmt::ShowType::VARIABLE;
+    if (matchKeyword(TokenType::KW_STATUS) || matchIdentifierKeyword("STATUS")) {
+        if (matchKeyword(TokenType::KW_GLOBAL) || matchKeyword(TokenType::KW_SESSION)) {
+            // Scope ignored for now.
+        }
+        if (matchKeyword(TokenType::KW_LIKE)) {
+            if (check(TokenType::STRING_LITERAL)) {
+                advance();
+            } else {
+                parseIdentifier();
+            }
+            warning("SHOW STATUS LIKE is not filtered; returning metrics snapshot");
+        } else if (matchKeyword(TokenType::KW_WHERE)) {
+            parseExpressionV3();
+            warning("SHOW STATUS WHERE is not filtered; returning metrics snapshot");
+        }
+        stmt->show_type = parser::v3::ShowStmt::ShowType::METRICS;
+        return stmt;
+    }
+
+    if (matchKeyword(TokenType::KW_VARIABLES) || matchIdentifierKeyword("VARIABLES")) {
+        if (matchKeyword(TokenType::KW_GLOBAL) || matchKeyword(TokenType::KW_SESSION)) {
+            // Scope ignored for now.
+        }
+
+        auto contains_wildcard = [](std::string_view text) {
+            for (char ch : text) {
+                if (ch == '%' || ch == '_') {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        parser::v3::StringPool::StringId pattern_id = parser::v3::StringPool::INVALID_ID;
+        if (matchKeyword(TokenType::KW_LIKE)) {
+            if (check(TokenType::STRING_LITERAL)) {
+                pattern_id = v3_string_pool_.intern(
+                    lexer_.stringPool().get(current_token_.value.string_id));
+                advance();
+            } else {
+                pattern_id = parseIdentifierId();
+            }
+        } else if (matchKeyword(TokenType::KW_WHERE)) {
+            parseExpressionV3();
+            warning("SHOW VARIABLES WHERE is not filtered; returning full variable list");
+        }
+
+        if (pattern_id != parser::v3::StringPool::INVALID_ID) {
+            std::string_view pattern = v3_string_pool_.get(pattern_id);
+            if (!contains_wildcard(pattern)) {
+                stmt->show_type = parser::v3::ShowStmt::ShowType::VARIABLE;
+                stmt->name = pattern_id;
+                return stmt;
+            }
+            warning("SHOW VARIABLES LIKE pattern not filtered; returning full variable list");
+        }
+
+        stmt->show_type = parser::v3::ShowStmt::ShowType::ALL;
+        stmt->like_pattern = pattern_id;
+        return stmt;
+    }
+
+    if (matchIdentifierKeyword("PROCESSLIST")) {
+        stmt->show_type = parser::v3::ShowStmt::ShowType::SYSTEM;
+        stmt->name = v3_string_pool_.intern("processlist");
+        warning("SHOW PROCESSLIST is mapped to SHOW SYSTEM output");
+        return stmt;
+    }
+
+    if (matchKeyword(TokenType::KW_WARNINGS) || matchIdentifierKeyword("WARNINGS")) {
+        stmt->show_type = parser::v3::ShowStmt::ShowType::SYSTEM;
+        stmt->name = v3_string_pool_.intern("warnings");
+        warning("SHOW WARNINGS is mapped to SHOW SYSTEM output");
+        return stmt;
+    }
+
+    if (matchKeyword(TokenType::KW_ERRORS) || matchIdentifierKeyword("ERRORS")) {
+        stmt->show_type = parser::v3::ShowStmt::ShowType::SYSTEM;
+        stmt->name = v3_string_pool_.intern("errors");
+        warning("SHOW ERRORS is mapped to SHOW SYSTEM output");
         return stmt;
     }
 
@@ -3491,6 +3704,42 @@ parser::v3::Statement* Parser::parseShowStmtV3() {
 parser::v3::Statement* Parser::parseSetStmtV3() {
     if (!matchKeyword(TokenType::KW_SET)) {
         return nullptr;
+    }
+
+    auto parse_account_name = [&]() -> std::string {
+        if (check(TokenType::STRING_LITERAL)) {
+            std::string value(lexer_.stringPool().get(current_token_.value.string_id));
+            advance();
+            if (check(TokenType::USER_VARIABLE)) {
+                advance();
+            }
+            return value;
+        }
+        std::string value = parseIdentifier();
+        if (check(TokenType::USER_VARIABLE)) {
+            advance();
+        }
+        return value;
+    };
+
+    if (matchKeyword(TokenType::KW_PASSWORD) || matchIdentifierKeyword("PASSWORD")) {
+        auto* stmt = arena()->create<parser::v3::AlterUserStmt>();
+        if (matchKeyword(TokenType::KW_FOR) || matchIdentifierKeyword("FOR")) {
+            stmt->user_name = v3_string_pool_.intern(parse_account_name());
+        } else {
+            error("Expected FOR after SET PASSWORD");
+            return stmt;
+        }
+        consume(TokenType::EQUAL, "Expected = after SET PASSWORD target");
+        if (!check(TokenType::STRING_LITERAL)) {
+            error("Expected string literal after SET PASSWORD =");
+            return stmt;
+        }
+        stmt->password = v3_string_pool_.intern(
+            std::string(lexer_.stringPool().get(current_token_.value.string_id)));
+        stmt->has_password = true;
+        advance();
+        return stmt;
     }
 
     auto* stmt = arena()->create<parser::v3::SetStmt>();
@@ -3673,6 +3922,50 @@ parser::v3::Statement* Parser::parseSetStmtV3() {
     } else {
         stmt->value = parse_set_variable_value();
     }
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parsePrepareStmtV3() {
+    if (!matchIdentifierKeyword("PREPARE")) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::PrepareStatementStmt>();
+    stmt->statement_name = parseIdentifierId();
+    consumeKeyword(TokenType::KW_FROM, "Expected FROM after PREPARE name");
+    stmt->sql = parseExpressionV3();
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseExecutePreparedStmtV3() {
+    if (!(matchIdentifierKeyword("EXECUTE") || matchIdentifierKeyword("EXEC"))) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::ExecutePreparedStmt>();
+    stmt->statement_name = parseIdentifierId();
+    if (matchKeyword(TokenType::KW_USING) || matchIdentifierKeyword("USING")) {
+        do {
+            stmt->parameters.push_back(parseExpressionV3());
+        } while (match(TokenType::COMMA));
+    }
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseDeallocatePreparedStmtV3(bool allow_drop_prepare) {
+    if (!allow_drop_prepare) {
+        if (!matchIdentifierKeyword("DEALLOCATE")) {
+            return nullptr;
+        }
+        matchIdentifierKeyword("PREPARE");
+    }
+
+    auto* stmt = arena()->create<parser::v3::DeallocatePreparedStmt>();
+    if (matchIdentifierKeyword("ALL")) {
+        stmt->all = true;
+        return stmt;
+    }
+    stmt->statement_name = parseIdentifierId();
     return stmt;
 }
 
@@ -11484,7 +11777,7 @@ void Parser::parseCreateView() {
     size_t def_start = current_token_.span.start.offset;
     bool prev_emit = emit_enabled_;
     emit_enabled_ = false;
-    parseSelectStmt();
+    auto* query_stmt = parseSelectStmtV3();
     emit_enabled_ = prev_emit;
     size_t def_end = current_token_.span.start.offset;
 
@@ -11505,6 +11798,16 @@ void Parser::parseCreateView() {
     std::string definition;
     if (def_end >= def_start) {
         definition = trim_sql(lexer_.input().substr(def_start, def_end - def_start));
+    }
+
+    std::vector<uint8_t> compiled_query_sblr;
+    std::string compiled_query_error;
+    if (!encodeCanonicalViewQuery(v3_string_pool_,
+                                  query_stmt,
+                                  compiled_query_sblr,
+                                  compiled_query_error)) {
+        error("Failed to encode CREATE VIEW query as canonical SBLR: " + compiled_query_error);
+        return;
     }
 
     bool check_option = false;
@@ -11533,6 +11836,7 @@ void Parser::parseCreateView() {
     if (check_option) {
         flags |= 0x02;
     }
+    flags |= 0x80;
 
     emitString(view_path);
     emitByte(flags);
@@ -11547,6 +11851,12 @@ void Parser::parseCreateView() {
         }
     }
     emitString(definition);
+    emitU32(static_cast<uint32_t>(compiled_query_sblr.size()));
+    if (emit_enabled_) {
+        bytecode_.insert(bytecode_.end(),
+                         compiled_query_sblr.begin(),
+                         compiled_query_sblr.end());
+    }
 }
 
 void Parser::parseAlterView() {
@@ -11575,7 +11885,7 @@ void Parser::parseAlterView() {
     size_t def_start = current_token_.span.start.offset;
     bool prev_emit = emit_enabled_;
     emit_enabled_ = false;
-    parseSelectStmt();
+    auto* query_stmt = parseSelectStmtV3();
     emit_enabled_ = prev_emit;
     size_t def_end = current_token_.span.start.offset;
 
@@ -11596,6 +11906,16 @@ void Parser::parseAlterView() {
     std::string definition;
     if (def_end >= def_start) {
         definition = trim_sql(lexer_.input().substr(def_start, def_end - def_start));
+    }
+
+    std::vector<uint8_t> compiled_query_sblr;
+    std::string compiled_query_error;
+    if (!encodeCanonicalViewQuery(v3_string_pool_,
+                                  query_stmt,
+                                  compiled_query_sblr,
+                                  compiled_query_error)) {
+        error("Failed to encode ALTER VIEW query as canonical SBLR: " + compiled_query_error);
+        return;
     }
 
     bool check_option = false;
@@ -11624,6 +11944,7 @@ void Parser::parseAlterView() {
     if (check_option) {
         flags |= 0x02;
     }
+    flags |= 0x80;
 
     emitString(view_path);
     emitByte(flags);
@@ -11638,6 +11959,12 @@ void Parser::parseAlterView() {
         }
     }
     emitString(definition);
+    emitU32(static_cast<uint32_t>(compiled_query_sblr.size()));
+    if (emit_enabled_) {
+        bytecode_.insert(bytecode_.end(),
+                         compiled_query_sblr.begin(),
+                         compiled_query_sblr.end());
+    }
 }
 
 void Parser::parseAlterProcedure() {

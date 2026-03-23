@@ -18,9 +18,15 @@
 #include "scratchbird/parser/v3_compiler.h"
 #include "scratchbird/network/socket.h"
 #include "scratchbird/optimizer/statistics_manager.h"
+#include "scratchbird/server/ipc_server.h"
+#include "scratchbird/server/server_session.h"
 
+#include <algorithm>
+#include <atomic>
 #include <filesystem>
+#include <fstream>
 #include <map>
+#include <thread>
 #include <cctype>
 #include <type_traits>
 #include <sys/socket.h>
@@ -32,6 +38,34 @@ using namespace scratchbird::protocol;
 namespace {
 std::filesystem::path dbPath(const std::string& name) {
     return std::filesystem::path("build") / "database" / name;
+}
+
+class ScopedEnvVar {
+public:
+    ScopedEnvVar(const char* key, const std::string& value)
+        : key_(key), had_value_(std::getenv(key) != nullptr),
+          old_value_(had_value_ ? std::getenv(key) : "") {
+        ::setenv(key_, value.c_str(), 1);
+    }
+
+    ~ScopedEnvVar() {
+        if (had_value_) {
+            ::setenv(key_, old_value_.c_str(), 1);
+        } else {
+            ::unsetenv(key_);
+        }
+    }
+
+private:
+    const char* key_;
+    bool had_value_ = false;
+    std::string old_value_;
+};
+
+std::string uniqueSocketPath(const std::string& prefix) {
+    static std::atomic<uint32_t> counter{0};
+    return "/tmp/" + prefix + "_" + std::to_string(getpid()) + "_" +
+        std::to_string(counter.fetch_add(1)) + ".sock";
 }
 
 template <typename T>
@@ -275,6 +309,90 @@ void cleanupDb(const std::string& name) {
     std::filesystem::create_directories(dbPath(name).parent_path(), ec);
 }
 
+struct RemoteEngineHarnessResult {
+    core::Status status = core::Status::OK;
+    std::string error_message;
+};
+
+class RemoteEngineHarness {
+public:
+    RemoteEngineHarness(core::Database* db, std::string socket_path)
+        : db_(db), socket_path_(std::move(socket_path)) {}
+
+    core::Status start(core::ErrorContext* ctx) {
+        server::IPCServerConfig server_config("protocol_adapter_dialects", server::IPCMethod::UNIX_SOCKET);
+        server_config.socket_path = socket_path_;
+        server_config.accept_timeout_ms = 250;
+        server_config.read_timeout_ms = 1000;
+        server_config.write_timeout_ms = 1000;
+        server_ = server::IPCServer::create(server_config, ctx);
+        if (!server_) {
+            return core::Status::CONNECTION_FAILURE;
+        }
+
+        core::Status status = server_->listen(ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+
+        server_thread_ = std::thread([this]() {
+            while (!stop_requested_.load(std::memory_order_acquire)) {
+                core::ErrorContext accept_ctx;
+                auto conn = server_->accept(&accept_ctx);
+                if (!conn) {
+                    if (stop_requested_.load(std::memory_order_acquire)) {
+                        return;
+                    }
+                    if (accept_ctx.code == core::Status::LOCK_TIMEOUT) {
+                        continue;
+                    }
+                    result_.status = core::Status::CONNECTION_FAILURE;
+                    result_.error_message = accept_ctx.message.empty()
+                        ? "accept failed"
+                        : accept_ctx.message;
+                    return;
+                }
+
+                uint8_t session_id[16];
+                generateSessionId(session_id);
+                server::ServerSession session(conn.get(), db_, session_id);
+                auto status = session.run();
+                if (status != core::Status::OK && !stop_requested_.load(std::memory_order_acquire)) {
+                    result_.status = status;
+                    result_.error_message = "server session failed";
+                    return;
+                }
+            }
+        });
+        return core::Status::OK;
+    }
+
+    void stop() {
+        stop_requested_.store(true, std::memory_order_release);
+        if (server_) {
+            server_->close();
+        }
+        if (server_thread_.joinable()) {
+            server_thread_.join();
+        }
+        server_.reset();
+        std::error_code ec;
+        std::filesystem::remove(socket_path_, ec);
+    }
+
+    ~RemoteEngineHarness() {
+        stop();
+    }
+
+private:
+    core::Database* db_ = nullptr;
+    std::string socket_path_;
+    std::unique_ptr<server::IPCServer> server_;
+    std::thread server_thread_;
+    std::atomic<bool> stop_requested_{false};
+    RemoteEngineHarnessResult result_{};
+};
+
 std::vector<uint8_t> buildMySqlWirePacket(const std::vector<uint8_t>& payload, uint8_t sequence = 0) {
     std::vector<uint8_t> packet;
     packet.reserve(4 + payload.size());
@@ -426,6 +544,32 @@ bool decodeFirstSbwpMessage(const std::vector<uint8_t>& stream,
 
     payload.assign(stream.begin() + sbwp::kHeaderSize, stream.begin() + total_size);
     return true;
+}
+
+std::vector<std::pair<sbwp::MessageHeader, std::vector<uint8_t>>> decodeSbwpMessages(
+    const std::vector<uint8_t>& stream) {
+    std::vector<std::pair<sbwp::MessageHeader, std::vector<uint8_t>>> messages;
+    size_t offset = 0;
+    while (offset + sbwp::kHeaderSize <= stream.size()) {
+        std::vector<uint8_t> header_bytes(stream.begin() + offset,
+                                          stream.begin() + offset + sbwp::kHeaderSize);
+        sbwp::MessageHeader header;
+        core::ErrorContext ctx;
+        if (sbwp::decodeHeader(header_bytes, header, &ctx) != core::Status::OK) {
+            break;
+        }
+
+        const size_t total_size = sbwp::kHeaderSize + static_cast<size_t>(header.length);
+        if (offset + total_size > stream.size()) {
+            break;
+        }
+
+        std::vector<uint8_t> payload(stream.begin() + offset + sbwp::kHeaderSize,
+                                     stream.begin() + offset + total_size);
+        messages.emplace_back(header, std::move(payload));
+        offset += total_size;
+    }
+    return messages;
 }
 
 std::vector<char> extractPgBackendMessageTypes(const std::vector<uint8_t>& stream) {
@@ -1529,10 +1673,10 @@ TEST(ProtocolAdapterDialectsFirebird, FirebirdSessionSchemaContextUsesEmulatedDa
     auto* conn_ctx = adapter.connectionContextForTest();
     ASSERT_NE(conn_ctx, nullptr);
     ASSERT_EQ(conn_ctx->current_schema(),
-              "emulated.firebird.localhost.tenant_fb");
+              "emulated.firebird.firebird_localhost.tenant_fb");
     ASSERT_FALSE(conn_ctx->search_path().empty());
     EXPECT_EQ(conn_ctx->search_path().front(),
-              "emulated.firebird.localhost.tenant_fb");
+              "emulated.firebird.firebird_localhost.tenant_fb");
     EXPECT_NE(conn_ctx->getCurrentSchemaId(), core::ID{});
 }
 
@@ -1904,6 +2048,762 @@ TEST(ProtocolAdapterDialectsNative, NativeCompileRejectIncludesDeterministicSqlC
     EXPECT_NE(first_error.find("SQL_CONTEXT:"), std::string::npos);
     EXPECT_NE(second_error.find("SQL_CONTEXT:"), std::string::npos);
     EXPECT_EQ(first_error, second_error);
+}
+
+TEST(ProtocolAdapterDialectsNative, NativeQueryAcceptsBytecodePayloads) {
+    cleanupDb("test_native_query_bytecode.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_native_query_bytecode.sbdb").string();
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    core::ErrorContext ctx;
+    ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+    ASSERT_EQ(adapter.assumePublicSuperuserForTest(&ctx), core::Status::OK) << ctx.message;
+
+    std::vector<uint8_t> bytecode;
+    std::string error;
+    ASSERT_EQ(adapter.runCompile("CREATE TABLE bytecode_smoke (id INTEGER)",
+                                 bytecode,
+                                 error),
+              core::Status::OK)
+        << error;
+    ASSERT_FALSE(bytecode.empty());
+
+    uint8_t session_id[16]{};
+    auto query_message = ProtocolCodec::buildQueryBytecode(
+        session_id, bytecode, "CREATE TABLE bytecode_smoke (id INTEGER)");
+    std::vector<uint8_t> payload(query_message.getPayloadData(),
+                                 query_message.getPayloadData() + query_message.getPayloadSize());
+    const auto packet = buildSbwpFrontendMessage(sbwp::MessageType::Query, payload, 7);
+
+    network::Connection conn(nullptr, 207);
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), packet.begin(), packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    sbwp::MessageHeader header;
+    std::vector<uint8_t> response_payload;
+    ASSERT_TRUE(decodeFirstSbwpMessage(conn.getWriteBuffer(), header, response_payload));
+    EXPECT_EQ(header.type, sbwp::MessageType::CommandComplete);
+}
+
+TEST(ProtocolAdapterDialectsNative, NativeRemoteAuthBindingDoesNotOpenLockedDatabaseFile) {
+    cleanupDb("test_native_remote_auth_lock.sbdb");
+
+    const auto path = dbPath("test_native_remote_auth_lock.sbdb");
+    core::ErrorContext ctx;
+    ASSERT_EQ(core::Database::create(path.string(), 16384, &ctx), core::Status::OK)
+        << ctx.message;
+
+    core::Database locker;
+    ASSERT_EQ(locker.open(path.string(), &ctx), core::Status::OK) << ctx.message;
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = path.string();
+    cfg.engine_endpoint = "/tmp/scratchbird-native-remote-auth.sock";
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 208);
+    EXPECT_EQ(adapter.forceAuthSuccess(&conn), core::Status::OK);
+    EXPECT_EQ(adapter.engineDatabaseForTest(), nullptr);
+}
+
+TEST(ProtocolAdapterDialectsNative, NativeRemoteAuthReadyStartsIdleTransactionState) {
+    cleanupDb("test_native_remote_auth_idle.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_native_remote_auth_idle.sbdb").string();
+    cfg.engine_endpoint = "/tmp/scratchbird-native-remote-auth-idle.sock";
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 209);
+    ASSERT_EQ(adapter.forceAuthSuccess(&conn), core::Status::OK);
+
+    const auto messages = decodeSbwpMessages(conn.getWriteBuffer());
+    const auto ready_it = std::find_if(messages.rbegin(),
+                                       messages.rend(),
+                                       [](const auto& message) {
+                                           return message.first.type == sbwp::MessageType::Ready;
+                                       });
+    ASSERT_NE(ready_it, messages.rend());
+
+    uint8_t status_byte = 1;
+    uint64_t txn_id = 1;
+    uint64_t epoch = 1;
+    core::ErrorContext ctx;
+    ASSERT_EQ(sbwp::parseReady(ready_it->second, status_byte, txn_id, epoch, &ctx), core::Status::OK)
+        << ctx.message;
+    EXPECT_EQ(status_byte, 0);
+    EXPECT_EQ(txn_id, 0u);
+}
+
+TEST(ProtocolAdapterDialectsNative, NativeRemoteCatalogDdlLeavesCommitCapableTransactionState) {
+    cleanupDb("test_native_remote_commit_state.sbdb");
+    ScopedEnvVar native_password_auth("SCRATCHBIRD_NATIVE_FORCE_PASSWORD_AUTH", "1");
+    const std::string bootstrap_token = "native_remote_commit_token";
+    const auto token_path = dbPath("test_native_remote_commit_state.bootstrap.token");
+    {
+        std::ofstream out(token_path);
+        ASSERT_TRUE(out.is_open());
+        out << bootstrap_token << "\n";
+    }
+    std::filesystem::permissions(token_path,
+                                 std::filesystem::perms::owner_read |
+                                     std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace);
+    ScopedEnvVar bootstrap_token_file("SCRATCHBIRD_BOOTSTRAP_TOKEN_FILE", token_path.string());
+    ScopedEnvVar bootstrap_owner_uid("SCRATCHBIRD_BOOTSTRAP_REQUIRE_OWNER_UID", "0");
+
+    const auto path = dbPath("test_native_remote_commit_state.sbdb");
+    core::ErrorContext ctx;
+    ASSERT_EQ(core::Database::create(path.string(), 16384, &ctx), core::Status::OK)
+        << ctx.message;
+
+    core::Database db;
+    ASSERT_EQ(db.open(path.string(), &ctx), core::Status::OK) << ctx.message;
+
+    const std::string socket_path = uniqueSocketPath("scratchbird_native_remote_commit");
+    RemoteEngineHarness engine_harness(&db, socket_path);
+    ASSERT_EQ(engine_harness.start(&ctx), core::Status::OK) << ctx.message;
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = path.string();
+    cfg.engine_endpoint = socket_path;
+    cfg.connect_client_flags =
+        scratchbird::protocol::CONNECT_FLAG_MANAGER_DBBT |
+        scratchbird::protocol::CONNECT_FLAG_BOUND_DB_UUID;
+    cfg.has_bound_db_uuid = true;
+    cfg.bound_db_uuid = db.uuid().bytes;
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 210);
+
+    const auto startup_packet = buildNativeStartupPacket(
+        "bootstrap_admin",
+        "main",
+        {{"auth_method_id", "scratchbird.auth.password_compat"}});
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    auto messages = decodeSbwpMessages(conn.getWriteBuffer());
+    ASSERT_FALSE(messages.empty());
+    ASSERT_EQ(messages.front().first.type, sbwp::MessageType::AuthRequest);
+
+    sbwp::AuthMethod auth_method = sbwp::AuthMethod::Password;
+    std::vector<uint8_t> auth_data;
+    ASSERT_EQ(sbwp::parseAuthRequest(messages.front().second, auth_method, auth_data, &ctx),
+              core::Status::OK)
+        << ctx.message;
+    EXPECT_EQ(auth_method, sbwp::AuthMethod::Password);
+
+    conn.clearWriteBuffer();
+    std::vector<uint8_t> auth_payload(bootstrap_token.begin(), bootstrap_token.end());
+    auth_payload.push_back('\0');
+    const auto auth_packet =
+        buildSbwpFrontendMessage(sbwp::MessageType::AuthResponse, auth_payload, 2);
+    read_buffer.insert(read_buffer.end(), auth_packet.begin(), auth_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    messages = decodeSbwpMessages(conn.getWriteBuffer());
+    ASSERT_FALSE(messages.empty());
+    const auto ready_after_auth = std::find_if(messages.rbegin(),
+                                               messages.rend(),
+                                               [](const auto& message) {
+                                                   return message.first.type == sbwp::MessageType::Ready;
+                                               });
+    ASSERT_NE(ready_after_auth, messages.rend());
+    conn.clearWriteBuffer();
+
+    const std::string ddl = "DROP USER IF EXISTS SysArch";
+    scratchbird::parser::v3::Compiler compiler;
+    auto compile_result = compiler.compile(ddl);
+    ASSERT_TRUE(compile_result.ok) << compile_result.error;
+    ASSERT_FALSE(compile_result.bytecode.empty());
+
+    uint8_t session_id[16]{};
+    auto query_message =
+        ProtocolCodec::buildQueryBytecode(session_id, compile_result.bytecode, ddl);
+    std::vector<uint8_t> query_payload(query_message.getPayloadData(),
+                                       query_message.getPayloadData() + query_message.getPayloadSize());
+    const auto query_packet =
+        buildSbwpFrontendMessage(sbwp::MessageType::Query, query_payload, 3);
+    read_buffer.insert(read_buffer.end(), query_packet.begin(), query_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    messages = decodeSbwpMessages(conn.getWriteBuffer());
+    ASSERT_FALSE(messages.empty());
+    EXPECT_TRUE(std::any_of(messages.begin(),
+                            messages.end(),
+                            [](const auto& message) {
+                                return message.first.type == sbwp::MessageType::CommandComplete;
+                            }));
+    EXPECT_FALSE(std::any_of(messages.begin(),
+                             messages.end(),
+                             [](const auto& message) {
+                                 return message.first.type == sbwp::MessageType::Error;
+                             }));
+    conn.clearWriteBuffer();
+
+    const auto commit_packet = buildSbwpFrontendMessage(
+        sbwp::MessageType::TxnCommit,
+        sbwp::buildTxnCommitPayload(0),
+        4);
+    read_buffer.insert(read_buffer.end(), commit_packet.begin(), commit_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    messages = decodeSbwpMessages(conn.getWriteBuffer());
+    ASSERT_FALSE(messages.empty());
+    EXPECT_FALSE(std::any_of(messages.begin(),
+                             messages.end(),
+                             [](const auto& message) {
+                                 return message.first.type == sbwp::MessageType::Error;
+                             }));
+    EXPECT_TRUE(std::any_of(messages.begin(),
+                            messages.end(),
+                            [](const auto& message) {
+                                return message.first.type == sbwp::MessageType::TxnStatus;
+                            }));
+
+    engine_harness.stop();
+    db.close();
+    std::error_code cleanup_ec;
+    std::filesystem::remove(token_path, cleanup_ec);
+}
+
+TEST(ProtocolAdapterDialectsNative, NativeRemoteSessionSetBytecodeExecutesAgainstEngineHarness) {
+    cleanupDb("test_native_remote_session_set.sbdb");
+    ScopedEnvVar native_password_auth("SCRATCHBIRD_NATIVE_FORCE_PASSWORD_AUTH", "1");
+    const std::string bootstrap_token = "native_remote_session_set_token";
+    const auto token_path = dbPath("test_native_remote_session_set.bootstrap.token");
+    {
+        std::ofstream out(token_path);
+        ASSERT_TRUE(out.is_open());
+        out << bootstrap_token << "\n";
+    }
+    std::filesystem::permissions(token_path,
+                                 std::filesystem::perms::owner_read |
+                                     std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace);
+    ScopedEnvVar bootstrap_token_file("SCRATCHBIRD_BOOTSTRAP_TOKEN_FILE", token_path.string());
+    ScopedEnvVar bootstrap_owner_uid("SCRATCHBIRD_BOOTSTRAP_REQUIRE_OWNER_UID", "0");
+
+    const auto path = dbPath("test_native_remote_session_set.sbdb");
+    core::ErrorContext ctx;
+    ASSERT_EQ(core::Database::create(path.string(), 16384, &ctx), core::Status::OK)
+        << ctx.message;
+
+    core::Database db;
+    ASSERT_EQ(db.open(path.string(), &ctx), core::Status::OK) << ctx.message;
+
+    const std::string socket_path = uniqueSocketPath("scratchbird_native_remote_session_set");
+    RemoteEngineHarness engine_harness(&db, socket_path);
+    ASSERT_EQ(engine_harness.start(&ctx), core::Status::OK) << ctx.message;
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = path.string();
+    cfg.engine_endpoint = socket_path;
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 211);
+
+    const auto startup_packet = buildNativeStartupPacket(
+        "bootstrap_admin",
+        "main",
+        {{"auth_method_id", "scratchbird.auth.password_compat"}});
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    auto messages = decodeSbwpMessages(conn.getWriteBuffer());
+    ASSERT_FALSE(messages.empty());
+    ASSERT_EQ(messages.front().first.type, sbwp::MessageType::AuthRequest);
+
+    sbwp::AuthMethod auth_method = sbwp::AuthMethod::Password;
+    std::vector<uint8_t> auth_data;
+    ASSERT_EQ(sbwp::parseAuthRequest(messages.front().second, auth_method, auth_data, &ctx),
+              core::Status::OK)
+        << ctx.message;
+    EXPECT_EQ(auth_method, sbwp::AuthMethod::Password);
+
+    conn.clearWriteBuffer();
+    std::vector<uint8_t> auth_payload(bootstrap_token.begin(), bootstrap_token.end());
+    auth_payload.push_back('\0');
+    const auto auth_packet =
+        buildSbwpFrontendMessage(sbwp::MessageType::AuthResponse, auth_payload, 2);
+    read_buffer.insert(read_buffer.end(), auth_packet.begin(), auth_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    messages = decodeSbwpMessages(conn.getWriteBuffer());
+    ASSERT_FALSE(messages.empty());
+    const auto ready_after_auth = std::find_if(messages.rbegin(),
+                                               messages.rend(),
+                                               [](const auto& message) {
+                                                   return message.first.type == sbwp::MessageType::Ready;
+                                               });
+    ASSERT_NE(ready_after_auth, messages.rend());
+    conn.clearWriteBuffer();
+
+    const std::string stmt = "SET SCHEMA users.public";
+    scratchbird::parser::v3::Compiler compiler;
+    auto compile_result = compiler.compile(stmt);
+    ASSERT_TRUE(compile_result.ok) << compile_result.error;
+    ASSERT_FALSE(compile_result.bytecode.empty());
+
+    uint8_t session_id[16]{};
+    auto query_message =
+        ProtocolCodec::buildQueryBytecode(session_id, compile_result.bytecode, stmt);
+    std::vector<uint8_t> query_payload(query_message.getPayloadData(),
+                                       query_message.getPayloadData() + query_message.getPayloadSize());
+    const auto query_packet =
+        buildSbwpFrontendMessage(sbwp::MessageType::Query, query_payload, 3);
+    read_buffer.insert(read_buffer.end(), query_packet.begin(), query_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    messages = decodeSbwpMessages(conn.getWriteBuffer());
+    ASSERT_FALSE(messages.empty());
+    EXPECT_FALSE(std::any_of(messages.begin(),
+                             messages.end(),
+                             [](const auto& message) {
+                                 return message.first.type == sbwp::MessageType::Error;
+                             }));
+    EXPECT_TRUE(std::any_of(messages.begin(),
+                            messages.end(),
+                            [](const auto& message) {
+                                return message.first.type == sbwp::MessageType::CommandComplete;
+                            }));
+
+    engine_harness.stop();
+    db.close();
+    std::error_code cleanup_ec;
+    std::filesystem::remove(token_path, cleanup_ec);
+}
+
+TEST(ProtocolAdapterDialectsNative, NativeRemoteTextExplainUsesCanonicalCompilerFinalization) {
+    cleanupDb("test_native_remote_text_explain.sbdb");
+    ScopedEnvVar native_password_auth("SCRATCHBIRD_NATIVE_FORCE_PASSWORD_AUTH", "1");
+    const std::string bootstrap_token = "native_remote_text_explain_token";
+    const auto token_path = dbPath("test_native_remote_text_explain.bootstrap.token");
+    {
+        std::ofstream out(token_path);
+        ASSERT_TRUE(out.is_open());
+        out << bootstrap_token << "\n";
+    }
+    std::filesystem::permissions(token_path,
+                                 std::filesystem::perms::owner_read |
+                                     std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace);
+    ScopedEnvVar bootstrap_token_file("SCRATCHBIRD_BOOTSTRAP_TOKEN_FILE", token_path.string());
+    ScopedEnvVar bootstrap_owner_uid("SCRATCHBIRD_BOOTSTRAP_REQUIRE_OWNER_UID", "0");
+
+    const auto path = dbPath("test_native_remote_text_explain.sbdb");
+    core::ErrorContext ctx;
+    ASSERT_EQ(core::Database::create(path.string(), 16384, &ctx), core::Status::OK)
+        << ctx.message;
+
+    core::Database db;
+    ASSERT_EQ(db.open(path.string(), &ctx), core::Status::OK) << ctx.message;
+
+    const std::string socket_path = uniqueSocketPath("scratchbird_native_remote_text_explain");
+    RemoteEngineHarness engine_harness(&db, socket_path);
+    ASSERT_EQ(engine_harness.start(&ctx), core::Status::OK) << ctx.message;
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = path.string();
+    cfg.engine_endpoint = socket_path;
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 212);
+
+    const auto startup_packet = buildNativeStartupPacket(
+        "bootstrap_admin",
+        "main",
+        {{"auth_method_id", "scratchbird.auth.password_compat"}});
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    auto messages = decodeSbwpMessages(conn.getWriteBuffer());
+    ASSERT_FALSE(messages.empty());
+    ASSERT_EQ(messages.front().first.type, sbwp::MessageType::AuthRequest);
+
+    sbwp::AuthMethod auth_method = sbwp::AuthMethod::Password;
+    std::vector<uint8_t> auth_data;
+    ASSERT_EQ(sbwp::parseAuthRequest(messages.front().second, auth_method, auth_data, &ctx),
+              core::Status::OK)
+        << ctx.message;
+    EXPECT_EQ(auth_method, sbwp::AuthMethod::Password);
+
+    conn.clearWriteBuffer();
+    std::vector<uint8_t> auth_payload(bootstrap_token.begin(), bootstrap_token.end());
+    auth_payload.push_back('\0');
+    const auto auth_packet =
+        buildSbwpFrontendMessage(sbwp::MessageType::AuthResponse, auth_payload, 2);
+    read_buffer.insert(read_buffer.end(), auth_packet.begin(), auth_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    messages = decodeSbwpMessages(conn.getWriteBuffer());
+    ASSERT_FALSE(messages.empty());
+    const auto ready_after_auth = std::find_if(messages.rbegin(),
+                                               messages.rend(),
+                                               [](const auto& message) {
+                                                   return message.first.type ==
+                                                       sbwp::MessageType::Ready;
+                                               });
+    ASSERT_NE(ready_after_auth, messages.rend());
+    conn.clearWriteBuffer();
+
+    auto execute_text = [&](const std::string& sql,
+                            uint32_t sequence,
+                            std::vector<std::pair<sbwp::MessageHeader, std::vector<uint8_t>>>&
+                                query_messages_out) {
+        uint8_t session_id[16]{};
+        auto query_message = ProtocolCodec::buildQuery(session_id, sql, 0);
+        std::vector<uint8_t> query_payload(query_message.getPayloadData(),
+                                           query_message.getPayloadData() +
+                                               query_message.getPayloadSize());
+        const auto query_packet =
+            buildSbwpFrontendMessage(sbwp::MessageType::Query, query_payload, sequence);
+        read_buffer.insert(read_buffer.end(), query_packet.begin(), query_packet.end());
+
+        ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+        ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+        query_messages_out = decodeSbwpMessages(conn.getWriteBuffer());
+        ASSERT_FALSE(query_messages_out.empty());
+        const auto error_it = std::find_if(query_messages_out.begin(),
+                                           query_messages_out.end(),
+                                           [](const auto& message) {
+                                               return message.first.type ==
+                                                   sbwp::MessageType::Error;
+                                           });
+        if (error_it != query_messages_out.end()) {
+            std::string severity;
+            std::string sqlstate;
+            std::string message;
+            std::string detail;
+            std::string hint;
+            core::ErrorContext error_ctx;
+            ASSERT_EQ(sbwp::parseErrorMessage(error_it->second,
+                                              severity,
+                                              sqlstate,
+                                              message,
+                                              detail,
+                                              hint,
+                                              &error_ctx),
+                      core::Status::OK)
+                << error_ctx.message;
+            ADD_FAILURE() << sql << " -> " << sqlstate << ": " << message;
+        }
+        EXPECT_TRUE(std::any_of(query_messages_out.begin(),
+                                query_messages_out.end(),
+                                [](const auto& message) {
+                                    return message.first.type ==
+                                        sbwp::MessageType::CommandComplete;
+                                }))
+            << sql;
+        conn.clearWriteBuffer();
+    };
+
+    std::vector<std::pair<sbwp::MessageHeader, std::vector<uint8_t>>> query_messages;
+    execute_text("CREATE TABLE explain_smoke (id INTEGER)", 3, query_messages);
+
+    std::vector<std::pair<sbwp::MessageHeader, std::vector<uint8_t>>> explain_messages;
+    execute_text("EXPLAIN SELECT id FROM explain_smoke", 4, explain_messages);
+    EXPECT_TRUE(std::any_of(explain_messages.begin(),
+                            explain_messages.end(),
+                            [](const auto& message) {
+                                return message.first.type ==
+                                    sbwp::MessageType::RowDescription;
+                            }));
+    EXPECT_TRUE(std::any_of(explain_messages.begin(),
+                            explain_messages.end(),
+                            [](const auto& message) {
+                                return message.first.type ==
+                                    sbwp::MessageType::DataRow;
+                            }));
+
+    engine_harness.stop();
+    db.close();
+    std::error_code cleanup_ec;
+    std::filesystem::remove(token_path, cleanup_ec);
+}
+
+TEST(ProtocolAdapterDialectsNative, NativeRemoteSessionSetBytecodeExecutesForSysArchPasswordSession) {
+    cleanupDb("test_native_remote_session_set_sysarch.sbdb");
+    ScopedEnvVar native_password_auth("SCRATCHBIRD_NATIVE_FORCE_PASSWORD_AUTH", "1");
+
+    const auto path = dbPath("test_native_remote_session_set_sysarch.sbdb");
+    core::ErrorContext ctx;
+    ASSERT_EQ(core::Database::create(path.string(), 16384, &ctx), core::Status::OK)
+        << ctx.message;
+
+    core::Database db;
+    ASSERT_EQ(db.open(path.string(), &ctx), core::Status::OK) << ctx.message;
+
+    const std::string socket_path =
+        uniqueSocketPath("scratchbird_native_remote_session_set_sysarch");
+    RemoteEngineHarness engine_harness(&db, socket_path);
+    ASSERT_EQ(engine_harness.start(&ctx), core::Status::OK) << ctx.message;
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = path.string();
+    cfg.engine_endpoint = socket_path;
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 212);
+
+    const auto startup_packet = buildNativeStartupPacket(
+        "SysArch",
+        "main",
+        {{"auth_method_id", "scratchbird.auth.password_compat"}});
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    auto messages = decodeSbwpMessages(conn.getWriteBuffer());
+    ASSERT_FALSE(messages.empty());
+    ASSERT_EQ(messages.front().first.type, sbwp::MessageType::AuthRequest);
+
+    sbwp::AuthMethod auth_method = sbwp::AuthMethod::Password;
+    std::vector<uint8_t> auth_data;
+    ASSERT_EQ(sbwp::parseAuthRequest(messages.front().second, auth_method, auth_data, &ctx),
+              core::Status::OK)
+        << ctx.message;
+    EXPECT_EQ(auth_method, sbwp::AuthMethod::Password);
+
+    conn.clearWriteBuffer();
+    std::vector<uint8_t> auth_payload{'r', 'e', 'p', 'l', 'a', 'c', 'e', 'm', 'e', '\0'};
+    const auto auth_packet =
+        buildSbwpFrontendMessage(sbwp::MessageType::AuthResponse, auth_payload, 2);
+    read_buffer.insert(read_buffer.end(), auth_packet.begin(), auth_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    messages = decodeSbwpMessages(conn.getWriteBuffer());
+    ASSERT_FALSE(messages.empty());
+    const auto ready_after_auth = std::find_if(messages.rbegin(),
+                                               messages.rend(),
+                                               [](const auto& message) {
+                                                   return message.first.type == sbwp::MessageType::Ready;
+                                               });
+    ASSERT_NE(ready_after_auth, messages.rend());
+    conn.clearWriteBuffer();
+
+    const std::string stmt = "SET SCHEMA users.public";
+    scratchbird::parser::v3::Compiler compiler;
+    auto compile_result = compiler.compile(stmt);
+    ASSERT_TRUE(compile_result.ok) << compile_result.error;
+    ASSERT_FALSE(compile_result.bytecode.empty());
+
+    uint8_t session_id[16]{};
+    auto query_message =
+        ProtocolCodec::buildQueryBytecode(session_id, compile_result.bytecode, stmt);
+    std::vector<uint8_t> query_payload(query_message.getPayloadData(),
+                                       query_message.getPayloadData() + query_message.getPayloadSize());
+    const auto query_packet =
+        buildSbwpFrontendMessage(sbwp::MessageType::Query, query_payload, 3);
+    read_buffer.insert(read_buffer.end(), query_packet.begin(), query_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    messages = decodeSbwpMessages(conn.getWriteBuffer());
+    ASSERT_FALSE(messages.empty());
+    EXPECT_FALSE(std::any_of(messages.begin(),
+                             messages.end(),
+                             [](const auto& message) {
+                                 return message.first.type == sbwp::MessageType::Error;
+                             }));
+    EXPECT_TRUE(std::any_of(messages.begin(),
+                            messages.end(),
+                            [](const auto& message) {
+                                return message.first.type == sbwp::MessageType::CommandComplete;
+                            }));
+
+    engine_harness.stop();
+    db.close();
+}
+
+TEST(ProtocolAdapterDialectsNative, NativeRemoteSessionSetExecutesAfterRecreatingSysArchUser) {
+    cleanupDb("test_native_remote_session_set_sysarch_recreate.sbdb");
+    ScopedEnvVar native_password_auth("SCRATCHBIRD_NATIVE_FORCE_PASSWORD_AUTH", "1");
+    ScopedEnvVar relaxed_password_policy("SCRATCHBIRD_EMULATION_RELAXED_PASSWORD_POLICY", "1");
+    const std::string bootstrap_token = "native_remote_session_set_recreate_token";
+    const auto token_path = dbPath("test_native_remote_session_set_recreate.bootstrap.token");
+    {
+        std::ofstream out(token_path);
+        ASSERT_TRUE(out.is_open());
+        out << bootstrap_token << "\n";
+    }
+    std::filesystem::permissions(token_path,
+                                 std::filesystem::perms::owner_read |
+                                     std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace);
+    ScopedEnvVar bootstrap_token_file("SCRATCHBIRD_BOOTSTRAP_TOKEN_FILE", token_path.string());
+    ScopedEnvVar bootstrap_owner_uid("SCRATCHBIRD_BOOTSTRAP_REQUIRE_OWNER_UID", "0");
+
+    const auto path = dbPath("test_native_remote_session_set_sysarch_recreate.sbdb");
+    core::ErrorContext ctx;
+    ASSERT_EQ(core::Database::create(path.string(), 16384, &ctx), core::Status::OK)
+        << ctx.message;
+
+    core::Database db;
+    ASSERT_EQ(db.open(path.string(), &ctx), core::Status::OK) << ctx.message;
+
+    const std::string socket_path =
+        uniqueSocketPath("scratchbird_native_remote_session_set_sysarch_recreate");
+    RemoteEngineHarness engine_harness(&db, socket_path);
+    ASSERT_EQ(engine_harness.start(&ctx), core::Status::OK) << ctx.message;
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = path.string();
+    cfg.engine_endpoint = socket_path;
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+
+    auto authenticate = [&](network::Connection& conn,
+                            const std::string& username,
+                            const std::vector<uint8_t>& response_payload,
+                            int startup_seq_base) {
+        const auto startup_packet = buildNativeStartupPacket(
+            username,
+            "main",
+            {{"auth_method_id", "scratchbird.auth.password_compat"}});
+        auto& read_buffer = conn.getReadBuffer();
+        read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+        ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+        ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+        auto messages = decodeSbwpMessages(conn.getWriteBuffer());
+        ASSERT_FALSE(messages.empty());
+        ASSERT_EQ(messages.front().first.type, sbwp::MessageType::AuthRequest);
+
+        sbwp::AuthMethod auth_method = sbwp::AuthMethod::Password;
+        std::vector<uint8_t> auth_data;
+        ASSERT_EQ(sbwp::parseAuthRequest(messages.front().second, auth_method, auth_data, &ctx),
+                  core::Status::OK)
+            << ctx.message;
+        EXPECT_EQ(auth_method, sbwp::AuthMethod::Password);
+
+        conn.clearWriteBuffer();
+        const auto auth_packet =
+            buildSbwpFrontendMessage(sbwp::MessageType::AuthResponse,
+                                     response_payload,
+                                     static_cast<uint32_t>(startup_seq_base + 1));
+        read_buffer.insert(read_buffer.end(), auth_packet.begin(), auth_packet.end());
+
+        ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+        ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+        messages = decodeSbwpMessages(conn.getWriteBuffer());
+        ASSERT_FALSE(messages.empty());
+        const auto ready_after_auth = std::find_if(messages.rbegin(),
+                                                   messages.rend(),
+                                                   [](const auto& message) {
+                                                       return message.first.type == sbwp::MessageType::Ready;
+                                                   });
+        ASSERT_NE(ready_after_auth, messages.rend());
+        conn.clearWriteBuffer();
+    };
+
+    auto execute_compiled = [&](network::Connection& conn,
+                                const std::string& sql,
+                                uint32_t sequence) {
+        scratchbird::parser::v3::Compiler compiler;
+        auto compile_result = compiler.compile(sql);
+        ASSERT_TRUE(compile_result.ok) << compile_result.error;
+        ASSERT_FALSE(compile_result.bytecode.empty());
+
+        uint8_t session_id[16]{};
+        auto query_message =
+            ProtocolCodec::buildQueryBytecode(session_id, compile_result.bytecode, sql);
+        std::vector<uint8_t> query_payload(query_message.getPayloadData(),
+                                           query_message.getPayloadData() + query_message.getPayloadSize());
+        const auto query_packet =
+            buildSbwpFrontendMessage(sbwp::MessageType::Query, query_payload, sequence);
+        auto& read_buffer = conn.getReadBuffer();
+        read_buffer.insert(read_buffer.end(), query_packet.begin(), query_packet.end());
+
+        ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+        ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+        const auto messages = decodeSbwpMessages(conn.getWriteBuffer());
+        ASSERT_FALSE(messages.empty());
+        const auto error_it = std::find_if(messages.begin(),
+                                           messages.end(),
+                                           [](const auto& message) {
+                                               return message.first.type == sbwp::MessageType::Error;
+                                           });
+        if (error_it != messages.end()) {
+            std::string severity;
+            std::string sqlstate;
+            std::string message;
+            std::string detail;
+            std::string hint;
+            core::ErrorContext error_ctx;
+            ASSERT_EQ(sbwp::parseErrorMessage(error_it->second,
+                                              severity,
+                                              sqlstate,
+                                              message,
+                                              detail,
+                                              hint,
+                                              &error_ctx),
+                      core::Status::OK)
+                << error_ctx.message;
+            ADD_FAILURE() << sql << " -> " << sqlstate << ": " << message;
+        }
+        EXPECT_TRUE(std::any_of(messages.begin(),
+                                messages.end(),
+                                [](const auto& message) {
+                                    return message.first.type == sbwp::MessageType::CommandComplete;
+                                }))
+            << sql;
+        conn.clearWriteBuffer();
+    };
+
+    network::Connection bootstrap_conn(nullptr, 213);
+    std::vector<uint8_t> bootstrap_auth_payload(bootstrap_token.begin(), bootstrap_token.end());
+    bootstrap_auth_payload.push_back('\0');
+    authenticate(bootstrap_conn, "bootstrap_admin", bootstrap_auth_payload, 1);
+    execute_compiled(bootstrap_conn, "DROP USER IF EXISTS SysArch", 3);
+    execute_compiled(bootstrap_conn, "CREATE USER SysArch WITH PASSWORD 'replaceme' SUPERUSER", 4);
+    execute_compiled(bootstrap_conn, "COMMIT", 5);
+
+    network::Connection sysarch_conn(nullptr, 214);
+    std::vector<uint8_t> sysarch_auth_payload{'r', 'e', 'p', 'l', 'a', 'c', 'e', 'm', 'e', '\0'};
+    authenticate(sysarch_conn, "SysArch", sysarch_auth_payload, 10);
+    execute_compiled(sysarch_conn, "SET SCHEMA users.public", 12);
+
+    engine_harness.stop();
+    db.close();
+    std::error_code cleanup_ec;
+    std::filesystem::remove(token_path, cleanup_ec);
 }
 
 TEST(ProtocolAdapterDialectsNative, PreparedStatementsCacheBucketedCustomPlansForScratchBird) {

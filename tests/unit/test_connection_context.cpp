@@ -116,6 +116,37 @@ TEST_F(ConnectionContextTest, RollbackAutoStart)
     EXPECT_NE(xid1, xid2) << "New transaction should have different XID";
 }
 
+TEST_F(ConnectionContextTest, CommitAfterDeletingBootstrapSeededSysArch)
+{
+    ErrorContext err_ctx;
+    CatalogManager* catalog = db_.catalog_manager();
+    ASSERT_NE(catalog, nullptr);
+
+    CatalogManager::UserInfo sysarch_user;
+    ASSERT_EQ(catalog->getUserByName("SysArch", sysarch_user, &err_ctx), Status::OK)
+        << err_ctx.message;
+
+    ID system_user_id = catalog->getSystemUserId(&err_ctx);
+    ASSERT_NE(system_user_id, ID{}) << err_ctx.message;
+
+    std::unique_ptr<ConnectionContext> conn;
+    ASSERT_EQ(db_.connect(conn, &err_ctx), Status::OK) << err_ctx.message;
+
+    ConnectionContext::setCurrent(conn.get());
+    conn->setCurrentUser(system_user_id, true);
+
+    ASSERT_EQ(catalog->deleteUser(sysarch_user.user_id, true, &err_ctx), Status::OK)
+        << err_ctx.message;
+
+    ErrorContext commit_ctx;
+    Status commit_status = conn->commit(&commit_ctx);
+    EXPECT_EQ(commit_status, Status::OK)
+        << "status=" << static_cast<uint32_t>(commit_status)
+        << " message=" << commit_ctx.message;
+
+    ConnectionContext::setCurrent(nullptr);
+}
+
 // Test default isolation level
 TEST_F(ConnectionContextTest, DefaultIsolationLevel)
 {

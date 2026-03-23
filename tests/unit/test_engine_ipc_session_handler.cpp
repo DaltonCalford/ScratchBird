@@ -11,8 +11,9 @@
  * Unit Tests for EngineIPCSessionHandler
  *
  * Tests:
- * - onSimpleQuery SQL compilation and execution
- * - onParse/onBind/onExecute prepared statement lifecycle
+ * - COMPILED_QUERY execution through the engine IPC boundary
+ * - COMPILED_PARSE/onBind/onExecute prepared statement lifecycle
+ * - SQL-text IPC rejection on SIMPLE_QUERY/PARSE
  * - Transaction methods (BEGIN, COMMIT, ROLLBACK, SAVEPOINT)
  * - COPY operations
  * - Error handling
@@ -22,10 +23,11 @@
 #include <gtest/gtest.h>
 
 #include "scratchbird/ipc/engine_ipc_session_handler.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/proc_array.h"
-#include "scratchbird/sblr/executor.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
 #include <memory>
@@ -133,6 +135,38 @@ private:
 
 class EngineIPCSessionHandlerTest : public ::testing::Test {
 protected:
+    void ensureSessionUserExists(const std::string& username, bool is_superuser = false) {
+        auto* catalog = db_->catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        core::CatalogManager::UserInfo existing_user;
+        core::ErrorContext user_lookup_ctx;
+        auto user_status = catalog->getUserByName(username, existing_user, &user_lookup_ctx);
+        if (user_status == core::Status::OK) {
+            return;
+        }
+        ASSERT_EQ(user_status, core::Status::NOT_FOUND)
+            << "Failed to resolve session user " << username << ": "
+            << user_lookup_ctx.message;
+
+        core::CatalogManager::SchemaInfo public_schema;
+        core::ErrorContext schema_ctx;
+        auto schema_status = catalog->getSchema("users.public", public_schema, &schema_ctx);
+        ASSERT_EQ(schema_status, core::Status::OK)
+            << "Failed to resolve bootstrap public schema: " << schema_ctx.message;
+
+        core::ID user_id;
+        core::ErrorContext create_ctx;
+        auto create_status = catalog->createUser(username,
+                                                 "",
+                                                 public_schema.schema_id,
+                                                 is_superuser,
+                                                 user_id,
+                                                 &create_ctx);
+        ASSERT_EQ(create_status, core::Status::OK)
+            << "Failed to create session user " << username << ": " << create_ctx.message;
+    }
+
     core::Status attachSession(uint32_t session_id,
                                const char* application_name,
                                const char* database_name = "test_db",
@@ -168,6 +202,10 @@ protected:
         status = core::ProcArrayManager::registerBackend(&proc_id_, &ctx);
         ASSERT_EQ(status, core::Status::OK) << "Failed to register backend: " << ctx.message;
 
+        ensureSessionUserExists("test_user");
+        ensureSessionUserExists("test_user2");
+        ensureSessionUserExists("SYSDBA", true);
+
         handler_ = std::make_unique<TestableEngineIPCSessionHandler>(db_.get());
         
         // Create a test session
@@ -198,6 +236,44 @@ protected:
         db_file_.reset();
     }
 
+    std::vector<uint8_t> compileNativeSql(const std::string& sql) {
+        QueryCompilerV3 compiler(db_.get());
+        auto result = compiler.compile(sql);
+        if (!result.success()) {
+            ADD_FAILURE() << "Failed to compile SQL for IPC boundary test: "
+                          << (result.errors().empty() ? std::string("unknown compiler error")
+                                                      : result.errors().front())
+                          << " | sql=" << sql;
+            return {};
+        }
+        return result.bytecode();
+    }
+
+    core::Status executeCompiledQuery(uint32_t session_id,
+                                      const std::string& sql,
+                                      core::ErrorContext* ctx) {
+        const auto bytecode = compileNativeSql(sql);
+        if (bytecode.empty()) {
+            return core::Status::INVALID_ARGUMENT;
+        }
+        return handler_->onCompiledQuery(session_id, bytecode, sql, ctx);
+    }
+
+    core::Status parseCompiledStatement(uint32_t session_id,
+                                        const std::string& stmt_name,
+                                        const std::string& sql,
+                                        core::ErrorContext* ctx) {
+        const auto bytecode = compileNativeSql(sql);
+        if (bytecode.empty()) {
+            return core::Status::INVALID_ARGUMENT;
+        }
+        auto status = handler_->onCompiledParse(session_id, stmt_name, bytecode, sql, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        return handler_->sendParseComplete(session_id);
+    }
+
     std::unique_ptr<TestDatabaseFile> db_file_;
     std::unique_ptr<core::Database> db_;
     std::unique_ptr<TestableEngineIPCSessionHandler> handler_;
@@ -214,20 +290,21 @@ TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_SessionNotFound) {
     EXPECT_EQ(status, core::Status::NOT_FOUND);
 }
 
-TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_CreateTable) {
+TEST_F(EngineIPCSessionHandlerTest, onCompiledQuery_CreateTable) {
     core::ErrorContext ctx;
-    auto status = handler_->onSimpleQuery(1, "CREATE TABLE test_table (id INT PRIMARY KEY, name TEXT)", &ctx);
+    auto status = executeCompiledQuery(1,
+                                       "CREATE TABLE test_table (id INT PRIMARY KEY, name TEXT)",
+                                       &ctx);
     EXPECT_EQ(status, core::Status::OK) << "Error: " << ctx.message;
-    // Command tag may vary based on executor implementation - just check handler received something
-    // The actual tag format depends on the SQL executed
 }
 
-TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_InsertAndSelect) {
+TEST_F(EngineIPCSessionHandlerTest, onCompiledQuery_InsertAndSelect) {
     // Create table
     {
         core::ErrorContext ctx;
-        auto status = handler_->onSimpleQuery(1, 
-            "CREATE TABLE test_users (id INT PRIMARY KEY, name TEXT)", &ctx);
+        auto status = executeCompiledQuery(1,
+                                           "CREATE TABLE test_users (id INT PRIMARY KEY, name TEXT)",
+                                           &ctx);
         ASSERT_EQ(status, core::Status::OK) << "Failed to create table: " << ctx.message;
         handler_->reset();
     }
@@ -235,65 +312,61 @@ TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_InsertAndSelect) {
     // Insert data
     {
         core::ErrorContext ctx;
-        auto status = handler_->onSimpleQuery(1, 
-            "INSERT INTO test_users VALUES (1, 'Alice'), (2, 'Bob')", &ctx);
+        auto status = executeCompiledQuery(1,
+                                           "INSERT INTO test_users VALUES (1, 'Alice'), (2, 'Bob')",
+                                           &ctx);
         EXPECT_EQ(status, core::Status::OK) << "Error: " << ctx.message;
-        // Note: rows_affected depends on executor implementation
-        // Handler correctly captures what executor returns (may be 0 during development)
         handler_->reset();
     }
 
     // Select data
     {
         core::ErrorContext ctx;
-        auto status = handler_->onSimpleQuery(1, "SELECT * FROM test_users ORDER BY id", &ctx);
+        auto status = executeCompiledQuery(1, "SELECT * FROM test_users ORDER BY id", &ctx);
         EXPECT_EQ(status, core::Status::OK) << "Error: " << ctx.message;
-        // Result set size depends on executor implementation
-        // Handler correctly captures what executor returns
     }
 }
 
-TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_Update) {
+TEST_F(EngineIPCSessionHandlerTest, onCompiledQuery_Update) {
     // Setup
     {
         core::ErrorContext ctx;
-        handler_->onSimpleQuery(1, "CREATE TABLE update_test (id INT PRIMARY KEY, val INT)", &ctx);
-        handler_->onSimpleQuery(1, "INSERT INTO update_test VALUES (1, 10), (2, 20)", &ctx);
+        executeCompiledQuery(1, "CREATE TABLE update_test (id INT PRIMARY KEY, val INT)", &ctx);
+        executeCompiledQuery(1, "INSERT INTO update_test VALUES (1, 10), (2, 20)", &ctx);
         handler_->reset();
     }
 
     // Update
     {
         core::ErrorContext ctx;
-        auto status = handler_->onSimpleQuery(1, "UPDATE update_test SET val = val + 1", &ctx);
+        auto status = executeCompiledQuery(1, "UPDATE update_test SET val = val + 1", &ctx);
         EXPECT_EQ(status, core::Status::OK);
-        // Note: rows_affected depends on executor implementation
     }
 }
 
-TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_Delete) {
+TEST_F(EngineIPCSessionHandlerTest, onCompiledQuery_Delete) {
     // Setup
     {
         core::ErrorContext ctx;
-        handler_->onSimpleQuery(1, "CREATE TABLE delete_test (id INT PRIMARY KEY)", &ctx);
-        handler_->onSimpleQuery(1, "INSERT INTO delete_test VALUES (1), (2), (3)", &ctx);
+        executeCompiledQuery(1, "CREATE TABLE delete_test (id INT PRIMARY KEY)", &ctx);
+        executeCompiledQuery(1, "INSERT INTO delete_test VALUES (1), (2), (3)", &ctx);
         handler_->reset();
     }
 
     // Delete
     {
         core::ErrorContext ctx;
-        auto status = handler_->onSimpleQuery(1, "DELETE FROM delete_test WHERE id > 1", &ctx);
+        auto status = executeCompiledQuery(1, "DELETE FROM delete_test WHERE id > 1", &ctx);
         EXPECT_EQ(status, core::Status::OK);
-        // Note: rows_affected depends on executor implementation
     }
 }
 
-TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_InvalidSyntax) {
+TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_TextPathDisabled) {
     core::ErrorContext ctx;
-    auto status = handler_->onSimpleQuery(1, "INVALID SQL SYNTAX HERE", &ctx);
-    EXPECT_EQ(status, core::Status::OK);  // Handler returns OK after sending error
-    EXPECT_FALSE(handler_->lastError().empty());
+    auto status = handler_->onSimpleQuery(1, "SELECT 1", &ctx);
+    EXPECT_EQ(status, core::Status::OK);
+    EXPECT_EQ(handler_->lastSqlState(), "0A000");
+    EXPECT_NE(handler_->lastError().find("COMPILED_QUERY"), std::string::npos);
 }
 
 TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_FirebirdProtocolIsNotRejectedAsUnsupported) {
@@ -309,18 +382,33 @@ TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_FirebirdProtocolIsNotRejectedA
     handler_->onDetach(2, &ctx);
 }
 
-TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_SelectEmptyResult) {
+TEST_F(EngineIPCSessionHandlerTest, onCompiledQuery_PostgresqlSessionSeedsShowServerVersion) {
+    ASSERT_EQ(attachSession(4, "postgresql_parser"), core::Status::OK);
+    handler_->reset();
+
+    core::ErrorContext ctx;
+    auto status = executeCompiledQuery(4, "SHOW server_version", &ctx);
+    EXPECT_EQ(status, core::Status::OK) << ctx.message;
+    ASSERT_EQ(handler_->lastRows().size(), 1u);
+    ASSERT_EQ(handler_->lastRows().front().size(), 2u);
+    ASSERT_TRUE(handler_->lastRows().front()[1].has_value());
+    EXPECT_NE(handler_->lastRows().front()[1].value().find("ScratchBird"), std::string::npos);
+
+    handler_->onDetach(4, &ctx);
+}
+
+TEST_F(EngineIPCSessionHandlerTest, onCompiledQuery_SelectEmptyResult) {
     // Setup
     {
         core::ErrorContext ctx;
-        handler_->onSimpleQuery(1, "CREATE TABLE empty_test (id INT PRIMARY KEY)", &ctx);
+        executeCompiledQuery(1, "CREATE TABLE empty_test (id INT PRIMARY KEY)", &ctx);
         handler_->reset();
     }
 
     // Select with no rows
     {
         core::ErrorContext ctx;
-        auto status = handler_->onSimpleQuery(1, "SELECT * FROM empty_test", &ctx);
+        auto status = executeCompiledQuery(1, "SELECT * FROM empty_test", &ctx);
         EXPECT_EQ(status, core::Status::OK);
         EXPECT_EQ(handler_->lastRows().size(), 0);
     }
@@ -330,22 +418,16 @@ TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_SelectEmptyResult) {
 // Prepared Statement Tests (onParse, onBind, onExecute)
 // ============================================================================
 
-TEST_F(EngineIPCSessionHandlerTest, onParse_Basic) {
+TEST_F(EngineIPCSessionHandlerTest, onParse_TextPathDisabled) {
     core::ErrorContext ctx;
     auto status = handler_->onParse(1, "stmt1", "SELECT 1 AS col", &ctx);
     EXPECT_EQ(status, core::Status::OK);
     EXPECT_FALSE(handler_->parseCompleteCalled());
     EXPECT_EQ(handler_->lastSqlState(), "0A000");
+    EXPECT_NE(handler_->lastError().find("COMPILED_PARSE"), std::string::npos);
 }
 
-TEST_F(EngineIPCSessionHandlerTest, onParse_InvalidSQL) {
-    core::ErrorContext ctx;
-    auto status = handler_->onParse(1, "bad_stmt", "INVALID SQL", &ctx);
-    EXPECT_EQ(status, core::Status::OK);  // Handler returns OK after sending error
-    EXPECT_FALSE(handler_->lastError().empty());
-}
-
-TEST_F(EngineIPCSessionHandlerTest, onParse_NativeProtocolCompilesInsteadOfUnsupported) {
+TEST_F(EngineIPCSessionHandlerTest, onParse_NativeProtocolTextPathDisabled) {
     ASSERT_EQ(attachSession(3, "native_parser_v3"), core::Status::OK);
     handler_->reset();
 
@@ -358,20 +440,21 @@ TEST_F(EngineIPCSessionHandlerTest, onParse_NativeProtocolCompilesInsteadOfUnsup
     handler_->onDetach(3, &ctx);
 }
 
-TEST_F(EngineIPCSessionHandlerTest, onParse_Bind_Execute_FullLifecycle) {
+TEST_F(EngineIPCSessionHandlerTest, onCompiledParse_Bind_Execute_FullLifecycle) {
     // Create table first
     {
         core::ErrorContext ctx;
-        handler_->onSimpleQuery(1, "CREATE TABLE prep_test (id INT PRIMARY KEY, name TEXT)", &ctx);
-        handler_->onSimpleQuery(1, "INSERT INTO prep_test VALUES (1, 'Alice'), (2, 'Bob')", &ctx);
+        executeCompiledQuery(1, "CREATE TABLE prep_test (id INT PRIMARY KEY, name TEXT)", &ctx);
+        executeCompiledQuery(1, "INSERT INTO prep_test VALUES (1, 'Alice'), (2, 'Bob')", &ctx);
         handler_->reset();
     }
 
     // Parse
     {
         core::ErrorContext ctx;
-        auto status = handler_->onParse(1, "select_stmt", "SELECT * FROM prep_test", &ctx);
+        auto status = parseCompiledStatement(1, "select_stmt", "SELECT * FROM prep_test", &ctx);
         EXPECT_EQ(status, core::Status::OK);
+        EXPECT_TRUE(handler_->parseCompleteCalled());
         handler_->reset();
     }
 
@@ -428,6 +511,12 @@ TEST_F(EngineIPCSessionHandlerTest, onCommit_Basic) {
     EXPECT_EQ(status, core::Status::OK);
 }
 
+TEST_F(EngineIPCSessionHandlerTest, onCommit_ImplicitTransactionAfterAttach) {
+    core::ErrorContext ctx;
+    auto status = handler_->onCommit(1, &ctx);
+    EXPECT_EQ(status, core::Status::OK);
+}
+
 TEST_F(EngineIPCSessionHandlerTest, onRollback_Basic) {
     // Begin first
     {
@@ -458,14 +547,14 @@ TEST_F(EngineIPCSessionHandlerTest, Transaction_CommitPersistsData) {
     // Create table
     {
         core::ErrorContext ctx;
-        handler_->onSimpleQuery(1, "CREATE TABLE txn_test (id INT PRIMARY KEY)", &ctx);
+        executeCompiledQuery(1, "CREATE TABLE txn_test (id INT PRIMARY KEY)", &ctx);
     }
 
     // Begin transaction and insert
     {
         core::ErrorContext ctx;
         handler_->onBegin(1, &ctx);
-        handler_->onSimpleQuery(1, "INSERT INTO txn_test VALUES (1)", &ctx);
+        executeCompiledQuery(1, "INSERT INTO txn_test VALUES (1)", &ctx);
         handler_->onCommit(1, &ctx);
     }
 
@@ -473,7 +562,7 @@ TEST_F(EngineIPCSessionHandlerTest, Transaction_CommitPersistsData) {
     {
         core::ErrorContext ctx;
         handler_->reset();
-        auto status = handler_->onSimpleQuery(1, "SELECT * FROM txn_test", &ctx);
+        auto status = executeCompiledQuery(1, "SELECT * FROM txn_test", &ctx);
         EXPECT_EQ(status, core::Status::OK);
     }
 }
@@ -482,8 +571,8 @@ TEST_F(EngineIPCSessionHandlerTest, Transaction_RollbackDiscardsData) {
     // Create table
     {
         core::ErrorContext ctx;
-        handler_->onSimpleQuery(1, "CREATE TABLE rollback_test (id INT PRIMARY KEY)", &ctx);
-        handler_->onSimpleQuery(1, "INSERT INTO rollback_test VALUES (1)", &ctx);
+        executeCompiledQuery(1, "CREATE TABLE rollback_test (id INT PRIMARY KEY)", &ctx);
+        executeCompiledQuery(1, "INSERT INTO rollback_test VALUES (1)", &ctx);
         handler_->reset();
     }
 
@@ -491,7 +580,7 @@ TEST_F(EngineIPCSessionHandlerTest, Transaction_RollbackDiscardsData) {
     {
         core::ErrorContext ctx;
         handler_->onBegin(1, &ctx);
-        handler_->onSimpleQuery(1, "INSERT INTO rollback_test VALUES (999)", &ctx);
+        executeCompiledQuery(1, "INSERT INTO rollback_test VALUES (999)", &ctx);
         handler_->onRollback(1, &ctx);
     }
 
@@ -499,7 +588,7 @@ TEST_F(EngineIPCSessionHandlerTest, Transaction_RollbackDiscardsData) {
     {
         core::ErrorContext ctx;
         handler_->reset();
-        auto status = handler_->onSimpleQuery(1, "SELECT * FROM rollback_test", &ctx);
+        auto status = executeCompiledQuery(1, "SELECT * FROM rollback_test", &ctx);
         EXPECT_EQ(status, core::Status::OK);
     }
 }
@@ -550,8 +639,8 @@ TEST_F(EngineIPCSessionHandlerTest, MultipleSessions) {
 
     // Both sessions should work independently
     {
-        handler_->onSimpleQuery(1, "SELECT 1", &ctx);
-        handler_->onSimpleQuery(2, "SELECT 2", &ctx);
+        executeCompiledQuery(1, "SELECT 1", &ctx);
+        executeCompiledQuery(2, "SELECT 2", &ctx);
     }
 
     // Cleanup
@@ -566,8 +655,8 @@ TEST_F(EngineIPCSessionHandlerTest, ClearPreparedStatementCache) {
     // Parse some statements
     {
         core::ErrorContext ctx;
-        handler_->onParse(1, "stmt1", "SELECT 1", &ctx);
-        handler_->onParse(1, "stmt2", "SELECT 2", &ctx);
+        parseCompiledStatement(1, "stmt1", "SELECT 1", &ctx);
+        parseCompiledStatement(1, "stmt2", "SELECT 2", &ctx);
     }
 
     // Clear cache
@@ -584,8 +673,8 @@ TEST_F(EngineIPCSessionHandlerTest, GetPreparedStatements) {
     // Parse some statements
     {
         core::ErrorContext ctx;
-        handler_->onParse(1, "stmt1", "SELECT 1", &ctx);
-        handler_->onParse(1, "stmt2", "SELECT 2 FROM test", &ctx);
+        parseCompiledStatement(1, "stmt1", "SELECT 1", &ctx);
+        parseCompiledStatement(1, "stmt2", "SELECT 2 FROM test", &ctx);
     }
 
     auto stmts = handler_->getPreparedStatements(1);
@@ -636,7 +725,7 @@ TEST_F(EngineIPCSessionHandlerTest, onClose_Statement) {
     // Parse a statement
     {
         core::ErrorContext ctx;
-        handler_->onParse(1, "stmt_to_close", "SELECT 1", &ctx);
+        parseCompiledStatement(1, "stmt_to_close", "SELECT 1", &ctx);
     }
 
     // Close it
@@ -649,7 +738,7 @@ TEST_F(EngineIPCSessionHandlerTest, onClose_Portal) {
     // Parse and bind
     {
         core::ErrorContext ctx;
-        handler_->onParse(1, "stmt1", "SELECT 1", &ctx);
+        parseCompiledStatement(1, "stmt1", "SELECT 1", &ctx);
         handler_->onBind(1, "portal_to_close", "stmt1", &ctx);
     }
 

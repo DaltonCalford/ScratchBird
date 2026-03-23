@@ -1,0 +1,62 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 136,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/range_selectivity/ref_mysql/raw/ref_mysql.setup.39a1a6eaa5b6.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/range_selectivity/ref_mysql/raw/ref_mysql.setup.39a1a6eaa5b6.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "1\tSIMPLE\tavp_range_selectivity\tNULL\trange\tidx_avp_range_selectivity_k\tidx_avp_range_selectivity_k\t4\tNULL\t11\t100.00\tUsing where; Using index\n\n",
+    "stderr": "",
+    "elapsed_ms": 31,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/range_selectivity/ref_mysql/raw/ref_mysql.plan.1e0ff695daf5.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/range_selectivity/ref_mysql/raw/ref_mysql.plan.1e0ff695daf5.stderr.txt",
+    "plan_lines": [
+      "PLAN|1\tSIMPLE\tavp_range_selectivity\tNULL\trange\tidx_avp_range_selectivity_k\tidx_avp_range_selectivity_k\t4\tNULL\t11\t100.00\tUsing where; Using index"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "ASSERT|range_selectivity|count=11|sum_id=110\n\n",
+    "stderr": "",
+    "elapsed_ms": 28,
+    "assert_lines": [
+      "ASSERT|range_selectivity|count=11|sum_id=110"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/range_selectivity/ref_mysql/raw/ref_mysql.exec.b11fe4b1197b.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/range_selectivity/ref_mysql/raw/ref_mysql.exec.b11fe4b1197b.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 63,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/range_selectivity/ref_mysql/raw/ref_mysql.teardown.d4d50d21194d.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_142558/20260319_142558/range_selectivity/ref_mysql/raw/ref_mysql.teardown.d4d50d21194d.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

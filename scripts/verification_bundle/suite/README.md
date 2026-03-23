@@ -8,6 +8,7 @@ It supports:
 2. Differential behavior comparisons (ScratchBird emulation vs reference engines).
 3. Performance/stress workloads.
 4. Optional wire/byte parity artifact generation via ScratchBird emulation scripts.
+5. Optimizer donor-comparison corpus runs with normalized plan/result scoring.
 
 For full host provisioning (dependencies + user/group + build/test/verify + artifact zip), use the parent bundle entrypoint:
 
@@ -60,3 +61,22 @@ cd ../../
 
 - ScratchBird static stack (`example_db_manager.sh static-up/down/status`)
 - reference engine containers (PostgreSQL, MySQL, Firebird)
+
+## Optimizer donor-comparison harness
+
+Optimizer comparison lanes use:
+
+- `configs/optimizer_donor_engines.yaml`
+- `configs/optimizer_donor_corpus.yaml`
+- `scripts/optimizer_compare_runner.py`
+
+The harness is designed to:
+
+- run normalized setup, plan, exec, and teardown stages
+- compare ScratchBird emulation listeners against matching PostgreSQL, MySQL, and Firebird donor dialects
+- enumerate installed ScratchBird emulated-engine parser bundles through parser `--print-package-scaffold` discovery before running emulated lanes
+- fail closed on emulated lanes whose installed parser scaffold does not match the expected parser/compiler/runtime package bundle
+- compare ScratchBird native v3 statements against donor engines using explicit intent-equivalent query variants
+- keep DuckDB as a native-intent comparator rather than a dialect-emulation comparator
+- preserve plan proof lines, result assertion lines, and metric lines
+- emit pairwise competitive scoring without requiring identical plan text

@@ -6,16 +6,23 @@ SB_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 DRIVER_DIR="${ROOT_DIR}-driver"
 
+# `sb_isql` belongs to the native ScratchBird/V3 lane. Emulated PostgreSQL,
+# MySQL, and Firebird verification must use the original engine tools instead.
 DEFAULT_ISQL="${ROOT_DIR}/build/src/sb_isql"
 if [[ ! -x "${DEFAULT_ISQL}" ]]; then
   ALT_ISQL="${ROOT_DIR}/build/src/cli/sb_isql"
   if [[ -x "${ALT_ISQL}" ]]; then
     DEFAULT_ISQL="${ALT_ISQL}"
   else
-    DRIVER_ISQL="${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_isql"
-    if [[ -x "${DRIVER_ISQL}" ]]; then
-      DEFAULT_ISQL="${DRIVER_ISQL}"
-    fi
+    for DRIVER_ISQL in \
+      "${DRIVER_DIR}/build/tracks/p3/drivers/cli/sb_isql" \
+      "${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_isql"
+    do
+      if [[ -x "${DRIVER_ISQL}" ]]; then
+        DEFAULT_ISQL="${DRIVER_ISQL}"
+        break
+      fi
+    done
   fi
 fi
 
@@ -102,7 +109,6 @@ PRECHECK_SQL="${RESULTS_DIR}/precheck.sql"
 PRECHECK_OUT="${RESULTS_DIR}/precheck.out"
 cat > "${PRECHECK_SQL}" <<'SQL'
 SELECT 1;
-SHOW server_version;
 SQL
 
 if ! "${ISQL_BIN}" "${DBNAME}" \
@@ -148,6 +154,11 @@ while IFS= read -r rel_path; do
       -o "${out_file}" \
       -q; then
     failures+=("${rel_path} (see ${out_file})")
+    continue
+  fi
+
+  if rg -q "Error:|Stopping due to error" "${out_file}"; then
+    failures+=("${rel_path} (reported execution errors in ${out_file})")
   fi
 done < "${LIST_FILE}"
 

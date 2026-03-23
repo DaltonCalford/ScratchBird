@@ -1002,32 +1002,9 @@ namespace scratchbird::optimizer
                 return false;
             }
 
-            switch (descriptor.function)
-            {
-                case ExpressionStatsFunction::LOWER:
-                    std::transform(text.begin(),
-                                   text.end(),
-                                   text.begin(),
-                                   [](unsigned char ch) {
-                                       return static_cast<char>(std::tolower(ch));
-                                   });
-                    break;
-                case ExpressionStatsFunction::UPPER:
-                    text = core::IdentifierUtils::toUpper(text);
-                    break;
-                case ExpressionStatsFunction::TRIM:
-                    text = trimAsciiCopy(text);
-                    break;
-                case ExpressionStatsFunction::LTRIM:
-                    text = ltrimAsciiCopy(text);
-                    break;
-                case ExpressionStatsFunction::RTRIM:
-                    text = rtrimAsciiCopy(text);
-                    break;
-                case ExpressionStatsFunction::UNKNOWN:
-                default:
-                    break;
-            }
+            ::scratchbird::optimizer::applyExpressionStatsTextTransform(
+                text,
+                descriptor.function);
             encodeLengthPrefixedBytes(text, literal);
             return true;
         }

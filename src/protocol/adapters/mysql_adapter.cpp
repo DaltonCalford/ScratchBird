@@ -442,6 +442,357 @@ std::vector<protocol::ProtocolCodec::ColumnValue> formatMySqlTextRow(
     return formatted;
 }
 
+bool isExplainLikeMySqlQuery(const std::string& sql) {
+    size_t pos = 0;
+    while (pos < sql.size() && std::isspace(static_cast<unsigned char>(sql[pos])) != 0) {
+        ++pos;
+    }
+    constexpr char kExplain[] = "EXPLAIN";
+    constexpr size_t kExplainLen = sizeof(kExplain) - 1;
+    if (sql.size() < pos + kExplainLen) {
+        return false;
+    }
+    for (size_t i = 0; i < kExplainLen; ++i) {
+        if (std::toupper(static_cast<unsigned char>(sql[pos + i])) != kExplain[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string mysqlTrimAscii(const std::string& value) {
+    size_t begin = 0;
+    while (begin < value.size() &&
+           std::isspace(static_cast<unsigned char>(value[begin])) != 0) {
+        ++begin;
+    }
+    size_t end = value.size();
+    while (end > begin &&
+           std::isspace(static_cast<unsigned char>(value[end - 1])) != 0) {
+        --end;
+    }
+    return value.substr(begin, end - begin);
+}
+
+std::string mysqlUpperAscii(std::string value) {
+    std::transform(value.begin(),
+                   value.end(),
+                   value.begin(),
+                   [](unsigned char ch) {
+                       return static_cast<char>(std::toupper(ch));
+                   });
+    return value;
+}
+
+std::string mysqlColumnValueToString(const protocol::ProtocolCodec::ColumnValue& value) {
+    if (value.is_null || value.data.empty()) {
+        return {};
+    }
+    return std::string(reinterpret_cast<const char*>(value.data.data()), value.data.size());
+}
+
+std::string extractPlanTokenValue(const std::string& line, const std::string& key) {
+    const std::string needle = key + "=";
+    const size_t pos = line.find(needle);
+    if (pos == std::string::npos) {
+        return {};
+    }
+    size_t cursor = pos + needle.size();
+    if (cursor >= line.size()) {
+        return {};
+    }
+
+    const char opener = line[cursor];
+    char closer = '\0';
+    if (opener == '(') {
+        closer = ')';
+    } else if (opener == '[') {
+        closer = ']';
+    } else if (opener == '{') {
+        closer = '}';
+    }
+
+    if (closer != '\0') {
+        int depth = 0;
+        size_t end = cursor;
+        for (; end < line.size(); ++end) {
+            if (line[end] == opener) {
+                ++depth;
+            } else if (line[end] == closer) {
+                --depth;
+                if (depth == 0) {
+                    ++end;
+                    break;
+                }
+            }
+        }
+        return line.substr(cursor, end - cursor);
+    }
+
+    size_t end = cursor;
+    while (end < line.size() &&
+           std::isspace(static_cast<unsigned char>(line[end])) == 0) {
+        ++end;
+    }
+    return line.substr(cursor, end - cursor);
+}
+
+std::string extractRelationAlias(const std::string& line) {
+    const std::string marker = "alias=";
+    const size_t pos = line.find(marker);
+    if (pos == std::string::npos) {
+        return {};
+    }
+    size_t cursor = pos + marker.size();
+    size_t end = cursor;
+    while (end < line.size() &&
+           std::isspace(static_cast<unsigned char>(line[end])) == 0) {
+        ++end;
+    }
+    return line.substr(cursor, end - cursor);
+}
+
+std::string extractChosenRelationName(const std::string& line) {
+    const std::string marker = "relation:";
+    const size_t pos = line.find(marker);
+    if (pos == std::string::npos) {
+        return {};
+    }
+    size_t cursor = pos + marker.size();
+    size_t end = cursor;
+    while (end < line.size() &&
+           std::isspace(static_cast<unsigned char>(line[end])) == 0) {
+        ++end;
+    }
+    return line.substr(cursor, end - cursor);
+}
+
+std::string mysqlExplainAccessTypeForScan(const std::string& scan_kind,
+                                          const std::string& scan_family,
+                                          const std::string& capability_tier) {
+    const std::string family_upper = mysqlUpperAscii(scan_family);
+    const std::string kind_upper = mysqlUpperAscii(scan_kind);
+    const std::string capability_upper = mysqlUpperAscii(capability_tier);
+
+    if (family_upper == "SEQ_SCAN" || kind_upper == "SEQ_SCAN") {
+        return "ALL";
+    }
+    if (family_upper.find("EQ_SCAN") != std::string::npos) {
+        return capability_upper == "EXACT" ? "const" : "ref";
+    }
+    if (family_upper.find("RANGE") != std::string::npos ||
+        family_upper.find("SUMMARY") != std::string::npos ||
+        family_upper.find("BRIN") != std::string::npos ||
+        family_upper.find("GIN") != std::string::npos ||
+        family_upper.find("TEXT") != std::string::npos) {
+        return "range";
+    }
+    if (family_upper.find("ORDERED") != std::string::npos ||
+        family_upper.find("INDEX_ONLY") != std::string::npos) {
+        return "index";
+    }
+    if (kind_upper.find("INDEX") != std::string::npos) {
+        return capability_upper == "EXACT" ? "ref" : "range";
+    }
+    return "ALL";
+}
+
+bool rewriteScratchBirdPlanToMySqlExplain(const std::string& sql,
+                                          ResultContext& result) {
+    if (myWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[my_explain_rewrite] explain=%d cols=%zu first_col=%s rows=%zu has_error=%d\n",
+                     isExplainLikeMySqlQuery(sql) ? 1 : 0,
+                     result.columns.size(),
+                     result.columns.empty() ? "<none>" : result.columns.front().name.c_str(),
+                     result.rows.size(),
+                     result.has_error ? 1 : 0);
+        std::fflush(stderr);
+    }
+    if (!isExplainLikeMySqlQuery(sql) || result.columns.size() != 1) {
+        return false;
+    }
+    const auto& source_columns = result.columns;
+    if (source_columns.empty() ||
+        !core::IdentifierUtils::namesMatch(source_columns.front().name, false, "QUERY PLAN", false)) {
+        return false;
+    }
+
+    struct ExplainRow {
+        std::string table;
+        std::string access_type{"ALL"};
+        std::string possible_keys{"NULL"};
+        std::string key{"NULL"};
+        std::string rows{"0"};
+        std::string filtered{"100.00"};
+        std::string extra;
+    };
+
+    std::vector<std::string> plan_lines;
+    plan_lines.reserve(result.rows.size());
+    for (const auto& values : result.rows) {
+        if (!values.empty()) {
+            const std::string line = mysqlColumnValueToString(values.front());
+            if (!line.empty()) {
+                plan_lines.push_back(line);
+            }
+        }
+    }
+    if (plan_lines.empty()) {
+        return false;
+    }
+
+    std::vector<ExplainRow> explain_rows;
+    for (const auto& raw_line : plan_lines) {
+        const std::string line = mysqlTrimAscii(raw_line);
+        if (line.rfind("relation[", 0) != 0) {
+            continue;
+        }
+        ExplainRow row;
+        row.table = extractRelationAlias(line);
+        const std::string scan_kind = extractPlanTokenValue(line, "scan_kind");
+        const std::string scan_family = extractPlanTokenValue(line, "scan_family");
+        const std::string capability_tier = extractPlanTokenValue(line, "capability_tier");
+        row.access_type = mysqlExplainAccessTypeForScan(scan_kind, scan_family, capability_tier);
+        if (!scan_family.empty() && mysqlUpperAscii(scan_family) != "SEQ_SCAN") {
+            row.possible_keys = scan_family;
+            row.key = scan_family;
+        }
+        if (!scan_family.empty()) {
+            row.extra = "ScratchBird scan_family=" + scan_family;
+        }
+        if (!capability_tier.empty()) {
+            if (!row.extra.empty()) {
+                row.extra += "; ";
+            }
+            row.extra += "capability=" + capability_tier;
+        }
+        const std::string clustered_lookup_shape = extractPlanTokenValue(line, "clustered_lookup_shape");
+        if (!clustered_lookup_shape.empty()) {
+            if (!row.extra.empty()) {
+                row.extra += "; ";
+            }
+            row.extra += "lookup=" + clustered_lookup_shape;
+        }
+        explain_rows.push_back(std::move(row));
+    }
+
+    for (const auto& raw_line : plan_lines) {
+        const std::string line = mysqlTrimAscii(raw_line);
+        if (line.rfind("ACCESS_PATH ", 0) != 0 ||
+            line.find("verdict=CHOSEN") == std::string::npos) {
+            continue;
+        }
+        const std::string relation_name = extractChosenRelationName(line);
+        if (relation_name.empty()) {
+            continue;
+        }
+        for (auto& row : explain_rows) {
+            if (!core::IdentifierUtils::namesMatch(row.table, false, relation_name, false)) {
+                continue;
+            }
+            const std::string candidate = extractPlanTokenValue(line, "candidate");
+            const std::string rows = extractPlanTokenValue(line, "rows");
+            if (!rows.empty()) {
+                row.rows = rows;
+            }
+            const size_t lb = candidate.find('[');
+            const size_t rb = candidate.find(']');
+            if (lb != std::string::npos && rb != std::string::npos && rb > lb + 1) {
+                const std::string index_name = candidate.substr(lb + 1, rb - lb - 1);
+                row.possible_keys = index_name;
+                row.key = index_name;
+            }
+            break;
+        }
+    }
+
+    if (explain_rows.empty()) {
+        for (const auto& raw_line : plan_lines) {
+            const std::string line = mysqlTrimAscii(raw_line);
+            if (line.find("table=") == std::string::npos) {
+                continue;
+            }
+            ExplainRow row;
+            row.table = extractPlanTokenValue(line, "table");
+            const std::string index_name = extractPlanTokenValue(line, "index");
+            row.rows = extractPlanTokenValue(line, "rows");
+            if (row.rows.empty()) {
+                row.rows = "0";
+            }
+            if (!index_name.empty()) {
+                row.possible_keys = index_name;
+                row.key = index_name;
+                row.access_type = "ref";
+            }
+            if (line.rfind("SeqScan", 0) == 0) {
+                row.access_type = "ALL";
+            }
+            row.extra = "ScratchBird translated explain";
+            explain_rows.push_back(std::move(row));
+            break;
+        }
+    }
+
+    if (explain_rows.empty()) {
+        return false;
+    }
+
+    auto make_string_column = [](const std::string& name) {
+        ProtocolCodec::ColumnInfo col;
+        col.name = name;
+        col.type = protocol::WireType::VARCHAR;
+        col.type_modifier = 0;
+        return col;
+    };
+    auto make_value = [](const std::string& value) {
+        return protocol::ProtocolCodec::ColumnValue::fromString(value);
+    };
+
+    result.columns.clear();
+    result.rows.clear();
+    result.columns.push_back(make_string_column("id"));
+    result.columns.push_back(make_string_column("select_type"));
+    result.columns.push_back(make_string_column("table"));
+    result.columns.push_back(make_string_column("partitions"));
+    result.columns.push_back(make_string_column("type"));
+    result.columns.push_back(make_string_column("possible_keys"));
+    result.columns.push_back(make_string_column("key"));
+    result.columns.push_back(make_string_column("key_len"));
+    result.columns.push_back(make_string_column("ref"));
+    result.columns.push_back(make_string_column("rows"));
+    result.columns.push_back(make_string_column("filtered"));
+    result.columns.push_back(make_string_column("Extra"));
+
+    for (const auto& row : explain_rows) {
+        result.rows.push_back({
+            make_value("1"),
+            make_value("SIMPLE"),
+            make_value(row.table.empty() ? "<unknown>" : row.table),
+            make_value("NULL"),
+            make_value(row.access_type),
+            make_value(row.possible_keys),
+            make_value(row.key),
+            make_value("NULL"),
+            make_value("NULL"),
+            make_value(row.rows),
+            make_value(row.filtered),
+            make_value(row.extra)
+        });
+    }
+
+    result.rows_affected = 0;
+    result.command_tag = "EXPLAIN";
+    result.has_error = false;
+    if (myWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[my_explain_rewrite] rewritten rows=%zu\n",
+                     result.rows.size());
+        std::fflush(stderr);
+    }
+    return true;
+}
+
 std::string rewriteMySqlSystemSchemaReferences(const std::string& sql,
                                                const std::string& database_root) {
     if (sql.empty() || database_root.empty()) {
@@ -1324,6 +1675,24 @@ void MySqlAdapter::updateServerCapabilities() {
 }
 
 MySqlAdapter::~MySqlAdapter() = default;
+
+void MySqlAdapter::onConnectionClosed(network::Connection* conn,
+                                      network::CloseReason reason) {
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
+    last_warnings_.clear();
+    last_errors_.clear();
+    last_error_code_ = 0;
+    last_error_sqlstate_.clear();
+    default_db_set_ = false;
+    information_schema_bootstrapped_ = false;
+    in_transaction_ = false;
+    server_status_ = mysql::ServerStatus::AUTOCOMMIT;
+    mysql_state_ = MySqlProtocolState::INITIAL;
+    ProtocolAdapter::onConnectionClosed(conn, reason);
+}
 
 core::Status MySqlAdapter::executeQuery(const QueryContext& query, ResultContext& result) {
     if (!queryTouchesMySqlSystemSchema(query.query) || !connection_ctx_) {
@@ -3282,6 +3651,18 @@ core::Status MySqlAdapter::handleComQuery(network::Connection* conn) {
 
     ResultContext result;
     executeRemoteQuery(ctx, result);
+    if (myWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[my_explain_rewrite] post-execute cols=%zu first_col=%s rows=%zu has_error=%d explain=%d\n",
+                     result.columns.size(),
+                     result.columns.empty() ? "<none>" : result.columns.front().name.c_str(),
+                     result.rows.size(),
+                     result.has_error ? 1 : 0,
+                     isExplainLikeMySqlQuery(query) ? 1 : 0);
+        std::fflush(stderr);
+    }
+
+    rewriteScratchBirdPlanToMySqlExplain(query, result);
 
     updateTransactionStatus(query, result.has_error);
 
@@ -3806,6 +4187,10 @@ core::Status MySqlAdapter::handleComPing(network::Connection* conn) {
 }
 
 core::Status MySqlAdapter::handleComQuit(network::Connection* conn) {
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
     mysql_state_ = MySqlProtocolState::CLOSING;
     conn->close(network::CloseReason::CLIENT_DISCONNECT);
     return core::Status::OK;

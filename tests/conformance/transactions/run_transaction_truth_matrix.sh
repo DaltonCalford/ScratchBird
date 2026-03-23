@@ -93,13 +93,20 @@ run_default_lane() {
       local my_port="${SCRATCHBIRD_MY_PORT:-3306}"
       local my_user="${SCRATCHBIRD_MY_USER:-root}"
       local my_password="${SCRATCHBIRD_MY_PASSWORD:-}"
+      local my_db="${SCRATCHBIRD_MY_DB:-compat_mysql}"
+      local my_wrapper_sql="${RESULT_DIR}/mysql/transaction_truth.run.sql"
+      {
+        printf 'CREATE DATABASE IF NOT EXISTS `%s`;\n' "${my_db}"
+        printf 'USE `%s`;\n' "${my_db}"
+        cat "${sql_file}"
+      } > "${my_wrapper_sql}"
       if [[ -n "${my_password}" ]]; then
         MYSQL_PWD="${my_password}" \
           "${my_bin}" --protocol=TCP -h "${my_host}" -P "${my_port}" -u "${my_user}" \
-          --batch --raw < "${sql_file}" > "${raw}" 2>&1
+          --batch --raw < "${my_wrapper_sql}" > "${raw}" 2>&1
       else
         "${my_bin}" --protocol=TCP -h "${my_host}" -P "${my_port}" -u "${my_user}" \
-          --batch --raw < "${sql_file}" > "${raw}" 2>&1
+          --batch --raw < "${my_wrapper_sql}" > "${raw}" 2>&1
       fi
       ;;
     firebird)

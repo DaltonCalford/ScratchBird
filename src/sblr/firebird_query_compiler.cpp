@@ -15,8 +15,9 @@
  */
 
 #include "scratchbird/sblr/firebird_query_compiler.h"
-#include "scratchbird/parser/v3_emitter.h"
+#include "scratchbird/sblr/ast_sblr_lowerer.h"
 #include "scratchbird/sblr/v3_container.h"
+#include "scratchbird/sblr/v3_codec.h"
 #include <chrono>
 
 namespace scratchbird {
@@ -28,9 +29,8 @@ namespace fb = parser::firebird;
 
 FirebirdQueryCompiler::FirebirdQueryCompiler(core::Database* db)
     : db_(db)
-    , catalog_(db ? db->catalog_manager() : nullptr)
 {
-    // Current schema is supplied by the Firebird adapter/session.
+    (void)db_;
 }
 
 FirebirdQueryCompiler::~FirebirdQueryCompiler() = default;
@@ -71,7 +71,7 @@ FirebirdCompilationResult FirebirdQueryCompiler::compileInternal(const std::stri
     // Phase 2: Emit V3 SBLR container from parser AST
     // =========================================================================
 
-    parser::v3::V3Emitter emitter(parser.stringPool());
+    parser::v3::AstSblrLowerer emitter(parser.stringPool());
     sblr::v3::Container container;
     std::string emit_err;
 
@@ -83,14 +83,13 @@ FirebirdCompilationResult FirebirdQueryCompiler::compileInternal(const std::stri
     // Annotate module metadata for Firebird emulation (dialect id reserved by spec)
     container.metadata.module_name = "firebird_emulation";
 
-    std::vector<uint8_t> encoded;
-    std::string encode_err;
-    if (!sblr::v3::encodeContainer(container, encoded, encode_err)) {
-        result.addError("V3 container encode failed: " + encode_err);
+    std::string encode_error;
+    std::vector<uint8_t> raw_bytecode;
+    if (!sblr::v3::encodeContainer(container, raw_bytecode, encode_error)) {
+        result.addError("V3 raw encode failed: " + encode_error);
         return result;
     }
-
-    result.setBytecode(std::move(encoded));
+    result.setBytecode(std::move(raw_bytecode));
     stats.bytecode_size = result.bytecode().size();
 
     auto total_end = std::chrono::steady_clock::now();

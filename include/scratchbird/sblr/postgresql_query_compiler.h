@@ -24,14 +24,16 @@
  */
 
 #include "scratchbird/parser/postgresql/pg_parser.h"
-#include "scratchbird/core/database.h"
-#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/types.h"
 #include <string>
 #include <vector>
 #include <memory>
 #include <chrono>
 
 namespace scratchbird {
+namespace core {
+class Database;
+}
 namespace sblr {
 
 /**
@@ -140,7 +142,6 @@ public:
 
 private:
     core::Database* db_ = nullptr;
-    core::CatalogManager* catalog_ = nullptr;
     core::ID current_schema_;
     std::string default_schema_;
     std::vector<std::string> search_path_;

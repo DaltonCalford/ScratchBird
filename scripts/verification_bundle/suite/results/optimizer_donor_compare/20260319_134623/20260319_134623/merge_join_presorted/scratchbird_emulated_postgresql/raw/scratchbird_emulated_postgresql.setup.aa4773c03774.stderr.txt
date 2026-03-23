@@ -1,0 +1,1 @@
+psql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/merge_join_presorted.setup.sql:1: NOTICE:  table "avp_merge_join_presorted" does not exist, skipping

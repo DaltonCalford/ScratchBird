@@ -1,0 +1,5 @@
+Catalog Error: Table with name avp_merge_join_presorted does not exist!
+Did you mean "pg_namespace"?
+
+LINE 2: FROM avp_merge_join_presorted a
+             ^

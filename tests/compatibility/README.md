@@ -302,15 +302,16 @@ Converter: `postgresql/scripts/convert_pg_test.py`
 
 ## Test Execution
 
-Tests are executed using CLI clients built from the `ScratchBird-driver` repository:
+Tests are executed using the original engine tools for emulated lanes and
+`sb_isql` only for the native ScratchBird lane:
 
-- **sb_fb_isql** - Firebird protocol client (port 3050)
-- **sb_my_isql** - MySQL protocol client (port 3306)
-- **sb_pg_isql** - PostgreSQL protocol client (port 5432)
-- **sb_isql** - ScratchBird native client (port 3092)
+- **`psql`** - donor PostgreSQL client for the PostgreSQL emulation lane
+- **`mysql`** - donor MySQL client for the MySQL emulation lane
+- **`isql` / `isql-fb`** - donor Firebird client for the Firebird emulation lane
+- **`sb_isql`** - ScratchBird native client for the V3/native lane only
 
-Compatibility lanes require protocol-accurate clients (`sb_my_isql`, `sb_pg_isql`, and Firebird-compatible `isql-fb`/`sb_fb_isql`).
-Generic `sb_isql` is intentionally rejected for emulated protocol parity runs.
+Compatibility lanes require the donor protocol clients from the original engines.
+Generic `sb_isql` is intentionally rejected for emulated PostgreSQL/MySQL/Firebird parity runs.
 
 Result separation by lane is mandatory:
 
@@ -392,7 +393,7 @@ Failed Firebird tests (21 files):
 
 ## Next Steps
 
-1. **Build ISQL Clients** - Implement sb_fb_isql, sb_my_isql, sb_pg_isql (see Plan 06)
+1. **Keep Client Boundaries Strict** - Emulated lanes stay on donor `isql`/`psql`/`mysql`; `sb_isql` remains native V3 only
 2. **Create Test Runners** - Implement automated test execution framework
 3. **Set Up CI/CD** - Integrate compatibility tests into continuous integration
 4. **Generate Compatibility Reports** - Track pass rates by database and category

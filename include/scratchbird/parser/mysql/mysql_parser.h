@@ -472,6 +472,9 @@ private:
     parser::v3::Statement* parseAlterStmtV3();
     parser::v3::Statement* parseRenameStmtV3(bool rename_consumed = false);
     parser::v3::Statement* parseTruncateStmtV3();
+    parser::v3::Statement* parsePrepareStmtV3();
+    parser::v3::Statement* parseExecutePreparedStmtV3();
+    parser::v3::Statement* parseDeallocatePreparedStmtV3(bool allow_drop_prepare = false);
     parser::v3::Statement* parseGrantStmtV3();
     parser::v3::Statement* parseRevokeStmtV3();
     parser::v3::Statement* parseExplainStmtV3();

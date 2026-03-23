@@ -15,21 +15,25 @@
  * Compiles Firebird SQL to V3 SBLR bytecode using:
  * - Firebird Lexer (Firebird SQL tokenization)
  * - Firebird Parser (Firebird SQL -> parser AST)
- * - V3 emitter (parser AST -> SBLR v3 container)
+ * - Shared AST-to-SBLR lowering (parser AST -> SBLR v3 container)
  *
  * This compiler allows Firebird SQL syntax to be executed on the
  * ScratchBird engine, enabling Firebird client emulation.
  */
 
 #include "scratchbird/parser/firebird/firebird_parser.h"
-#include "scratchbird/core/database.h"
-#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/uuidv7.h"
 #include <string>
 #include <vector>
 #include <memory>
 #include <chrono>
 
 namespace scratchbird {
+
+namespace core {
+class Database;
+}
+
 namespace sblr {
 
 /**
@@ -118,6 +122,18 @@ public:
     void setCurrentSchema(const core::ID& schema_id) { current_schema_ = schema_id; }
 
     /**
+     * Get/set default schema path (used when the schema UUID is not supplied)
+     */
+    const std::string& defaultSchema() const { return default_schema_name_; }
+    void setDefaultSchema(const std::string& schema_name) { default_schema_name_ = schema_name; }
+
+    /**
+     * Get/set search path (used to resolve the effective schema root)
+     */
+    const std::vector<std::string>& searchPath() const { return search_path_; }
+    void setSearchPath(const std::vector<std::string>& search_path) { search_path_ = search_path; }
+
+    /**
      * Enable/disable optimizations
      */
     bool optimizationsEnabled() const { return optimizations_enabled_; }
@@ -131,8 +147,9 @@ public:
 
 private:
     core::Database* db_ = nullptr;
-    core::CatalogManager* catalog_ = nullptr;
     core::ID current_schema_;
+    std::string default_schema_name_;
+    std::vector<std::string> search_path_;
     parser::firebird::SQLDialect dialect_ = parser::firebird::SQLDialect::DIALECT_3;
     bool optimizations_enabled_ = true;
     bool stats_enabled_ = false;

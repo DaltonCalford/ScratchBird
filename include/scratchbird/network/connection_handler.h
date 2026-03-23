@@ -549,6 +549,14 @@ public:
     virtual core::Status initializeConnection(Connection* conn) = 0;
 
     /**
+     * Notify the handler that the connection is being closed by the network layer.
+     */
+    virtual void onConnectionClosed(Connection* conn, CloseReason reason) {
+        (void)conn;
+        (void)reason;
+    }
+
+    /**
      * Send error to client
      */
     virtual void sendError(Connection* conn, const std::string& message,

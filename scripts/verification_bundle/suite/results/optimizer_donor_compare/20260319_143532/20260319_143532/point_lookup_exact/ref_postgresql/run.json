@@ -1,0 +1,65 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\npsql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/point_lookup_exact.setup.sql:1: NOTICE:  table \"avp_point_lookup_exact\" does not exist, skipping\n",
+    "stderr": "",
+    "elapsed_ms": 55,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/ref_postgresql/raw/ref_postgresql.setup.e2cc6c4575ec.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/ref_postgresql/raw/ref_postgresql.setup.e2cc6c4575ec.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Bitmap Heap Scan on avp_point_lookup_exact  (cost=4.17..11.28 rows=3 width=82)\n  Recheck Cond: (k = 73)\n  ->  Bitmap Index Scan on idx_avp_point_lookup_exact_k  (cost=0.00..4.17 rows=3 width=0)\n        Index Cond: (k = 73)\n\n",
+    "stderr": "",
+    "elapsed_ms": 17,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/ref_postgresql/raw/ref_postgresql.plan.b6c8a9271f38.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/ref_postgresql/raw/ref_postgresql.plan.b6c8a9271f38.stderr.txt",
+    "plan_lines": [
+      "PLAN|Bitmap Heap Scan on avp_point_lookup_exact  (cost=4.17..11.28 rows=3 width=82)",
+      "PLAN|Recheck Cond: (k = 73)",
+      "PLAN|->  Bitmap Index Scan on idx_avp_point_lookup_exact_k  (cost=0.00..4.17 rows=3 width=0)",
+      "PLAN|Index Cond: (k = 73)"
+    ],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "ASSERT|point_lookup_exact|count=1|payload=p073\n\n",
+    "stderr": "",
+    "elapsed_ms": 15,
+    "assert_lines": [
+      "ASSERT|point_lookup_exact|count=1|payload=p073"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/ref_postgresql/raw/ref_postgresql.exec.33b946011a87.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/ref_postgresql/raw/ref_postgresql.exec.33b946011a87.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 18,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/ref_postgresql/raw/ref_postgresql.teardown.b5595c9b9eee.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_143532/20260319_143532/point_lookup_exact/ref_postgresql/raw/ref_postgresql.teardown.b5595c9b9eee.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}

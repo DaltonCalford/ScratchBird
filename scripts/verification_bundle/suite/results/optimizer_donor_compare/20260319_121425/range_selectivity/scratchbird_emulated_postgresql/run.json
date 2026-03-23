@@ -1,0 +1,58 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\npsql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/range_selectivity.setup.sql:1: NOTICE:  table \"avp_range_selectivity\" does not exist, skipping\n",
+    "stderr": "",
+    "elapsed_ms": 496,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.setup.0f2555c3f4f4.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.setup.0f2555c3f4f4.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "plan": {
+    "status": "error",
+    "returncode": 3,
+    "sqlstate": "ERROR",
+    "message": "psql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/range_selectivity.plan.sql:1: ERROR:  V3 EXPLAIN plan payload invalid",
+    "stdout": "\npsql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/range_selectivity.plan.sql:1: ERROR:  V3 EXPLAIN plan payload invalid\n",
+    "stderr": "",
+    "elapsed_ms": 99,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.plan.088058049f8e.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.plan.088058049f8e.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 3,
+    "sqlstate": "ERROR",
+    "message": "psql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/range_selectivity.exec.sql:3: ERROR:  Parse error at line 1, column 97: Expected expression",
+    "stdout": "\npsql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/range_selectivity.exec.sql:3: ERROR:  Parse error at line 1, column 97: Expected expression\n",
+    "stderr": "",
+    "elapsed_ms": 94,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.exec.dbd3c8d6c3ff.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.exec.dbd3c8d6c3ff.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 77,
+    "assert_lines": [],
+    "stdout_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.teardown.292035cc6ba3.stdout.txt",
+    "stderr_path": "../results/optimizer_donor_compare/20260319_121425/range_selectivity/scratchbird_emulated_postgresql/raw/scratchbird_emulated_postgresql.teardown.292035cc6ba3.stderr.txt",
+    "plan_lines": [],
+    "metric_lines": []
+  }
+}
