@@ -13,6 +13,8 @@ ScratchBird is at a public beta engineering state where core implementation and 
 - Emulation adapters in active verification scope: PostgreSQL, MySQL, Firebird
 - Security conformance lanes active: row-level security, column-level security, domain-level security/masking
 - Transaction/MGA verification active for compatibility dependency lanes
+- Alpha durability and restart model: MGA/state-based recovery, not WAL/redo replay
+- Auditor entry point for recovery model and Firebird-class failure handling: `docs/audit/MGA_RECOVERY_AND_FIREBIRD_FAILURE_COVERAGE.md`
 
 ## Required Beta Gate Categories
 

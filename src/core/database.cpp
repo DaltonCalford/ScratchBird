@@ -3184,7 +3184,9 @@ namespace scratchbird::core
 
         // Set configuration
         header->block_size = page_size;
-        header->wal_level = 0; // No WAL in Alpha
+        // Reserved compatibility slot only. Alpha durability/recovery uses MGA
+        // state reconstruction and never write-ahead redo.
+        header->reserved_wal_level_compat = 0;
         header->max_connections = 1;
         header->encoding = 1; // UTF-8
         header->locale = 0;

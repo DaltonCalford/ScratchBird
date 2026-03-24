@@ -229,8 +229,12 @@ SET synchronous_commit = 'on';
 SELECT id, data FROM test_sync_commit;
 
 -- ============================================================================
--- Section 7: WAL (Write-Ahead Log) Configuration
+-- Section 7: PostgreSQL compatibility setting names
 -- ============================================================================
+
+-- These rows exercise PostgreSQL-compatible pg_settings names for migration and
+-- donor-surface analysis only. They are not ScratchBird engine recovery truth;
+-- ScratchBird Alpha durability remains MGA/state based without write-ahead redo.
 
 -- WAL configuration affects transaction performance
 SELECT

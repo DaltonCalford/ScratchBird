@@ -39,10 +39,10 @@ namespace scratchbird::core
         uint64_t total_evidence_items_emitted = 0;
         uint64_t last_evidence_items_emitted = 0;
         uint64_t evidence_persist_failures = 0;
-        uint64_t total_wal_after_segments_emitted = 0;
-        uint64_t last_wal_after_segments_emitted = 0;
-        uint64_t wal_after_export_failures = 0;
-        uint64_t wal_after_backlog_depth = 0;
+        uint64_t total_wal_after_segments_emitted = 0; // Derivative post-commit write-after export count
+        uint64_t last_wal_after_segments_emitted = 0;  // Derivative post-commit write-after export count
+        uint64_t wal_after_export_failures = 0;        // Export failures only; never recovery-state failures
+        uint64_t wal_after_backlog_depth = 0;          // Backlog of derivative exports waiting on downstream sinks
         uint64_t total_page_audit_findings_emitted = 0;
         uint64_t last_page_audit_findings_emitted = 0;
         uint64_t page_audit_persist_failures = 0;
@@ -59,7 +59,7 @@ namespace scratchbird::core
         LINEAGE_RETENTION = 1,
         OBJECT_TOUCH_AUDIT = 2,
         SCHEMA_CHANGE_AUDIT = 3,
-        WAL_AFTER_EXPORT = 4,
+        WAL_AFTER_EXPORT = 4, // Derivative write-after lineage export, not write-ahead redo
         PAGE_SPOT_AUDIT = 5,
         SHADOW_CAPTURE = 6,
         COMPOSITE = 7
@@ -116,6 +116,9 @@ namespace scratchbird::core
         std::string lanes_csv;
     };
 
+    // A committed lineage/export segment emitted after local MGA truth is
+    // durable. These records are useful for replication, audit, and shipping,
+    // but recovery never replays them as redo.
     struct SweepWalAfterLogSegment
     {
         ID segment_id{};
@@ -174,6 +177,10 @@ namespace scratchbird::core
     //
     // Sweep is triggered when: (OST - OIT) > sweep_interval
     // Where OST = Oldest Snapshot Transaction, OIT = Oldest Interesting Transaction
+    //
+    // ScratchBird sweep may also emit derivative write-after lineage artifacts
+    // for audit/replication. Those artifacts are downstream of committed MGA
+    // truth and must never be interpreted as write-ahead recovery logs.
     class SweepManager
     {
     public:

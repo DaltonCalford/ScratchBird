@@ -6,6 +6,9 @@
 
 namespace scratchbird::core
 {
+    // GC publication records are emitted after MGA truth is already known.
+    // They publish cleanup debt or completion state to downstream consumers and
+    // are not redo/WAL records.
     enum class IndexCleanupFamily : uint8_t
     {
         EXACT = 0,

@@ -39,6 +39,9 @@ namespace scratchbird::core
     {
         constexpr const char* kSweepEvidenceProfileName = "__sweep_local_evidence__";
         constexpr const char* kSweepManifestMagic = "SB_SWEEP_EVIDENCE_MANIFEST_v1";
+        // "wal_after" is retained in identifiers for continuity with earlier
+        // tests/tooling, but these artifacts are emitted after commit as
+        // derivative lineage export. They are never used as write-ahead redo.
         constexpr const char* kWalAfterLogProfileName = "__sweep_wal_after_log__";
         constexpr const char* kWalAfterLogManifestMagic = "SB_WAL_AFTER_LOG_SEGMENT_v1";
         constexpr const char* kShadowCaptureProfileName = "__sweep_shadow_capture__";

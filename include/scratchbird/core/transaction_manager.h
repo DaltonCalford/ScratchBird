@@ -186,6 +186,9 @@ namespace scratchbird::core
         uint64_t inventory_generation = 0;
     };
 
+    // Startup recovery is state reconciliation, not WAL replay. Recovery makes
+    // incomplete transactions terminal using TIP/CLOG truth, prepared-state
+    // catalog evidence, and on-page markers before new work is admitted.
     struct StartupReconciliationSummary
     {
         bool clean_shutdown_marker = false;
