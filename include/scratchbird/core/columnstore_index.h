@@ -86,7 +86,7 @@ namespace scratchbird
 
         private:
             // Plan 01 Task C: Dual meta page structure for crash-safe catalog persistence
-            // Meta page format: [header][segment entries...]
+            // On-disk meta page format: [PageHeader][ColumnstoreMetaHeader][segment entries...]
             struct ColumnstoreMetaHeader
             {
                 uint32_t magic;           // 0x43534D50 ('CSMP' = Columnstore Meta Page)

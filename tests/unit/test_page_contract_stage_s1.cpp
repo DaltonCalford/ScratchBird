@@ -38,9 +38,17 @@ auto makeCanonicalPage(uint16_t page_type, const ID &database_uuid, const ID &ob
     pageSetLower(*header, sizeof(PageHeader));
     pageSetUpper(*header, static_cast<uint32_t>(page.size()));
     pageSetSpecial(*header, static_cast<uint32_t>(page.size()));
+    setPageRepairState(*header, PageRepairState::REPAIR_NONE);
+    header->payload_checksum = calculatePagePayloadChecksum(
+        page.data(), static_cast<uint32_t>(page.size()), header->header_bytes);
+    header->header_checksum = calculatePageHeaderChecksum(
+        page.data(), static_cast<uint32_t>(header->header_bytes));
     setDatabaseUuid(*header, database_uuid);
     setObjectUuid(*header, object_uuid);
-    header->checksum = calculatePageChecksum(page.data(), static_cast<uint32_t>(page.size()));
+    header->payload_checksum = calculatePagePayloadChecksum(
+        page.data(), static_cast<uint32_t>(page.size()), header->header_bytes);
+    header->header_checksum = calculatePageHeaderChecksum(
+        page.data(), static_cast<uint32_t>(header->header_bytes));
     return page;
 }
 
@@ -63,22 +71,37 @@ TEST(PageContractStageS1Test, CanonicalPageTypeEnumValuesMatchSpecification)
 
 TEST(PageContractStageS1Test, PageHeaderLayoutOffsetsAreCanonical)
 {
-    EXPECT_EQ(sizeof(PageHeader), 80u);
+    EXPECT_EQ(sizeof(PageHeader), 106u);
     EXPECT_EQ(offsetof(PageHeader, magic), 0u);
     EXPECT_EQ(offsetof(PageHeader, version), 4u);
-    EXPECT_EQ(offsetof(PageHeader, page_type), 6u);
-    EXPECT_EQ(offsetof(PageHeader, page_size), 8u);
-    EXPECT_EQ(offsetof(PageHeader, checksum), 12u);
-    EXPECT_EQ(offsetof(PageHeader, lsn), 16u);
+    EXPECT_EQ(offsetof(PageHeader, header_bytes), 6u);
+    EXPECT_EQ(offsetof(PageHeader, page_type), 8u);
+    EXPECT_EQ(offsetof(PageHeader, flags), 10u);
+    EXPECT_EQ(offsetof(PageHeader, page_size), 12u);
+    EXPECT_EQ(offsetof(PageHeader, header_checksum), 16u);
+    EXPECT_EQ(offsetof(PageHeader, checksum), 20u);
     EXPECT_EQ(offsetof(PageHeader, page_id), 24u);
-    EXPECT_EQ(offsetof(PageHeader, flags), 28u);
     EXPECT_EQ(offsetof(PageHeader, database_uuid), 32u);
     EXPECT_EQ(offsetof(PageHeader, object_uuid), 48u);
     EXPECT_EQ(offsetof(PageHeader, generation), 64u);
-    EXPECT_EQ(offsetof(PageHeader, free_space), 72u);
-    EXPECT_EQ(offsetof(PageHeader, item_count), 74u);
-    EXPECT_EQ(offsetof(PageHeader, free_offset), 76u);
-    EXPECT_EQ(offsetof(PageHeader, special_size), 78u);
+    EXPECT_EQ(offsetof(PageHeader, flush_generation), 72u);
+    EXPECT_EQ(offsetof(PageHeader, checkpoint_generation), 80u);
+    EXPECT_EQ(offsetof(PageHeader, repair_epoch), 88u);
+    EXPECT_EQ(offsetof(PageHeader, repair_state_raw), 92u);
+    EXPECT_EQ(offsetof(PageHeader, free_space), 94u);
+    EXPECT_EQ(offsetof(PageHeader, item_count), 98u);
+    EXPECT_EQ(offsetof(PageHeader, free_offset), 100u);
+    EXPECT_EQ(offsetof(PageHeader, special_size), 102u);
+    EXPECT_EQ(offsetof(PageHeader, reserved), 104u);
+}
+
+TEST(PageContractStageS1Test, BootstrapFsmRootLayoutTracksCanonicalHeaderWidth)
+{
+    EXPECT_EQ(offsetof(BootstrapFsmRootPage, page_header), 0u);
+    EXPECT_EQ(offsetof(BootstrapFsmRootPage, total_pages), sizeof(PageHeader));
+    EXPECT_EQ(offsetof(BootstrapFsmRootPage, free_pages), sizeof(PageHeader) + 4u);
+    EXPECT_EQ(offsetof(BootstrapFsmRootPage, next_fsm_page), sizeof(PageHeader) + 8u);
+    EXPECT_EQ(sizeof(BootstrapFsmRootPage), sizeof(PageHeader) + 12u);
 }
 
 TEST(PageContractStageS1Test, ChecksumValidationFollowsChecksumFlagSemantics)
@@ -101,6 +124,38 @@ TEST(PageContractStageS1Test, ChecksumValidationFollowsChecksumFlagSemantics)
     EXPECT_EQ(validatePageContract(page.data(), 8192u, PAGE_TYPE_HEAP, &database_uuid,
                                    &object_uuid),
               Status::OK);
+}
+
+TEST(PageContractStageS1Test, PreparePageForWritePublishesHeaderAndPayloadChecksums)
+{
+    const ID database_uuid = generateUuidV7();
+    const ID object_uuid = generateUuidV7();
+    std::vector<uint8_t> page(8192u, 0u);
+    auto *header = reinterpret_cast<PageHeader *>(page.data());
+    header->magic = K_MAGIC_SBRD;
+    header->version = 1u;
+    header->page_type = PAGE_TYPE_HEAP;
+    header->page_size = static_cast<uint32_t>(page.size());
+    setDatabaseUuid(*header, database_uuid);
+    setObjectUuid(*header, object_uuid);
+    pageSetLower(*header, sizeof(PageHeader));
+    pageSetUpper(*header, static_cast<uint32_t>(page.size()));
+    pageSetSpecial(*header, static_cast<uint32_t>(page.size()));
+
+    preparePageForWrite(page.data(), static_cast<uint32_t>(page.size()), 7u);
+
+    EXPECT_EQ(header->page_id, 7u);
+    EXPECT_EQ(header->header_bytes, sizeof(PageHeader));
+    EXPECT_EQ(getPageRepairState(*header), PageRepairState::REPAIR_NONE);
+    EXPECT_NE(header->header_checksum, 0u);
+    EXPECT_NE(header->payload_checksum, 0u);
+    EXPECT_LE(header->checkpoint_generation, header->flush_generation);
+    EXPECT_LE(header->flush_generation, header->generation);
+    EXPECT_TRUE(validatePageContract(page.data(),
+                                     static_cast<uint32_t>(page.size()),
+                                     PAGE_TYPE_HEAP,
+                                     &database_uuid,
+                                     &object_uuid) == Status::OK);
 }
 
 TEST(PageContractStageS1Test, HeaderValidationEnforcesTypeAndUuidContracts)

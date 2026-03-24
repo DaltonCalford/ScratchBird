@@ -53,6 +53,11 @@ namespace scratchbird::core
             return hash;
         }
 
+        std::string buildImplicitStatementSavepointName(uint64_t statement_id)
+        {
+            return "__sb_stmt_" + std::to_string(statement_id);
+        }
+
         std::string normalizeSessionVar(const std::string& name)
         {
             std::string out;
@@ -73,6 +78,20 @@ namespace scratchbird::core
                 normalized.push_back(ch == '/' ? '.' : ch);
             }
             return normalized;
+        }
+
+        const char *temporaryObjectKindNameLocal(ConnectionContext::TemporaryObjectKind kind)
+        {
+            switch (kind)
+            {
+            case ConnectionContext::TemporaryObjectKind::TABLE:
+                return "table";
+            case ConnectionContext::TemporaryObjectKind::VIEW:
+                return "view";
+            case ConnectionContext::TemporaryObjectKind::SEQUENCE:
+                return "sequence";
+            }
+            return "unknown";
         }
 
         std::vector<std::string> splitSchemaComponentsLocal(const std::string& value)
@@ -3178,6 +3197,19 @@ namespace scratchbird::core
             }
         }
 
+        if (current_xid_ != 0)
+        {
+            Status savepoint_status = openImplicitStatementSavepoint(ctx);
+            if (savepoint_status != Status::OK)
+            {
+                statement_io_active_ = false;
+                statement_id_ = 0;
+                last_statement_status_ = StatementStatus::FAILED;
+                clearStatementXID(nullptr);
+                return savepoint_status;
+            }
+        }
+
         auto& metrics = ScratchBirdMetrics::getInstance();
         metrics.initialize();
         if (metrics.query_currently_running)
@@ -3200,6 +3232,13 @@ namespace scratchbird::core
 
     void ConnectionContext::endStatementTrackingSuccess(int64_t rows_affected)
     {
+        Status release_status = releaseImplicitStatementSavepoint(nullptr);
+        if (release_status != Status::OK && release_status != Status::NOT_FOUND)
+        {
+            LOG_WARNING(TRANSACTION,
+                        "Failed to release implicit statement savepoint for proc_id %u",
+                        proc_id_);
+        }
         Status clear_status = clearStatementXID(nullptr);
         if (clear_status != Status::OK && clear_status != Status::INVALID_ARGUMENT)
         {
@@ -3324,6 +3363,22 @@ namespace scratchbird::core
     void ConnectionContext::endStatementTrackingFailure(uint32_t error_code,
                                                        const std::string& sqlstate)
     {
+        Status rollback_status = rollbackImplicitStatementSavepoint(nullptr);
+        if (rollback_status != Status::OK && rollback_status != Status::NOT_FOUND)
+        {
+            LOG_WARNING(TRANSACTION,
+                        "Failed to rollback implicit statement savepoint for proc_id %u",
+                        proc_id_);
+        }
+
+        Status release_status = releaseImplicitStatementSavepoint(nullptr);
+        if (release_status != Status::OK && release_status != Status::NOT_FOUND)
+        {
+            LOG_WARNING(TRANSACTION,
+                        "Failed to release implicit statement savepoint for proc_id %u",
+                        proc_id_);
+        }
+
         Status clear_status = clearStatementXID(nullptr);
         if (clear_status != Status::OK && clear_status != Status::INVALID_ARGUMENT)
         {
@@ -4225,6 +4280,18 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
+        Status rollback_status = rollbackImplicitStatementSavepoint(ctx);
+        if (rollback_status != Status::OK && rollback_status != Status::NOT_FOUND)
+        {
+            return rollback_status;
+        }
+
+        Status release_status = releaseImplicitStatementSavepoint(ctx);
+        if (release_status != Status::OK && release_status != Status::NOT_FOUND)
+        {
+            return release_status;
+        }
+
         last_statement_restart_decision_ = decision;
         if (statement_restart_count_ < std::numeric_limits<uint32_t>::max())
         {
@@ -4282,7 +4349,9 @@ namespace scratchbird::core
     // Savepoint/Subtransaction Support (Issue 2.15)
     // ============================================================================
 
-    Status ConnectionContext::createSavepoint(const std::string &name, ErrorContext *ctx)
+    Status ConnectionContext::pushSavepointFrame(const std::string &name,
+                                                 bool implicit_statement_frame,
+                                                 ErrorContext *ctx)
     {
         if (current_xid_ == 0)
         {
@@ -4291,34 +4360,29 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // Check for duplicate savepoint name
-        for (const auto &sp : savepoint_stack_)
-        {
-            if (sp.name == name)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                  "Savepoint with this name already exists");
-                return Status::INVALID_ARGUMENT;
-            }
-        }
-
-        // Create new savepoint
         Savepoint sp;
         sp.name = name;
         sp.level = ++savepoint_level_;
         sp.xid = current_xid_;
         sp.command_id = command_id_;
+        sp.implicit_statement_frame = implicit_statement_frame;
 
-        // FIREBIRD MGA: No snapshot needed - XID is sufficient for rollback
-        // Savepoint just marks a point in transaction for potential rollback
-
-        // Add to stack
         savepoint_stack_.push_back(std::move(sp));
 
-        LOG_DEBUG(TRANSACTION, "Created savepoint '%s' at level %u: proc_id=%u, xid=%lu",
-                  name.c_str(), sp.level, proc_id_, current_xid_);
+        LOG_DEBUG(TRANSACTION,
+                  "Created %s savepoint '%s' at level %u: proc_id=%u, xid=%lu",
+                  implicit_statement_frame ? "implicit statement" : "user",
+                  name.c_str(),
+                  savepoint_stack_.back().level,
+                  proc_id_,
+                  current_xid_);
 
         return Status::OK;
+    }
+
+    Status ConnectionContext::createSavepoint(const std::string &name, ErrorContext *ctx)
+    {
+        return pushSavepointFrame(name, false, ctx);
     }
 
     auto ConnectionContext::findSavepointBackoutChange(Savepoint &savepoint,
@@ -4335,6 +4399,65 @@ namespace scratchbird::core
             }
         }
         return nullptr;
+    }
+
+    auto ConnectionContext::findMostRecentSavepointIndexByName(const std::string &name) const
+        -> size_t
+    {
+        for (size_t idx = savepoint_stack_.size(); idx > 0; --idx)
+        {
+            if (savepoint_stack_[idx - 1].name == name)
+            {
+                return idx - 1;
+            }
+        }
+
+        return savepoint_stack_.size();
+    }
+
+    auto ConnectionContext::findMostRecentImplicitStatementSavepointIndex() const -> size_t
+    {
+        for (size_t idx = savepoint_stack_.size(); idx > 0; --idx)
+        {
+            if (savepoint_stack_[idx - 1].implicit_statement_frame)
+            {
+                return idx - 1;
+            }
+        }
+
+        return savepoint_stack_.size();
+    }
+
+    Status ConnectionContext::openImplicitStatementSavepoint(ErrorContext *ctx)
+    {
+        if (current_xid_ == 0 || statement_id_ == 0)
+        {
+            return Status::OK;
+        }
+
+        return pushSavepointFrame(buildImplicitStatementSavepointName(statement_id_), true, ctx);
+    }
+
+    Status ConnectionContext::rollbackImplicitStatementSavepoint(ErrorContext *ctx)
+    {
+        const size_t savepoint_index = findMostRecentImplicitStatementSavepointIndex();
+        if (savepoint_index == savepoint_stack_.size())
+        {
+            return Status::NOT_FOUND;
+        }
+
+        return rollbackToSavepoint(savepoint_stack_[savepoint_index].name, ctx);
+    }
+
+    Status ConnectionContext::releaseImplicitStatementSavepoint(ErrorContext *ctx)
+    {
+        const size_t savepoint_index = findMostRecentImplicitStatementSavepointIndex();
+        if (savepoint_index == savepoint_stack_.size())
+        {
+            return Status::NOT_FOUND;
+        }
+
+        return releaseSavepoint(savepoint_stack_[savepoint_index].name, ctx);
     }
 
     void ConnectionContext::recordSavepointBackoutAction(const ID &table_id,
@@ -4390,6 +4513,59 @@ namespace scratchbird::core
         }
     }
 
+    void ConnectionContext::trackTemporaryObjectCreation(TemporaryObjectKind kind,
+                                                         const ID &object_id)
+    {
+        if (savepoint_stack_.empty() || isZeroUuidLocal(object_id))
+        {
+            return;
+        }
+
+        Savepoint &savepoint = savepoint_stack_.back();
+        auto existing = std::find_if(
+            savepoint.temp_objects_created.begin(),
+            savepoint.temp_objects_created.end(),
+            [&](const Savepoint::TemporaryObjectCreation &candidate)
+            {
+                return candidate.kind == kind && candidate.object_id == object_id;
+            });
+        if (existing != savepoint.temp_objects_created.end())
+        {
+            return;
+        }
+
+        Savepoint::TemporaryObjectCreation entry;
+        entry.kind = kind;
+        entry.object_id = object_id;
+        savepoint.temp_objects_created.emplace_back(entry);
+
+        LOG_DEBUG(TRANSACTION,
+                  "Tracked temporary %s creation in savepoint '%s' (level %u): %s",
+                  temporaryObjectKindNameLocal(kind),
+                  savepoint.name.c_str(),
+                  savepoint.level,
+                  object_id.toString().c_str());
+    }
+
+    void ConnectionContext::mergeSavepointTemporaryObjects(Savepoint &target,
+                                                           const Savepoint &source)
+    {
+        for (const auto &entry : source.temp_objects_created)
+        {
+            auto existing = std::find_if(
+                target.temp_objects_created.begin(),
+                target.temp_objects_created.end(),
+                [&](const Savepoint::TemporaryObjectCreation &candidate)
+                {
+                    return candidate.kind == entry.kind && candidate.object_id == entry.object_id;
+                });
+            if (existing == target.temp_objects_created.end())
+            {
+                target.temp_objects_created.emplace_back(entry);
+            }
+        }
+    }
+
     auto ConnectionContext::collectRollbackBackoutChanges(size_t first_savepoint_index) const
         -> std::vector<SavepointBackoutAction>
     {
@@ -4413,9 +4589,89 @@ namespace scratchbird::core
                 {
                     changes.emplace_back(change);
                 }
+                else
+                {
+                    // Preserve newest-first rollback order across distinct tuples, but keep the
+                    // oldest pre-frontier image for any stable tuple touched multiple times.
+                    *existing = change;
+                }
             }
         }
         return changes;
+    }
+
+    auto ConnectionContext::collectRollbackTemporaryObjects(size_t first_savepoint_index) const
+        -> std::vector<Savepoint::TemporaryObjectCreation>
+    {
+        std::vector<Savepoint::TemporaryObjectCreation> objects;
+        for (size_t idx = savepoint_stack_.size(); idx > first_savepoint_index; --idx)
+        {
+            const Savepoint &savepoint = savepoint_stack_[idx - 1];
+            for (auto object_it = savepoint.temp_objects_created.rbegin();
+                 object_it != savepoint.temp_objects_created.rend();
+                 ++object_it)
+            {
+                objects.emplace_back(*object_it);
+            }
+        }
+        return objects;
+    }
+
+    Status ConnectionContext::dropRollbackTemporaryObjects(
+        const std::vector<Savepoint::TemporaryObjectCreation> &temp_objects,
+        ErrorContext *ctx)
+    {
+        if (temp_objects.empty())
+        {
+            return Status::OK;
+        }
+
+        CatalogManager *catalog = db_ ? db_->catalog_manager() : nullptr;
+        if (catalog == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Catalog manager unavailable for temporary object rollback");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        for (const auto &entry : temp_objects)
+        {
+            ErrorContext object_ctx;
+            Status drop_status = Status::OK;
+            switch (entry.kind)
+            {
+            case TemporaryObjectKind::TABLE:
+                drop_status = catalog->dropTable(entry.object_id, true, &object_ctx);
+                break;
+            case TemporaryObjectKind::VIEW:
+                drop_status = catalog->dropView(entry.object_id, true, &object_ctx);
+                break;
+            case TemporaryObjectKind::SEQUENCE:
+                drop_status = catalog->dropSequence(entry.object_id, true, &object_ctx);
+                break;
+            }
+
+            if (drop_status == Status::OK || drop_status == Status::NOT_FOUND)
+            {
+                continue;
+            }
+
+            if (ctx != nullptr)
+            {
+                const char *message = object_ctx.message.empty()
+                    ? "Temporary object rollback failed"
+                    : object_ctx.message.c_str();
+                ctx->set(drop_status, message, __FILE__, __LINE__, __func__);
+                ctx->setSQLState(object_ctx.sqlstate);
+                if (!object_ctx.vnext_code.empty())
+                {
+                    ctx->setVNextCode(object_ctx.vnext_code.c_str());
+                }
+            }
+            return drop_status;
+        }
+
+        return Status::OK;
     }
 
     Status ConnectionContext::rollbackToSavepoint(const std::string &name, ErrorContext *ctx)
@@ -4428,22 +4684,14 @@ namespace scratchbird::core
         }
 
         // Find the named savepoint
-        auto sp_it = savepoint_stack_.end();
-        for (auto it = savepoint_stack_.begin(); it != savepoint_stack_.end(); ++it)
-        {
-            if (it->name == name)
-            {
-                sp_it = it;
-                break;
-            }
-        }
-
-        if (sp_it == savepoint_stack_.end())
+        const size_t target_index = findMostRecentSavepointIndexByName(name);
+        if (target_index == savepoint_stack_.size())
         {
             SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Savepoint not found");
             return Status::NOT_FOUND;
         }
 
+        auto sp_it = savepoint_stack_.begin() + static_cast<std::ptrdiff_t>(target_index);
         LOG_DEBUG(TRANSACTION, "Rolling back to savepoint '%s' at level %u: proc_id=%u, xid=%lu",
                   name.c_str(), sp_it->level, proc_id_, current_xid_);
 
@@ -4453,9 +4701,6 @@ namespace scratchbird::core
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "MGA backout engine not available");
             return Status::IO_ERROR;
         }
-
-        const size_t target_index = static_cast<size_t>(std::distance(savepoint_stack_.begin(),
-                                                                      sp_it));
 
         struct RollbackGuard
         {
@@ -4478,9 +4723,17 @@ namespace scratchbird::core
             return rollback_status;
         }
 
+        const auto rollback_temp_objects = collectRollbackTemporaryObjects(target_index);
+        rollback_status = dropRollbackTemporaryObjects(rollback_temp_objects, ctx);
+        if (rollback_status != Status::OK)
+        {
+            return rollback_status;
+        }
+
         // Keep the target savepoint active, but clear its post-rollback mutation state.
         sp_it = savepoint_stack_.begin() + static_cast<std::ptrdiff_t>(target_index);
         sp_it->changes.clear();
+        sp_it->temp_objects_created.clear();
 
         // Remove nested savepoints.
         auto erase_from = sp_it;
@@ -4510,40 +4763,32 @@ namespace scratchbird::core
         }
 
         // Find the named savepoint
-        auto sp_it = savepoint_stack_.end();
-        size_t sp_index = 0;
-        for (auto it = savepoint_stack_.begin(); it != savepoint_stack_.end(); ++it, ++sp_index)
-        {
-            if (it->name == name)
-            {
-                sp_it = it;
-                break;
-            }
-        }
-
-        if (sp_it == savepoint_stack_.end())
+        const size_t sp_index = findMostRecentSavepointIndexByName(name);
+        if (sp_index == savepoint_stack_.size())
         {
             SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Savepoint not found");
             return Status::NOT_FOUND;
         }
 
+        auto sp_it = savepoint_stack_.begin() + static_cast<std::ptrdiff_t>(sp_index);
         LOG_DEBUG(TRANSACTION, "Releasing savepoint '%s' at level %u: proc_id=%u, xid=%lu",
                   name.c_str(), sp_it->level, proc_id_, current_xid_);
 
-        // If there's a parent savepoint, merge canonical backout records for the released
-        // savepoint and any nested descendants into it, preserving the earliest pre-change row
-        // state as the authoritative undo image.
+        // Merge the released frame into its parent so rollback to an older savepoint still
+        // preserves the earliest pre-frame image for rows first touched here.
         if (sp_index > 0)
         {
             auto &parent = savepoint_stack_[sp_index - 1];
-            for (size_t idx = sp_index; idx < savepoint_stack_.size(); ++idx)
-            {
-                mergeSavepointBackoutChanges(parent, savepoint_stack_[idx]);
-            }
+            mergeSavepointBackoutChanges(parent, *sp_it);
+            mergeSavepointTemporaryObjects(parent, *sp_it);
         }
 
-        // Remove this savepoint and all nested ones
-        savepoint_stack_.erase(sp_it, savepoint_stack_.end());
+        // Remove only the targeted savepoint. Younger frames stay active and collapse inward.
+        savepoint_stack_.erase(sp_it);
+        for (size_t idx = sp_index; idx < savepoint_stack_.size(); ++idx)
+        {
+            savepoint_stack_[idx].level = static_cast<uint32_t>(idx + 1);
+        }
 
         // Update savepoint level
         if (!savepoint_stack_.empty())

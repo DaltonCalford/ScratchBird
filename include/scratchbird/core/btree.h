@@ -140,7 +140,8 @@ namespace scratchbird
         };
 #pragma pack(pop)
 
-        static_assert(sizeof(SBBTreePage) == 184, "SBBTreePage size must be 184 bytes (80-byte PageHeader + 104 bytes)");
+        static_assert(sizeof(SBBTreePage) == sizeof(PageHeader) + 104,
+                      "SBBTreePage size must track PageHeader plus 104 bytes");
         static_assert(sizeof(SBBTreeNode) == 36, "SBBTreeNode size must be 36 bytes");
 
         // In-memory representation of a B-Tree index

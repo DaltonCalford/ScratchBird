@@ -18,6 +18,10 @@
 
 using namespace scratchbird::core;
 
+namespace {
+
+} // namespace
+
 class TransactionVNextContractTest : public ::testing::Test
 {
 protected:
@@ -107,7 +111,8 @@ protected:
         }
         ASSERT_TRUE(found);
 
-        tip_header->page_header.checksum = calculatePageChecksum(buffer.data(), buffer.size());
+        preparePageForWrite(
+            buffer.data(), buffer.size(), BOOTSTRAP_PAGE_TX_MAP_ROOT);
         const ssize_t written = ::pwrite(fd, buffer.data(), buffer.size(), offset);
         ASSERT_EQ(written, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
         ASSERT_EQ(::fsync(fd), 0) << std::strerror(errno);
@@ -126,9 +131,32 @@ protected:
 
         auto *header = reinterpret_cast<DatabaseHeader *>(buffer.data());
         header->latest_commit_seqno = latest_commit_seqno;
-        header->page_header.checksum = calculatePageChecksum(buffer.data(), buffer.size());
+        preparePageForWrite(buffer.data(), buffer.size(), header->page_header.page_id);
 
         const ssize_t written = ::pwrite(fd, buffer.data(), buffer.size(), 0);
+        ASSERT_EQ(written, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+        ASSERT_EQ(::fsync(fd), 0) << std::strerror(errno);
+        ::close(fd);
+    }
+
+    void patchCleanShutdownMarkerInFile(bool clean_shutdown)
+    {
+        constexpr size_t kPageSize = 8192;
+        std::vector<uint8_t> buffer(kPageSize, 0);
+        const int fd = ::open(test_db_file_->path().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0) << std::strerror(errno);
+
+        const off_t offset = static_cast<off_t>(BOOTSTRAP_PAGE_SYSTEM_STATE) *
+                             static_cast<off_t>(kPageSize);
+        const ssize_t bytes = ::pread(fd, buffer.data(), buffer.size(), offset);
+        ASSERT_EQ(bytes, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+
+        auto *state_page = reinterpret_cast<BootstrapSystemStatePage *>(buffer.data());
+        state_page->clean_shutdown = clean_shutdown ? 1 : 0;
+        preparePageForWrite(
+            buffer.data(), buffer.size(), BOOTSTRAP_PAGE_SYSTEM_STATE);
+
+        const ssize_t written = ::pwrite(fd, buffer.data(), buffer.size(), offset);
         ASSERT_EQ(written, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
         ASSERT_EQ(::fsync(fd), 0) << std::strerror(errno);
         ::close(fd);
@@ -206,6 +234,116 @@ TEST_F(TransactionVNextContractTest, StartupNormalizesResidualActiveToAborted)
     EXPECT_EQ(VisibilityReason::ABORTED_INVISIBLE, decision.reason);
     ASSERT_EQ(Status::OK, tm_->rollbackTransaction(proc_id, reader_xid, &ctx)) << ctx.message;
     ProcArrayManager::unregisterBackend(proc_id, &ctx);
+}
+
+TEST_F(TransactionVNextContractTest, DirtyRestartRebuildsOitWhenResidualActiveNormalizes)
+{
+    ErrorContext ctx;
+    uint32_t proc_id = 0;
+    ASSERT_EQ(Status::OK, ProcArrayManager::registerBackend(&proc_id, &ctx)) << ctx.message;
+
+    uint64_t committed_xid = 0;
+    ASSERT_EQ(Status::OK, tm_->beginTransaction(proc_id, committed_xid, &ctx)) << ctx.message;
+    ASSERT_EQ(Status::OK, tm_->commitTransaction(proc_id, committed_xid, &ctx)) << ctx.message;
+
+    const uint64_t generation_before_restart = tm_->getInventoryGeneration();
+
+    uint64_t residual_active_xid = 0;
+    ASSERT_EQ(Status::OK, tm_->beginTransaction(proc_id, residual_active_xid, &ctx))
+        << ctx.message;
+
+    ProcArrayManager::unregisterBackend(proc_id, &ctx);
+    db_.close();
+    patchCleanShutdownMarkerInFile(false);
+
+    ASSERT_EQ(Status::OK, db_.open(test_db_file_->path(), &ctx)) << ctx.message;
+    ASSERT_EQ(Status::OK, db_.initializeProcArray(32, &ctx)) << ctx.message;
+    tm_ = db_.transaction_manager();
+    ASSERT_NE(nullptr, tm_);
+
+    TransactionState state = TransactionState::ACTIVE;
+    ASSERT_EQ(Status::OK, tm_->getTransactionState(residual_active_xid, state, &ctx))
+        << ctx.message;
+    EXPECT_EQ(TransactionState::ABORTED, state);
+
+    const auto &startup_state = db_.last_startup_reconciliation();
+    EXPECT_TRUE(startup_state.startup_repair);
+    EXPECT_EQ(startup_state.tip_active_to_aborted, 1u);
+    EXPECT_GE(static_cast<int>(startup_state.classification),
+              static_cast<int>(
+                  Database::StartupRecoveryClassification::
+                      DIRTY_SHUTDOWN_NORMALIZATION_REQUIRED));
+    EXPECT_GE(static_cast<int>(startup_state.service_state),
+              static_cast<int>(Database::StartupServiceState::NORMAL));
+
+    const uint64_t expected_next_xid = tm_->getCurrentXid() + 1;
+    EXPECT_EQ(tm_->getOldestXid(), expected_next_xid);
+    EXPECT_EQ(tm_->getOldestActiveXid(), expected_next_xid);
+    EXPECT_EQ(tm_->getOldestSnapshot(), expected_next_xid);
+    EXPECT_GT(tm_->getInventoryGeneration(), generation_before_restart);
+
+    ReclaimHorizonSnapshot horizons{};
+    ASSERT_EQ(Status::OK, tm_->captureReclaimHorizons(horizons, &ctx)) << ctx.message;
+    EXPECT_EQ(horizons.oldest_interesting_xid, expected_next_xid);
+    EXPECT_EQ(horizons.oldest_active_xid, expected_next_xid);
+    EXPECT_EQ(horizons.oldest_snapshot_xid, expected_next_xid);
+}
+
+TEST_F(TransactionVNextContractTest, DirtyRestartRebuildsOitFromPreparedInventory)
+{
+    ErrorContext ctx;
+    uint32_t proc_id = 0;
+    ASSERT_EQ(Status::OK, ProcArrayManager::registerBackend(&proc_id, &ctx)) << ctx.message;
+
+    uint64_t committed_xid = 0;
+    ASSERT_EQ(Status::OK, tm_->beginTransaction(proc_id, committed_xid, &ctx)) << ctx.message;
+    ASSERT_EQ(Status::OK, tm_->commitTransaction(proc_id, committed_xid, &ctx)) << ctx.message;
+
+    const uint64_t generation_before_restart = tm_->getInventoryGeneration();
+
+    uint64_t prepared_xid = 0;
+    ASSERT_EQ(Status::OK, tm_->beginTransaction(proc_id, prepared_xid, &ctx)) << ctx.message;
+    ASSERT_EQ(Status::OK,
+              tm_->prepareTransaction(proc_id,
+                                      prepared_xid,
+                                      "tm_dirty_restart_prepared_oit",
+                                      generateUuidV7(),
+                                      &ctx))
+        << ctx.message;
+
+    ProcArrayManager::unregisterBackend(proc_id, &ctx);
+    db_.close();
+    patchCleanShutdownMarkerInFile(false);
+
+    ASSERT_EQ(Status::OK, db_.open(test_db_file_->path(), &ctx)) << ctx.message;
+    ASSERT_EQ(Status::OK, db_.initializeProcArray(32, &ctx)) << ctx.message;
+    tm_ = db_.transaction_manager();
+    ASSERT_NE(nullptr, tm_);
+
+    TransactionState state = TransactionState::ACTIVE;
+    ASSERT_EQ(Status::OK, tm_->getTransactionState(prepared_xid, state, &ctx)) << ctx.message;
+    EXPECT_EQ(TransactionState::PREPARED, state);
+
+    const auto &startup_state = db_.last_startup_reconciliation();
+    EXPECT_EQ(startup_state.outcome,
+              Database::StartupReconciliationOutcome::RECOVERY_WITH_FINDINGS);
+    EXPECT_TRUE(startup_state.startup_repair);
+    EXPECT_GE(static_cast<int>(startup_state.classification),
+              static_cast<int>(
+                  Database::StartupRecoveryClassification::
+                      DIRTY_SHUTDOWN_NORMALIZATION_REQUIRED));
+    EXPECT_GE(static_cast<int>(startup_state.service_state),
+              static_cast<int>(Database::StartupServiceState::NORMAL));
+
+    EXPECT_EQ(tm_->getOldestXid(), prepared_xid);
+    EXPECT_EQ(tm_->getOldestActiveXid(), prepared_xid);
+    EXPECT_GE(tm_->getOldestSnapshot(), prepared_xid);
+    EXPECT_GT(tm_->getInventoryGeneration(), generation_before_restart);
+
+    ReclaimHorizonSnapshot horizons{};
+    ASSERT_EQ(Status::OK, tm_->captureReclaimHorizons(horizons, &ctx)) << ctx.message;
+    EXPECT_EQ(horizons.oldest_interesting_xid, prepared_xid);
+    EXPECT_EQ(horizons.oldest_active_xid, prepared_xid);
 }
 
 TEST_F(TransactionVNextContractTest, MissingInRangeTipFailsClosedEvenIfClogStillCommitted)

@@ -69,6 +69,13 @@ namespace scratchbird::core
             INDEX_CHURN = 6
         };
 
+        enum class WritebackQueueState : uint8_t
+        {
+            NONE = 0,
+            BACKGROUND = 1,
+            CHECKPOINT = 2
+        };
+
         struct MgaFrameHints
         {
             MgaPageClass page_class = MgaPageClass::Generic;
@@ -86,8 +93,10 @@ namespace scratchbird::core
             bool resident = false;
             GPID gpid = INVALID_GPID;
             MgaPageClass page_class = MgaPageClass::Generic;
+            WritebackQueueState writeback_queue_state = WritebackQueueState::NONE;
             uint32_t pin_count = 0;
             bool is_dirty = false;
+            uint64_t dirty_generation = 0;
             uint64_t oldest_interesting_txid = 0;
             uint64_t prune_safe_horizon_hint = 0;
             uint32_t dead_version_bytes = 0;
@@ -297,6 +306,16 @@ namespace scratchbird::core
         auto getMgaFrameSnapshotGlobal(GPID gpid,
                                        MgaFrameSnapshot *snapshot_out,
                                        ErrorContext *ctx = nullptr) const -> Status;
+        uint64_t currentDirtyGeneration() const
+        {
+            return dirty_generation_clock_.load(std::memory_order_relaxed);
+        }
+        uint32_t currentDirtyPageCount() const
+        {
+            return dirty_page_count_.load(std::memory_order_relaxed);
+        }
+        auto flushDirtyCheckpointBoundary(uint64_t dirty_generation_boundary,
+                                          ErrorContext *ctx = nullptr) -> Status;
 
         void beginCommitFence();
         void endCommitFence();
@@ -309,6 +328,7 @@ namespace scratchbird::core
          * @return Status code
          */
         auto lockPage(uint32_t page_id, ErrorContext *ctx = nullptr) -> Status;
+        auto lockPageGlobal(GPID gpid, ErrorContext *ctx = nullptr) -> Status;
 
         /**
          * Unlock a previously locked page
@@ -317,6 +337,7 @@ namespace scratchbird::core
          * @return Status code
          */
         auto unlockPage(uint32_t page_id, ErrorContext *ctx = nullptr) -> Status;
+        auto unlockPageGlobal(GPID gpid, ErrorContext *ctx = nullptr) -> Status;
 
         // Runtime config snapshot for tests and diagnostics.
         auto getConfigSnapshot() const -> Config
@@ -487,6 +508,9 @@ namespace scratchbird::core
             std::atomic<uint16_t> chain_depth_hint{0};
             std::atomic<uint64_t> last_gc_touch_generation{0};
             std::atomic<uint64_t> scan_probation_generation{0};
+            std::atomic<uint64_t> dirty_generation{0};
+            std::atomic<uint8_t> writeback_queue_state{
+                static_cast<uint8_t>(WritebackQueueState::NONE)};
             std::atomic<bool> commit_fence_member{false};
             std::unique_ptr<uint8_t[]> data = nullptr;
             std::unique_ptr<std::mutex>
@@ -516,6 +540,10 @@ namespace scratchbird::core
                       other.last_gc_touch_generation.load(std::memory_order_relaxed)),
                   scan_probation_generation(
                       other.scan_probation_generation.load(std::memory_order_relaxed)),
+                  dirty_generation(
+                      other.dirty_generation.load(std::memory_order_relaxed)),
+                  writeback_queue_state(
+                      other.writeback_queue_state.load(std::memory_order_relaxed)),
                   commit_fence_member(
                       other.commit_fence_member.load(std::memory_order_relaxed)),
                   data(nullptr),
@@ -553,6 +581,12 @@ namespace scratchbird::core
                     scan_probation_generation.store(
                         other.scan_probation_generation.load(std::memory_order_relaxed),
                         std::memory_order_relaxed);
+                    dirty_generation.store(
+                        other.dirty_generation.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    writeback_queue_state.store(
+                        other.writeback_queue_state.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
                     commit_fence_member.store(
                         other.commit_fence_member.load(std::memory_order_relaxed),
                         std::memory_order_relaxed);
@@ -579,6 +613,10 @@ namespace scratchbird::core
                       other.last_gc_touch_generation.load(std::memory_order_relaxed)),
                   scan_probation_generation(
                       other.scan_probation_generation.load(std::memory_order_relaxed)),
+                  dirty_generation(
+                      other.dirty_generation.load(std::memory_order_relaxed)),
+                  writeback_queue_state(
+                      other.writeback_queue_state.load(std::memory_order_relaxed)),
                   commit_fence_member(
                       other.commit_fence_member.load(std::memory_order_relaxed)),
                   data(std::move(other.data)),
@@ -596,6 +634,10 @@ namespace scratchbird::core
                 other.chain_depth_hint.store(0, std::memory_order_relaxed);
                 other.last_gc_touch_generation.store(0, std::memory_order_relaxed);
                 other.scan_probation_generation.store(0, std::memory_order_relaxed);
+                other.dirty_generation.store(0, std::memory_order_relaxed);
+                other.writeback_queue_state.store(
+                    static_cast<uint8_t>(WritebackQueueState::NONE),
+                    std::memory_order_relaxed);
                 other.commit_fence_member.store(false, std::memory_order_relaxed);
             }
 
@@ -627,6 +669,12 @@ namespace scratchbird::core
                     scan_probation_generation.store(
                         other.scan_probation_generation.load(std::memory_order_relaxed),
                         std::memory_order_relaxed);
+                    dirty_generation.store(
+                        other.dirty_generation.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    writeback_queue_state.store(
+                        other.writeback_queue_state.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
                     commit_fence_member.store(
                         other.commit_fence_member.load(std::memory_order_relaxed),
                         std::memory_order_relaxed);
@@ -645,6 +693,10 @@ namespace scratchbird::core
                     other.chain_depth_hint.store(0, std::memory_order_relaxed);
                     other.last_gc_touch_generation.store(0, std::memory_order_relaxed);
                     other.scan_probation_generation.store(0, std::memory_order_relaxed);
+                    other.dirty_generation.store(0, std::memory_order_relaxed);
+                    other.writeback_queue_state.store(
+                        static_cast<uint8_t>(WritebackQueueState::NONE),
+                        std::memory_order_relaxed);
                     other.commit_fence_member.store(false, std::memory_order_relaxed);
                 }
                 return *this;
@@ -745,6 +797,8 @@ namespace scratchbird::core
         // P2-2: Atomic dirty page counter for O(1) getDirtyPageCount()
         // Updated atomically whenever is_dirty flag changes on any frame
         std::atomic<uint32_t> dirty_page_count_{0};
+        std::mutex dirty_tracking_mutex_;
+        std::unordered_map<GPID, uint64_t> dirty_checkpoint_candidates_;
 
         // Background writer state (Issue 2.20)
         std::unique_ptr<std::thread> bgwriter_thread_;      // Background writer thread
@@ -754,6 +808,7 @@ namespace scratchbird::core
         ScratchBirdMetrics *metrics_{nullptr};              // Telemetry wiring (optional)
         std::atomic<uint64_t> mga_scan_generation_{0};
         std::atomic<uint64_t> mga_gc_touch_generation_{0};
+        std::atomic<uint64_t> dirty_generation_clock_{0};
         std::atomic<uint64_t> commit_fence_backlog_{0};
         std::atomic<uint32_t> commit_fence_depth_{0};
 
@@ -762,7 +817,10 @@ namespace scratchbird::core
         auto evictSpecificFrame(uint32_t frame_index, ErrorContext *ctx) -> Status;
         // PHASE 1, TASK 1.2.3: Changed page_id to gpid (GPID is 64-bit)
         auto readPageFromDisk(GPID gpid, uint8_t *buffer, ErrorContext *ctx) -> Status;
-        auto writePageToDisk(GPID gpid, const uint8_t *buffer, ErrorContext *ctx) -> Status;
+        auto writePageToDisk(GPID gpid,
+                             const uint8_t *buffer,
+                             ErrorContext *ctx,
+                             bool checkpoint_flush = false) -> Status;
         void updateLru(uint32_t frame_index);
         void insertLruMidpoint(uint32_t frame_index);
         void initializeRingBuffers();
@@ -790,6 +848,10 @@ namespace scratchbird::core
         void updatePoolTelemetry();                         // Sync pool size/total gauges
         bool tryMarkFrameDirty(uint32_t frame_index);       // Dirty transition false->true
         bool tryClearFrameDirty(uint32_t frame_index);      // Dirty transition true->false
+        bool finishFrameWriteback(uint32_t frame_index,
+                                  uint64_t flushed_generation,
+                                  WritebackQueueState dirty_queue_state);
+        uint64_t publishDirtyGeneration(uint32_t frame_index);
     };
 
 } // namespace scratchbird::core

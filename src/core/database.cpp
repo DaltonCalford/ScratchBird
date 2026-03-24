@@ -88,6 +88,11 @@ namespace scratchbird::core
             return value;
         }
 
+        bool preadFully(int fd, void *buffer, size_t size, off_t offset,
+                        size_t *bytes_read_out = nullptr);
+        bool pwriteFully(int fd, const void *buffer, size_t size, off_t offset,
+                         size_t *bytes_written_out = nullptr);
+
         auto formatStartupRepairPlanMask(uint64_t repair_plan_mask) -> std::string
         {
             if (repair_plan_mask == Database::STARTUP_REPAIR_PLAN_NONE)
@@ -149,6 +154,573 @@ namespace scratchbird::core
                     return "refuse_open";
             }
             return "unknown";
+        }
+
+        auto startupRecoveryClassificationName(
+            Database::StartupRecoveryClassification value) -> const char *
+        {
+            switch (value)
+            {
+                case Database::StartupRecoveryClassification::NOT_CLASSIFIED:
+                    return "not_classified";
+                case Database::StartupRecoveryClassification::CLEAN_SHUTDOWN_FAST_PATH:
+                    return "clean_shutdown_fast_path";
+                case Database::StartupRecoveryClassification::
+                    DIRTY_SHUTDOWN_NORMALIZATION_REQUIRED:
+                    return "dirty_shutdown_normalization_required";
+                case Database::StartupRecoveryClassification::REPAIRABLE_PAGE_DAMAGE:
+                    return "repairable_page_damage";
+                case Database::StartupRecoveryClassification::WRITEBACK_FAILURE_RESUME:
+                    return "writeback_failure_resume";
+                case Database::StartupRecoveryClassification::CATALOG_OR_CONTROL_DAMAGE_FATAL:
+                    return "catalog_or_control_damage_fatal";
+            }
+            return "unknown";
+        }
+
+        auto startupServiceStateName(Database::StartupServiceState value) -> const char *
+        {
+            switch (value)
+            {
+                case Database::StartupServiceState::NORMAL:
+                    return "normal";
+                case Database::StartupServiceState::DEGRADED_READ_WRITE:
+                    return "degraded_read_write";
+                case Database::StartupServiceState::WRITE_FENCED:
+                    return "write_fenced";
+                case Database::StartupServiceState::FATAL:
+                    return "fatal";
+            }
+            return "unknown";
+        }
+
+        struct CheckpointControlState
+        {
+            uint64_t version = SYSTEM_STATE_CHECKPOINT_VERSION;
+            uint64_t checkpoint_generation = 0;
+            CheckpointLifecycleState checkpoint_state = CheckpointLifecycleState::IDLE;
+            uint64_t checkpoint_start_time = 0;
+            uint64_t captured_oit = 0;
+            uint64_t captured_oat = 0;
+            uint64_t captured_ost = 0;
+            uint64_t dirty_generation_low_watermark = 0;
+            uint64_t dirty_generation_high_watermark = 0;
+            uint64_t captured_flush_debt_pages = 0;
+            uint64_t sweep_generation_seen = 0;
+            bool queue_rebuild_required = false;
+            CheckpointShutdownIntent shutdown_intent = CheckpointShutdownIntent::NONE;
+            Status checkpoint_failure_reason = Status::OK;
+        };
+
+        void loadCheckpointControlState(const BootstrapSystemStatePage &state_page,
+                                        CheckpointControlState *control_out)
+        {
+            if (control_out == nullptr)
+            {
+                return;
+            }
+
+            CheckpointControlState control{};
+            control.version = state_page.reserved[SYSTEM_STATE_CHECKPOINT_VERSION_SLOT];
+            if (control.version == 0)
+            {
+                control.version = SYSTEM_STATE_CHECKPOINT_VERSION;
+                control.checkpoint_generation = state_page.last_clean_shutdown_generation;
+                control.shutdown_intent = state_page.clean_shutdown != 0
+                    ? CheckpointShutdownIntent::CLEAN
+                    : CheckpointShutdownIntent::NONE;
+                *control_out = control;
+                return;
+            }
+
+            control.checkpoint_generation =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_GENERATION_SLOT];
+            control.checkpoint_state = static_cast<CheckpointLifecycleState>(
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_STATE_SLOT]);
+            control.checkpoint_start_time =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_START_TIME_SLOT];
+            control.captured_oit =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_CAPTURED_OIT_SLOT];
+            control.captured_oat =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_CAPTURED_OAT_SLOT];
+            control.captured_ost =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_CAPTURED_OST_SLOT];
+            control.dirty_generation_low_watermark =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_DIRTY_LOW_SLOT];
+            control.dirty_generation_high_watermark =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_DIRTY_HIGH_SLOT];
+            control.captured_flush_debt_pages =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_FLUSH_DEBT_SLOT];
+            control.sweep_generation_seen =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_SWEEP_GENERATION_SLOT];
+            control.queue_rebuild_required =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_QUEUE_REBUILD_SLOT] != 0;
+            control.shutdown_intent = static_cast<CheckpointShutdownIntent>(
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_SHUTDOWN_INTENT_SLOT]);
+            control.checkpoint_failure_reason = static_cast<Status>(
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_FAILURE_REASON_SLOT]);
+            *control_out = control;
+        }
+
+        void storeCheckpointControlState(BootstrapSystemStatePage *state_page,
+                                         const CheckpointControlState &control)
+        {
+            if (state_page == nullptr)
+            {
+                return;
+            }
+
+            state_page->reserved[SYSTEM_STATE_CHECKPOINT_VERSION_SLOT] = control.version;
+            state_page->reserved[SYSTEM_STATE_CHECKPOINT_GENERATION_SLOT] =
+                control.checkpoint_generation;
+            state_page->reserved[SYSTEM_STATE_CHECKPOINT_STATE_SLOT] =
+                static_cast<uint64_t>(control.checkpoint_state);
+            state_page->reserved[SYSTEM_STATE_CHECKPOINT_START_TIME_SLOT] =
+                control.checkpoint_start_time;
+            state_page->reserved[SYSTEM_STATE_CHECKPOINT_CAPTURED_OIT_SLOT] =
+                control.captured_oit;
+            state_page->reserved[SYSTEM_STATE_CHECKPOINT_CAPTURED_OAT_SLOT] =
+                control.captured_oat;
+            state_page->reserved[SYSTEM_STATE_CHECKPOINT_CAPTURED_OST_SLOT] =
+                control.captured_ost;
+            state_page->reserved[SYSTEM_STATE_CHECKPOINT_DIRTY_LOW_SLOT] =
+                control.dirty_generation_low_watermark;
+            state_page->reserved[SYSTEM_STATE_CHECKPOINT_DIRTY_HIGH_SLOT] =
+                control.dirty_generation_high_watermark;
+            state_page->reserved[SYSTEM_STATE_CHECKPOINT_FLUSH_DEBT_SLOT] =
+                control.captured_flush_debt_pages;
+            state_page->reserved[SYSTEM_STATE_CHECKPOINT_SWEEP_GENERATION_SLOT] =
+                control.sweep_generation_seen;
+            state_page->reserved[SYSTEM_STATE_CHECKPOINT_QUEUE_REBUILD_SLOT] =
+                control.queue_rebuild_required ? 1 : 0;
+            state_page->reserved[SYSTEM_STATE_CHECKPOINT_SHUTDOWN_INTENT_SLOT] =
+                static_cast<uint64_t>(control.shutdown_intent);
+            state_page->reserved[SYSTEM_STATE_CHECKPOINT_FAILURE_REASON_SLOT] =
+                static_cast<uint64_t>(control.checkpoint_failure_reason);
+        }
+
+        struct WritebackIncidentControlState
+        {
+            uint64_t version = SYSTEM_STATE_WRITEBACK_INCIDENT_VERSION;
+            bool incident_open = false;
+            uint64_t filespace_id = 0;
+            WritebackQueueKind queue_kind = WritebackQueueKind::UNKNOWN;
+            WritebackPolicyDomain policy_domain = WritebackPolicyDomain::UNKNOWN;
+            uint64_t page_class = 0;
+            uint64_t dirty_generation = 0;
+            uint64_t first_seen_time = 0;
+            uint64_t last_retry_time = 0;
+            uint64_t retry_count = 0;
+            WritebackFailureClass failure_class = WritebackFailureClass::NONE;
+            WritebackDegradedState degraded_state = WritebackDegradedState::NORMAL;
+            Status last_error_status = Status::OK;
+        };
+
+        void loadWritebackIncidentControlState(const BootstrapSystemStatePage &state_page,
+                                               WritebackIncidentControlState *control_out)
+        {
+            if (control_out == nullptr)
+            {
+                return;
+            }
+
+            WritebackIncidentControlState control{};
+            control.version =
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_VERSION_SLOT];
+            if (control.version == 0)
+            {
+                *control_out = control;
+                return;
+            }
+
+            control.incident_open =
+                (state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_FLAGS_SLOT] &
+                 SYSTEM_STATE_WRITEBACK_INCIDENT_FLAG_OPEN) != 0;
+            control.filespace_id =
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_FILESPACE_SLOT];
+            control.queue_kind = static_cast<WritebackQueueKind>(
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_QUEUE_KIND_SLOT]);
+            control.policy_domain = static_cast<WritebackPolicyDomain>(
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_POLICY_DOMAIN_SLOT]);
+            control.page_class =
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_PAGE_CLASS_SLOT];
+            control.dirty_generation =
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_DIRTY_GENERATION_SLOT];
+            control.first_seen_time =
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_FIRST_SEEN_SLOT];
+            control.last_retry_time =
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_LAST_RETRY_SLOT];
+            control.retry_count =
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_RETRY_COUNT_SLOT];
+            control.failure_class = static_cast<WritebackFailureClass>(
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_FAILURE_CLASS_SLOT]);
+            control.degraded_state = static_cast<WritebackDegradedState>(
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_DEGRADED_STATE_SLOT]);
+            control.last_error_status = static_cast<Status>(
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_LAST_ERROR_STATUS_SLOT]);
+            *control_out = control;
+        }
+
+        void storeWritebackIncidentControlState(BootstrapSystemStatePage *state_page,
+                                                const WritebackIncidentControlState &control)
+        {
+            if (state_page == nullptr)
+            {
+                return;
+            }
+
+            state_page->reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_VERSION_SLOT] =
+                control.version;
+            state_page->reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_FLAGS_SLOT] =
+                control.incident_open ? SYSTEM_STATE_WRITEBACK_INCIDENT_FLAG_OPEN : 0;
+            state_page->reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_FILESPACE_SLOT] =
+                control.filespace_id;
+            state_page->reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_QUEUE_KIND_SLOT] =
+                static_cast<uint64_t>(control.queue_kind);
+            state_page->reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_POLICY_DOMAIN_SLOT] =
+                static_cast<uint64_t>(control.policy_domain);
+            state_page->reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_PAGE_CLASS_SLOT] =
+                control.page_class;
+            state_page->reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_DIRTY_GENERATION_SLOT] =
+                control.dirty_generation;
+            state_page->reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_FIRST_SEEN_SLOT] =
+                control.first_seen_time;
+            state_page->reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_LAST_RETRY_SLOT] =
+                control.last_retry_time;
+            state_page->reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_RETRY_COUNT_SLOT] =
+                control.retry_count;
+            state_page->reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_FAILURE_CLASS_SLOT] =
+                static_cast<uint64_t>(control.failure_class);
+            state_page->reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_DEGRADED_STATE_SLOT] =
+                static_cast<uint64_t>(control.degraded_state);
+            state_page->reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_LAST_ERROR_STATUS_SLOT] =
+                static_cast<uint64_t>(control.last_error_status);
+        }
+
+        auto startupStateHasTxnNormalizationWork(
+            const Database::StartupReconciliationState &state) -> bool
+        {
+            return state.startup_repair ||
+                   state.tip_active_to_aborted > 0 ||
+                   state.tip_active_to_prepared > 0 ||
+                   state.stale_prepared_records_removed > 0 ||
+                   state.clog_states_synchronized > 0;
+        }
+
+        auto startupOutcomeIsFatal(Database::StartupReconciliationOutcome outcome) -> bool
+        {
+            switch (outcome)
+            {
+                case Database::StartupReconciliationOutcome::FAILED_PAGE_SCAN:
+                case Database::StartupReconciliationOutcome::FAILED_TXN_RECONCILIATION:
+                case Database::StartupReconciliationOutcome::FAILED_CORRUPTION_POLICY:
+                    return true;
+                case Database::StartupReconciliationOutcome::NOT_RUN:
+                case Database::StartupReconciliationOutcome::CLEAN:
+                case Database::StartupReconciliationOutcome::CLEAN_WITH_FINDINGS:
+                case Database::StartupReconciliationOutcome::RECOVERY_WITH_FINDINGS:
+                    return false;
+            }
+            return false;
+        }
+
+        auto escalateStartupServiceState(Database::StartupServiceState current,
+                                         Database::StartupServiceState candidate)
+            -> Database::StartupServiceState
+        {
+            return static_cast<uint8_t>(candidate) > static_cast<uint8_t>(current)
+                ? candidate
+                : current;
+        }
+
+        auto startupServiceStateFromWriteback(WritebackDegradedState degraded_state)
+            -> Database::StartupServiceState
+        {
+            switch (degraded_state)
+            {
+                case WritebackDegradedState::NORMAL:
+                    return Database::StartupServiceState::DEGRADED_READ_WRITE;
+                case WritebackDegradedState::DEGRADED_READ_WRITE:
+                    return Database::StartupServiceState::DEGRADED_READ_WRITE;
+                case WritebackDegradedState::WRITE_FENCED:
+                    return Database::StartupServiceState::WRITE_FENCED;
+                case WritebackDegradedState::FATAL:
+                    return Database::StartupServiceState::FATAL;
+            }
+            return Database::StartupServiceState::DEGRADED_READ_WRITE;
+        }
+
+        auto finalizeStartupRecoveryClassification(
+            Database::StartupReconciliationState *state,
+            bool writeback_incident_open,
+            WritebackDegradedState writeback_degraded_state) -> void
+        {
+            if (state == nullptr)
+            {
+                return;
+            }
+
+            const bool has_tx_findings = startupStateHasTxnNormalizationWork(*state);
+            const bool has_repairable_page_damage =
+                state->has_page_scan_findings ||
+                state->has_corrupt_pages ||
+                state->relinkable_chain_pages > 0 ||
+                state->cleanup_blocked_chain_pages > 0 ||
+                state->quarantinable_chain_pages > 0 ||
+                state->corruption_class != Database::StartupCorruptionClass::NONE;
+            const bool has_fatal_corruption =
+                state->corruption_class == Database::StartupCorruptionClass::STARTUP_REFUSAL ||
+                state->quarantine_action == Database::StartupQuarantineAction::REFUSE_OPEN ||
+                startupOutcomeIsFatal(state->outcome);
+
+            if (has_fatal_corruption)
+            {
+                state->classification =
+                    Database::StartupRecoveryClassification::CATALOG_OR_CONTROL_DAMAGE_FATAL;
+                state->service_state = Database::StartupServiceState::FATAL;
+                return;
+            }
+
+            if (writeback_incident_open)
+            {
+                state->classification =
+                    Database::StartupRecoveryClassification::WRITEBACK_FAILURE_RESUME;
+                state->service_state = startupServiceStateFromWriteback(writeback_degraded_state);
+            }
+            else if (has_repairable_page_damage)
+            {
+                state->classification =
+                    Database::StartupRecoveryClassification::REPAIRABLE_PAGE_DAMAGE;
+                state->service_state = Database::StartupServiceState::DEGRADED_READ_WRITE;
+            }
+            else if (!state->clean_shutdown_marker || has_tx_findings)
+            {
+                state->classification =
+                    Database::StartupRecoveryClassification::
+                        DIRTY_SHUTDOWN_NORMALIZATION_REQUIRED;
+                state->service_state = Database::StartupServiceState::NORMAL;
+            }
+            else
+            {
+                state->classification =
+                    Database::StartupRecoveryClassification::CLEAN_SHUTDOWN_FAST_PATH;
+                state->service_state = Database::StartupServiceState::NORMAL;
+            }
+
+            if (state->has_page_scan_findings || state->has_corrupt_pages ||
+                state->corruption_class == Database::StartupCorruptionClass::REPAIR_REQUIRED ||
+                state->corruption_class == Database::StartupCorruptionClass::RELINKABLE_ONLY)
+            {
+                state->service_state = escalateStartupServiceState(
+                    state->service_state,
+                    Database::StartupServiceState::DEGRADED_READ_WRITE);
+            }
+            if (state->quarantine_active ||
+                state->quarantine_action == Database::StartupQuarantineAction::READ_ONLY)
+            {
+                state->service_state = escalateStartupServiceState(
+                    state->service_state,
+                    Database::StartupServiceState::WRITE_FENCED);
+            }
+        }
+
+        template <typename Mutator>
+        auto mutateAndFlushSystemStatePage(Database *db,
+                                           BufferPool *buffer_pool,
+                                           uint32_t page_size,
+                                           ErrorContext *ctx,
+                                           Mutator &&mutator) -> Status
+        {
+            if (db == nullptr || buffer_pool == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "System state mutation requires database and buffer pool");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            void *page_buffer = nullptr;
+            Status status =
+                buffer_pool->pinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *state_page = static_cast<BootstrapSystemStatePage *>(page_buffer);
+            if (state_page->page_header.page_type != PAGE_TYPE_SYSTEM_STATE)
+            {
+                buffer_pool->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Invalid system state bootstrap page");
+                return Status::PAGE_CORRUPT;
+            }
+            if (!validatePageChecksum(reinterpret_cast<uint8_t *>(state_page), page_size))
+            {
+                buffer_pool->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::CHECKSUM_MISMATCH,
+                                  "System state page checksum validation failed");
+                return Status::CHECKSUM_MISMATCH;
+            }
+
+            mutator(state_page);
+            state_page->page_header.checksum =
+                calculatePageChecksum(reinterpret_cast<uint8_t *>(state_page), page_size);
+            buffer_pool->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, true, ctx);
+
+            status = buffer_pool->flushPage(BOOTSTRAP_PAGE_SYSTEM_STATE, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            WritebackAttribution attribution{};
+            attribution.queue_kind = WritebackQueueKind::METADATA_PRIORITY;
+            attribution.policy_domain = WritebackPolicyDomain::SYSTEM_STATE;
+            attribution.page_class = PAGE_TYPE_SYSTEM_STATE;
+            return db->sync(ctx, attribution);
+        }
+
+        auto classifyWritebackFailure(Status status,
+                                      int err,
+                                      bool sync_failure) -> WritebackFailureClass
+        {
+            if (status == Status::DISK_FULL || err == ENOSPC)
+            {
+                return WritebackFailureClass::DISK_FULL;
+            }
+            if (err == EROFS || err == ENODEV || err == EIO)
+            {
+                return WritebackFailureClass::FILESYSTEM_OFFLINE;
+            }
+            return sync_failure
+                ? WritebackFailureClass::RETRYABLE_FSYNC_IO
+                : WritebackFailureClass::RETRYABLE_WRITEBACK_IO;
+        }
+
+        auto finalizeWritebackAttribution(const void *buffer,
+                                          WritebackAttribution attribution,
+                                          uint64_t default_filespace_id) -> WritebackAttribution
+        {
+            attribution.filespace_id =
+                attribution.filespace_id == 0 ? default_filespace_id : attribution.filespace_id;
+            if (buffer == nullptr)
+            {
+                return attribution;
+            }
+
+            const auto *header = reinterpret_cast<const PageHeader *>(buffer);
+            if (header->magic != K_MAGIC_SBRD)
+            {
+                return attribution;
+            }
+            if (attribution.page_class == 0)
+            {
+                attribution.page_class = header->page_type;
+            }
+            if (attribution.dirty_generation == 0)
+            {
+                attribution.dirty_generation = header->generation;
+            }
+            return attribution;
+        }
+
+        template <typename Mutator>
+        auto mutateAndPersistSystemStatePageDirect(Database *db,
+                                                   bool sync_after_write,
+                                                   ErrorContext *ctx,
+                                                   Mutator &&mutator) -> Status
+        {
+            if (db == nullptr || db->fd() < 0 || db->page_size() == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "System state direct persistence requires an open database");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            std::vector<uint8_t> buffer(db->page_size(), 0);
+            const off_t offset =
+                static_cast<off_t>(BOOTSTRAP_PAGE_SYSTEM_STATE) *
+                static_cast<off_t>(db->page_size());
+            size_t bytes_read = 0;
+            errno = 0;
+            if (!preadFully(db->fd(), buffer.data(), db->page_size(), offset, &bytes_read))
+            {
+                if (errno != 0)
+                {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg),
+                             "Failed to load system state page for direct persistence: %s",
+                             std::strerror(errno));
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                      "Short read loading system state page for direct persistence");
+                }
+                return Status::IO_ERROR;
+            }
+
+            auto *state_page =
+                reinterpret_cast<BootstrapSystemStatePage *>(buffer.data());
+            if (state_page->page_header.page_type != PAGE_TYPE_SYSTEM_STATE)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Invalid system state page during direct persistence");
+                return Status::PAGE_CORRUPT;
+            }
+            if (!validatePageChecksum(buffer.data(), db->page_size()))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CHECKSUM_MISMATCH,
+                                  "System state page checksum validation failed");
+                return Status::CHECKSUM_MISMATCH;
+            }
+
+            mutator(state_page);
+            preparePageForWrite(buffer.data(),
+                                db->page_size(),
+                                BOOTSTRAP_PAGE_SYSTEM_STATE);
+
+            size_t bytes_written = 0;
+            errno = 0;
+            if (!pwriteFully(db->fd(), buffer.data(), db->page_size(), offset, &bytes_written))
+            {
+                if (errno != 0)
+                {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg),
+                             "Failed to persist system state page directly: %s",
+                             std::strerror(errno));
+                    SET_ERROR_CONTEXT(ctx, classifyWritebackFailure(Status::IO_ERROR,
+                                                                    errno,
+                                                                    false) ==
+                                              WritebackFailureClass::DISK_FULL
+                                          ? Status::DISK_FULL
+                                          : Status::IO_ERROR,
+                                      msg);
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                      "Short write persisting system state page directly");
+                }
+                return (errno == ENOSPC) ? Status::DISK_FULL : Status::IO_ERROR;
+            }
+
+            if (sync_after_write && platform::syncFd(db->fd()) != 0)
+            {
+                const int sync_errno = errno;
+                if (sync_errno == ENOSPC)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DISK_FULL,
+                                      "Failed to sync persisted system state page: disk full");
+                    return Status::DISK_FULL;
+                }
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                  "Failed to sync persisted system state page");
+                return Status::IO_ERROR;
+            }
+
+            return Status::OK;
         }
 
         auto classifyStartupCorruptionPolicy(Database::StartupReconciliationState *state) -> void
@@ -226,6 +798,10 @@ namespace scratchbird::core
                 << startupCorruptionClassName(state.corruption_class)
                 << ",action="
                 << startupQuarantineActionName(state.quarantine_action)
+                << ",recovery_class="
+                << startupRecoveryClassificationName(state.classification)
+                << ",service_state="
+                << startupServiceStateName(state.service_state)
                 << ",repair_plan="
                 << formatStartupRepairPlanMask(state.repair_plan_mask)
                 << ",corrupt_pages=" << state.has_corrupt_pages
@@ -333,7 +909,7 @@ namespace scratchbird::core
         }
 
         bool preadFully(int fd, void* buffer, size_t size, off_t offset,
-                        size_t* transferred_out = nullptr)
+                        size_t* transferred_out)
         {
             auto* dst = static_cast<uint8_t*>(buffer);
             size_t transferred = 0;
@@ -373,7 +949,7 @@ namespace scratchbird::core
         }
 
         bool pwriteFully(int fd, const void* buffer, size_t size, off_t offset,
-                         size_t* transferred_out = nullptr)
+                         size_t* transferred_out)
         {
             const auto* src = static_cast<const uint8_t*>(buffer);
             size_t transferred = 0;
@@ -1301,6 +1877,231 @@ namespace scratchbird::core
         close();
     }
 
+    auto Database::write_admission_fenced() const -> bool
+    {
+        std::lock_guard<std::mutex> lock(writeback_failure_mutex_);
+        return write_admission_fenced_;
+    }
+
+    auto Database::write_admission_status() const -> Status
+    {
+        std::lock_guard<std::mutex> lock(writeback_failure_mutex_);
+        return write_admission_failure_status_;
+    }
+
+    auto Database::clearWritebackFailureState(ErrorContext *ctx) -> Status
+    {
+        WritebackIncidentControlState cleared{};
+        {
+            std::lock_guard<std::mutex> lock(writeback_failure_mutex_);
+            writeback_incident_open_ = false;
+            writeback_degraded_state_ = WritebackDegradedState::NORMAL;
+            write_admission_fenced_ = false;
+            write_admission_failure_status_ = Status::OK;
+            writeback_incident_persist_in_progress_ = true;
+        }
+
+        Status status = mutateAndPersistSystemStatePageDirect(
+            this,
+            true,
+            ctx,
+            [&](BootstrapSystemStatePage *state_page) {
+                storeWritebackIncidentControlState(state_page, cleared);
+            });
+
+        {
+            std::lock_guard<std::mutex> lock(writeback_failure_mutex_);
+            writeback_incident_persist_in_progress_ = false;
+            if (status != Status::OK)
+            {
+                writeback_incident_open_ = true;
+                writeback_degraded_state_ = WritebackDegradedState::WRITE_FENCED;
+                write_admission_fenced_ = true;
+                write_admission_failure_status_ =
+                    status == Status::OK ? Status::IO_ERROR : status;
+            }
+            else
+            {
+                clean_shutdown_eligible_ = startup_state_loaded_;
+            }
+        }
+
+        if (status == Status::OK && catalog_manager_ != nullptr)
+        {
+            ErrorContext history_ctx;
+            CatalogManager::WritebackIncidentCatalogInfo incident{};
+            if (catalog_manager_->getOpenWritebackIncidentCatalogEntry(incident, &history_ctx) ==
+                Status::OK)
+            {
+                incident.is_open = false;
+                incident.degraded_state = WritebackDegradedState::NORMAL;
+                incident.last_seen_time = defaultTimeSource().nowMicros();
+                incident.last_error_status = Status::OK;
+                if (!incident.has_clearance_condition_uuid)
+                {
+                    incident.has_clearance_condition_uuid = true;
+                    incident.clearance_condition_uuid = generateUuidV7();
+                }
+                ErrorContext update_ctx;
+                const Status update_status =
+                    catalog_manager_->upsertWritebackIncidentCatalogEntry(incident, &update_ctx);
+                if (update_status != Status::OK)
+                {
+                    LOG_WARNING(STORAGE,
+                                "Failed to close writeback incident history row: %d (%s)",
+                                static_cast<int>(update_status),
+                                update_ctx.message.c_str());
+                }
+            }
+        }
+        return status;
+    }
+
+    void Database::noteWritebackFailure(Status status,
+                                        WritebackFailureClass failure_class,
+                                        const WritebackAttribution &attribution,
+                                        bool skip_sync,
+                                        ErrorContext *ctx)
+    {
+        WritebackIncidentControlState incident{};
+        bool should_persist = false;
+
+        {
+            std::lock_guard<std::mutex> lock(writeback_failure_mutex_);
+            const uint64_t now = defaultTimeSource().nowMicros();
+            write_admission_fenced_ = true;
+            write_admission_failure_status_ =
+                status == Status::OK ? Status::IO_ERROR : status;
+            clean_shutdown_eligible_ = false;
+            writeback_incident_open_ = true;
+            writeback_degraded_state_ = WritebackDegradedState::WRITE_FENCED;
+
+            incident.version = SYSTEM_STATE_WRITEBACK_INCIDENT_VERSION;
+            incident.incident_open = true;
+            incident.filespace_id = attribution.filespace_id;
+            incident.queue_kind = attribution.queue_kind;
+            incident.policy_domain = attribution.policy_domain;
+            incident.page_class = attribution.page_class;
+            incident.dirty_generation = attribution.dirty_generation;
+            incident.failure_class = failure_class;
+            incident.degraded_state = WritebackDegradedState::WRITE_FENCED;
+            incident.last_error_status = write_admission_failure_status_;
+            incident.first_seen_time = now;
+            incident.last_retry_time = now;
+            incident.retry_count = 1;
+
+            if (!writeback_incident_persist_in_progress_)
+            {
+                writeback_incident_persist_in_progress_ = true;
+                should_persist = true;
+            }
+        }
+
+        if (!should_persist)
+        {
+            return;
+        }
+
+        ErrorContext persist_ctx;
+        const Status persist_status = mutateAndPersistSystemStatePageDirect(
+            this,
+            !skip_sync,
+            &persist_ctx,
+            [&](BootstrapSystemStatePage *state_page) {
+                WritebackIncidentControlState existing{};
+                loadWritebackIncidentControlState(*state_page, &existing);
+                if (existing.version != SYSTEM_STATE_WRITEBACK_INCIDENT_VERSION ||
+                    !existing.incident_open)
+                {
+                    existing = incident;
+                }
+                else
+                {
+                    existing.incident_open = true;
+                    existing.filespace_id = incident.filespace_id;
+                    existing.queue_kind = incident.queue_kind;
+                    existing.policy_domain = incident.policy_domain;
+                    existing.page_class = incident.page_class;
+                    existing.dirty_generation = incident.dirty_generation;
+                    existing.last_retry_time = incident.last_retry_time;
+                    existing.retry_count += 1;
+                    existing.failure_class = incident.failure_class;
+                    existing.degraded_state = incident.degraded_state;
+                    existing.last_error_status = incident.last_error_status;
+                }
+                storeWritebackIncidentControlState(state_page, existing);
+            });
+
+        {
+            std::lock_guard<std::mutex> lock(writeback_failure_mutex_);
+            writeback_incident_persist_in_progress_ = false;
+        }
+
+        if (persist_status != Status::OK)
+        {
+            LOG_WARNING(STORAGE,
+                        "Failed to persist writeback incident state: %d (%s)",
+                        static_cast<int>(persist_status),
+                        persist_ctx.message.c_str());
+            if (ctx != nullptr && ctx->message.empty())
+            {
+                ctx->set(persist_status,
+                         persist_ctx.message.c_str(),
+                         __FILE__,
+                         __LINE__,
+                         __func__);
+            }
+        }
+        else if (catalog_manager_ != nullptr)
+        {
+            ErrorContext history_ctx;
+            CatalogManager::WritebackIncidentCatalogInfo history{};
+            if (catalog_manager_->getOpenWritebackIncidentCatalogEntry(history, &history_ctx) ==
+                Status::OK)
+            {
+                history.queue_kind = attribution.queue_kind;
+                history.policy_domain = attribution.policy_domain;
+                history.page_class = attribution.page_class;
+                history.failure_class = failure_class;
+                history.last_seen_time = incident.last_retry_time;
+                history.retry_count = std::max<uint64_t>(history.retry_count + 1, 1);
+                history.degraded_state = WritebackDegradedState::WRITE_FENCED;
+                history.is_open = true;
+                history.last_error_status = write_admission_failure_status_;
+            }
+            else
+            {
+                history = CatalogManager::WritebackIncidentCatalogInfo{};
+                history.writeback_incident_uuid = generateUuidV7();
+                history.queue_kind = attribution.queue_kind;
+                history.policy_domain = attribution.policy_domain;
+                history.page_class = attribution.page_class;
+                history.failure_class = failure_class;
+                history.first_seen_time = incident.first_seen_time;
+                history.last_seen_time = incident.last_retry_time;
+                history.retry_count = incident.retry_count;
+                history.degraded_state = WritebackDegradedState::WRITE_FENCED;
+                history.is_open = true;
+                history.is_valid = true;
+                history.last_error_status = write_admission_failure_status_;
+            }
+
+            ErrorContext update_ctx;
+            const bool previous_enforcement_state = write_admission_enforcement_suspended_;
+            write_admission_enforcement_suspended_ = true;
+            const Status update_status =
+                catalog_manager_->upsertWritebackIncidentCatalogEntry(history, &update_ctx);
+            write_admission_enforcement_suspended_ = previous_enforcement_state;
+            if (update_status != Status::OK)
+            {
+                LOG_WARNING(STORAGE,
+                            "Failed to persist writeback incident history row: %d (%s)",
+                            static_cast<int>(update_status),
+                            update_ctx.message.c_str());
+            }
+        }
+    }
+
     // NOTE: Move operations deleted in header because Database contains std::mutex (non-movable)
 
     void Database::close()
@@ -1389,27 +2190,29 @@ namespace scratchbird::core
         // Shut down storage engine
         storage_engine_.reset();
 
-        // Shut down catalog manager
-        catalog_manager_.reset();
-
         table_stats_manager_.reset();
-
-        // Flush page manager before shutting down buffer pool
-        if (page_manager_ != nullptr)
-        {
-            ErrorContext ctx;
-            page_manager_->flush(&ctx);
-        }
 
         if (buffer_pool_ != nullptr)
         {
             ErrorContext ctx;
-            buffer_pool_->flushAll(&ctx);
-            sync(&ctx);
             if (clean_shutdown_eligible_)
             {
                 markCleanShutdown(&ctx);
             }
+            else
+            {
+                buffer_pool_->flushAll(&ctx);
+                sync(&ctx);
+            }
+        }
+
+        // Flush page-manager state after clean-shutdown publication so any
+        // catalog pages allocated for runtime-history rows are reflected in the
+        // persisted FSM state seen on the next open.
+        if (page_manager_ != nullptr)
+        {
+            ErrorContext ctx;
+            page_manager_->flush(&ctx);
         }
 
         // Sync header_buffer_ with latest header page before buffer pool shutdown
@@ -1433,6 +2236,11 @@ namespace scratchbird::core
 
         // Now delete page manager
         page_manager_.reset();
+
+        // Shut down catalog manager after clean-shutdown publication, since
+        // markCleanShutdown() persists runtime history through the live
+        // catalog/buffer/page-manager stack.
+        catalog_manager_.reset();
 
         // Flush the database header page (page 0) before closing
         // The header is stored in header_buffer_ and may have been modified during operation
@@ -1462,8 +2270,18 @@ namespace scratchbird::core
         restart_generation_ = 0;
         last_clean_shutdown_generation_ = 0;
         last_shutdown_was_clean_ = true;
+        write_admission_enforcement_suspended_ = true;
         startup_reconciliation_state_ = {};
         startup_quarantine_active_ = false;
+        write_admission_enforcement_suspended_ = false;
+        {
+            std::lock_guard<std::mutex> lock(writeback_failure_mutex_);
+            writeback_incident_open_ = false;
+            writeback_degraded_state_ = WritebackDegradedState::NORMAL;
+            write_admission_fenced_ = false;
+            write_admission_failure_status_ = Status::OK;
+            writeback_incident_persist_in_progress_ = false;
+        }
     }
 
     Status Database::applySchedulerConfig(ErrorContext *ctx)
@@ -2160,6 +2978,11 @@ namespace scratchbird::core
         state_page->last_checkpoint_txid = 0;
         state_page->last_checkpoint_time = 0;
         state_page->config_flags = 0;
+        CheckpointControlState checkpoint{};
+        checkpoint.checkpoint_generation = 1;
+        checkpoint.shutdown_intent = CheckpointShutdownIntent::CLEAN;
+        storeCheckpointControlState(state_page, checkpoint);
+        storeWritebackIncidentControlState(state_page, WritebackIncidentControlState{});
 
         header.flags |= PAGE_FLAG_CHECKSUM_VALID;
         header.checksum = calculatePageChecksum(page_buffer, page_size);
@@ -2617,6 +3440,14 @@ namespace scratchbird::core
         restart_generation_ = 0;
         last_clean_shutdown_generation_ = 0;
         last_shutdown_was_clean_ = true;
+        write_admission_enforcement_suspended_ = true;
+        auto release_startup_write_admission_suspension = [this](void *) {
+            write_admission_enforcement_suspended_ = false;
+        };
+        std::unique_ptr<void, decltype(release_startup_write_admission_suspension)>
+            startup_write_admission_guard(
+                reinterpret_cast<void *>(1),
+                release_startup_write_admission_suspension);
 
         // Open file
         fd_ = platform::openFd(canonical_path.c_str(), O_RDWR);
@@ -2827,6 +3658,14 @@ namespace scratchbird::core
                     }
                 }
             }
+
+            status = catalog_manager_->purgeStaleSessionTemporaryTables(ctx);
+            if (status != Status::OK)
+            {
+                return close_with_stage_error(
+                    status,
+                    "catalog_manager.purgeStaleSessionTemporaryTables");
+            }
         }
 
         // Initialize audit logger
@@ -2903,6 +3742,7 @@ namespace scratchbird::core
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate TransactionManager");
             return Status::OOM;
         }
+        startup_recovery_start_time_ = defaultTimeSource().nowMicros();
         status = runStartupReconciliation(ctx);
         if (status != Status::OK)
         {
@@ -3138,7 +3978,9 @@ namespace scratchbird::core
         // Initialize virtual catalog handlers (information_schema, pg_catalog, mysql, firebird).
         scratchbird::catalog::initializeVirtualCatalogs(catalog_manager_.get());
 
-        clean_shutdown_eligible_ = true;
+        write_admission_enforcement_suspended_ = false;
+        startup_write_admission_guard.release();
+        clean_shutdown_eligible_ = !write_admission_fenced();
         DEBUG_LOG_DB("Database opened successfully");
         return Status::OK;
     }
@@ -3154,88 +3996,125 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        void *page_buffer = nullptr;
-        Status status = buffer_pool_->pinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, &page_buffer, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
+        Status status = mutateAndFlushSystemStatePage(
+            this,
+            buffer_pool_.get(),
+            page_size_,
+            ctx,
+            [&](BootstrapSystemStatePage *state_page) {
+                uint64_t flags = 0;
+                if (state.clean_shutdown_marker)
+                {
+                    flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_CLEAN_MARKER;
+                }
+                if (state.startup_repair)
+                {
+                    flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_STARTUP_REPAIR;
+                }
+                if (state.has_page_scan_findings)
+                {
+                    flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_PAGE_SCAN_FINDINGS;
+                }
+                if (state.has_corrupt_pages)
+                {
+                    flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_CORRUPT_PAGES;
+                }
+                if (state.quarantine_active)
+                {
+                    flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_QUARANTINE_ACTIVE;
+                }
 
-        auto *state_page = static_cast<BootstrapSystemStatePage *>(page_buffer);
-        if (state_page->page_header.page_type != PAGE_TYPE_SYSTEM_STATE)
-        {
-            buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
-            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid system state bootstrap page");
-            return Status::PAGE_CORRUPT;
-        }
-
-        uint64_t flags = 0;
-        if (state.clean_shutdown_marker)
-        {
-            flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_CLEAN_MARKER;
-        }
-        if (state.startup_repair)
-        {
-            flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_STARTUP_REPAIR;
-        }
-        if (state.has_page_scan_findings)
-        {
-            flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_PAGE_SCAN_FINDINGS;
-        }
-        if (state.has_corrupt_pages)
-        {
-            flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_CORRUPT_PAGES;
-        }
-        if (state.quarantine_active)
-        {
-            flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_QUARANTINE_ACTIVE;
-        }
-
-        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_VERSION_SLOT] =
-            SYSTEM_STATE_STARTUP_RECON_VERSION;
-        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_OUTCOME_SLOT] =
-            static_cast<uint64_t>(state.outcome);
-        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_STATUS_SLOT] =
-            static_cast<uint64_t>(state.failure_status);
-        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_TIP_ABORTED_SLOT] =
-            state.tip_active_to_aborted;
-        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_TIP_PREPARED_SLOT] =
-            state.tip_active_to_prepared;
-        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_STALE_PREPARED_SLOT] =
-            state.stale_prepared_records_removed;
-        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_CLOG_SYNC_SLOT] =
-            state.clog_states_synchronized;
-        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_RELINKABLE_SLOT] =
-            state.relinkable_chain_pages;
-        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_BLOCKED_SLOT] =
-            state.cleanup_blocked_chain_pages;
-        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_QUARANTINABLE_SLOT] =
-            state.quarantinable_chain_pages;
-        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_UNRECOVERABLE_SLOT] =
-            state.unrecoverable_chain_pages;
-        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_CLASS_SLOT] =
-            static_cast<uint64_t>(state.corruption_class);
-        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_ACTION_SLOT] =
-            static_cast<uint64_t>(state.quarantine_action);
-        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_REPAIR_PLAN_SLOT] =
-            state.repair_plan_mask;
-        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_FLAGS_SLOT] = flags;
-        state_page->page_header.checksum =
-            calculatePageChecksum(reinterpret_cast<uint8_t *>(state_page), page_size_);
-        buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, true, ctx);
-
-        status = buffer_pool_->flushAll(ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
-        status = sync(ctx);
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_VERSION_SLOT] =
+                    SYSTEM_STATE_STARTUP_RECON_VERSION;
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_OUTCOME_SLOT] =
+                    static_cast<uint64_t>(state.outcome);
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_STATUS_SLOT] =
+                    static_cast<uint64_t>(state.failure_status);
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_TIP_ABORTED_SLOT] =
+                    state.tip_active_to_aborted;
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_TIP_PREPARED_SLOT] =
+                    state.tip_active_to_prepared;
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_STALE_PREPARED_SLOT] =
+                    state.stale_prepared_records_removed;
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_CLOG_SYNC_SLOT] =
+                    state.clog_states_synchronized;
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_RELINKABLE_SLOT] =
+                    state.relinkable_chain_pages;
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_BLOCKED_SLOT] =
+                    state.cleanup_blocked_chain_pages;
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_QUARANTINABLE_SLOT] =
+                    state.quarantinable_chain_pages;
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_UNRECOVERABLE_SLOT] =
+                    state.unrecoverable_chain_pages;
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_CLASS_SLOT] =
+                    static_cast<uint64_t>(state.corruption_class);
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_ACTION_SLOT] =
+                    static_cast<uint64_t>(state.quarantine_action);
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_REPAIR_PLAN_SLOT] =
+                    state.repair_plan_mask;
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_CLASSIFICATION_SLOT] =
+                    static_cast<uint64_t>(state.classification);
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_SERVICE_STATE_SLOT] =
+                    static_cast<uint64_t>(state.service_state);
+                state_page->reserved[SYSTEM_STATE_STARTUP_RECON_FLAGS_SLOT] = flags;
+            });
         if (status != Status::OK)
         {
             return status;
         }
 
         startup_reconciliation_state_ = state;
+        if (catalog_manager_ != nullptr)
+        {
+            CatalogManager::RecoveryRunCatalogInfo recovery_run{};
+            recovery_run.recovery_generation = startup_generation_;
+            recovery_run.classification = state.classification;
+            recovery_run.start_time = startup_recovery_start_time_ == 0
+                ? defaultTimeSource().nowMicros()
+                : startup_recovery_start_time_;
+            recovery_run.has_end_time = true;
+            recovery_run.end_time = defaultTimeSource().nowMicros();
+            recovery_run.normalized_transactions = state.tip_active_to_aborted +
+                state.tip_active_to_prepared + state.stale_prepared_records_removed;
+            recovery_run.repair_required_pages = static_cast<uint64_t>(state.relinkable_chain_pages) +
+                static_cast<uint64_t>(state.cleanup_blocked_chain_pages) +
+                static_cast<uint64_t>(state.quarantinable_chain_pages) +
+                static_cast<uint64_t>(state.unrecoverable_chain_pages);
+            recovery_run.degraded_state = state.service_state;
+
+            ErrorContext history_ctx;
+            const Status history_status =
+                catalog_manager_->upsertRecoveryRunCatalogEntry(recovery_run, &history_ctx);
+            if (history_status != Status::OK)
+            {
+                LOG_WARNING(STORAGE,
+                            "Failed to persist recovery run history row: %d (%s)",
+                            static_cast<int>(history_status),
+                            history_ctx.message.c_str());
+            }
+
+            if (state.classification != StartupRecoveryClassification::CLEAN_SHUTDOWN_FAST_PATH)
+            {
+                CatalogManager::RecoveryIncidentCatalogInfo incident{};
+                incident.recovery_generation = startup_generation_;
+                incident.classification = state.classification;
+                incident.has_checkpoint_generation = true;
+                incident.checkpoint_generation = last_clean_shutdown_generation_;
+                incident.created_time = recovery_run.end_time;
+                incident.has_details = true;
+                incident.details_json = buildStartupCorruptionPolicyMessage(state);
+                ErrorContext incident_ctx;
+                const Status incident_status =
+                    catalog_manager_->appendRecoveryIncidentCatalogEntry(incident, &incident_ctx);
+                if (incident_status != Status::OK)
+                {
+                    LOG_WARNING(STORAGE,
+                                "Failed to persist recovery incident row: %d (%s)",
+                                static_cast<int>(incident_status),
+                                incident_ctx.message.c_str());
+                }
+            }
+        }
         return Status::OK;
     }
 
@@ -3251,6 +4130,13 @@ namespace scratchbird::core
         StartupReconciliationState state{};
         startup_quarantine_active_ = false;
         state.clean_shutdown_marker = last_shutdown_was_clean_;
+        bool writeback_incident_open = false;
+        WritebackDegradedState writeback_degraded_state = WritebackDegradedState::NORMAL;
+        {
+            std::lock_guard<std::mutex> lock(writeback_failure_mutex_);
+            writeback_incident_open = writeback_incident_open_;
+            writeback_degraded_state = writeback_degraded_state_;
+        }
 
         PageManager::ReconstructionSummary page_summary{};
         Status status = page_manager_->reconstructFromPages(&page_summary, ctx);
@@ -3269,6 +4155,8 @@ namespace scratchbird::core
         {
             state.outcome = StartupReconciliationOutcome::FAILED_PAGE_SCAN;
             state.failure_status = status;
+            finalizeStartupRecoveryClassification(
+                &state, writeback_incident_open, writeback_degraded_state);
             ErrorContext persist_ctx;
             Status persist_status = persistStartupReconciliationState(state, &persist_ctx);
             if (persist_status != Status::OK)
@@ -3292,6 +4180,8 @@ namespace scratchbird::core
         {
             state.outcome = StartupReconciliationOutcome::FAILED_TXN_RECONCILIATION;
             state.failure_status = status;
+            finalizeStartupRecoveryClassification(
+                &state, writeback_incident_open, writeback_degraded_state);
             ErrorContext persist_ctx;
             Status persist_status = persistStartupReconciliationState(state, &persist_ctx);
             if (persist_status != Status::OK)
@@ -3303,12 +4193,7 @@ namespace scratchbird::core
             return status;
         }
 
-        const bool has_tx_findings =
-            state.startup_repair ||
-            state.tip_active_to_aborted > 0 ||
-            state.tip_active_to_prepared > 0 ||
-            state.stale_prepared_records_removed > 0 ||
-            state.clog_states_synchronized > 0;
+        const bool has_tx_findings = startupStateHasTxnNormalizationWork(state);
         if (!state.clean_shutdown_marker && !state.has_page_scan_findings && !has_tx_findings)
         {
             state.outcome = StartupReconciliationOutcome::RECOVERY_WITH_FINDINGS;
@@ -3325,11 +4210,15 @@ namespace scratchbird::core
         }
 
         classifyStartupCorruptionPolicy(&state);
+        finalizeStartupRecoveryClassification(
+            &state, writeback_incident_open, writeback_degraded_state);
         startup_quarantine_active_ = state.quarantine_active;
         if (state.corruption_class == Database::StartupCorruptionClass::STARTUP_REFUSAL)
         {
             state.outcome = StartupReconciliationOutcome::FAILED_CORRUPTION_POLICY;
             state.failure_status = Status::PAGE_CORRUPT;
+            finalizeStartupRecoveryClassification(
+                &state, writeback_incident_open, writeback_degraded_state);
             const std::string policy_message = buildStartupCorruptionPolicyMessage(state);
             Status persist_status = persistStartupReconciliationState(state, ctx);
             if (persist_status != Status::OK)
@@ -3383,7 +4272,24 @@ namespace scratchbird::core
             return Status::CHECKSUM_MISMATCH;
         }
 
-        last_shutdown_was_clean_ = state_page->clean_shutdown != 0;
+        CheckpointControlState checkpoint{};
+        loadCheckpointControlState(*state_page, &checkpoint);
+        WritebackIncidentControlState writeback_incident{};
+        loadWritebackIncidentControlState(*state_page, &writeback_incident);
+
+        const bool checkpoint_state_completed =
+            checkpoint.checkpoint_state == CheckpointLifecycleState::IDLE ||
+            checkpoint.checkpoint_state == CheckpointLifecycleState::COMPLETE;
+        const bool checkpoint_clean_valid =
+            checkpoint_state_completed &&
+            checkpoint.checkpoint_failure_reason == Status::OK &&
+            !checkpoint.queue_rebuild_required &&
+            checkpoint.shutdown_intent == CheckpointShutdownIntent::CLEAN &&
+            state_page->last_clean_shutdown_generation != 0 &&
+            state_page->last_clean_shutdown_generation == checkpoint.checkpoint_generation;
+
+        last_shutdown_was_clean_ =
+            state_page->clean_shutdown != 0 && checkpoint_clean_valid;
         const uint64_t persisted_startup =
             state_page->startup_counter == 0 ? 1 : state_page->startup_counter;
         startup_generation_ = persisted_startup + 1;
@@ -3394,20 +4300,33 @@ namespace scratchbird::core
         }
         last_clean_shutdown_generation_ = state_page->last_clean_shutdown_generation;
         startup_quarantine_active_ = false;
-
-        state_page->clean_shutdown = 0;
-        state_page->startup_counter = startup_generation_;
-        state_page->restart_generation = restart_generation_;
-        state_page->page_header.checksum =
-            calculatePageChecksum(reinterpret_cast<uint8_t *>(state_page), page_size_);
-        buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, true, ctx);
-
-        status = buffer_pool_->flushAll(ctx);
-        if (status != Status::OK)
         {
-            return status;
+            std::lock_guard<std::mutex> lock(writeback_failure_mutex_);
+            writeback_incident_open_ = writeback_incident.incident_open;
+            writeback_degraded_state_ = writeback_incident.degraded_state;
+            write_admission_fenced_ =
+                writeback_incident.incident_open &&
+                writeback_incident.degraded_state == WritebackDegradedState::WRITE_FENCED;
+            write_admission_failure_status_ = writeback_incident.incident_open &&
+                                              writeback_incident.last_error_status != Status::OK
+                ? writeback_incident.last_error_status
+                : Status::OK;
         }
-        status = sync(ctx);
+
+        buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+
+        checkpoint.shutdown_intent = CheckpointShutdownIntent::NONE;
+        status = mutateAndFlushSystemStatePage(
+            this,
+            buffer_pool_.get(),
+            page_size_,
+            ctx,
+            [&](BootstrapSystemStatePage *mutable_state_page) {
+                mutable_state_page->clean_shutdown = 0;
+                mutable_state_page->startup_counter = startup_generation_;
+                mutable_state_page->restart_generation = restart_generation_;
+                storeCheckpointControlState(mutable_state_page, checkpoint);
+            });
         if (status != Status::OK)
         {
             return status;
@@ -3424,47 +4343,156 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        void *page_buffer = nullptr;
-        Status status = buffer_pool_->pinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, &page_buffer, ctx);
+        CheckpointControlState checkpoint{};
+        checkpoint.checkpoint_generation = std::max<uint64_t>(startup_generation_, 1);
+        checkpoint.checkpoint_start_time = defaultTimeSource().nowMicros();
+        checkpoint.captured_oit = header_ != nullptr ? header_->oldest_transaction_id : 0;
+        checkpoint.captured_oat = header_ != nullptr ? header_->oldest_active_xid : 0;
+        checkpoint.captured_ost = header_ != nullptr ? header_->oldest_snapshot : 0;
+        checkpoint.shutdown_intent = CheckpointShutdownIntent::CLEAN;
+        checkpoint.checkpoint_failure_reason = Status::OK;
+        checkpoint.queue_rebuild_required = false;
+        const uint64_t dirty_generation_boundary =
+            buffer_pool_->currentDirtyGeneration();
+        const uint64_t checkpoint_flushes_before =
+            buffer_pool_->getStats().checkpoint_flushes;
+        CatalogManager::CheckpointRunCatalogInfo checkpoint_run{};
+        checkpoint_run.checkpoint_generation = checkpoint.checkpoint_generation;
+        checkpoint_run.checkpoint_state = CheckpointLifecycleState::CAPTURING_HORIZONS;
+        checkpoint_run.start_time = checkpoint.checkpoint_start_time;
+        checkpoint_run.dirty_generation_low_watermark = dirty_generation_boundary;
+        checkpoint_run.pages_target = buffer_pool_->currentDirtyPageCount();
+        checkpoint_run.pages_flushed = 0;
+        checkpoint_run.is_valid = true;
+        auto persist_checkpoint_history =
+            [&](CheckpointLifecycleState phase, Status failure_reason, bool terminal) {
+                if (catalog_manager_ == nullptr)
+                {
+                    return;
+                }
+                checkpoint_run.checkpoint_state = phase;
+                checkpoint_run.pages_flushed =
+                    buffer_pool_->getStats().checkpoint_flushes - checkpoint_flushes_before;
+                checkpoint_run.has_failure_reason = failure_reason != Status::OK;
+                checkpoint_run.failure_reason = failure_reason;
+                checkpoint_run.has_end_time = terminal;
+                checkpoint_run.end_time = terminal ? defaultTimeSource().nowMicros() : 0;
+                ErrorContext history_ctx;
+                const Status history_status =
+                    catalog_manager_->upsertCheckpointRunCatalogEntry(
+                        checkpoint_run, &history_ctx);
+                if (history_status != Status::OK)
+                {
+                    LOG_WARNING(STORAGE,
+                                "Failed to persist checkpoint history row: %d (%s)",
+                                static_cast<int>(history_status),
+                                history_ctx.message.c_str());
+                }
+            };
+
+        auto persist_checkpoint_phase = [&](CheckpointLifecycleState phase,
+                                            bool clean_shutdown,
+                                            Status failure_reason) -> Status {
+            checkpoint.checkpoint_state = phase;
+            checkpoint.checkpoint_failure_reason = failure_reason;
+            checkpoint.queue_rebuild_required =
+                (phase == CheckpointLifecycleState::FAILED);
+
+            return mutateAndFlushSystemStatePage(
+                this,
+                buffer_pool_.get(),
+                page_size_,
+                ctx,
+                [&](BootstrapSystemStatePage *state_page) {
+                    state_page->clean_shutdown = clean_shutdown ? 1 : 0;
+                    state_page->startup_counter = startup_generation_;
+                    state_page->restart_generation = restart_generation_;
+                    if (clean_shutdown)
+                    {
+                        state_page->last_clean_shutdown_generation =
+                            checkpoint.checkpoint_generation;
+                    }
+                    state_page->last_checkpoint_txid =
+                        header_ != nullptr && header_->next_transaction_id > 0
+                            ? header_->next_transaction_id - 1
+                            : 0;
+                    state_page->last_checkpoint_time = defaultTimeSource().nowMicros();
+                    storeCheckpointControlState(state_page, checkpoint);
+                });
+        };
+
+        persist_checkpoint_history(CheckpointLifecycleState::CAPTURING_HORIZONS,
+                                   Status::OK,
+                                   false);
+
+        Status status = persist_checkpoint_phase(CheckpointLifecycleState::CAPTURING_HORIZONS,
+                                                 false,
+                                                 Status::OK);
         if (status != Status::OK)
         {
             return status;
         }
 
-        auto *state_page = static_cast<BootstrapSystemStatePage *>(page_buffer);
-        if (state_page->page_header.page_type != PAGE_TYPE_SYSTEM_STATE)
-        {
-            buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
-            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid system state bootstrap page");
-            return Status::PAGE_CORRUPT;
-        }
-
-        state_page->clean_shutdown = 1;
-        state_page->startup_counter = startup_generation_;
-        state_page->restart_generation = restart_generation_;
-        state_page->last_clean_shutdown_generation = startup_generation_;
-        state_page->last_checkpoint_txid =
-            header_ != nullptr && header_->next_transaction_id > 0
-                ? header_->next_transaction_id - 1
-                : 0;
-        state_page->last_checkpoint_time = defaultTimeSource().nowMicros();
-        state_page->page_header.checksum =
-            calculatePageChecksum(reinterpret_cast<uint8_t *>(state_page), page_size_);
-        buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, true, ctx);
-
-        status = buffer_pool_->flushAll(ctx);
+        status = persist_checkpoint_phase(CheckpointLifecycleState::DRAINING_DIRTY_SET,
+                                          false,
+                                          Status::OK);
         if (status != Status::OK)
         {
             return status;
         }
-        status = sync(ctx);
+        status = buffer_pool_->flushDirtyCheckpointBoundary(dirty_generation_boundary, ctx);
+        if (status != Status::OK)
+        {
+            (void)persist_checkpoint_phase(CheckpointLifecycleState::FAILED, false, status);
+            persist_checkpoint_history(CheckpointLifecycleState::FAILED, status, true);
+            return status;
+        }
+
+        WritebackAttribution attribution{};
+        attribution.queue_kind = WritebackQueueKind::CHECKPOINT;
+        attribution.policy_domain = WritebackPolicyDomain::CHECKPOINT;
+        attribution.page_class = PAGE_TYPE_SYSTEM_STATE;
+        status = sync(ctx, attribution);
+        if (status != Status::OK)
+        {
+            (void)persist_checkpoint_phase(CheckpointLifecycleState::FAILED, false, status);
+            persist_checkpoint_history(CheckpointLifecycleState::FAILED, status, true);
+            return status;
+        }
+
+        status = persist_checkpoint_phase(CheckpointLifecycleState::PERSISTING_CHECKPOINT_MARKER,
+                                          false,
+                                          Status::OK);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        status = persist_checkpoint_phase(CheckpointLifecycleState::CLEAN_SHUTDOWN_ARMED,
+                                          true,
+                                          Status::OK);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        status = persist_checkpoint_phase(CheckpointLifecycleState::COMPLETE,
+                                          true,
+                                          Status::OK);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        persist_checkpoint_history(CheckpointLifecycleState::COMPLETE, Status::OK, true);
+
+        status = persist_checkpoint_phase(CheckpointLifecycleState::IDLE, true, Status::OK);
         if (status != Status::OK)
         {
             return status;
         }
 
         last_shutdown_was_clean_ = true;
-        last_clean_shutdown_generation_ = startup_generation_;
+        last_clean_shutdown_generation_ = checkpoint.checkpoint_generation;
         return Status::OK;
     }
 
@@ -3784,12 +4812,35 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Database::write_page(uint32_t page_id, const void *buffer, ErrorContext *ctx) -> Status
+    auto Database::write_page(uint32_t page_id,
+                              const void *buffer,
+                              ErrorContext *ctx,
+                              WritebackAttribution attribution) -> Status
     {
         if (fd_ < 0 || (buffer == nullptr))
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments to write_page");
             return Status::INVALID_ARGUMENT;
+        }
+
+        attribution = finalizeWritebackAttribution(buffer, attribution, 0);
+
+        MgaFailpointManager *failpoints = mga_failpoint_manager_.get();
+        if (failpoints != nullptr)
+        {
+            Status failpoint_status = failpoints->trip(
+                MgaFailpointTriggers::kWritebackPageWriteFailure,
+                {},
+                ctx);
+            if (failpoint_status != Status::OK)
+            {
+                noteWritebackFailure(failpoint_status,
+                                     classifyWritebackFailure(failpoint_status, 0, false),
+                                     attribution,
+                                     false,
+                                     ctx);
+                return failpoint_status;
+            }
         }
 
         // Finalize page header contract before durable write.
@@ -3816,14 +4867,20 @@ namespace scratchbird::core
                 snprintf(msg, sizeof(msg), "Short write on page (%zu/%u bytes)",
                          bytes_written, page_size_);
             }
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
-            return Status::IO_ERROR;
+            const Status failure_status = (errno == ENOSPC) ? Status::DISK_FULL : Status::IO_ERROR;
+            SET_ERROR_CONTEXT(ctx, failure_status, msg);
+            noteWritebackFailure(failure_status,
+                                 classifyWritebackFailure(failure_status, errno, false),
+                                 attribution,
+                                 false,
+                                 ctx);
+            return failure_status;
         }
 
         return Status::OK;
     }
 
-    auto Database::sync(ErrorContext *ctx) const -> Status
+    auto Database::sync(ErrorContext *ctx, WritebackAttribution attribution) const -> Status
     {
         if (fd_ < 0)
         {
@@ -3831,10 +4888,45 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
+        MgaFailpointManager *failpoints = mga_failpoint_manager_.get();
+        if (failpoints != nullptr)
+        {
+            Status failpoint_status = failpoints->trip(
+                MgaFailpointTriggers::kWritebackSyncFailure,
+                {},
+                ctx);
+            if (failpoint_status != Status::OK)
+            {
+                const_cast<Database *>(this)->noteWritebackFailure(
+                    failpoint_status,
+                    classifyWritebackFailure(failpoint_status, 0, true),
+                    attribution,
+                    true,
+                    ctx);
+                return failpoint_status;
+            }
+        }
+
         if (platform::syncFd(fd_) != 0)
         {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to sync database file");
-            return Status::IO_ERROR;
+            const int sync_errno = errno;
+            const Status failure_status =
+                (sync_errno == ENOSPC) ? Status::DISK_FULL : Status::IO_ERROR;
+            if (sync_errno == ENOSPC)
+            {
+                SET_ERROR_CONTEXT(ctx, failure_status, "Failed to sync database file: disk full");
+            }
+            else
+            {
+                SET_ERROR_CONTEXT(ctx, failure_status, "Failed to sync database file");
+            }
+            const_cast<Database *>(this)->noteWritebackFailure(
+                failure_status,
+                classifyWritebackFailure(failure_status, sync_errno, true),
+                attribution,
+                true,
+                ctx);
+            return failure_status;
         }
 
         return Status::OK;
@@ -3952,7 +5044,10 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Database::write_page_global(GPID gpid, const void *buffer, ErrorContext *ctx) -> Status
+    auto Database::write_page_global(GPID gpid,
+                                     const void *buffer,
+                                     ErrorContext *ctx,
+                                     WritebackAttribution attribution) -> Status
     {
         if (buffer == nullptr)
         {
@@ -4001,8 +5096,33 @@ namespace scratchbird::core
             }
         }
 
+        attribution = finalizeWritebackAttribution(buffer, attribution, tablespace_id);
+
+        MgaFailpointManager *failpoints = mga_failpoint_manager_.get();
+        if (failpoints != nullptr)
+        {
+            Status failpoint_status = failpoints->trip(
+                MgaFailpointTriggers::kWritebackPageWriteFailure,
+                {},
+                ctx);
+            if (failpoint_status != Status::OK)
+            {
+                noteWritebackFailure(failpoint_status,
+                                     classifyWritebackFailure(failpoint_status, 0, false),
+                                     attribution,
+                                     false,
+                                     ctx);
+                return failpoint_status;
+            }
+        }
+
         // Calculate offset in file (page_number * page_size_)
         off_t offset = static_cast<off_t>(page_number) * static_cast<off_t>(page_size_);
+
+        // Finalize page header contract before durable write for both primary and custom
+        // tablespaces so GPID-based buffer-pool flushes publish canonical checksum state.
+        auto *page = const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(buffer));
+        preparePageForWrite(page, page_size_, page_number);
 
         // Write page to tablespace file
         errno = 0;
@@ -4022,8 +5142,14 @@ namespace scratchbird::core
                          "Partial write: expected %u bytes, wrote %zu bytes for page %lu in tablespace %u",
                          page_size_, bytes_written, page_number, tablespace_id);
             }
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
-            return Status::IO_ERROR;
+            const Status failure_status = (errno == ENOSPC) ? Status::DISK_FULL : Status::IO_ERROR;
+            SET_ERROR_CONTEXT(ctx, failure_status, msg);
+            noteWritebackFailure(failure_status,
+                                 classifyWritebackFailure(failure_status, errno, false),
+                                 attribution,
+                                 false,
+                                 ctx);
+            return failure_status;
         }
 
         return Status::OK;

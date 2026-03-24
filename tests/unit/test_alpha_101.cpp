@@ -274,8 +274,9 @@ TEST_F(Alpha101Test, ChecksumValidation)
     std::fstream file(test_db_->path(), std::ios::binary | std::ios::in | std::ios::out);
     ASSERT_TRUE(file.is_open());
 
-    // Corrupt a byte after the checksum field
-    file.seekp(100);
+    // Corrupt payload bytes outside the canonical page header so payload CRC
+    // validation must fail on reopen.
+    file.seekp(CANONICAL_PAGE_HEADER_BYTES + 16);
     char corrupt = 0xFF;
     file.write(&corrupt, 1);
     file.close();

@@ -9,11 +9,13 @@
  */
 #pragma once
 
+#include "scratchbird/core/gc_publication.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/savepoint_backout.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/tid.h"
 #include <cstdint>
+#include <string>
 #include <memory>
 #include <vector>
 #include <unordered_map>
@@ -235,6 +237,9 @@ namespace scratchbird::core
             -> bool;
         auto listFragmentationAdvisories(std::vector<FragmentationAdvisorySnapshot>& advisories_out) const
             -> Status;
+        void publishIndexCleanupPublication(const IndexCleanupPublicationRecord& publication);
+        auto listIndexCleanupPublications(
+            std::vector<IndexCleanupPublicationRecord>& publications_out) const -> Status;
 
     private:
         friend class IndexScanIterator;
@@ -251,6 +256,9 @@ namespace scratchbird::core
         std::unordered_map<ID, std::unordered_map<uint32_t, FragmentationAdvisory>>
             fragmentation_advisories_;
         mutable std::mutex fragmentation_advisory_mutex_;
+        std::unordered_map<ID, std::unordered_map<uint32_t, IndexCleanupPublicationRecord>>
+            cleanup_publications_;
+        mutable std::mutex cleanup_publication_mutex_;
 
         // Find a page with free space for a tuple
         auto findFreePage(const ID &table_id, uint32_t tuple_size, uint32_t *page_id_out,

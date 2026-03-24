@@ -146,7 +146,14 @@ protected:
         auto* header = reinterpret_cast<DatabaseHeader*>(page.data());
         header->db_version = db_version;
         header->db_compat_version = db_compat_version;
-        header->page_header.checksum = calculatePageChecksum(page.data(), page.size());
+        if (header->page_header.header_bytes == 0u)
+        {
+            header->page_header.header_bytes = CANONICAL_PAGE_HEADER_BYTES;
+        }
+        header->page_header.payload_checksum =
+            calculatePageChecksum(page.data(), static_cast<uint32_t>(page.size()));
+        header->page_header.header_checksum =
+            calculatePageHeaderChecksum(page.data(), header->page_header.header_bytes);
 
         ASSERT_TRUE(writeFullyAt(fd, page.data(), page.size(), 0));
         ::close(fd);

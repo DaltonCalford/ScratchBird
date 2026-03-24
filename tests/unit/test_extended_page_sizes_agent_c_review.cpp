@@ -191,7 +191,7 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, StructureAlignment)
         sizeof(uint16_t) + sizeof(uint16_t) + sizeof(ID) + sizeof(uint64_t);
     ASSERT_EQ(sizeof(HeapPageSpecial), expected_special_size)
         << "HeapPageSpecial size should match packed field sizes";
-    ASSERT_EQ(sizeof(PageHeader), 80) << "PageHeader size check";
+    ASSERT_EQ(sizeof(PageHeader), 106) << "PageHeader size check";
     ASSERT_EQ(sizeof(TupleHeader), 88) << "TupleHeader size check";
 
     // Verify field offsets using offsetof
@@ -243,7 +243,7 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, MixedPageSizeBufferPool)
             << " message=" << ctx.message;
 
         info.db = new Database();
-        ASSERT_EQ(info.db->open(info.path, &ctx), Status::OK);
+        ASSERT_EQ(info.db->open(info.path, &ctx), Status::OK) << ctx.message;
 
         // Reuse the database-owned buffer pool to avoid dual-writer races.
         info.bp = info.db->buffer_pool();
@@ -405,7 +405,7 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, ConcurrentLargePageAccess)
     ASSERT_EQ(Database::create(db_path, page_size, &ctx), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open(db_path, &ctx), Status::OK);
+    ASSERT_EQ(db.open(db_path, &ctx), Status::OK) << ctx.message;
 
     // Initialize buffer pool with enough buffers for concurrent access
     BufferPool::Config config;
@@ -593,7 +593,7 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, RegressionExistingPageSizes)
         ASSERT_EQ(Database::create(path, page_size, &ctx), Status::OK);
 
         Database db;
-        ASSERT_EQ(db.open(path, &ctx), Status::OK);
+        ASSERT_EQ(db.open(path, &ctx), Status::OK) << ctx.message;
         ASSERT_EQ(db.page_size(), page_size);
 
         // Initialize components
@@ -880,7 +880,7 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, OutOfMemoryConditions)
     }
 
     Database db;
-    ASSERT_EQ(db.open(db_path, &ctx), Status::OK);
+    ASSERT_EQ(db.open(db_path, &ctx), Status::OK) << ctx.message;
 
     // Try to create a buffer pool with unrealistic size
     BufferPool::Config config;

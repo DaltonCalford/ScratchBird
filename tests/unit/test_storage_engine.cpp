@@ -15,6 +15,7 @@
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/mga_backout_engine.h"
+#include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/toast.h"
@@ -286,6 +287,41 @@ protected:
         db_->buffer_pool()->unpinPage(page_id, false, &ctx);
         EXPECT_EQ(status, Status::OK) << ctx.message;
         return tuple;
+    }
+
+    std::vector<uint8_t> readVisibleTupleCopy(const ID &table_id,
+                                              uint32_t stable_page_id,
+                                              uint16_t stable_item_id)
+    {
+        ErrorContext ctx;
+        void *page_buffer = nullptr;
+        const GPID stable_gpid = makeGPID(PRIMARY_TABLESPACE_ID, stable_page_id);
+        EXPECT_EQ(db_->buffer_pool()->pinPageGlobal(stable_gpid, &page_buffer, &ctx), Status::OK)
+            << ctx.message;
+
+        ToastManager toast_mgr(db_.get(), table_id);
+        EXPECT_EQ(toast_mgr.initialize(&ctx), Status::OK) << ctx.message;
+
+        HeapPage heap_page(static_cast<uint8_t *>(page_buffer), kPageSize, &toast_mgr, db_.get(),
+                           table_id);
+        const uint8_t *tuple_data = nullptr;
+        uint32_t tuple_size = 0;
+        TID visible_tid{};
+        Status status = heap_page.findVisibleVersion(stable_item_id,
+                                                     ConnectionContext::getCurrentTransactionId(),
+                                                     &tuple_data,
+                                                     &tuple_size,
+                                                     &visible_tid,
+                                                     &ctx);
+        std::vector<uint8_t> tuple_copy;
+        if (status == Status::OK && tuple_data != nullptr)
+        {
+            tuple_copy.assign(tuple_data, tuple_data + tuple_size);
+        }
+
+        db_->buffer_pool()->unpinPageGlobal(stable_gpid, false, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        return tuple_copy;
     }
 
     ID readRawToastValueId(const ID &table_id, uint32_t page_id, uint16_t item_id)
@@ -1302,6 +1338,181 @@ TEST_F(StorageEngineTest, ReadConsistencyWaitModeAlsoUsesRestartSemantics)
     ProcArrayManager::unregisterBackend(blocker_proc_id, &ctx);
 }
 
+TEST_F(StorageEngineTest, NoWaitUpdateConflictReturnsDistinctLockNotAvailableStatus)
+{
+    ErrorContext ctx;
+    ID table_id = createSingleIntTable("no_wait_update_conflict_table");
+
+    auto tuple = buildIntTuple(41, conn_ctx_->getCurrentXid());
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   tuple.data(),
+                                   static_cast<uint32_t>(tuple.size()),
+                                   &page_id,
+                                   &item_id,
+                                   &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->commit(&ctx), Status::OK) << ctx.message;
+
+    LockTag tag{};
+    tag.target_type = LockTarget::LOCK_TARGET_TUPLE;
+    tag.object_uuid = table_id;
+    tag.page_num = page_id;
+    tag.offset_num = item_id;
+    tag.padding = 0;
+
+    uint32_t blocker_proc_id = 0;
+    ASSERT_EQ(ProcArrayManager::registerBackend(&blocker_proc_id, &ctx), Status::OK)
+        << ctx.message;
+    uint64_t blocker_xid = 0;
+    ASSERT_EQ(db_->transaction_manager()->beginTransaction(blocker_proc_id, blocker_xid, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_->lock_manager()->acquireLock(blocker_proc_id,
+                                               tag,
+                                               LockMode::LOCK_ROW_EXCLUSIVE,
+                                               true,
+                                               0,
+                                               &ctx),
+              Status::OK)
+        << ctx.message;
+
+    std::unique_ptr<ConnectionContext> conn2;
+    ASSERT_EQ(db_->connect(conn2, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(conn2->initialize(&ctx), Status::OK) << ctx.message;
+    ID system_user = db_->catalog_manager()->getSystemUserId(&ctx);
+    conn2->setCurrentUser(system_user, true);
+    ASSERT_EQ(conn2->startTransaction(false, IsolationLevel::READ_COMMITTED, true, &ctx),
+              Status::OK)
+        << ctx.message;
+    conn2->setWaitForLocks(false);
+
+    auto updated_tuple = buildIntTuple(42, conn2->getCurrentXid());
+    ConnectionContext::setCurrent(conn2.get());
+    uint32_t new_page_id = 0;
+    uint16_t new_item_id = 0;
+    Status status = engine_->updateTuple(table_id,
+                                         page_id,
+                                         item_id,
+                                         updated_tuple.data(),
+                                         static_cast<uint32_t>(updated_tuple.size()),
+                                         &new_page_id,
+                                         &new_item_id,
+                                         &ctx);
+    EXPECT_EQ(status, Status::LOCK_NOT_AVAILABLE);
+    EXPECT_NE(ctx.message.find("UPDATE_CONFLICT_NO_WAIT"), std::string::npos) << ctx.message;
+    EXPECT_EQ(conn2->statementRestartCount(), 0u);
+
+    ConnectionContext::setCurrent(conn_ctx_.get());
+    db_->lock_manager()->releaseAllLocks(blocker_proc_id, nullptr);
+    db_->transaction_manager()->rollbackTransaction(blocker_proc_id, blocker_xid, nullptr);
+    ProcArrayManager::unregisterBackend(blocker_proc_id, &ctx);
+}
+
+TEST_F(StorageEngineTest, ReadConsistencyRestartRollsBackEarlierStatementMutations)
+{
+    ErrorContext ctx;
+    ID table_id = createSingleIntTable("rc_restart_statement_scope_table");
+
+    auto first_tuple = buildIntTuple(41, conn_ctx_->getCurrentXid());
+    uint32_t first_page_id = 0;
+    uint16_t first_item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id, first_tuple.data(), static_cast<uint32_t>(first_tuple.size()),
+                                   &first_page_id, &first_item_id, &ctx), Status::OK)
+        << ctx.message;
+
+    auto second_tuple = buildIntTuple(84, conn_ctx_->getCurrentXid());
+    uint32_t second_page_id = 0;
+    uint16_t second_item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   second_tuple.data(),
+                                   static_cast<uint32_t>(second_tuple.size()),
+                                   &second_page_id,
+                                   &second_item_id,
+                                   &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->commit(&ctx), Status::OK) << ctx.message;
+
+    LockTag tag{};
+    tag.target_type = LockTarget::LOCK_TARGET_TUPLE;
+    tag.object_uuid = table_id;
+    tag.page_num = second_page_id;
+    tag.offset_num = second_item_id;
+    tag.padding = 0;
+
+    uint32_t blocker_proc_id = 0;
+    ASSERT_EQ(ProcArrayManager::registerBackend(&blocker_proc_id, &ctx), Status::OK)
+        << ctx.message;
+    uint64_t blocker_xid = 0;
+    ASSERT_EQ(db_->transaction_manager()->beginTransaction(blocker_proc_id, blocker_xid, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_->lock_manager()->acquireLock(blocker_proc_id, tag,
+                                               LockMode::LOCK_ROW_EXCLUSIVE, true, 0, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    std::unique_ptr<ConnectionContext> conn2;
+    ASSERT_EQ(db_->connect(conn2, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(conn2->initialize(&ctx), Status::OK) << ctx.message;
+    ID system_user = db_->catalog_manager()->getSystemUserId(&ctx);
+    conn2->setCurrentUser(system_user, true);
+    ASSERT_EQ(conn2->startTransaction(false, IsolationLevel::READ_COMMITTED_READ_CONSISTENCY,
+                                      true, &ctx),
+              Status::OK)
+        << ctx.message;
+    conn2->setWaitForLocks(false);
+    ASSERT_EQ(conn2->beginStatementTracking(
+                  "UPDATE users.public.rc_restart_statement_scope_table SET id = id + 1", &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ConnectionContext::setCurrent(conn2.get());
+
+    auto first_update = buildIntTuple(42, conn2->getCurrentXid());
+    uint32_t first_new_page_id = 0;
+    uint16_t first_new_item_id = 0;
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   first_page_id,
+                                   first_item_id,
+                                   first_update.data(),
+                                   static_cast<uint32_t>(first_update.size()),
+                                   &first_new_page_id,
+                                   &first_new_item_id,
+                                   &ctx),
+              Status::OK)
+        << ctx.message;
+
+    auto second_update = buildIntTuple(85, conn2->getCurrentXid());
+    uint32_t second_new_page_id = 0;
+    uint16_t second_new_item_id = 0;
+    Status status = engine_->updateTuple(table_id,
+                                         second_page_id,
+                                         second_item_id,
+                                         second_update.data(),
+                                         static_cast<uint32_t>(second_update.size()),
+                                         &second_new_page_id,
+                                         &second_new_item_id,
+                                         &ctx);
+    EXPECT_EQ(status, Status::SERIALIZATION_FAILURE);
+    EXPECT_NE(ctx.message.find("READ_CONSISTENCY_RESTART_REQUIRED"), std::string::npos);
+    EXPECT_EQ(conn2->statementRestartCount(), 1u);
+
+    const auto visible_after_restart = readVisibleTupleCopy(table_id, first_page_id, first_item_id);
+    expectTuplePayloadEquals(visible_after_restart, first_tuple);
+
+    conn2->endStatementTrackingFailure(static_cast<uint32_t>(status), "40001");
+    EXPECT_FALSE(conn2->hasActiveSavepoints());
+
+    ConnectionContext::setCurrent(conn_ctx_.get());
+    db_->lock_manager()->releaseAllLocks(blocker_proc_id, nullptr);
+    db_->transaction_manager()->rollbackTransaction(blocker_proc_id, blocker_xid, nullptr);
+    ProcArrayManager::unregisterBackend(blocker_proc_id, &ctx);
+}
+
 TEST_F(StorageEngineTest, PageFullAllocatesNewPage)
 {
     ID table_id = createTestTable("page_full_test");
@@ -1648,6 +1859,15 @@ TEST_F(StorageEngineTest, CrossPageSavepointRollbackRestoresIndexedKeyVisibility
                                    &ctx),
               Status::OK) << ctx.message;
 
+    auto* page_mgr = db_->page_manager();
+    ASSERT_NE(page_mgr, nullptr);
+    const uint32_t extent_end = ((page_id / 32u) + 1u) * 32u;
+    if (page_mgr->totalPages() < extent_end)
+    {
+        ASSERT_EQ(page_mgr->extendFile(extent_end - page_mgr->totalPages(), &ctx), Status::OK)
+            << ctx.message;
+    }
+
     TID stable_tid(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
     fillPageAlmostFull(page_id, 128, 96);
 
@@ -1813,6 +2033,182 @@ TEST_F(StorageEngineTest, ReleasedNestedSavepointPreservesEarliestRestoreImage)
     expectIndexSeekNotFound(index_id, 20);
     expectIndexSeekNotFound(index_id, 30);
     expectIndexSeekNotFound(index_id, 40);
+}
+
+TEST_F(StorageEngineTest, ShadowedSavepointNameResolvesToMostRecentFrame)
+{
+    ErrorContext ctx;
+    ID table_id = createSingleIntTable("savepoint_shadowed_name_restore");
+    ID index_id = createSingleIntIndex(table_id, "idx_savepoint_shadowed_name_restore", false);
+
+    auto original_tuple = buildIntTuple(10);
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   original_tuple.data(),
+                                   static_cast<uint32_t>(original_tuple.size()),
+                                   &page_id,
+                                   &item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    TID stable_tid(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
+
+    ASSERT_EQ(conn_ctx_->createSavepoint("sp_shadow", &ctx), Status::OK) << ctx.message;
+
+    auto first_update = buildIntTuple(20, conn_ctx_->getCurrentXid());
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   first_update.data(),
+                                   static_cast<uint32_t>(first_update.size()),
+                                   nullptr,
+                                   nullptr,
+                                   &ctx),
+              Status::OK) << ctx.message;
+    expectIndexSeekFindsTid(index_id, 20, stable_tid);
+
+    ASSERT_EQ(conn_ctx_->createSavepoint("sp_shadow", &ctx), Status::OK) << ctx.message;
+
+    auto second_update = buildIntTuple(30, conn_ctx_->getCurrentXid());
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   second_update.data(),
+                                   static_cast<uint32_t>(second_update.size()),
+                                   nullptr,
+                                   nullptr,
+                                   &ctx),
+              Status::OK) << ctx.message;
+    expectIndexSeekFindsTid(index_id, 30, stable_tid);
+
+    ASSERT_EQ(conn_ctx_->rollbackToSavepoint("sp_shadow", &ctx), Status::OK) << ctx.message;
+
+    Tuple restored{};
+    ASSERT_EQ(engine_->getTuple(page_id, item_id, &restored, &ctx), Status::OK) << ctx.message;
+    const auto *payload = restored.data + sizeof(TupleHeader);
+    EXPECT_EQ(*reinterpret_cast<const int32_t *>(payload), 20);
+    expectIndexSeekFindsTid(index_id, 20, stable_tid);
+    expectIndexSeekNotFound(index_id, 30);
+}
+
+TEST_F(StorageEngineTest, ReleasingInteriorSavepointKeepsYoungerFrameActive)
+{
+    ErrorContext ctx;
+    ID table_id = createSingleIntTable("savepoint_release_interior_keeps_inner");
+    ID index_id = createSingleIntIndex(table_id, "idx_savepoint_release_interior_keeps_inner", false);
+
+    auto original_tuple = buildIntTuple(10);
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   original_tuple.data(),
+                                   static_cast<uint32_t>(original_tuple.size()),
+                                   &page_id,
+                                   &item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    TID stable_tid(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
+
+    ASSERT_EQ(conn_ctx_->createSavepoint("sp_outer", &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(conn_ctx_->createSavepoint("sp_middle", &ctx), Status::OK) << ctx.message;
+
+    auto middle_update = buildIntTuple(20, conn_ctx_->getCurrentXid());
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   middle_update.data(),
+                                   static_cast<uint32_t>(middle_update.size()),
+                                   nullptr,
+                                   nullptr,
+                                   &ctx),
+              Status::OK) << ctx.message;
+    expectIndexSeekFindsTid(index_id, 20, stable_tid);
+
+    ASSERT_EQ(conn_ctx_->createSavepoint("sp_inner", &ctx), Status::OK) << ctx.message;
+
+    auto inner_update = buildIntTuple(30, conn_ctx_->getCurrentXid());
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   inner_update.data(),
+                                   static_cast<uint32_t>(inner_update.size()),
+                                   nullptr,
+                                   nullptr,
+                                   &ctx),
+              Status::OK) << ctx.message;
+    expectIndexSeekFindsTid(index_id, 30, stable_tid);
+
+    ASSERT_EQ(conn_ctx_->releaseSavepoint("sp_middle", &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(conn_ctx_->rollbackToSavepoint("sp_inner", &ctx), Status::OK) << ctx.message;
+
+    Tuple restored{};
+    ASSERT_EQ(engine_->getTuple(page_id, item_id, &restored, &ctx), Status::OK) << ctx.message;
+    const auto *payload = restored.data + sizeof(TupleHeader);
+    EXPECT_EQ(*reinterpret_cast<const int32_t *>(payload), 20);
+    expectIndexSeekFindsTid(index_id, 20, stable_tid);
+    expectIndexSeekNotFound(index_id, 30);
+}
+
+TEST_F(StorageEngineTest, OuterRollbackAfterInteriorReleaseUsesEarliestRestoreImage)
+{
+    ErrorContext ctx;
+    ID table_id = createSingleIntTable("savepoint_release_interior_outer_restore");
+    ID index_id = createSingleIntIndex(table_id, "idx_savepoint_release_interior_outer_restore", false);
+
+    auto original_tuple = buildIntTuple(10);
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   original_tuple.data(),
+                                   static_cast<uint32_t>(original_tuple.size()),
+                                   &page_id,
+                                   &item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    TID stable_tid(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
+
+    ASSERT_EQ(conn_ctx_->createSavepoint("sp_outer", &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(conn_ctx_->createSavepoint("sp_middle", &ctx), Status::OK) << ctx.message;
+
+    auto middle_update = buildIntTuple(20, conn_ctx_->getCurrentXid());
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   middle_update.data(),
+                                   static_cast<uint32_t>(middle_update.size()),
+                                   nullptr,
+                                   nullptr,
+                                   &ctx),
+              Status::OK) << ctx.message;
+    expectIndexSeekFindsTid(index_id, 20, stable_tid);
+
+    ASSERT_EQ(conn_ctx_->createSavepoint("sp_inner", &ctx), Status::OK) << ctx.message;
+
+    auto inner_update = buildIntTuple(30, conn_ctx_->getCurrentXid());
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   inner_update.data(),
+                                   static_cast<uint32_t>(inner_update.size()),
+                                   nullptr,
+                                   nullptr,
+                                   &ctx),
+              Status::OK) << ctx.message;
+    expectIndexSeekFindsTid(index_id, 30, stable_tid);
+
+    ASSERT_EQ(conn_ctx_->releaseSavepoint("sp_middle", &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(conn_ctx_->rollbackToSavepoint("sp_outer", &ctx), Status::OK) << ctx.message;
+
+    Tuple restored{};
+    ASSERT_EQ(engine_->getTuple(page_id, item_id, &restored, &ctx), Status::OK) << ctx.message;
+    const auto *payload = restored.data + sizeof(TupleHeader);
+    EXPECT_EQ(*reinterpret_cast<const int32_t *>(payload), 10);
+    expectIndexSeekFindsTid(index_id, 10, stable_tid);
+    expectIndexSeekNotFound(index_id, 20);
+    expectIndexSeekNotFound(index_id, 30);
 }
 
 TEST_F(StorageEngineTest, BootstrapVisibilityFallbackIsTransactionManagerOwned)

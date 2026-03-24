@@ -16,6 +16,7 @@
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/mga_failpoint_manager.h"
 #include "unit/test_user_helpers.h"
 #include <filesystem>
 #include <fstream>
@@ -213,6 +214,48 @@ TEST_F(CopyExecutorTest, CopyEncodingUnsupportedRejected) {
     auto copy_out = compileAndExecute(sql);
     ASSERT_FALSE(copy_out.success());
     EXPECT_NE(copy_out.error().find("COPY ENCODING"), std::string::npos);
+
+    std::filesystem::remove(path);
+}
+
+TEST_F(CopyExecutorTest, CopyFromPreservesWriteFenceStatusAtExecutorBoundary) {
+    auto create_table = compileAndExecute(
+        "CREATE TABLE copy_fenced (id INT, name VARCHAR(10))");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    std::string path = makeUniquePath("copy_fenced", ".csv");
+    {
+        std::ofstream out(path);
+        ASSERT_TRUE(out.is_open());
+        out << "1,alpha\n";
+    }
+
+    auto* failpoints = db_.mga_failpoint_manager();
+    ASSERT_NE(failpoints, nullptr);
+
+    ErrorContext ctx;
+    scratchbird::core::MgaFailpointDefinition definition{};
+    definition.trigger_name =
+        std::string(scratchbird::core::MgaFailpointTriggers::kWritebackSyncFailure);
+    definition.injected_status = Status::DISK_FULL;
+    ASSERT_EQ(failpoints->installSeed("tdrw012_copy_write_fence", {definition}, &ctx), Status::OK)
+        << ctx.message;
+
+    scratchbird::core::WritebackAttribution attribution{};
+    attribution.queue_kind = scratchbird::core::WritebackQueueKind::FOREGROUND_HELP;
+    attribution.policy_domain = scratchbird::core::WritebackPolicyDomain::TRANSACTION;
+    ASSERT_EQ(db_.sync(&ctx, attribution), Status::DISK_FULL);
+    ASSERT_EQ(failpoints->clear(&ctx), Status::OK) << ctx.message;
+    ASSERT_TRUE(db_.write_admission_fenced());
+
+    std::string sql = "COPY copy_fenced FROM '" + path +
+                      "' WITH (FORMAT csv, DELIMITER ',', BATCH_SIZE 1)";
+    auto copy_in = compileAndExecute(sql);
+    ASSERT_FALSE(copy_in.success());
+    EXPECT_EQ(copy_in.status(), Status::DISK_FULL) << copy_in.error();
+    EXPECT_EQ(copy_in.sqlstate(), std::string(statusToSQLState(Status::DISK_FULL)))
+        << copy_in.error();
+    EXPECT_NE(copy_in.error().find("writeback"), std::string::npos);
 
     std::filesystem::remove(path);
 }

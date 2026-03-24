@@ -239,18 +239,26 @@ namespace scratchbird::core
     private:
         struct SweepProgressState
         {
-            uint64_t generation_id = 0;
+            uint64_t sweep_generation = 0;
             bool active = false;
             uint64_t start_horizon = 0;
-            uint64_t resume_oit_before = 0;
+            uint64_t captured_oit = 0;
+            uint64_t captured_oat = 0;
+            uint64_t captured_ost = 0;
+            uint64_t checkpoint_generation_seen = 0;
             uint16_t resume_lane_mask = 0;
             bool resume_strict_audit = true;
-            ID last_relation_id{};
-            uint64_t last_page_cursor = 0;
+            ID relation_uuid{};
+            ID filespace_uuid{};
+            uint64_t page_id = 0;
+            uint32_t slot_id = 0;
+            uint32_t cursor_crc32c = 0;
+            uint64_t persist_time = 0;
             uint64_t reclaimed_version_count = 0;
             uint64_t reclaimed_bytes = 0;
             uint64_t index_backlog_count = 0;
             SweepProgressStage stage = SweepProgressStage::NONE;
+            bool cursor_checksum_valid = false;
         };
 
         Database *db_;
@@ -279,6 +287,10 @@ namespace scratchbird::core
 
         Status loadSweepProgressState(SweepProgressState *state_out, ErrorContext *ctx) const;
         Status persistSweepProgressState(const SweepProgressState &state, ErrorContext *ctx);
+        Status validateSweepResumeState(SweepProgressState *state,
+                                        bool *resume_compatible_out,
+                                        uint64_t *rewind_page_cursor_out,
+                                        ErrorContext *ctx) const;
 
         // Update sweep statistics
         void updateStatistics(uint64_t oit_before, uint64_t oit_after, uint64_t duration_ms,

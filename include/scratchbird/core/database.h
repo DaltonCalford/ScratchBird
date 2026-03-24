@@ -145,6 +145,36 @@ namespace scratchbird
             uint64_t created_time;   // Creation timestamp
         };
 
+        enum class WritebackQueueKind : uint64_t
+        {
+            UNKNOWN = 0,
+            FOREGROUND_HELP = 1,
+            BACKGROUND_AGE = 2,
+            CHECKPOINT = 3,
+            METADATA_PRIORITY = 4,
+            WRITE_COMBINE = 5,
+            REPAIR_RETRY = 6,
+        };
+
+        enum class WritebackPolicyDomain : uint64_t
+        {
+            UNKNOWN = 0,
+            TRANSACTION = 1,
+            CHECKPOINT = 2,
+            ALLOCATOR = 3,
+            CATALOG = 4,
+            SYSTEM_STATE = 5,
+        };
+
+        struct WritebackAttribution
+        {
+            WritebackQueueKind queue_kind = WritebackQueueKind::UNKNOWN;
+            WritebackPolicyDomain policy_domain = WritebackPolicyDomain::UNKNOWN;
+            uint64_t filespace_id = 0;
+            uint64_t page_class = 0;
+            uint64_t dirty_generation = 0;
+        };
+
         // Database class for managing database files
         class Database
         {
@@ -235,6 +265,24 @@ namespace scratchbird
                 REFUSE_OPEN = 2
             };
 
+            enum class StartupRecoveryClassification : uint8_t
+            {
+                NOT_CLASSIFIED = 0,
+                CLEAN_SHUTDOWN_FAST_PATH = 1,
+                DIRTY_SHUTDOWN_NORMALIZATION_REQUIRED = 2,
+                REPAIRABLE_PAGE_DAMAGE = 3,
+                WRITEBACK_FAILURE_RESUME = 4,
+                CATALOG_OR_CONTROL_DAMAGE_FATAL = 5
+            };
+
+            enum class StartupServiceState : uint8_t
+            {
+                NORMAL = 0,
+                DEGRADED_READ_WRITE = 1,
+                WRITE_FENCED = 2,
+                FATAL = 3
+            };
+
             enum StartupRepairPlan : uint64_t
             {
                 STARTUP_REPAIR_PLAN_NONE = 0,
@@ -254,6 +302,10 @@ namespace scratchbird
                     StartupCorruptionClass::NONE;
                 StartupQuarantineAction quarantine_action =
                     StartupQuarantineAction::NONE;
+                StartupRecoveryClassification classification =
+                    StartupRecoveryClassification::NOT_CLASSIFIED;
+                StartupServiceState service_state =
+                    StartupServiceState::NORMAL;
                 Status failure_status = Status::OK;
                 bool clean_shutdown_marker = false;
                 bool startup_repair = false;
@@ -349,6 +401,8 @@ namespace scratchbird
             {
                 return header_ ? header_->db_compat_version : 0;
             }
+            bool write_admission_fenced() const;
+            Status write_admission_status() const;
 
             // LSM Integration: Get database path (for LSM-Tree index directories)
             const std::string &path() const
@@ -359,7 +413,10 @@ namespace scratchbird
             // === LEGACY API: tablespace 0 only ===
             // Read/write pages
             Status read_page(uint32_t page_id, void *buffer, ErrorContext *ctx = nullptr) const;
-            Status write_page(uint32_t page_id, const void *buffer, ErrorContext *ctx = nullptr);
+            Status write_page(uint32_t page_id,
+                              const void *buffer,
+                              ErrorContext *ctx = nullptr,
+                              WritebackAttribution attribution = {});
 
             // Read partial page data
             Status read_page_partial(uint32_t page_id, void *buffer, uint32_t size, uint32_t offset,
@@ -389,7 +446,14 @@ namespace scratchbird
              *
              * Supports both primary (tablespace 0) and custom tablespaces (1-65535).
              */
-            Status write_page_global(GPID gpid, const void *buffer, ErrorContext *ctx = nullptr);
+            Status write_page_global(GPID gpid,
+                                     const void *buffer,
+                                     ErrorContext *ctx = nullptr,
+                                     WritebackAttribution attribution = {});
+            bool write_admission_enforcement_suspended() const
+            {
+                return write_admission_enforcement_suspended_;
+            }
 
             // Get page manager
             PageManager *page_manager()
@@ -652,7 +716,9 @@ namespace scratchbird
             }
 
             // Sync database file to disk
-            Status sync(ErrorContext *ctx = nullptr) const;
+            Status sync(ErrorContext *ctx = nullptr,
+                        WritebackAttribution attribution = {}) const;
+            Status clearWritebackFailureState(ErrorContext *ctx = nullptr);
 
             // Update header total pages (for internal use by PageManager)
             Status update_header_total_pages(uint32_t total_pages, ErrorContext *ctx = nullptr);
@@ -741,8 +807,16 @@ namespace scratchbird
             uint64_t startup_generation_ = 0;
             uint64_t restart_generation_ = 0;
             uint64_t last_clean_shutdown_generation_ = 0;
+            uint64_t startup_recovery_start_time_ = 0;
             StartupReconciliationState startup_reconciliation_state_{};
             bool startup_quarantine_active_ = false;
+            mutable std::mutex writeback_failure_mutex_;
+            bool writeback_incident_open_ = false;
+            WritebackDegradedState writeback_degraded_state_ = WritebackDegradedState::NORMAL;
+            bool write_admission_fenced_ = false;
+            Status write_admission_failure_status_ = Status::OK;
+            bool writeback_incident_persist_in_progress_ = false;
+            bool write_admission_enforcement_suspended_ = false;
 
             // Forward declared pointers - managed via unique_ptr for RAII
             std::unique_ptr<PageManager> page_manager_;       // Page allocation manager (owned)
@@ -815,6 +889,11 @@ namespace scratchbird
                                                          ErrorContext *ctx);
             Status markStartupOpen(ErrorContext *ctx);
             Status markCleanShutdown(ErrorContext *ctx);
+            void noteWritebackFailure(Status status,
+                                      WritebackFailureClass failure_class,
+                                      const WritebackAttribution &attribution,
+                                      bool skip_sync,
+                                      ErrorContext *ctx);
             Status persistStartupReconciliationState(const StartupReconciliationState &state,
                                                      ErrorContext *ctx);
             Status runStartupReconciliation(ErrorContext *ctx);

@@ -37,6 +37,8 @@ using namespace scratchbird::core;
 
 namespace {
 
+constexpr size_t kCatalogHeaderOffset = sizeof(PageHeader);
+
 class ColumnstorePersistenceTest : public ::testing::Test
 {
 protected:
@@ -242,7 +244,8 @@ TEST_F(ColumnstorePersistenceTest, GenerationSelectionOneCorrupted)
     // Read peer_page_id from the canonical metadata header field offset.
     uint32_t peer_page_id = 0;
     memcpy(&peer_page_id,
-           static_cast<uint8_t*>(meta_buffer) + offsetof(ColumnstoreMetaHeader, peer_page_id),
+           static_cast<uint8_t*>(meta_buffer) + kCatalogHeaderOffset +
+               offsetof(ColumnstoreMetaHeader, peer_page_id),
            sizeof(uint32_t));
 
     db_->buffer_pool()->unpinPageGlobal(meta_gpid_a, false, nullptr);
@@ -316,7 +319,8 @@ TEST_F(ColumnstorePersistenceTest, BothMetaPagesCorrupted)
 
     uint32_t peer_page_id = 0;
     memcpy(&peer_page_id,
-           static_cast<uint8_t*>(meta_buffer) + offsetof(ColumnstoreMetaHeader, peer_page_id),
+           static_cast<uint8_t*>(meta_buffer) + kCatalogHeaderOffset +
+               offsetof(ColumnstoreMetaHeader, peer_page_id),
            sizeof(uint32_t));
 
     db_->buffer_pool()->unpinPageGlobal(meta_gpid_a, false, nullptr);

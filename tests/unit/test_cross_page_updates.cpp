@@ -31,6 +31,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/page_manager.h"
 #include "test_helpers.h"
 #include <vector>
 #include <cstring>
@@ -141,6 +142,24 @@ protected:
         }
 
         db_->buffer_pool()->unpinPage(page_id, true, ctx);
+    }
+
+    uint32_t allocateOwnedHeapPage(const ID &table_id, ErrorContext *ctx)
+    {
+        uint32_t page_id = 0;
+        void *page_buffer = nullptr;
+        EXPECT_EQ(db_->buffer_pool()->allocatePage(&page_id, &page_buffer, ctx), Status::OK)
+            << ctx->message;
+
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
+        std::memset(page_data, 0, db_->page_size());
+
+        HeapPage heap_page(page_data, db_->page_size(), nullptr, db_.get(), table_id);
+        EXPECT_EQ(heap_page.initialize(page_id, ctx), Status::OK) << ctx->message;
+        heap_page.applyOwningTableContract(false);
+
+        EXPECT_EQ(db_->buffer_pool()->unpinPage(page_id, true, ctx), Status::OK) << ctx->message;
+        return page_id;
     }
 
     // Choose an update tuple size that forces cross-page back-versioning while
@@ -287,30 +306,114 @@ TEST_F(CrossPageUpdateTest, BasicCrossPageUpdate)
 TEST_F(CrossPageUpdateTest, CrossPageBackVersionPrefersSameExtentCandidate)
 {
     ErrorContext ctx;
+    constexpr uint32_t kBackVersionExtentPages = 32;
+    constexpr uint32_t kBackVersionLocalityBucketPages = 128;
 
     auto small_tuple = createTupleData(120, 0x7A);
     uint32_t page_id = 0;
+    uint32_t candidate_page_id = 0;
+    do
+    {
+        page_id = allocateOwnedHeapPage(test_table_id_, &ctx);
+        candidate_page_id = allocateOwnedHeapPage(test_table_id_, &ctx);
+    } while ((page_id / 32u) != (candidate_page_id / 32u) || (page_id % 32u) == 31u);
+
+    void *page_buffer = nullptr;
+    ASSERT_EQ(db_->buffer_pool()->pinPage(page_id, &page_buffer, &ctx), Status::OK)
+        << ctx.message;
+    auto *page_data = static_cast<uint8_t *>(page_buffer);
+    HeapPage primary_heap_page(page_data, db_->page_size(), nullptr, db_.get(), test_table_id_);
     uint16_t item_id = 0;
-    Status status = storage_engine_->insertTuple(test_table_id_, small_tuple.data(),
-                                                 small_tuple.size(), &page_id, &item_id, &ctx);
-    ASSERT_EQ(status, Status::OK) << "Failed to insert initial tuple: " << ctx.message;
+    Status status = primary_heap_page.insertTuple(small_tuple.data(),
+                                                  static_cast<uint32_t>(small_tuple.size()),
+                                                  txn_mgr_ ? txn_mgr_->getCurrentXid() : 100,
+                                                  &item_id,
+                                                  &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to place primary tuple: " << ctx.message;
+    ASSERT_EQ(db_->buffer_pool()->unpinPage(page_id, true, &ctx), Status::OK) << ctx.message;
 
     fillPageAlmostFull(page_id, &ctx);
 
-    auto spill_tuple = createTupleData(120, 0x4C);
-    uint32_t candidate_page_id = page_id;
-    uint16_t candidate_item_id = 0;
-    while (candidate_page_id == page_id)
-    {
-        status = storage_engine_->insertTuple(test_table_id_, spill_tuple.data(),
-                                             spill_tuple.size(), &candidate_page_id,
-                                             &candidate_item_id, &ctx);
-        ASSERT_EQ(status, Status::OK) << "Failed to allocate spill candidate page: "
-                                      << ctx.message;
-    }
-
     ASSERT_EQ(page_id / 32, candidate_page_id / 32)
         << "Test setup expected a same-extent spill page";
+
+    std::vector<GPID> table_pages;
+    ASSERT_EQ(db_->catalog_manager()->enumerateTablePages(test_table_id_, table_pages, &ctx),
+              Status::OK)
+        << "Failed to enumerate table pages: " << ctx.message;
+
+    auto same_extent = [&](uint32_t lhs, uint32_t rhs) {
+        return (lhs / kBackVersionExtentPages) == (rhs / kBackVersionExtentPages);
+    };
+    auto same_bucket = [&](uint32_t lhs, uint32_t rhs) {
+        return (lhs / kBackVersionLocalityBucketPages) == (rhs / kBackVersionLocalityBucketPages);
+    };
+    auto distance = [&](uint32_t lhs, uint32_t rhs) {
+        return (lhs > rhs) ? (lhs - rhs) : (rhs - lhs);
+    };
+    auto tier = [&](uint32_t primary_page_id, uint32_t possible_page_id) {
+        if (same_extent(primary_page_id, possible_page_id) &&
+            same_bucket(primary_page_id, possible_page_id))
+        {
+            return 0u;
+        }
+        if (same_bucket(primary_page_id, possible_page_id))
+        {
+            return 1u;
+        }
+        return 2u;
+    };
+
+    uint32_t expected_back_page_id = 0;
+    bool expected_back_page_valid = false;
+    for (const auto &page_gpid : table_pages)
+    {
+        const uint32_t possible_page_id = static_cast<uint32_t>(getPageNumber(page_gpid));
+        if (possible_page_id == page_id)
+        {
+            continue;
+        }
+
+        void *candidate_buffer = nullptr;
+        ASSERT_EQ(db_->buffer_pool()->pinPage(possible_page_id, &candidate_buffer, &ctx), Status::OK)
+            << "Failed to pin candidate page " << possible_page_id << ": " << ctx.message;
+
+        auto *candidate_data = static_cast<uint8_t *>(candidate_buffer);
+        HeapPage candidate_heap_page(candidate_data, db_->page_size());
+        const bool has_space = candidate_heap_page.hasFreeSpace(
+            static_cast<uint32_t>(small_tuple.size()));
+        ASSERT_EQ(db_->buffer_pool()->unpinPage(possible_page_id, false, &ctx), Status::OK)
+            << ctx.message;
+        if (!has_space)
+        {
+            continue;
+        }
+
+        if (!expected_back_page_valid)
+        {
+            expected_back_page_id = possible_page_id;
+            expected_back_page_valid = true;
+            continue;
+        }
+
+        const uint32_t possible_tier = tier(page_id, possible_page_id);
+        const uint32_t expected_tier = tier(page_id, expected_back_page_id);
+        if (possible_tier < expected_tier ||
+            (possible_tier == expected_tier &&
+             (distance(page_id, possible_page_id) <
+                  distance(page_id, expected_back_page_id) ||
+              (distance(page_id, possible_page_id) ==
+                   distance(page_id, expected_back_page_id) &&
+               possible_page_id < expected_back_page_id))))
+        {
+            expected_back_page_id = possible_page_id;
+        }
+    }
+
+    ASSERT_TRUE(expected_back_page_valid)
+        << "Test setup expected at least one non-primary page with room for the back version";
+    ASSERT_TRUE(same_extent(page_id, expected_back_page_id))
+        << "Expected back-version page should stay within the primary extent";
 
     auto updated_tuple = createCrossPageUpdateTuple(page_id, item_id, 0x5D, &ctx);
     uint32_t updated_page_id = 0;
@@ -331,8 +434,9 @@ TEST_F(CrossPageUpdateTest, CrossPageBackVersionPrefersSameExtentCandidate)
     const TID back_tid = hdr->getBackVersionTID();
     const uint32_t back_page_id = static_cast<uint32_t>(getPageNumber(back_tid.gpid));
 
-    EXPECT_EQ(back_page_id, candidate_page_id)
-        << "Back-version placement should prefer the closest same-extent candidate";
+    EXPECT_EQ(back_page_id, expected_back_page_id)
+        << "Back-version placement should choose the best same-table page by "
+           "same-extent locality, distance, and page-id tie-break";
 }
 
 /**

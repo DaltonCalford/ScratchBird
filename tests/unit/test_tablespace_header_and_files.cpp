@@ -49,7 +49,8 @@ TEST_F(TablespaceHeaderTest, WritesHeaderCurrentWithLongName)
     ASSERT_EQ(Database::create(db_path_, 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open(db_path_), Status::OK);
+    ErrorContext open_ctx;
+    ASSERT_EQ(db.open(db_path_, &open_ctx), Status::OK) << open_ctx.message;
 
     TablespaceConfig config;
     config.autoextend_enabled = true;
@@ -80,7 +81,8 @@ TEST_F(TablespaceHeaderTest, TablespaceIdAllocationSkipsReservedOne)
     ASSERT_EQ(Database::create(db_path_, 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open(db_path_), Status::OK);
+    ErrorContext open_ctx;
+    ASSERT_EQ(db.open(db_path_, &open_ctx), Status::OK) << open_ctx.message;
 
     ErrorContext ctx;
     uint16_t tablespace_id = 0;
@@ -96,7 +98,8 @@ TEST_F(TablespaceHeaderTest, TablespaceFileRecordsLoadMultipleFiles)
     ASSERT_EQ(Database::create(db_path_, 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open(db_path_), Status::OK);
+    ErrorContext open_ctx;
+    ASSERT_EQ(db.open(db_path_, &open_ctx), Status::OK) << open_ctx.message;
 
     ErrorContext ctx;
     uint16_t tablespace_id = 0;
@@ -132,7 +135,8 @@ TEST_F(TablespaceHeaderTest, TablespaceFileRecordsPersistAcrossRestart)
 
     {
         Database db;
-        ASSERT_EQ(db.open(db_path_), Status::OK);
+        ErrorContext open_ctx;
+        ASSERT_EQ(db.open(db_path_, &open_ctx), Status::OK) << open_ctx.message;
 
         ErrorContext ctx;
         Status status = db.catalog_manager()->createTablespace("ts_files_persist", ts_path_,
@@ -149,7 +153,8 @@ TEST_F(TablespaceHeaderTest, TablespaceFileRecordsPersistAcrossRestart)
 
     {
         Database db;
-        ASSERT_EQ(db.open(db_path_), Status::OK);
+        ErrorContext open_ctx;
+        ASSERT_EQ(db.open(db_path_, &open_ctx), Status::OK) << open_ctx.message;
 
         ErrorContext ctx;
         TablespaceInfo info;
@@ -170,7 +175,8 @@ TEST_F(TablespaceHeaderTest, VirtualTablespaceLocationIsMetadataOnly)
     ASSERT_EQ(Database::create(db_path_, 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open(db_path_), Status::OK);
+    ErrorContext open_ctx;
+    ASSERT_EQ(db.open(db_path_, &open_ctx), Status::OK) << open_ctx.message;
 
     const std::string virtual_location =
         "sb://emu-ts/testdb/root_hash/name_hash/root_token/ts_virtual";
@@ -204,7 +210,8 @@ TEST_F(TablespaceHeaderTest, VirtualTablespacePersistsAcrossRestartWithoutBackin
 
     {
         Database db;
-        ASSERT_EQ(db.open(db_path_), Status::OK);
+        ErrorContext open_ctx;
+        ASSERT_EQ(db.open(db_path_, &open_ctx), Status::OK) << open_ctx.message;
 
         ErrorContext ctx;
         uint16_t tablespace_id = 0;
@@ -222,7 +229,8 @@ TEST_F(TablespaceHeaderTest, VirtualTablespacePersistsAcrossRestartWithoutBackin
 
     {
         Database db;
-        ASSERT_EQ(db.open(db_path_), Status::OK);
+        ErrorContext open_ctx;
+        ASSERT_EQ(db.open(db_path_, &open_ctx), Status::OK) << open_ctx.message;
 
         ErrorContext ctx;
         TablespaceInfo info;
@@ -239,7 +247,8 @@ TEST_F(TablespaceHeaderTest, DropVirtualTablespaceSucceedsWithoutFilesystemArtif
     ASSERT_EQ(Database::create(db_path_, 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open(db_path_), Status::OK);
+    ErrorContext open_ctx;
+    ASSERT_EQ(db.open(db_path_, &open_ctx), Status::OK) << open_ctx.message;
 
     const std::string virtual_location =
         "sb://emu-ts/testdb/root_hash/name_hash/root_token/ts_drop";

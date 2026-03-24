@@ -61,6 +61,20 @@ namespace {
         return "LOCK_UNKNOWN";
     }
 
+    void recordTouchedPageLocal(std::vector<uint32_t> *touched_pages_out, uint32_t page_id)
+    {
+        if (touched_pages_out == nullptr)
+        {
+            return;
+        }
+
+        if (std::find(touched_pages_out->begin(), touched_pages_out->end(), page_id) ==
+            touched_pages_out->end())
+        {
+            touched_pages_out->push_back(page_id);
+        }
+    }
+
     auto formatLockResourceIdLocal(const scratchbird::core::LockTag& tag) -> std::string
     {
         return std::to_string(static_cast<uint8_t>(tag.target_type)) + ":" +
@@ -88,6 +102,29 @@ namespace {
         }
 
         return ClogStatus::IN_PROGRESS;
+    }
+
+    auto transactionStateCanConsumeReserve(
+        scratchbird::core::TransactionState state) -> bool
+    {
+        using scratchbird::core::TransactionState;
+
+        switch (state)
+        {
+            case TransactionState::COMMITTED:
+            case TransactionState::ABORTED:
+            case TransactionState::PREPARED:
+                return true;
+            case TransactionState::ACTIVE:
+                return false;
+        }
+
+        return false;
+    }
+
+    auto durabilityModeUsesDurableFence(scratchbird::core::DurabilityMode mode) -> bool
+    {
+        return mode != scratchbird::core::DurabilityMode::DEVELOPMENT_UNSAFE;
     }
 }
 
@@ -363,6 +400,21 @@ namespace scratchbird::core
             }
         }
 
+        uint64_t reconciled_oit = oldest_xid_;
+        if (!db_->last_shutdown_was_clean() || startup_repair || rewrote_commit_sequences)
+        {
+            status = findOldestInterestingXidFromInventoryUnlocked(
+                oldest_xid_,
+                current_next_xid,
+                tip_root_page_,
+                reconciled_oit,
+                ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
         uint64_t reconciled_oat = current_next_xid;
         if (!prepared_xids_.empty())
         {
@@ -377,10 +429,12 @@ namespace scratchbird::core
         const uint64_t reconciled_ost = current_next_xid;
         const uint64_t reconciled_snapshot_serial = 0;
         const bool markers_changed =
+            oldest_xid_ != reconciled_oit ||
             oldest_active_xid_ != reconciled_oat ||
             oldest_snapshot_ != reconciled_ost ||
             oldest_snapshot_serial_ != reconciled_snapshot_serial;
 
+        oldest_xid_ = reconciled_oit;
         oldest_active_xid_ = reconciled_oat;
         oldest_snapshot_ = reconciled_ost;
         oldest_snapshot_serial_ = reconciled_snapshot_serial;
@@ -636,18 +690,25 @@ namespace scratchbird::core
 
         // Persist ACTIVE state and next_xid advance before publishing the
         // transaction in attachment-visible inventory.
-        Status status = writeTipEntry(new_xid, TransactionState::ACTIVE, 0, ctx);
+        std::vector<uint32_t> publication_pages;
+
+        Status status = writeTipEntry(new_xid,
+                                      TransactionState::ACTIVE,
+                                      0,
+                                      ctx,
+                                      &publication_pages);
         if (status != Status::OK)
         {
             return status;
         }
 
         // Persist IN_PROGRESS in CLOG to avoid "unknown == committed" after restart
-        Status clog_status = db_->clog()->setStatus(new_xid, ClogStatus::IN_PROGRESS, ctx);
+        Status clog_status =
+            db_->clog()->setStatus(new_xid, ClogStatus::IN_PROGRESS, ctx, &publication_pages);
         if (clog_status != Status::OK)
         {
             // Best-effort mark as aborted in TIP to avoid dangling ACTIVE state
-            writeTipEntry(new_xid, TransactionState::ABORTED, 0, nullptr);
+            writeTipEntry(new_xid, TransactionState::ABORTED, 0, nullptr, nullptr);
             return clog_status;
         }
 
@@ -658,7 +719,7 @@ namespace scratchbird::core
             db_->update_header_next_xid(current_next_xid_for_header, ctx);
         }
 
-        status = flushTransactionState(ctx);
+        status = flushTransactionPublicationState(publication_pages, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -667,9 +728,10 @@ namespace scratchbird::core
         status = ProcArrayManager::setTransactionId(proc_id, new_xid, ctx);
         if (status != Status::OK)
         {
-            writeTipEntry(new_xid, TransactionState::ABORTED, 0, nullptr);
-            db_->clog()->setStatus(new_xid, ClogStatus::ABORTED, nullptr);
-            flushTransactionState(nullptr);
+            std::vector<uint32_t> cleanup_pages;
+            writeTipEntry(new_xid, TransactionState::ABORTED, 0, nullptr, &cleanup_pages);
+            db_->clog()->setStatus(new_xid, ClogStatus::ABORTED, nullptr, &cleanup_pages);
+            flushTransactionPublicationState(cleanup_pages, nullptr);
             return status;
         }
 
@@ -721,16 +783,24 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        Status status = flushTransactionState(ctx);
-        if (status != Status::OK)
+        const DurabilityMode durability_mode = getDurabilityMode();
+        const bool require_durable_fence = durabilityModeUsesDurableFence(durability_mode);
+        const bool use_group_commit = durability_mode == DurabilityMode::GROUP_COMMIT;
+
+        Status status = Status::OK;
+        if (!use_group_commit && require_durable_fence)
         {
-            SET_ERROR_CONTEXT_VNEXT(ctx, status, "TXN_0216",
-                                    "Commit fence flush failed before durable publish");
-            return status;
+            status = flushTransactionState(ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, status, "TXN_0216",
+                                        "Commit fence flush failed before durable publish");
+                return status;
+            }
         }
 
         MgaFailpointManager* failpoints = db_ ? db_->mga_failpoint_manager() : nullptr;
-        if (failpoints != nullptr)
+        if (require_durable_fence && !use_group_commit && failpoints != nullptr)
         {
             MgaFailpointInvocation invocation{};
             invocation.has_txid = true;
@@ -746,7 +816,7 @@ namespace scratchbird::core
         }
 
         // GROUP COMMIT OPTIMIZATION (Issue 2.19)
-        if (group_commit_enabled_.load(std::memory_order_acquire))
+        if (use_group_commit)
         {
             // Thread-owned waiter: lifetime is tied to this transaction call.
             // Queue stores raw pointers protected by group_commit_mutex_.
@@ -873,7 +943,10 @@ namespace scratchbird::core
             }
             if (status == Status::OK)
             {
-                status = flushTransactionState(ctx);
+                if (require_durable_fence)
+                {
+                    status = flushTransactionState(ctx);
+                }
             }
             commit_seqno_out = commit_seqno;
         }
@@ -897,10 +970,17 @@ namespace scratchbird::core
             return marker_status;
         }
 
-        status = flushTransactionState(ctx);
-        if (status != Status::OK)
+        if (require_durable_fence)
         {
-            return status;
+            status = flushTransactionState(ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+        else
+        {
+            commits_acknowledged_at_risk_.fetch_add(1, std::memory_order_relaxed);
         }
 
         {
@@ -919,7 +999,7 @@ namespace scratchbird::core
             stats_.transactions_committed++;
         }
 
-        if (failpoints != nullptr)
+        if (require_durable_fence && failpoints != nullptr)
         {
             MgaFailpointInvocation invocation{};
             invocation.has_txid = true;
@@ -1846,22 +1926,13 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto TransactionManager::findOldestInterestingXidFromInventory(uint64_t &xid_out,
-                                                                   ErrorContext *ctx) const
-        -> Status
+    auto TransactionManager::findOldestInterestingXidFromInventoryUnlocked(
+        uint64_t start_xid,
+        uint64_t end_xid_exclusive,
+        uint32_t tip_root_page,
+        uint64_t &xid_out,
+        ErrorContext *ctx) const -> Status
     {
-        (void)ctx;
-
-        uint64_t start_xid = 0;
-        uint64_t end_xid_exclusive = 0;
-        uint32_t tip_root_page = 0;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            start_xid = oldest_xid_;
-            end_xid_exclusive = next_xid_.load(std::memory_order_acquire);
-            tip_root_page = tip_root_page_;
-        }
-
         if (start_xid <= FROZEN_XID)
         {
             start_xid = FROZEN_XID + 1;
@@ -1991,6 +2062,28 @@ namespace scratchbird::core
 
         xid_out = (expected_xid < end_xid_exclusive) ? expected_xid : end_xid_exclusive;
         return Status::OK;
+    }
+
+    auto TransactionManager::findOldestInterestingXidFromInventory(uint64_t &xid_out,
+                                                                   ErrorContext *ctx) const
+        -> Status
+    {
+        uint64_t start_xid = 0;
+        uint64_t end_xid_exclusive = 0;
+        uint32_t tip_root_page = 0;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            start_xid = oldest_xid_;
+            end_xid_exclusive = next_xid_.load(std::memory_order_acquire);
+            tip_root_page = tip_root_page_;
+        }
+
+        return findOldestInterestingXidFromInventoryUnlocked(
+            start_xid,
+            end_xid_exclusive,
+            tip_root_page,
+            xid_out,
+            ctx);
     }
 
     auto TransactionManager::captureReclaimHorizons(ReclaimHorizonSnapshot &snapshot_out,
@@ -2226,6 +2319,7 @@ namespace scratchbird::core
         }
 
         auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
+        db_header->oldest_transaction_id = oldest_xid_;
         db_header->oldest_active_xid = oldest_active_xid_;
         db_header->oldest_snapshot = oldest_snapshot_;
         db_header->inventory_generation = inventory_generation_;
@@ -3029,10 +3123,13 @@ namespace scratchbird::core
     }
 
 
-    auto TransactionManager::allocateTipPage(uint32_t &page_id_out, ErrorContext *ctx) -> Status
+    auto TransactionManager::allocateTipPage(uint32_t &page_id_out,
+                                             ErrorContext *ctx,
+                                             bool allow_reserve_consumption) -> Status
     {
         // Allocate a new page for TIP
-        Status status = page_manager_->allocatePage(page_id_out, ctx);
+        Status status =
+            page_manager_->allocatePage(page_id_out, ctx, allow_reserve_consumption);
         if (status != Status::OK)
         {
             return status;
@@ -3123,11 +3220,15 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto TransactionManager::writeTipEntry(uint64_t xid, TransactionState state,
-                                           uint64_t commit_seqno, ErrorContext *ctx) -> Status
+    auto TransactionManager::writeTipEntry(uint64_t xid,
+                                           TransactionState state,
+                                           uint64_t commit_seqno,
+                                           ErrorContext *ctx,
+                                           std::vector<uint32_t> *touched_pages_out) -> Status
     {
         const uint64_t tip_commit_seqno =
             (state == TransactionState::COMMITTED) ? commit_seqno : 0;
+        const bool allow_reserve_consumption = transactionStateCanConsumeReserve(state);
 
         // TIP mutations are serialized to avoid concurrent page updates across
         // commit/rollback/job paths that can touch the same TIP chain.
@@ -3189,6 +3290,7 @@ namespace scratchbird::core
                             reinterpret_cast<uint8_t *>(page_buffer), db_->page_size());
 
                         buffer_pool_->unpinPage(start_page, true, ctx);
+                        recordTouchedPageLocal(touched_pages_out, start_page);
                         if (state == TransactionState::COMMITTED)
                         {
                             void *header_buffer = nullptr;
@@ -3206,6 +3308,7 @@ namespace scratchbird::core
                             db_header->page_header.checksum = calculatePageChecksum(
                                 reinterpret_cast<uint8_t *>(db_header), db_->page_size());
                             buffer_pool_->unpinPage(0, true, ctx);
+                            recordTouchedPageLocal(touched_pages_out, 0);
                         }
                         return Status::OK;
                     }
@@ -3262,6 +3365,7 @@ namespace scratchbird::core
                 }
 
                 buffer_pool_->unpinPage(current_page, true, ctx);
+                recordTouchedPageLocal(touched_pages_out, current_page);
                 if (state == TransactionState::COMMITTED)
                 {
                     void *header_buffer = nullptr;
@@ -3279,6 +3383,7 @@ namespace scratchbird::core
                     db_header->page_header.checksum = calculatePageChecksum(
                         reinterpret_cast<uint8_t *>(db_header), db_->page_size());
                     buffer_pool_->unpinPage(0, true, ctx);
+                    recordTouchedPageLocal(touched_pages_out, 0);
                 }
                 return Status::OK;
             }
@@ -3304,7 +3409,7 @@ namespace scratchbird::core
         {
             // Page is full - need to allocate a new page and chain it
             uint32_t new_page_id;
-            status = allocateTipPage(new_page_id, ctx);
+            status = allocateTipPage(new_page_id, ctx, allow_reserve_consumption);
             if (status != Status::OK)
             {
                 buffer_pool_->unpinPage(last_page, false, ctx);
@@ -3317,6 +3422,7 @@ namespace scratchbird::core
             tip_header->page_header.checksum =
                 calculatePageChecksum(reinterpret_cast<uint8_t *>(page_buffer), db_->page_size());
             buffer_pool_->unpinPage(last_page, true, ctx);
+            recordTouchedPageLocal(touched_pages_out, last_page);
 
             // Now use the new page
             last_page = new_page_id;
@@ -3360,6 +3466,7 @@ namespace scratchbird::core
         }
 
         buffer_pool_->unpinPage(last_page, true, ctx);
+        recordTouchedPageLocal(touched_pages_out, last_page);
 
         if (state == TransactionState::COMMITTED)
         {
@@ -3378,6 +3485,7 @@ namespace scratchbird::core
             db_header->page_header.checksum = calculatePageChecksum(
                 reinterpret_cast<uint8_t *>(db_header), db_->page_size());
             buffer_pool_->unpinPage(0, true, ctx);
+            recordTouchedPageLocal(touched_pages_out, 0);
         }
 
         return Status::OK;
@@ -3470,6 +3578,32 @@ namespace scratchbird::core
             }
         }
 
+        const auto wait_elapsed = std::chrono::steady_clock::now() - start_time;
+        const uint64_t wait_us = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(wait_elapsed).count());
+        group_commit_wait_time_us_total_.fetch_add(wait_us, std::memory_order_relaxed);
+
+        MgaFailpointManager* failpoints = db_ ? db_->mga_failpoint_manager() : nullptr;
+
+        Status status = flushTransactionState(ctx);
+        if (status == Status::OK && failpoints != nullptr)
+        {
+            for (const auto* waiter : batch)
+            {
+                MgaFailpointInvocation invocation{};
+                invocation.has_txid = true;
+                invocation.txid = waiter->xid;
+                status = failpoints->trip(
+                    MgaFailpointTriggers::kAfterDirtyFlushBeforeTipTerminal,
+                    invocation,
+                    ctx);
+                if (status != Status::OK)
+                {
+                    break;
+                }
+            }
+        }
+
         // Build TIP batch and assign durable commit sequence numbers to committed entries.
         std::vector<TipBatchEntry> xid_batch;
         xid_batch.reserve(batch.size());
@@ -3490,7 +3624,10 @@ namespace scratchbird::core
         }
 
         // Write all TIP entries in batch
-        Status status = writeTipEntriesBatch(xid_batch, ctx);
+        if (status == Status::OK)
+        {
+            status = writeTipEntriesBatch(xid_batch, ctx);
+        }
 
         if (status == Status::OK)
         {
@@ -3577,6 +3714,17 @@ namespace scratchbird::core
 
     auto TransactionManager::flushTransactionState(ErrorContext *ctx) -> Status
     {
+        if (db_ != nullptr &&
+            db_->write_admission_fenced() &&
+            !db_->write_admission_enforcement_suspended())
+        {
+            const Status fenced_status = db_->write_admission_status();
+            SET_ERROR_CONTEXT(ctx,
+                              fenced_status == Status::OK ? Status::IO_ERROR : fenced_status,
+                              "Durable commit fence is blocked by an open writeback incident");
+            return fenced_status == Status::OK ? Status::IO_ERROR : fenced_status;
+        }
+
         if (buffer_pool_ != nullptr)
         {
             buffer_pool_->beginCommitFence();
@@ -3584,13 +3732,76 @@ namespace scratchbird::core
         Status status = buffer_pool_->flushAll(ctx);
         if (status == Status::OK)
         {
-            status = db_->sync(ctx);
+            WritebackAttribution attribution{};
+            attribution.queue_kind = WritebackQueueKind::FOREGROUND_HELP;
+            attribution.policy_domain = WritebackPolicyDomain::TRANSACTION;
+            status = db_->sync(ctx, attribution);
         }
         if (buffer_pool_ != nullptr)
         {
             buffer_pool_->endCommitFence();
         }
+        if (status == Status::OK)
+        {
+            commits_acknowledged_at_risk_.store(0, std::memory_order_release);
+        }
+        else
+        {
+            commit_fence_failures_.fetch_add(1, std::memory_order_relaxed);
+        }
         return status;
+    }
+
+    auto TransactionManager::flushTransactionPublicationState(const std::vector<uint32_t> &page_ids,
+                                                              ErrorContext *ctx) -> Status
+    {
+        if (db_ != nullptr &&
+            db_->write_admission_fenced() &&
+            !db_->write_admission_enforcement_suspended())
+        {
+            const Status fenced_status = db_->write_admission_status();
+            SET_ERROR_CONTEXT(ctx,
+                              fenced_status == Status::OK ? Status::IO_ERROR : fenced_status,
+                              "Transaction publication is blocked by an open writeback incident");
+            return fenced_status == Status::OK ? Status::IO_ERROR : fenced_status;
+        }
+
+        if (page_manager_ != nullptr)
+        {
+            Status page_manager_status = page_manager_->flush(ctx);
+            if (page_manager_status != Status::OK)
+            {
+                return page_manager_status;
+            }
+        }
+
+        if (buffer_pool_ != nullptr)
+        {
+            Status header_status = buffer_pool_->flushPage(0, ctx);
+            if (header_status != Status::OK)
+            {
+                return header_status;
+            }
+
+            for (uint32_t page_id : page_ids)
+            {
+                if (page_id == 0)
+                {
+                    continue;
+                }
+
+                Status page_status = buffer_pool_->flushPage(page_id, ctx);
+                if (page_status != Status::OK)
+                {
+                    return page_status;
+                }
+            }
+        }
+
+        WritebackAttribution attribution{};
+        attribution.queue_kind = WritebackQueueKind::FOREGROUND_HELP;
+        attribution.policy_domain = WritebackPolicyDomain::TRANSACTION;
+        return db_->sync(ctx, attribution);
     }
 
     auto TransactionManager::normalizeStartupTipStates(bool clean_shutdown_marker,
@@ -3900,6 +4111,7 @@ namespace scratchbird::core
         }
 
         auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
+        db_header->oldest_transaction_id = oldest_xid_;
         db_header->oldest_active_xid = oldest_active_xid_;
         db_header->oldest_snapshot = oldest_snapshot_;
         db_header->inventory_generation = inventory_generation_;

@@ -252,6 +252,16 @@ namespace scratchbird::core
                                                  ErrorContext *ctx) -> Status
     {
         CatalogManager *catalog = db_->catalog_manager();
+        CatalogManager::TableInfo parent_info;
+        if (catalog != nullptr && table_id_ != catalog->policyToastTableId())
+        {
+            Status parent_status = catalog->getTable(table_id_, parent_info, ctx);
+            if (parent_status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, parent_status, "Failed to resolve parent TOAST metadata");
+                return parent_status;
+            }
+        }
 
         // TOAST table schema:
         // chunk_id: UUID (TOAST value ID)
@@ -292,6 +302,13 @@ namespace scratchbird::core
         // Create TOAST table in same tablespace as parent (Phase 2 Task 2.3)
         CatalogManager::TableCreateOptions options;
         options.table_type = CatalogManager::TableType::TOAST;
+        options.temp_metadata_scope = parent_info.temp_metadata_scope;
+        options.temp_data_scope = parent_info.temp_data_scope;
+        options.temp_on_commit = parent_info.temp_on_commit;
+        options.creating_session_id = parent_info.creating_session_id;
+        options.creating_transaction_id = parent_info.creating_transaction_id;
+        options.temp_parent_table_id = table_id_;
+        options.temp_schema_id = parent_info.temp_schema_id;
         if (catalog && table_id_ == catalog->policyToastTableId())
         {
             options.force_table_id = true;

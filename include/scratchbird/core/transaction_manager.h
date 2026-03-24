@@ -197,6 +197,13 @@ namespace scratchbird::core
         uint64_t clog_states_synchronized = 0;
     };
 
+    enum class DurabilityMode : uint8_t
+    {
+        STRICT = 0,
+        GROUP_COMMIT = 1,
+        DEVELOPMENT_UNSAFE = 2,
+    };
+
 // Transaction Inventory Page (TIP) format
 // TIP pages track transaction states for MVCC visibility
 #pragma pack(push, 1)
@@ -588,9 +595,15 @@ namespace scratchbird::core
         // Statistics
         struct Stats
         {
+            DurabilityMode durability_mode = DurabilityMode::STRICT;
             uint64_t transactions_started = 0;   // Total transactions started
             uint64_t transactions_committed = 0; // Total transactions committed
             uint64_t transactions_aborted = 0;   // Total transactions aborted
+            uint64_t group_commits_performed = 0;
+            uint64_t group_commit_total_xids = 0;
+            uint64_t group_commit_wait_time_us_total = 0;
+            uint64_t commit_fence_failures = 0;
+            uint64_t commits_acknowledged_at_risk = 0;
 
             // READ ONLY transaction optimizations (Phase 3)
             uint64_t readonly_transactions = 0;           // Read-only transactions started
@@ -605,14 +618,42 @@ namespace scratchbird::core
         auto getStats() const -> Stats
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            return stats_;
+            Stats snapshot = stats_;
+            snapshot.durability_mode = getDurabilityMode();
+            snapshot.group_commits_performed =
+                group_commits_performed_.load(std::memory_order_acquire);
+            snapshot.group_commit_total_xids =
+                group_commit_total_xids_.load(std::memory_order_acquire);
+            snapshot.group_commit_wait_time_us_total =
+                group_commit_wait_time_us_total_.load(std::memory_order_acquire);
+            snapshot.commit_fence_failures =
+                commit_fence_failures_.load(std::memory_order_acquire);
+            snapshot.commits_acknowledged_at_risk =
+                commits_acknowledged_at_risk_.load(std::memory_order_acquire);
+            return snapshot;
         }
 
-        // Group commit control
+        // Durability mode control
+        // LOCKING: Thread-safe. Uses atomic operations (no locks required).
+        void setDurabilityMode(DurabilityMode mode)
+        {
+            durability_mode_.store(static_cast<uint8_t>(mode), std::memory_order_release);
+            group_commit_enabled_.store(mode == DurabilityMode::GROUP_COMMIT,
+                                        std::memory_order_release);
+        }
+
+        auto getDurabilityMode() const -> DurabilityMode
+        {
+            return static_cast<DurabilityMode>(
+                durability_mode_.load(std::memory_order_acquire));
+        }
+
+        // Group commit compatibility control
         // LOCKING: Thread-safe. Uses atomic operations (no locks required).
         void enableGroupCommit(bool enabled)
         {
-            group_commit_enabled_.store(enabled, std::memory_order_release);
+            setDurabilityMode(enabled ? DurabilityMode::GROUP_COMMIT
+                                      : DurabilityMode::STRICT);
         }
 
         // Set group commit timeout in microseconds
@@ -716,13 +757,18 @@ namespace scratchbird::core
         std::mutex group_commit_mutex_;                  // Protects group commit queue
         std::vector<CommitWaiter*> commit_queue_;       // Queue of waiting commits (thread-owned waiters)
         bool group_commit_in_progress_{false};           // True if leader is processing
-        std::atomic<bool> group_commit_enabled_{true};   // Configuration flag
+        std::atomic<uint8_t> durability_mode_{
+            static_cast<uint8_t>(DurabilityMode::STRICT)}; // Commit durability mode
+        std::atomic<bool> group_commit_enabled_{false};  // Compatibility flag derived from durability mode
         uint64_t group_commit_timeout_us_{10000};        // Wait up to 10ms for batch (configurable)
         uint32_t group_commit_batch_size_{32};           // Max batch size (configurable)
 
         // Group commit statistics
         std::atomic<uint64_t> group_commits_performed_{0}; // Total group commits performed
         std::atomic<uint64_t> group_commit_total_xids_{0}; // Total XIDs committed via group commit
+        std::atomic<uint64_t> group_commit_wait_time_us_total_{0}; // Batch wait time spent by leaders
+        std::atomic<uint64_t> commit_fence_failures_{0}; // Durable fence failures before ACK
+        std::atomic<uint64_t> commits_acknowledged_at_risk_{0}; // Unsafe ACKs not yet fenced
 
         // Statistics
         Stats stats_;
@@ -754,18 +800,29 @@ namespace scratchbird::core
         auto loadTipPage(uint32_t page_id, ErrorContext *ctx) -> Status;
 
         // LOCKING: No locks required (allocates page and writes header, no shared state).
-        auto allocateTipPage(uint32_t &page_id_out, ErrorContext *ctx) -> Status;
+        // `allow_reserve_consumption` is reserved for terminal TIP publication paths.
+        auto allocateTipPage(uint32_t &page_id_out,
+                             ErrorContext *ctx,
+                             bool allow_reserve_consumption = false) -> Status;
 
         // LOCKING: No locks required internally. Updates TIP pages (disk I/O).
         //          May update tip_location_cache_ but doesn't require mutex_ (cache is best-effort).
-        auto writeTipEntry(uint64_t xid, TransactionState state, uint64_t commit_seqno,
-                           ErrorContext *ctx) -> Status;
+        auto writeTipEntry(uint64_t xid,
+                           TransactionState state,
+                           uint64_t commit_seqno,
+                           ErrorContext *ctx,
+                           std::vector<uint32_t> *touched_pages_out = nullptr) -> Status;
 
         // LOCKING: No locks required (reads TIP pages from disk via buffer pool).
         auto findTipEntry(uint64_t xid, TIPEntry &entry_out, ErrorContext *ctx) -> Status;
 
         // LOCKING: No locks required (performs fsync via Database API).
         auto flushTransactionState(ErrorContext *ctx) -> Status;
+
+        // Persist begin/abort publication metadata without fencing unrelated user pages.
+        // LOCKING: No locks required (performs targeted page flushes and fsync).
+        auto flushTransactionPublicationState(const std::vector<uint32_t> &page_ids,
+                                             ErrorContext *ctx) -> Status;
 
         // Check for XID wraparound based on transaction age
         // LOCKING: Requires mutex_ held by caller.
@@ -785,9 +842,15 @@ namespace scratchbird::core
         auto synchronizeStartupClogStateLocked(uint64_t *synchronized_count_out,
                                                ErrorContext *ctx) -> Status;
 
-        // Persist OAT/OST markers from current in-memory values.
+        // Persist OIT/OAT/OST markers from current in-memory values.
         // LOCKING: Requires mutex_ held by caller.
         auto persistTransactionMarkersLocked(ErrorContext *ctx) -> Status;
+
+        auto findOldestInterestingXidFromInventoryUnlocked(uint64_t start_xid,
+                                                           uint64_t end_xid_exclusive,
+                                                           uint32_t tip_root_page,
+                                                           uint64_t &xid_out,
+                                                           ErrorContext *ctx) const -> Status;
 
         auto backfillLegacyCommitSequencesLocked(bool *rewrote_tip_out,
                                                 ErrorContext *ctx) -> Status;

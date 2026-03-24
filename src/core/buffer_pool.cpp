@@ -67,6 +67,21 @@ namespace scratchbird::core
             }
             return "GENERIC";
         }
+
+        auto isTemporaryWorkPageBuffer(const uint8_t *buffer, uint32_t page_size) -> bool
+        {
+            if (buffer == nullptr || page_size < sizeof(PageHeader))
+            {
+                return false;
+            }
+
+            const auto *header = reinterpret_cast<const PageHeader *>(buffer);
+            if (header->magic != K_MAGIC_SBRD)
+            {
+                return false;
+            }
+            return pageIsTemporaryWork(*header);
+        }
     }
 
     BufferPool::BufferPool(Database *db, const Config &config) : db_(db), config_(config)
@@ -131,6 +146,10 @@ namespace scratchbird::core
             frames_[i].chain_depth_hint.store(0, std::memory_order_relaxed);
             frames_[i].last_gc_touch_generation.store(0, std::memory_order_relaxed);
             frames_[i].scan_probation_generation.store(0, std::memory_order_relaxed);
+            frames_[i].dirty_generation.store(0, std::memory_order_relaxed);
+            frames_[i].writeback_queue_state.store(
+                static_cast<uint8_t>(WritebackQueueState::NONE),
+                std::memory_order_relaxed);
             frames_[i].commit_fence_member.store(false, std::memory_order_relaxed);
 
             // Add to LRU list (all frames start as free)
@@ -481,8 +500,12 @@ namespace scratchbird::core
         snapshot_out->resident = true;
         snapshot_out->pin_count = frame.pin_count.load(std::memory_order_relaxed);
         snapshot_out->is_dirty = frame.is_dirty.load(std::memory_order_relaxed);
+        snapshot_out->dirty_generation =
+            frame.dirty_generation.load(std::memory_order_relaxed);
         snapshot_out->page_class = static_cast<MgaPageClass>(
             frame.mga_page_class.load(std::memory_order_relaxed));
+        snapshot_out->writeback_queue_state = static_cast<WritebackQueueState>(
+            frame.writeback_queue_state.load(std::memory_order_relaxed));
         snapshot_out->oldest_interesting_txid =
             frame.oldest_interesting_txid.load(std::memory_order_relaxed);
         snapshot_out->prune_safe_horizon_hint =
@@ -615,6 +638,10 @@ namespace scratchbird::core
                     frames_[i].chain_depth_hint.store(0, std::memory_order_relaxed);
                     frames_[i].last_gc_touch_generation.store(0, std::memory_order_relaxed);
                     frames_[i].scan_probation_generation.store(0, std::memory_order_relaxed);
+                    frames_[i].dirty_generation.store(0, std::memory_order_relaxed);
+                    frames_[i].writeback_queue_state.store(
+                        static_cast<uint8_t>(WritebackQueueState::NONE),
+                        std::memory_order_relaxed);
                     frames_[i].commit_fence_member.store(false, std::memory_order_relaxed);
                     lru_list_.push_back(i);
                 }
@@ -823,6 +850,10 @@ namespace scratchbird::core
         frames_[frame_index].chain_depth_hint.store(0, std::memory_order_relaxed);
         frames_[frame_index].last_gc_touch_generation.store(0, std::memory_order_relaxed);
         frames_[frame_index].scan_probation_generation.store(0, std::memory_order_relaxed);
+        frames_[frame_index].dirty_generation.store(0, std::memory_order_relaxed);
+        frames_[frame_index].writeback_queue_state.store(
+            static_cast<uint8_t>(WritebackQueueState::NONE),
+            std::memory_order_relaxed);
         frames_[frame_index].commit_fence_member.store(false, std::memory_order_relaxed);
         applyAutomaticMgaClassification(frame_index, effective_strategy);
 
@@ -882,13 +913,17 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // Update dirty flag
-        // P2-2: Update atomic dirty page counter when transitioning to dirty
-        if (is_dirty && tryMarkFrameDirty(frame_index))
+        // Update dirty flag and publish the latest dirty generation so checkpoint
+        // drains can distinguish pages dirtied before vs. after their boundary.
+        if (is_dirty)
         {
-            if (auto* conn_ctx = ConnectionContext::getCurrent())
+            publishDirtyGeneration(frame_index);
+            if (tryMarkFrameDirty(frame_index))
             {
-                conn_ctx->recordPageMark();
+                if (auto* conn_ctx = ConnectionContext::getCurrent())
+                {
+                    conn_ctx->recordPageMark();
+                }
             }
         }
 
@@ -961,11 +996,14 @@ namespace scratchbird::core
         }
 
         // Write to disk
+        const uint64_t flushed_generation =
+            frames_[frame_index].dirty_generation.load(std::memory_order_acquire);
         Status status = writePageToDisk(gpid, frames_[frame_index].data.get(), ctx);
         if (status == Status::OK)
         {
-            // P2-2: Decrement dirty counter when transitioning from dirty to clean
-            tryClearFrameDirty(frame_index);
+            finishFrameWriteback(frame_index,
+                                 flushed_generation,
+                                 WritebackQueueState::BACKGROUND);
             // MEDIUM-1 FIX: Use relaxed atomic increment for stats
             stats_.flushes.fetch_add(1, std::memory_order_relaxed);
         }
@@ -994,14 +1032,21 @@ namespace scratchbird::core
             {
                 continue;
             }
+            if (isTemporaryWorkPageBuffer(frames_[i].data.get(), config_.page_size))
+            {
+                continue;
+            }
 
+            const uint64_t flushed_generation =
+                frames_[i].dirty_generation.load(std::memory_order_acquire);
             Status status = writePageToDisk(frames_[i].gpid, frames_[i].data.get(), ctx);
             if (status != Status::OK)
             {
                 return status;
             }
-            // P2-2: Decrement dirty counter when transitioning from dirty to clean
-            tryClearFrameDirty(i);
+            finishFrameWriteback(i,
+                                 flushed_generation,
+                                 WritebackQueueState::BACKGROUND);
             // MEDIUM-1 FIX: Use relaxed atomic increment for stats
             stats_.flushes.fetch_add(1, std::memory_order_relaxed);
         }
@@ -1107,7 +1152,25 @@ namespace scratchbird::core
             // Check if this frame belongs to the target tablespace
             if (frame_tablespace_id == tablespace_id)
             {
+                std::unique_lock<std::mutex> content_lock(*frames_[i].content_mutex,
+                                                          std::try_to_lock);
+                if (!content_lock.owns_lock())
+                {
+                    continue;
+                }
+                if (frames_[i].pin_count.load(std::memory_order_relaxed) > 0)
+                {
+                    continue;
+                }
+                if (frames_[i].gpid == INVALID_GPID ||
+                    !frames_[i].is_dirty.load(std::memory_order_acquire))
+                {
+                    continue;
+                }
+
                 // Flush this dirty page
+                const uint64_t flushed_generation =
+                    frames_[i].dirty_generation.load(std::memory_order_acquire);
                 Status status = writePageToDisk(frames_[i].gpid, frames_[i].data.get(), ctx);
                 if (status != Status::OK)
                 {
@@ -1117,8 +1180,9 @@ namespace scratchbird::core
                     return status;
                 }
 
-                // P2-2: Decrement dirty counter when transitioning from dirty to clean
-                tryClearFrameDirty(i);
+                finishFrameWriteback(i,
+                                     flushed_generation,
+                                     WritebackQueueState::BACKGROUND);
                 stats_.flushes.fetch_add(1, std::memory_order_relaxed);
                 flushed_count++;
             }
@@ -1134,10 +1198,13 @@ namespace scratchbird::core
     // P2-1: Updated to use partitioned page table locks
     auto BufferPool::lockPage(uint32_t page_id, ErrorContext *ctx) -> Status
     {
-        uint32_t frame_index;
-
-        // P2-1: Convert to GPID and use partition lock
         GPID gpid = convertPageIDtoGPID(page_id);
+        return lockPageGlobal(gpid, ctx);
+    }
+
+    auto BufferPool::lockPageGlobal(GPID gpid, ErrorContext *ctx) -> Status
+    {
+        uint32_t frame_index;
         size_t partition_idx = getPartitionIndex(gpid);
         auto& partition = page_table_partitions_[partition_idx];
 
@@ -1172,10 +1239,13 @@ namespace scratchbird::core
     // P2-1: Updated to use partitioned page table locks
     auto BufferPool::unlockPage(uint32_t page_id, ErrorContext *ctx) -> Status
     {
-        uint32_t frame_index;
-
-        // P2-1: Convert to GPID and use partition lock
         GPID gpid = convertPageIDtoGPID(page_id);
+        return unlockPageGlobal(gpid, ctx);
+    }
+
+    auto BufferPool::unlockPageGlobal(GPID gpid, ErrorContext *ctx) -> Status
+    {
+        uint32_t frame_index;
         size_t partition_idx = getPartitionIndex(gpid);
         auto& partition = page_table_partitions_[partition_idx];
 
@@ -1256,8 +1326,17 @@ namespace scratchbird::core
             frame.chain_depth_hint.store(0, std::memory_order_relaxed);
             frame.last_gc_touch_generation.store(0, std::memory_order_relaxed);
             frame.scan_probation_generation.store(0, std::memory_order_relaxed);
+            frame.dirty_generation.store(0, std::memory_order_relaxed);
+            frame.writeback_queue_state.store(static_cast<uint8_t>(WritebackQueueState::NONE),
+                                              std::memory_order_relaxed);
             frame.commit_fence_member.store(false, std::memory_order_relaxed);
             return Status::OK;
+        }
+
+        std::unique_lock<std::mutex> content_lock(*frame.content_mutex, std::try_to_lock);
+        if (!content_lock.owns_lock())
+        {
+            return Status::INVALID_ARGUMENT;
         }
 
         size_t partition_idx = getPartitionIndex(frame.gpid);
@@ -1278,12 +1357,16 @@ namespace scratchbird::core
 
         if (frame.is_dirty.load(std::memory_order_acquire))
         {
+            const uint64_t flushed_generation =
+                frame.dirty_generation.load(std::memory_order_acquire);
             Status status = writePageToDisk(frame.gpid, frame.data.get(), ctx);
             if (status != Status::OK)
             {
                 return status;
             }
-            tryClearFrameDirty(frame_index);
+            finishFrameWriteback(frame_index,
+                                 flushed_generation,
+                                 WritebackQueueState::NONE);
             stats_.flushes.fetch_add(1, std::memory_order_relaxed);
             stats_.evictions_dirty.fetch_add(1, std::memory_order_relaxed);
         }
@@ -1312,6 +1395,9 @@ namespace scratchbird::core
         frame.chain_depth_hint.store(0, std::memory_order_relaxed);
         frame.last_gc_touch_generation.store(0, std::memory_order_relaxed);
         frame.scan_probation_generation.store(0, std::memory_order_relaxed);
+        frame.dirty_generation.store(0, std::memory_order_relaxed);
+        frame.writeback_queue_state.store(static_cast<uint8_t>(WritebackQueueState::NONE),
+                                          std::memory_order_relaxed);
         frame.commit_fence_member.store(false, std::memory_order_relaxed);
         stats_.evictions.fetch_add(1, std::memory_order_relaxed);
         recordMgaEviction(page_class);
@@ -1338,7 +1424,7 @@ namespace scratchbird::core
         // Spec: docs/specifications/STORAGE_ENGINE_BUFFER_POOL.md:402-465
 
         constexpr uint32_t MAX_PASSES = 2; // Maximum passes before forcing eviction
-        constexpr uint32_t MAX_RETRIES = 4; // Retry if candidate becomes pinned during eviction
+        constexpr uint32_t MAX_RETRIES = 16; // Retry if candidate mapping changes while selecting
 
         for (uint32_t attempt = 0; attempt < MAX_RETRIES; ++attempt)
         {
@@ -1581,8 +1667,13 @@ namespace scratchbird::core
             auto page_table_it = partition.table.find(evicted_gpid);
             if (page_table_it == partition.table.end() || page_table_it->second != candidate_frame)
             {
+                std::this_thread::yield();
                 continue;
             }
+
+            // Wait for an in-flight writer to finish publishing this frame rather than
+            // surfacing a false "all pages pinned" exhaustion to the caller.
+            std::unique_lock<std::mutex> content_lock(*frames_[candidate_frame].content_mutex);
 
             // CRITICAL FIX (Issue 2.2): Consistency check - verify frame is unpinned
             // This MUST be fatal in ALL builds (not just debug) to prevent corruption
@@ -1591,6 +1682,12 @@ namespace scratchbird::core
                 frames_[candidate_frame].pin_count.load(std::memory_order_relaxed);
             if (evicted_pin_count != 0)
             {
+                std::this_thread::yield();
+                continue;
+            }
+            if (frames_[candidate_frame].gpid != evicted_gpid)
+            {
+                std::this_thread::yield();
                 continue;
             }
 
@@ -1608,14 +1705,17 @@ namespace scratchbird::core
             // If dirty, flush first
             if (was_dirty)
             {
+                const uint64_t flushed_generation =
+                    frames_[evicted_frame].dirty_generation.load(std::memory_order_acquire);
                 Status status =
                     writePageToDisk(evicted_gpid, frames_[evicted_frame].data.get(), ctx);
                 if (status != Status::OK)
                 {
                     return status;
                 }
-                // P2-2: Decrement dirty counter since page is being flushed during eviction
-                tryClearFrameDirty(evicted_frame);
+                finishFrameWriteback(evicted_frame,
+                                     flushed_generation,
+                                     WritebackQueueState::NONE);
                 // MEDIUM-1 FIX: Use relaxed atomic increment for stats
                 stats_.flushes.fetch_add(1, std::memory_order_relaxed);
                 stats_.evictions_dirty.fetch_add(1, std::memory_order_relaxed);
@@ -1649,6 +1749,10 @@ namespace scratchbird::core
             frames_[evicted_frame].chain_depth_hint.store(0, std::memory_order_relaxed);
             frames_[evicted_frame].last_gc_touch_generation.store(0, std::memory_order_relaxed);
             frames_[evicted_frame].scan_probation_generation.store(0, std::memory_order_relaxed);
+            frames_[evicted_frame].dirty_generation.store(0, std::memory_order_relaxed);
+            frames_[evicted_frame].writeback_queue_state.store(
+                static_cast<uint8_t>(WritebackQueueState::NONE),
+                std::memory_order_relaxed);
             frames_[evicted_frame].commit_fence_member.store(false, std::memory_order_relaxed);
 
             // MEDIUM-1 FIX: Use relaxed atomic increment for stats
@@ -1688,12 +1792,43 @@ namespace scratchbird::core
     }
 
     // PHASE 1, TASK 1.2.4: Use Database::write_page_global() for GPID-based I/O
-    auto BufferPool::writePageToDisk(GPID gpid, const uint8_t *buffer, ErrorContext *ctx)
+    auto BufferPool::writePageToDisk(GPID gpid,
+                                     const uint8_t *buffer,
+                                     ErrorContext *ctx,
+                                     bool checkpoint_flush)
         -> Status
     {
+        auto *mutable_buffer = const_cast<uint8_t *>(buffer);
+        auto *header = reinterpret_cast<PageHeader *>(mutable_buffer);
+        const bool temporary_work = header->magic == K_MAGIC_SBRD && pageIsTemporaryWork(*header);
+        if (header->magic == K_MAGIC_SBRD)
+        {
+            if (temporary_work)
+            {
+                header->flush_generation = 0;
+                header->checkpoint_generation = 0;
+            }
+            else
+            {
+                if (header->generation == 0)
+                {
+                    header->generation = 1;
+                }
+                header->flush_generation = header->generation;
+                if (checkpoint_flush)
+                {
+                    header->checkpoint_generation = header->flush_generation;
+                }
+                else if (header->checkpoint_generation > header->flush_generation)
+                {
+                    header->checkpoint_generation = header->flush_generation;
+                }
+            }
+        }
+
         // Call new Database GPID method (supports multi-tablespace addressing)
         // Database class handles tablespace validation and routing for Phase 1
-        Status status = db_->write_page_global(gpid, buffer, ctx);
+        Status status = db_->write_page_global(gpid, mutable_buffer, ctx);
         if (status == Status::OK)
         {
             if (metrics_ && metrics_->buffer_pool_writes_total)
@@ -1852,6 +1987,45 @@ namespace scratchbird::core
         return false;
     }
 
+    bool BufferPool::finishFrameWriteback(uint32_t frame_index,
+                                          uint64_t flushed_generation,
+                                          WritebackQueueState dirty_queue_state)
+    {
+        const uint64_t current_generation =
+            frames_[frame_index].dirty_generation.load(std::memory_order_acquire);
+        if (current_generation != flushed_generation)
+        {
+            frames_[frame_index].writeback_queue_state.store(
+                static_cast<uint8_t>(dirty_queue_state),
+                std::memory_order_relaxed);
+            return false;
+        }
+
+        const bool cleared = tryClearFrameDirty(frame_index);
+        frames_[frame_index].writeback_queue_state.store(
+            static_cast<uint8_t>(cleared ? WritebackQueueState::NONE : dirty_queue_state),
+            std::memory_order_relaxed);
+        return cleared;
+    }
+
+    uint64_t BufferPool::publishDirtyGeneration(uint32_t frame_index)
+    {
+        const uint64_t dirty_generation =
+            dirty_generation_clock_.fetch_add(1, std::memory_order_relaxed) + 1;
+        frames_[frame_index].dirty_generation.store(dirty_generation,
+                                                    std::memory_order_relaxed);
+        frames_[frame_index].writeback_queue_state.store(
+            static_cast<uint8_t>(WritebackQueueState::BACKGROUND),
+            std::memory_order_relaxed);
+        const GPID gpid = frames_[frame_index].gpid;
+        if (gpid != INVALID_GPID)
+        {
+            std::lock_guard<std::mutex> lock(dirty_tracking_mutex_);
+            dirty_checkpoint_candidates_[gpid] = dirty_generation;
+        }
+        return dirty_generation;
+    }
+
     // PHASE 1, TASK 1.2.3: LEGACY API - Convert page_id to GPID and call markDirtyGlobal
     auto BufferPool::markDirty(uint32_t page_id, ErrorContext *ctx) -> Status
     {
@@ -1878,6 +2052,8 @@ namespace scratchbird::core
         }
 
         uint32_t frame_index = it->second;
+
+        publishDirtyGeneration(frame_index);
 
         // P2-2: Update atomic dirty page counter when transitioning to dirty
         if (tryMarkFrameDirty(frame_index))
@@ -2066,6 +2242,12 @@ namespace scratchbird::core
             {
                 continue;
             }
+            if (static_cast<WritebackQueueState>(
+                    frame.writeback_queue_state.load(std::memory_order_relaxed)) !=
+                WritebackQueueState::BACKGROUND)
+            {
+                continue;
+            }
 
             // Skip pinned pages (in use by transactions)
             // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
@@ -2106,11 +2288,14 @@ namespace scratchbird::core
 
             // Flush this dirty page
             // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+            const uint64_t flushed_generation =
+                frame.dirty_generation.load(std::memory_order_acquire);
             Status status = writePageToDisk(frame.gpid, frame.data.get(), ctx);
             if (status == Status::OK)
             {
-                // P2-2: Decrement dirty counter when transitioning from dirty to clean
-                tryClearFrameDirty(i);
+                finishFrameWriteback(i,
+                                     flushed_generation,
+                                     WritebackQueueState::BACKGROUND);
                 pages_written++;
                 // MEDIUM-1 FIX: Use relaxed atomic increment for stats
                 stats_.bgwriter_pages_written.fetch_add(1, std::memory_order_relaxed);
@@ -2132,6 +2317,145 @@ namespace scratchbird::core
             // MEDIUM-1 FIX: Use relaxed atomic increment for stats
             stats_.bgwriter_maxwritten.fetch_add(1, std::memory_order_relaxed);
         }
+    }
+
+    auto BufferPool::flushDirtyCheckpointBoundary(uint64_t dirty_generation_boundary,
+                                                  ErrorContext *ctx) -> Status
+    {
+        if (dirty_generation_boundary == 0)
+        {
+            return dirty_page_count_.load(std::memory_order_relaxed) == 0
+                ? Status::OK
+                : flushAll(ctx);
+        }
+
+        std::vector<std::pair<GPID, uint64_t>> candidates;
+        {
+            std::lock_guard<std::mutex> lock(dirty_tracking_mutex_);
+            candidates.reserve(dirty_checkpoint_candidates_.size());
+            for (const auto &entry : dirty_checkpoint_candidates_)
+            {
+                if (entry.second != 0 && entry.second <= dirty_generation_boundary)
+                {
+                    candidates.push_back(entry);
+                }
+            }
+        }
+
+        for (const auto &[gpid, queued_generation] : candidates)
+        {
+            void *buffer = nullptr;
+            Status status = pinPageGlobal(gpid, &buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            size_t partition_idx = getPartitionIndex(gpid);
+            auto &partition = page_table_partitions_[partition_idx];
+            uint32_t frame_index = UINT32_MAX;
+            {
+                std::lock_guard<std::mutex> partition_lock(partition.mutex);
+                auto it = partition.table.find(gpid);
+                if (it != partition.table.end())
+                {
+                    frame_index = it->second;
+                }
+            }
+
+            if (frame_index == UINT32_MAX)
+            {
+                (void)unpinPageGlobal(gpid, false, ctx);
+                if (ctx != nullptr)
+                {
+                    ctx->code = Status::IO_ERROR;
+                    ctx->message =
+                        "Checkpoint dirty-set drain could not resolve the pinned frame";
+                }
+                return Status::IO_ERROR;
+            }
+
+            Frame &frame = frames_[frame_index];
+            std::unique_lock<std::mutex> content_lock(*frame.content_mutex);
+
+            uint64_t live_generation = 0;
+            {
+                std::lock_guard<std::mutex> lock(dirty_tracking_mutex_);
+                auto it = dirty_checkpoint_candidates_.find(gpid);
+                if (it != dirty_checkpoint_candidates_.end())
+                {
+                    live_generation = it->second;
+                }
+            }
+            if (live_generation == 0 || live_generation > dirty_generation_boundary)
+            {
+                frame.writeback_queue_state.store(
+                    static_cast<uint8_t>(WritebackQueueState::BACKGROUND),
+                    std::memory_order_relaxed);
+                (void)unpinPageGlobal(gpid, false, ctx);
+                continue;
+            }
+
+            auto *header = reinterpret_cast<PageHeader *>(buffer);
+            if (pageIsTemporaryWork(*header))
+            {
+                frame.writeback_queue_state.store(
+                    static_cast<uint8_t>(WritebackQueueState::BACKGROUND),
+                    std::memory_order_relaxed);
+                (void)unpinPageGlobal(gpid, false, ctx);
+                continue;
+            }
+            const bool dirty = frame.is_dirty.load(std::memory_order_acquire);
+            const bool needs_checkpoint_marker =
+                header->magic == K_MAGIC_SBRD &&
+                header->flush_generation > header->checkpoint_generation;
+            if (dirty || needs_checkpoint_marker)
+            {
+                frame.writeback_queue_state.store(
+                    static_cast<uint8_t>(WritebackQueueState::CHECKPOINT),
+                    std::memory_order_relaxed);
+
+                const uint64_t flushed_generation =
+                    frame.dirty_generation.load(std::memory_order_acquire);
+                status = writePageToDisk(gpid,
+                                         static_cast<uint8_t *>(buffer),
+                                         ctx,
+                                         true);
+                if (status != Status::OK)
+                {
+                    (void)unpinPageGlobal(gpid, false, ctx);
+                    return status;
+                }
+                if (dirty)
+                {
+                    finishFrameWriteback(frame_index,
+                                         flushed_generation,
+                                         WritebackQueueState::CHECKPOINT);
+                }
+                else
+                {
+                    frame.writeback_queue_state.store(
+                        static_cast<uint8_t>(WritebackQueueState::NONE),
+                        std::memory_order_relaxed);
+                }
+                stats_.checkpoint_flushes.fetch_add(1, std::memory_order_relaxed);
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(dirty_tracking_mutex_);
+                auto it = dirty_checkpoint_candidates_.find(gpid);
+                if (it != dirty_checkpoint_candidates_.end() &&
+                    it->second <= dirty_generation_boundary &&
+                    it->second == queued_generation)
+                {
+                    dirty_checkpoint_candidates_.erase(it);
+                }
+            }
+
+            (void)unpinPageGlobal(gpid, false, ctx);
+        }
+
+        return Status::OK;
     }
 
     double BufferPool::calculateDirtyRatio() const

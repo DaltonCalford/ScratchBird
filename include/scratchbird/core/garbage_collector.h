@@ -9,6 +9,7 @@
  */
 #pragma once
 
+#include "scratchbird/core/gc_publication.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/tid.h"
@@ -161,6 +162,13 @@ namespace scratchbird::core
         void setSweepPruneBlocked(bool blocked);
         bool isSweepPruneBlocked() const;
 
+        Status publishCleanupAfterHeapProof(const ID& table_id,
+                                            uint32_t page_id,
+                                            const std::vector<TID>& dead_tids,
+                                            const HeapReclaimPublicationContext& publication_ctx,
+                                            IndexCleanupPublicationSummary* summary_out = nullptr,
+                                            ErrorContext* ctx = nullptr);
+
         // Phase 4: TOAST Garbage Collection
         // Detect orphaned TOAST chunks (referenced by no heap tuples)
         Status detectOrphanedToastChunks(const ID& toast_table_id,
@@ -231,13 +239,6 @@ namespace scratchbird::core
         void backgroundGCLoop();
         uint64_t cleanPage(uint32_t page_id, uint64_t *space_reclaimed_out, ErrorContext *ctx);
         void readConfiguration();
-
-        // PHASE 2 TASK 2.6: Clean indexes for dead tuples
-        // PHASE 1.5 TASK 1.5.3: Migrated to TID struct API
-        // Called after prunePage and unpinPage (post-heap cleanup)
-        // Returns number of index entries removed
-        uint64_t cleanIndexes(uint32_t page_id, const ID &table_id,
-                              const std::vector<TID> &dead_tids, ErrorContext *ctx);
 
         // Statistics helpers
         void updateCooperativeStats(uint64_t tuples_removed, uint64_t pages_cleaned,

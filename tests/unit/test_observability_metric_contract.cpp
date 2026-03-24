@@ -104,9 +104,9 @@ namespace scratchbird::core
 
         std::vector<MetricSchemaDefinition> definitions;
         ASSERT_EQ(MgaObservabilityContract::appendMetricDefinitions(definitions), Status::OK);
-        ASSERT_EQ(definitions.size(), 33u);
+        ASSERT_EQ(definitions.size(), 45u);
         EXPECT_EQ(definitions.front().metric_name, "sb_buf_commit_fence_backlog");
-        EXPECT_EQ(definitions.back().metric_name, "sb_tx_restart_normalized_total");
+        EXPECT_EQ(definitions.back().metric_name, "sb_writeback_incidents_open");
         for (const MetricSchemaDefinition& definition : definitions)
         {
             EXPECT_TRUE(MetricContractPolicy::isCanonicalMetricName(definition.metric_name))
@@ -127,12 +127,21 @@ namespace scratchbird::core
         auto* chain_depth = dynamic_cast<Gauge*>(registry.get("sb_mga_chain_depth_bucket"));
         auto* buf_frames = dynamic_cast<Gauge*>(registry.get("sb_buf_frames_by_class"));
         auto* lock_wait = dynamic_cast<Counter*>(registry.get("sb_lock_wait_seconds_total"));
+        auto* checkpoint_generation =
+            dynamic_cast<Gauge*>(registry.get("sb_checkpoint_generation_current"));
+        auto* recovery_generation =
+            dynamic_cast<Gauge*>(registry.get("sb_recovery_generation_current"));
+        auto* writeback_open =
+            dynamic_cast<Gauge*>(registry.get("sb_writeback_incidents_open"));
         ASSERT_NE(tx_active, nullptr);
         ASSERT_NE(tx_limbo, nullptr);
         ASSERT_NE(commit_fence, nullptr);
         ASSERT_NE(chain_depth, nullptr);
         ASSERT_NE(buf_frames, nullptr);
         ASSERT_NE(lock_wait, nullptr);
+        ASSERT_NE(checkpoint_generation, nullptr);
+        ASSERT_NE(recovery_generation, nullptr);
+        ASSERT_NE(writeback_open, nullptr);
 
         tx_active->set(7.0, {"sb"});
         tx_limbo->set(1.0, {"sb", "prepared"});
@@ -140,6 +149,9 @@ namespace scratchbird::core
         chain_depth->set(4.0, {"sb", "orders", "depth_4_7"});
         buf_frames->set(128.0, {"sb", "commit_fence"});
         lock_wait->inc(0.50, {"sb", "WAIT"});
+        checkpoint_generation->set(3.0, {"sb"});
+        recovery_generation->set(4.0, {"sb"});
+        writeback_open->set(1.0, {"sb", "write_fenced"});
 
         std::vector<MetricPolicyViolation> violations;
         ASSERT_EQ(MetricContractPolicy::auditRegistry(registry, violations), Status::OK);

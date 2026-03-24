@@ -11,11 +11,13 @@
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/mga_failpoint_manager.h"
 #include "test_helpers.h"
 #include <gtest/gtest.h>
 #include <thread>
 #include <vector>
 #include <atomic>
+#include <array>
 #include <chrono>
 
 using namespace scratchbird::core;
@@ -224,6 +226,93 @@ TEST_F(GroupCommitTest, BatchCollectionTimeout)
     auto [group_commits, total_xids] = txn_mgr_->getGroupCommitStats();
     EXPECT_GT(group_commits - start_group_commits, 0) << "Expected at least one group commit";
     EXPECT_GE(total_xids - start_total_xids, num_commits) << "Expected all XIDs to be committed";
+}
+
+TEST_F(GroupCommitTest, GroupCommitPreTipFenceFailureRejectsWholeBatch)
+{
+    ErrorContext ctx;
+    txn_mgr_->setDurabilityMode(DurabilityMode::GROUP_COMMIT);
+    txn_mgr_->setGroupCommitTimeout(50000);
+    txn_mgr_->setGroupCommitBatchSize(8);
+
+    ASSERT_EQ(db_->mga_failpoint_manager()->installSeed(
+                  "group-pretip-failure",
+                  {{std::string(MgaFailpointTriggers::kAfterDirtyFlushBeforeTipTerminal),
+                    MgaFailpointAction::RETURN_ERROR,
+                    1,
+                    Status::IO_ERROR,
+                    0,
+                    "group_pre_tip_blocked"}},
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    constexpr size_t kBatchMembers = 2;
+    std::array<uint64_t, kBatchMembers> xids{};
+    for (size_t i = 0; i < kBatchMembers; ++i)
+    {
+        ASSERT_EQ(txn_mgr_->beginTransaction(getProcId(static_cast<int>(i)),
+                                             xids[i],
+                                             &ctx),
+                  Status::OK)
+            << ctx.message;
+    }
+
+    std::atomic<size_t> ready{0};
+    std::atomic<bool> go{false};
+    std::array<Status, kBatchMembers> results{Status::OK, Status::OK};
+    std::array<std::thread, kBatchMembers> threads;
+
+    for (size_t i = 0; i < kBatchMembers; ++i)
+    {
+        threads[i] = std::thread([&, i]() {
+            ErrorContext thread_ctx;
+            ready.fetch_add(1, std::memory_order_release);
+            while (!go.load(std::memory_order_acquire))
+            {
+                std::this_thread::yield();
+            }
+
+            results[i] = txn_mgr_->commitTransaction(getProcId(static_cast<int>(i)),
+                                                     xids[i],
+                                                     &thread_ctx);
+        });
+    }
+
+    while (ready.load(std::memory_order_acquire) != kBatchMembers)
+    {
+        std::this_thread::yield();
+    }
+    go.store(true, std::memory_order_release);
+
+    for (auto &thread : threads)
+    {
+        thread.join();
+    }
+
+    for (Status result : results)
+    {
+        EXPECT_EQ(result, Status::IO_ERROR);
+    }
+
+    std::vector<MgaFailpointEvent> events;
+    ASSERT_EQ(db_->mga_failpoint_manager()->listEvents(events, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_EQ(events[0].trigger_name,
+              MgaFailpointTriggers::kAfterDirtyFlushBeforeTipTerminal);
+
+    for (size_t i = 0; i < kBatchMembers; ++i)
+    {
+        TransactionState state = TransactionState::COMMITTED;
+        ASSERT_EQ(txn_mgr_->getTransactionState(xids[i], state, &ctx), Status::OK) << ctx.message;
+        EXPECT_EQ(state, TransactionState::ACTIVE);
+        ASSERT_EQ(txn_mgr_->rollbackTransaction(getProcId(static_cast<int>(i)), xids[i], &ctx),
+                  Status::OK)
+            << ctx.message;
+    }
+
+    ASSERT_EQ(db_->mga_failpoint_manager()->clear(&ctx), Status::OK) << ctx.message;
 }
 
 // Test 4: Batch size limit - verify all commits are batched correctly

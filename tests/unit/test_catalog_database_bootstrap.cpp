@@ -27,6 +27,11 @@ using scratchbird::testing::uniqueTestDbPath;
 namespace
 {
 #pragma pack(push, 1)
+bool isCatalogHeapLikePageType(uint16_t page_type)
+{
+    return page_type == PAGE_TYPE_HEAP || page_type == PAGE_TYPE_CATALOG_PAGE;
+}
+
 struct DatabaseRecordContract
 {
     ID database_id;
@@ -136,10 +141,10 @@ Status readDatabaseCatalogSnapshot(Database& db,
         }
 
         const auto* heap = reinterpret_cast<const CatalogHeapPage*>(page_buffer);
-        if (heap->header.page_type != PAGE_TYPE_HEAP)
+        if (!isCatalogHeapLikePageType(heap->header.page_type))
         {
             bp->unpinPage(current_page_id, false, ctx);
-            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "database catalog page is not heap");
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "database catalog page is not catalog heap");
             return Status::PAGE_CORRUPT;
         }
 
@@ -208,10 +213,10 @@ Status readObjectCatalogSnapshot(Database& db,
         }
 
         const auto* heap = reinterpret_cast<const CatalogHeapPage*>(page_buffer);
-        if (heap->header.page_type != PAGE_TYPE_HEAP)
+        if (!isCatalogHeapLikePageType(heap->header.page_type))
         {
             bp->unpinPage(current_page_id, false, ctx);
-            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "object catalog page is not heap");
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "object catalog page is not catalog heap");
             return Status::PAGE_CORRUPT;
         }
 
@@ -281,10 +286,10 @@ Status readObjectNameCatalogSnapshot(Database& db,
         }
 
         const auto* heap = reinterpret_cast<const CatalogHeapPage*>(page_buffer);
-        if (heap->header.page_type != PAGE_TYPE_HEAP)
+        if (!isCatalogHeapLikePageType(heap->header.page_type))
         {
             bp->unpinPage(current_page_id, false, ctx);
-            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "object_name catalog page is not heap");
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "object_name catalog page is not catalog heap");
             return Status::PAGE_CORRUPT;
         }
 
@@ -348,7 +353,7 @@ Status assertHeapCatalogPage(Database& db, uint32_t page_id, ErrorContext* ctx)
     }
 
     const auto* heap = reinterpret_cast<const CatalogHeapPage*>(page_buffer);
-    const bool is_heap = (heap->header.page_type == PAGE_TYPE_HEAP);
+    const bool is_heap = isCatalogHeapLikePageType(heap->header.page_type);
 
     status = bp->unpinPage(page_id, false, ctx);
     if (status != Status::OK)
@@ -358,7 +363,7 @@ Status assertHeapCatalogPage(Database& db, uint32_t page_id, ErrorContext* ctx)
 
     if (!is_heap)
     {
-        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "catalog page is not heap");
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "catalog page is not catalog heap");
         return Status::PAGE_CORRUPT;
     }
     return Status::OK;

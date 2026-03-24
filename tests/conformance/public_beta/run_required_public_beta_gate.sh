@@ -162,6 +162,19 @@ run_ctest_exact "transaction_semantics" "transaction_truth_native" "TransactionT
 run_ctest_exact "transaction_semantics" "mga_basic_update" "MGABackVersioningTest.BasicUpdate" 1 || true
 run_ctest_exact "transaction_semantics" "mga_mvcc_visibility" "MGABackVersioningTest.MVCCVisibilityAcrossVersions" 1 || true
 run_ctest_exact "transaction_semantics" "storage_tx_backversion" "StorageTransactionTest.UpdateCreatesBackVersion" 1 || true
+run_ctest_exact "transaction_semantics" "txn_startup_failpoint_replay" "MgaFailpointReplayStandaloneTest.StartupFailpointIsReplayable" 1 || true
+run_ctest_exact "transaction_semantics" "txn_commit_pre_tip_restart" "MgaFailpointReplayTest.CommitPreTipFailpointAbortsInsertedRowAcrossUncleanRestart" 1 || true
+run_ctest_exact "transaction_semantics" "txn_commit_post_tip_restart" "MgaFailpointReplayTest.CommitPostTipFailpointKeepsInsertedRowCommittedAcrossRestart" 1 || true
+run_ctest_exact "transaction_semantics" "txn_prepare_catalog_restart" "MgaFailpointReplayTest.PrepareCatalogOnlyFailpointPromotesToPreparedAcrossRestart" 1 || true
+run_ctest_exact "transaction_semantics" "txn_writeback_diskfull_fence" "ExecutorTransactionPayloadTest.SyncDiskFullPersistsWritebackFenceAndBlocksGrowth" 1 || true
+run_ctest_exact "transaction_semantics" "txn_commit_fence_rejects_open_incident" "ExecutorTransactionPayloadTest.CommitFenceRejectsWhileWritebackIncidentIsOpen" 1 || true
+run_ctest_exact "transaction_semantics" "txn_restart_reloads_write_fence" "ExecutorTransactionPayloadTest.ReopenReloadsWritebackFenceUntilIncidentClears" 1 || true
+run_ctest_exact "transaction_semantics" "txn_cleanup_blocked_recovery" "ExecutorTransactionPayloadTest.StartupReconciliationCapturesCleanupBlockedChainFindings" 1 || true
+run_ctest_exact "transaction_semantics" "txn_checksum_quarantine_recovery" "ExecutorTransactionPayloadTest.StartupCorruptionPolicyQuarantinesChecksumCorruption" 1 || true
+run_ctest_exact "transaction_semantics" "txn_copy_write_fence_boundary" "CopyExecutorTest.CopyFromPreservesWriteFenceStatusAtExecutorBoundary" 1 || true
+run_ctest_exact "transaction_semantics" "txn_sweep_resume_generation_reuse" "GarbageCollectorTest.SweepResumeStateSurvivesRestartAndReusesGeneration" 1 || true
+run_ctest_exact "transaction_semantics" "txn_sweep_dirty_restart_rewind" "GarbageCollectorTest.SweepDirtyRestartRewindsPersistedCursorAndStartsFreshGeneration" 1 || true
+run_ctest_exact "transaction_semantics" "txn_durability_observability_surface" "MgaObservabilityLiveViewsTest.BuildsDurabilityRowsFromCatalogHistoryAndRuntimeState" 1 || true
 
 # ------------------------------------------------------------------------------
 # Category 3: security runtime enforcement

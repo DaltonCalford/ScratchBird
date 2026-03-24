@@ -303,22 +303,22 @@ namespace scratchbird
         // Dynamic capacity calculations
         uint16_t GinIndex::getMaxPendingEntriesPerPage() const
         {
-            return (db_->page_size() - 128) / sizeof(GinPendingEntry);
+            return GinSettings::getMaxPendingEntriesPerPage(db_->page_size());
         }
 
         uint16_t GinIndex::getMaxPostingEntriesPerPage() const
         {
-            return (db_->page_size() - 80) / sizeof(GinPostingEntry);
+            return GinSettings::getMaxPostingEntriesPerPage(db_->page_size());
         }
 
         uint16_t GinIndex::getMaxPostingTreeInternalEntries() const
         {
-            return (db_->page_size() - 92) / sizeof(GinPostingTreeInternalEntry);
+            return GinSettings::getMaxPostingTreeInternalEntries(db_->page_size());
         }
 
         uint16_t GinIndex::getMaxPostingTreeLeafTids() const
         {
-            return (db_->page_size() - 88) / sizeof(GinPostingEntry);
+            return GinSettings::getMaxPostingTreeLeafTids(db_->page_size());
         }
 
         Status GinIndex::attachBloomFilter(const BloomFilterConfig &config,
@@ -1891,7 +1891,7 @@ namespace scratchbird
             sibling->gpt_header.checksum = 0;
             sibling->gpt_header.flags = 0;
             sibling->gpt_header.lsn = 0;
-            pageSetLower(sibling->gpt_header, sizeof(SBGinPostingTreeInternal));
+            pageSetLower(sibling->gpt_header, sizeof(SBGinPostingTreeLeaf));
             pageSetUpper(sibling->gpt_header, db_->page_size());
             pageSetSpecial(sibling->gpt_header, db_->page_size());
             sibling->gpt_is_leaf = 1;

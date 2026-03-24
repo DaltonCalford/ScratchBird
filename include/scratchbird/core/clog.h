@@ -13,6 +13,7 @@
 #include "scratchbird/core/ondisk.h"
 #include <cstdint>
 #include <mutex>
+#include <vector>
 
 namespace scratchbird::core
 {
@@ -73,7 +74,10 @@ namespace scratchbird::core
         Status initialize(ErrorContext *ctx = nullptr);
 
         // Set transaction status
-        Status setStatus(uint64_t xid, ClogStatus status, ErrorContext *ctx = nullptr);
+        Status setStatus(uint64_t xid,
+                         ClogStatus status,
+                         ErrorContext *ctx = nullptr,
+                         std::vector<uint32_t> *touched_pages_out = nullptr);
 
         // Get transaction status
         Status getStatus(uint64_t xid, ClogStatus *status_out, ErrorContext *ctx = nullptr);
@@ -85,7 +89,10 @@ namespace scratchbird::core
         }
 
         // Extend CLOG to accommodate new XID
-        Status extendClog(uint64_t xid, ErrorContext *ctx = nullptr);
+        Status extendClog(uint64_t xid,
+                          bool allow_reserve_consumption = false,
+                          ErrorContext *ctx = nullptr,
+                          std::vector<uint32_t> *touched_pages_out = nullptr);
 
         // Statistics
         struct ClogStats

@@ -56,8 +56,12 @@ namespace scratchbird::core
         // Load FSM from existing database
         auto load(ErrorContext *ctx = nullptr) -> Status;
 
-        // Allocate a new page (legacy API - uses tablespace 0)
-        auto allocatePage(uint32_t &page_id, ErrorContext *ctx = nullptr) -> Status;
+        // Allocate a new page (legacy API - uses tablespace 0).
+        // `allow_reserve_consumption` is reserved for correctness-critical metadata
+        // publication paths and must remain false for ordinary user growth.
+        auto allocatePage(uint32_t &page_id,
+                          ErrorContext *ctx = nullptr,
+                          bool allow_reserve_consumption = false) -> Status;
 
         // Free a page (legacy API - uses tablespace 0)
         auto freePage(uint32_t page_id, ErrorContext *ctx = nullptr) -> Status;
@@ -79,8 +83,10 @@ namespace scratchbird::core
          * Note: For tablespace 0 (primary), this is equivalent to allocatePage()
          *       but returns a GPID instead of uint32_t page_id.
          */
-        auto allocatePageInTablespace(uint16_t tablespace_id, GPID *gpid_out,
-                                     ErrorContext *ctx = nullptr) -> Status;
+        auto allocatePageInTablespace(uint16_t tablespace_id,
+                                      GPID *gpid_out,
+                                      ErrorContext *ctx = nullptr,
+                                      bool allow_reserve_consumption = false) -> Status;
 
         /**
          * freePageGlobal - Free a page identified by GPID
@@ -235,19 +241,36 @@ namespace scratchbird::core
         // Get total number of pages
         auto totalPages() const -> uint32_t
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<std::recursive_mutex> lock(mutex_);
             return total_pages_;
         }
 
         // Get number of free pages
         auto freePages() const -> uint32_t
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<std::recursive_mutex> lock(mutex_);
             return free_pages_;
         }
 
+        static constexpr uint32_t kEmergencyReservePages = 4;
+
+        auto emergencyReservePages() const -> uint32_t
+        {
+            return kEmergencyReservePages;
+        }
+
+        auto ordinaryFreePages() const -> uint32_t
+        {
+            std::lock_guard<std::recursive_mutex> lock(mutex_);
+            return free_pages_ > kEmergencyReservePages
+                ? free_pages_ - kEmergencyReservePages
+                : 0;
+        }
+
         // Extend the database file
-        auto extendFile(uint32_t num_pages, ErrorContext *ctx = nullptr) -> Status;
+        auto extendFile(uint32_t num_pages,
+                        ErrorContext *ctx = nullptr,
+                        bool allow_reserve_consumption = false) -> Status;
 
         // Flush FSM to disk
         auto flush(ErrorContext *ctx = nullptr) -> Status;
@@ -330,7 +353,9 @@ namespace scratchbird::core
         uint32_t free_pages_;         // Number of free pages
         std::vector<uint8_t> bitmap_; // Allocation bitmap
         bool dirty_;                  // FSM needs flush
-        mutable std::mutex mutex_;    // Thread safety (future)
+        // Terminal metadata publication can re-enter allocation when a writeback
+        // failure is raised from extend/flush paths.
+        mutable std::recursive_mutex mutex_;
 
         // Eager FSM flush counters (protected by mutex_)
         uint32_t alloc_counter_ = 0;  // Count allocations for periodic FSM flush
@@ -384,15 +409,7 @@ namespace scratchbird::core
          */
         auto flushUnlocked(ErrorContext *ctx = nullptr) -> Status;
 
-        // FSM page structure
-        struct FSMPage
-        {
-            PageHeader header;
-            uint32_t total_pages;
-            uint32_t free_pages;
-            uint32_t next_fsm_page; // For future expansion
-            uint8_t bitmap[];       // Variable length bitmap
-        };
+        using FSMPage = BootstrapFsmRootPage;
 
         static constexpr uint32_t FSM_PAGE_ID = BOOTSTRAP_PAGE_FSM_ROOT; // Canonical bootstrap FSM root
     };

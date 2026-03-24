@@ -28,6 +28,13 @@ using scratchbird::testing::uniqueTestDbPath;
 
 namespace
 {
+    struct EntryLocation
+    {
+        bool found = false;
+        uint32_t page_id = 0;
+        bool reachable_from_directory = false;
+    };
+
     bool scanIndexForEntry(Database *db, GPID meta_gpid, uint64_t hash, const TID &tid, ErrorContext *ctx)
     {
         if (!db)
@@ -125,6 +132,71 @@ namespace
         }
 
         return false;
+    }
+
+    EntryLocation scanAllAllocatedPagesForEntry(Database *db,
+                                                const std::string &db_path,
+                                                uint64_t hash,
+                                                const TID &tid,
+                                                ErrorContext *ctx)
+    {
+        EntryLocation location;
+        if (!db)
+        {
+            return location;
+        }
+
+        BufferPool *buffer_pool = db->buffer_pool();
+        PageManager *page_manager = db->page_manager();
+        if (!buffer_pool || !page_manager)
+        {
+            return location;
+        }
+
+        std::error_code size_error;
+        uint64_t file_size = static_cast<uint64_t>(std::filesystem::file_size(db_path, size_error));
+        if (size_error || db->page_size() == 0)
+        {
+            return location;
+        }
+
+        uint64_t total_pages = file_size / db->page_size();
+        for (uint64_t page_id = 0; page_id < total_pages; ++page_id)
+        {
+            GPID gpid = makeGPID(PRIMARY_TABLESPACE_ID, page_id);
+            if (!page_manager->isAllocatedGlobal(gpid))
+            {
+                continue;
+            }
+
+            void *page_buffer = nullptr;
+            Status status = buffer_pool->pinPageGlobal(gpid, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                continue;
+            }
+
+            auto *header = reinterpret_cast<PageHeader *>(page_buffer);
+            if (header->page_type == static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_BUCKET))
+            {
+                auto *bucket = reinterpret_cast<SBHashBucketPage *>(page_buffer);
+                for (uint16_t i = 0; i < bucket->hbp_entry_count; ++i)
+                {
+                    const HashEntry &entry = bucket->hbp_entries[i];
+                    if (entry.he_key_hash == hash && entry.getTID() == tid)
+                    {
+                        location.found = true;
+                        location.page_id = static_cast<uint32_t>(page_id);
+                        buffer_pool->unpinPageGlobal(gpid, false, ctx);
+                        return location;
+                    }
+                }
+            }
+
+            buffer_pool->unpinPageGlobal(gpid, false, ctx);
+        }
+
+        return location;
     }
 } // namespace
 
@@ -537,9 +609,19 @@ TEST_F(HashIndexTest, LargeDataset)
                                                                   static_cast<uint64_t>(idx)),
                                                          1),
                                                      &ctx);
+            EntryLocation any_location =
+                scanAllAllocatedPagesForEntry(db.get(),
+                                              test_db_path,
+                                              hash,
+                                              TID(makeGPID(PRIMARY_TABLESPACE_ID,
+                                                           static_cast<uint64_t>(idx)),
+                                                  1),
+                                              &ctx);
             FAIL() << "Missing idx=" << idx
                    << " global_depth=" << stats.global_depth
-                   << " found_elsewhere=" << (found_elsewhere ? "true" : "false");
+                   << " found_elsewhere=" << (found_elsewhere ? "true" : "false")
+                   << " found_anywhere=" << (any_location.found ? "true" : "false")
+                   << " page_id=" << any_location.page_id;
         }
         ASSERT_EQ(results[0], TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(idx)), 1));
     }

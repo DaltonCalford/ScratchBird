@@ -241,6 +241,7 @@ namespace scratchbird::core
     constexpr uint32_t PAGE_FLAG_ENCRYPTED = 0x0008;      // Page data is encrypted
     constexpr uint32_t PAGE_FLAG_SPECIAL = 0x0010;        // Page has populated special area
     constexpr uint32_t PAGE_FLAG_CHECKSUM_VALID = 0x0020; // Checksum must validate
+    constexpr uint32_t PAGE_FLAG_TEMPORARY_WORK = 0x0040; // Non-durable temp/workfile page
 
 // Fixed 80-byte page header per ON_DISK_FORMAT.md; little-endian integers assumed
 #pragma pack(push, 1)
@@ -302,23 +303,73 @@ namespace scratchbird::core
         uint8_t reserved[3];    // +0x1D
     };
 
-    struct PageHeader
+    enum class PageRepairState : uint16_t
+    {
+        REPAIR_NONE = 0,
+        REPAIR_PENDING_VALIDATION = 1,
+        REPAIR_REQUIRED = 2,
+        REPAIR_IN_PROGRESS = 3,
+        REPAIR_COMPLETE = 4,
+        REPAIR_FATAL = 5,
+    };
+
+    struct LegacyPageHeaderV1
     {
         uint32_t magic;        // 0x00 'SBRD'
         uint16_t version;      // 0x04 format version
         uint16_t page_type;    // 0x06 PageType
         uint32_t page_size;    // 0x08 8192|16384|32768|65536|131072
-        uint32_t checksum;     // 0x0C CRC32C of bytes [0x10..page_size)
-        uint64_t lsn;          // 0x10 Log Sequence Number (0 if no WAL)
+        uint32_t checksum;     // 0x0C legacy whole-page checksum
+        uint64_t lsn;          // 0x10 legacy Alpha slot (unused in no-WAL flow)
         uint32_t page_id;      // 0x18 page number in file (0-based)
         uint32_t flags;        // 0x1C page-specific flags
         uint8_t  database_uuid[16]; // 0x20 Database UUID (v7)
         uint8_t  object_uuid[16];   // 0x30 Owning object UUID (table/index/catalog object)
         uint64_t generation;   // 0x40 page generation for MVCC
-        uint16_t free_space;   // 0x48 bytes of free space
+        uint16_t free_space;   // 0x48 bytes of free space (legacy compressed encoding)
         uint16_t item_count;   // 0x4A number of items on page
         uint16_t free_offset;  // 0x4C offset to start of free space
         uint16_t special_size; // 0x4E size of special area at page end
+    };
+
+    struct PageHeader
+    {
+        uint32_t magic;        // 0x00 'SBRD'
+        uint16_t version;      // 0x04 format version
+        uint16_t header_bytes; // 0x06 canonical header length
+        uint16_t page_type;    // 0x08 PageType
+        uint16_t flags;        // 0x0A page-specific flags
+        uint32_t page_size;    // 0x0C 8192|16384|32768|65536|131072
+        union
+        {
+            struct
+            {
+                uint32_t header_checksum;  // 0x10 canonical header checksum
+                union
+                {
+                    uint32_t checksum;         // 0x14 payload checksum compatibility alias
+                    uint32_t payload_checksum; // 0x14 canonical payload checksum
+                };
+            };
+            uint64_t lsn; // 0x10 legacy compatibility alias for zero-init writers
+        };
+        uint64_t page_id;      // 0x18 page number in file (0-based)
+        uint8_t  database_uuid[16]; // 0x20 Database UUID (v7)
+        uint8_t  object_uuid[16];   // 0x30 Owning object UUID (table/index/catalog object)
+        union
+        {
+            uint64_t generation;      // 0x40 compatibility alias
+            uint64_t page_generation; // 0x40 canonical page generation
+        };
+        uint64_t flush_generation;      // 0x48 last durably flushed generation
+        uint64_t checkpoint_generation; // 0x50 last completed checkpoint covering page
+        uint32_t repair_epoch;          // 0x58 repair publication epoch
+        uint16_t repair_state_raw;      // 0x5C canonical repair-state marker
+        uint32_t free_space;            // 0x5E bytes of free space
+        uint16_t item_count;            // 0x62 number of items on page
+        uint16_t free_offset;           // 0x64 offset to start of free space
+        uint16_t special_size;          // 0x66 size of special area at page end
+        uint16_t reserved;              // 0x68 reserved, must remain zero
     };
 #pragma pack(pop)
 
@@ -330,7 +381,49 @@ static_assert(sizeof(VNextSlotDirectoryEntry) == 8,
               "VNextSlotDirectoryEntry must be exactly 8 bytes");
 static_assert(sizeof(VNextPointerSwapRecord) == 32,
               "VNextPointerSwapRecord must be exactly 32 bytes");
-static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per ON_DISK_FORMAT.md");
+static_assert(sizeof(LegacyPageHeaderV1) == 80,
+              "LegacyPageHeaderV1 must remain exactly 80 bytes for legacy readers");
+static_assert(sizeof(PageHeader) == 106,
+              "PageHeader must publish the canonical section-05 field set");
+
+    constexpr uint16_t LEGACY_PAGE_HEADER_V1_BYTES =
+        static_cast<uint16_t>(sizeof(LegacyPageHeaderV1));
+    constexpr uint16_t CANONICAL_PAGE_HEADER_BYTES =
+        static_cast<uint16_t>(sizeof(PageHeader));
+
+    inline auto canonicalizeLegacyPageHeader(const LegacyPageHeaderV1 &legacy) -> PageHeader
+    {
+        PageHeader out{};
+        out.magic = legacy.magic;
+        out.version = legacy.version;
+        out.header_bytes = CANONICAL_PAGE_HEADER_BYTES;
+        out.page_type = legacy.page_type;
+        out.flags = static_cast<uint16_t>(legacy.flags & 0xFFFFu);
+        out.page_size = legacy.page_size;
+        out.header_checksum = 0u;
+        out.payload_checksum = legacy.checksum;
+        out.page_id = legacy.page_id;
+        std::memcpy(out.database_uuid, legacy.database_uuid, sizeof(out.database_uuid));
+        std::memcpy(out.object_uuid, legacy.object_uuid, sizeof(out.object_uuid));
+        out.generation = legacy.generation;
+        out.flush_generation = legacy.generation;
+        out.checkpoint_generation = legacy.generation;
+        out.repair_epoch = 0u;
+        out.repair_state_raw = static_cast<uint16_t>(PageRepairState::REPAIR_NONE);
+        const uint32_t unit = (legacy.page_size > 0xFFFFu) ? 2u : 1u;
+        out.free_space = static_cast<uint32_t>(legacy.free_space) * unit;
+        out.item_count = legacy.item_count;
+        out.free_offset = legacy.free_offset;
+        out.special_size = legacy.special_size;
+        out.reserved = 0u;
+        return out;
+    }
+
+    inline auto pageIsTemporaryWork(const PageHeader &header) -> bool
+    {
+        return (header.flags & PAGE_FLAG_TEMPORARY_WORK) != 0u ||
+               header.page_type == PAGE_TYPE_TEMP_HEAP;
+    }
 
     inline auto isValidVNextPageHeaderBounds(const VNextBasePageHeader &header,
                                              uint32_t page_size = VNEXT_PAGE_SIZE_BYTES) -> bool
@@ -472,12 +565,30 @@ static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per
         uint64_t restart_generation;
         uint64_t last_clean_shutdown_generation;
         uint64_t config_flags;
-        // Shared extension slots for startup reconciliation, sweep progress,
-        // and future restart-safe control metadata.
-        uint64_t reserved[32];
+        // Shared extension slots for startup reconciliation, checkpoint,
+        // writeback incidents, sweep progress, and future restart-safe
+        // control metadata.
+        uint64_t reserved[64];
     };
 
-    constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_VERSION = 2;
+    enum class CheckpointLifecycleState : uint64_t
+    {
+        IDLE = 0,
+        CAPTURING_HORIZONS = 1,
+        DRAINING_DIRTY_SET = 2,
+        PERSISTING_CHECKPOINT_MARKER = 3,
+        CLEAN_SHUTDOWN_ARMED = 4,
+        COMPLETE = 5,
+        FAILED = 6,
+    };
+
+    enum class CheckpointShutdownIntent : uint64_t
+    {
+        NONE = 0,
+        CLEAN = 1,
+    };
+
+    constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_VERSION = 3;
     constexpr size_t SYSTEM_STATE_STARTUP_RECON_VERSION_SLOT = 0;
     constexpr size_t SYSTEM_STATE_STARTUP_RECON_OUTCOME_SLOT = 1;
     constexpr size_t SYSTEM_STATE_STARTUP_RECON_STATUS_SLOT = 2;
@@ -493,12 +604,87 @@ static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per
     constexpr size_t SYSTEM_STATE_STARTUP_RECON_CLASS_SLOT = 12;
     constexpr size_t SYSTEM_STATE_STARTUP_RECON_ACTION_SLOT = 13;
     constexpr size_t SYSTEM_STATE_STARTUP_RECON_REPAIR_PLAN_SLOT = 14;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_CLASSIFICATION_SLOT = 42;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_SERVICE_STATE_SLOT = 43;
 
     constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_FLAG_CLEAN_MARKER = 1ULL << 0;
     constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_FLAG_STARTUP_REPAIR = 1ULL << 1;
     constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_FLAG_PAGE_SCAN_FINDINGS = 1ULL << 2;
     constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_FLAG_CORRUPT_PAGES = 1ULL << 3;
     constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_FLAG_QUARANTINE_ACTIVE = 1ULL << 4;
+
+    constexpr uint64_t SYSTEM_STATE_CHECKPOINT_VERSION = 1;
+    constexpr size_t SYSTEM_STATE_CHECKPOINT_VERSION_SLOT = 15;
+    constexpr size_t SYSTEM_STATE_CHECKPOINT_GENERATION_SLOT = 16;
+    constexpr size_t SYSTEM_STATE_CHECKPOINT_STATE_SLOT = 17;
+    constexpr size_t SYSTEM_STATE_CHECKPOINT_START_TIME_SLOT = 18;
+    constexpr size_t SYSTEM_STATE_CHECKPOINT_CAPTURED_OIT_SLOT = 19;
+    constexpr size_t SYSTEM_STATE_CHECKPOINT_CAPTURED_OAT_SLOT = 20;
+    constexpr size_t SYSTEM_STATE_CHECKPOINT_CAPTURED_OST_SLOT = 21;
+    constexpr size_t SYSTEM_STATE_CHECKPOINT_DIRTY_LOW_SLOT = 22;
+    constexpr size_t SYSTEM_STATE_CHECKPOINT_DIRTY_HIGH_SLOT = 23;
+    constexpr size_t SYSTEM_STATE_CHECKPOINT_FLUSH_DEBT_SLOT = 24;
+    constexpr size_t SYSTEM_STATE_CHECKPOINT_SWEEP_GENERATION_SLOT = 25;
+    constexpr size_t SYSTEM_STATE_CHECKPOINT_QUEUE_REBUILD_SLOT = 26;
+    constexpr size_t SYSTEM_STATE_CHECKPOINT_SHUTDOWN_INTENT_SLOT = 27;
+    constexpr size_t SYSTEM_STATE_CHECKPOINT_FAILURE_REASON_SLOT = 28;
+
+    enum class WritebackFailureClass : uint64_t
+    {
+        NONE = 0,
+        RETRYABLE_WRITEBACK_IO = 1,
+        RETRYABLE_FSYNC_IO = 2,
+        DISK_FULL = 3,
+        RESERVE_SPACE_EXHAUSTED = 4,
+        CORRUPT_TARGET_PAGE = 5,
+        FILESYSTEM_OFFLINE = 6,
+        WRITEBACK_TIMEOUT = 7,
+    };
+
+    enum class WritebackDegradedState : uint64_t
+    {
+        NORMAL = 0,
+        DEGRADED_READ_WRITE = 1,
+        WRITE_FENCED = 2,
+        FATAL = 3,
+    };
+
+    constexpr uint64_t SYSTEM_STATE_WRITEBACK_INCIDENT_VERSION = 1;
+    constexpr size_t SYSTEM_STATE_WRITEBACK_INCIDENT_VERSION_SLOT = 29;
+    constexpr size_t SYSTEM_STATE_WRITEBACK_INCIDENT_FLAGS_SLOT = 30;
+    constexpr size_t SYSTEM_STATE_WRITEBACK_INCIDENT_FILESPACE_SLOT = 31;
+    constexpr size_t SYSTEM_STATE_WRITEBACK_INCIDENT_QUEUE_KIND_SLOT = 32;
+    constexpr size_t SYSTEM_STATE_WRITEBACK_INCIDENT_POLICY_DOMAIN_SLOT = 33;
+    constexpr size_t SYSTEM_STATE_WRITEBACK_INCIDENT_PAGE_CLASS_SLOT = 34;
+    constexpr size_t SYSTEM_STATE_WRITEBACK_INCIDENT_DIRTY_GENERATION_SLOT = 35;
+    constexpr size_t SYSTEM_STATE_WRITEBACK_INCIDENT_FIRST_SEEN_SLOT = 36;
+    constexpr size_t SYSTEM_STATE_WRITEBACK_INCIDENT_LAST_RETRY_SLOT = 37;
+    constexpr size_t SYSTEM_STATE_WRITEBACK_INCIDENT_RETRY_COUNT_SLOT = 38;
+    constexpr size_t SYSTEM_STATE_WRITEBACK_INCIDENT_FAILURE_CLASS_SLOT = 39;
+    constexpr size_t SYSTEM_STATE_WRITEBACK_INCIDENT_DEGRADED_STATE_SLOT = 40;
+    constexpr size_t SYSTEM_STATE_WRITEBACK_INCIDENT_LAST_ERROR_STATUS_SLOT = 41;
+
+    constexpr uint64_t SYSTEM_STATE_WRITEBACK_INCIDENT_FLAG_OPEN = 1ULL << 0;
+
+    constexpr uint64_t SYSTEM_STATE_SWEEP_PROGRESS_VERSION = 1;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_VERSION_SLOT = 44;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_CONTROL_SLOT = 45;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_GENERATION_SLOT = 46;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_RELATION_HI_SLOT = 47;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_RELATION_LO_SLOT = 48;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_FILESPACE_HI_SLOT = 49;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_FILESPACE_LO_SLOT = 50;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_PAGE_ID_SLOT = 51;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_CAPTURED_OIT_SLOT = 52;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_CAPTURED_OAT_SLOT = 53;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_CAPTURED_OST_SLOT = 54;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_CHECKPOINT_GENERATION_SLOT = 55;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_CURSOR_CHECKSUM_SLOT = 56;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_PERSIST_TIME_SLOT = 57;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_START_HORIZON_SLOT = 58;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_RECLAIMED_VERSIONS_SLOT = 59;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_RECLAIMED_BYTES_SLOT = 60;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_SLOT = 61;
 
     struct BootstrapCatalogRootHeader
     {
@@ -810,10 +996,7 @@ static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per
 
     inline auto pageUpper(const PageHeader &header) -> uint32_t
     {
-        const uint32_t unit = (header.page_size > 0xFFFFu) ? 2u : 1u;
-        return (static_cast<uint32_t>(header.free_offset) +
-                static_cast<uint32_t>(header.free_space)) *
-               unit;
+        return pageLower(header) + header.free_space;
     }
 
     inline auto pageSpecial(const PageHeader &header) -> uint32_t
@@ -824,19 +1007,26 @@ static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per
 
     inline void pageSetLower(PageHeader &header, uint32_t lower)
     {
+        if (header.header_bytes == 0u)
+        {
+            header.header_bytes = CANONICAL_PAGE_HEADER_BYTES;
+        }
+        if (header.repair_state_raw == 0u)
+        {
+            header.repair_state_raw = static_cast<uint16_t>(PageRepairState::REPAIR_NONE);
+        }
         const uint32_t unit = (header.page_size > 0xFFFFu) ? 2u : 1u;
         header.free_offset = static_cast<uint16_t>(lower / unit);
     }
 
     inline void pageSetUpper(PageHeader &header, uint32_t upper)
     {
-        const uint32_t unit = (header.page_size > 0xFFFFu) ? 2u : 1u;
-        uint32_t lower = static_cast<uint32_t>(header.free_offset) * unit;
+        uint32_t lower = pageLower(header);
         if (upper < lower)
         {
             upper = lower;
         }
-        header.free_space = static_cast<uint16_t>((upper - lower) / unit);
+        header.free_space = upper - lower;
     }
 
     inline void pageSetSpecial(PageHeader &header, uint32_t special)
@@ -881,10 +1071,10 @@ static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per
         return out;
     }
 
-    inline auto calculatePageChecksum(const uint8_t *page, uint32_t page_size) -> uint32_t
+    inline auto calculateLegacyPageChecksum(const uint8_t *page, uint32_t page_size) -> uint32_t
     {
         uint32_t crc = 0xFFFFFFFFU;
-        // Per ON_DISK_FORMAT.md: exclude checksum field bytes 0x0C-0x0F
+        // Legacy Alpha checksum model: exclude checksum field bytes 0x0C-0x0F
         if (page_size >= 0x10)
         {
             crc = crc32cCompute(page, 0x0C, crc);
@@ -897,15 +1087,100 @@ static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per
         return crc ^ 0xFFFFFFFFU;
     }
 
+    inline auto calculatePageHeaderChecksum(const uint8_t *page, uint32_t header_bytes) -> uint32_t
+    {
+        if (page == nullptr || header_bytes < CANONICAL_PAGE_HEADER_BYTES)
+        {
+            return 0u;
+        }
+
+        uint32_t crc = 0xFFFFFFFFU;
+        crc = crc32cCompute(page, 0x10, crc);
+        if (header_bytes > 0x14)
+        {
+            crc = crc32cCompute(page + 0x14, header_bytes - 0x14, crc);
+        }
+        return crc ^ 0xFFFFFFFFU;
+    }
+
+    inline auto calculatePagePayloadChecksum(const uint8_t *page, uint32_t page_size,
+                                             uint32_t header_bytes) -> uint32_t
+    {
+        if (page == nullptr)
+        {
+            return 0u;
+        }
+        if (header_bytes == 0u || header_bytes > page_size)
+        {
+            return calculateLegacyPageChecksum(page, page_size);
+        }
+
+        uint32_t crc = 0xFFFFFFFFU;
+        if (page_size > header_bytes)
+        {
+            crc = crc32cCompute(page + header_bytes, page_size - header_bytes, crc);
+        }
+        return crc ^ 0xFFFFFFFFU;
+    }
+
+    inline auto calculatePageChecksum(const uint8_t *page, uint32_t page_size) -> uint32_t
+    {
+        if (page == nullptr)
+        {
+            return 0u;
+        }
+
+        const auto *header = reinterpret_cast<const PageHeader *>(page);
+        if (header->header_bytes >= CANONICAL_PAGE_HEADER_BYTES &&
+            header->header_bytes <= page_size)
+        {
+            return calculatePagePayloadChecksum(
+                page, page_size, static_cast<uint32_t>(header->header_bytes));
+        }
+        return calculateLegacyPageChecksum(page, page_size);
+    }
+
+    inline auto getPageRepairState(const PageHeader &header) -> PageRepairState
+    {
+        return static_cast<PageRepairState>(header.repair_state_raw);
+    }
+
+    inline void setPageRepairState(PageHeader &header, PageRepairState state)
+    {
+        header.repair_state_raw = static_cast<uint16_t>(state);
+    }
+
     inline auto validatePageChecksum(const uint8_t *page, uint32_t page_size) -> bool
     {
         const auto *header = reinterpret_cast<const PageHeader *>(page);
-        const uint32_t computed = calculatePageChecksum(page, page_size);
-        if (computed == header->checksum)
+        if ((header->flags & PAGE_FLAG_CHECKSUM_VALID) == 0u)
         {
             return true;
         }
-        return (header->flags & PAGE_FLAG_CHECKSUM_VALID) == 0u;
+
+        if (header->header_bytes >= CANONICAL_PAGE_HEADER_BYTES &&
+            header->header_bytes <= page_size)
+        {
+            const uint32_t payload_crc = calculatePagePayloadChecksum(
+                page, page_size, static_cast<uint32_t>(header->header_bytes));
+            if (payload_crc != header->payload_checksum)
+            {
+                return false;
+            }
+            if (header->header_checksum != 0u)
+            {
+                const uint32_t header_crc = calculatePageHeaderChecksum(
+                    page, static_cast<uint32_t>(header->header_bytes));
+                if (header_crc != header->header_checksum)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        const uint32_t computed = calculateLegacyPageChecksum(page, page_size);
+        return computed == header->checksum;
     }
 
     inline auto validatePageHeaderContract(const PageHeader &header, uint32_t expected_page_size,
@@ -932,6 +1207,22 @@ static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per
         {
             return Status::PAGE_CORRUPT;
         }
+        if (header.header_bytes != CANONICAL_PAGE_HEADER_BYTES)
+        {
+            return Status::PAGE_CORRUPT;
+        }
+        if (header.repair_state_raw > static_cast<uint16_t>(PageRepairState::REPAIR_FATAL))
+        {
+            return Status::PAGE_CORRUPT;
+        }
+        if (header.flush_generation > header.generation)
+        {
+            return Status::PAGE_CORRUPT;
+        }
+        if (header.checkpoint_generation > header.flush_generation)
+        {
+            return Status::PAGE_CORRUPT;
+        }
         if (expected_database_uuid != nullptr &&
             getDatabaseUuid(header) != *expected_database_uuid)
         {
@@ -945,7 +1236,7 @@ static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per
         const uint32_t lower = pageLower(header);
         const uint32_t upper = pageUpper(header);
         const uint32_t special = pageSpecial(header);
-        if (lower < sizeof(PageHeader) || lower > upper || upper > special ||
+        if (lower < header.header_bytes || lower > upper || upper > special ||
             special > header.page_size)
         {
             return Status::PAGE_CORRUPT;
@@ -977,12 +1268,20 @@ static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per
         return Status::OK;
     }
 
-    inline void preparePageForWrite(uint8_t *page, uint32_t page_size, uint32_t page_id)
+    inline void preparePageForWrite(uint8_t *page, uint32_t page_size, uint64_t page_id)
     {
         auto *header = reinterpret_cast<PageHeader *>(page);
         const bool had_valid_checksum = (header->flags & PAGE_FLAG_CHECKSUM_VALID) != 0u;
         header->page_id = page_id;
-        header->lsn = 0; // Alpha has no WAL and keeps lsn zeroed on write.
+        if (header->version == 0u)
+        {
+            header->version = 1u;
+        }
+        header->header_bytes = CANONICAL_PAGE_HEADER_BYTES;
+        if (header->repair_state_raw == 0u)
+        {
+            header->repair_state_raw = static_cast<uint16_t>(PageRepairState::REPAIR_NONE);
+        }
         if (had_valid_checksum)
         {
             header->generation += 1;
@@ -991,8 +1290,18 @@ static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per
         {
             header->generation = 1;
         }
+        if (header->flush_generation > header->generation)
+        {
+            header->flush_generation = header->generation;
+        }
+        if (header->checkpoint_generation > header->flush_generation)
+        {
+            header->checkpoint_generation = header->flush_generation;
+        }
         header->flags |= PAGE_FLAG_CHECKSUM_VALID;
-        header->checksum = calculatePageChecksum(page, page_size);
+        header->payload_checksum = calculatePageChecksum(page, page_size);
+        header->header_checksum = calculatePageHeaderChecksum(
+            page, static_cast<uint32_t>(header->header_bytes));
     }
 
     inline auto isValidAlphaPageSize(uint32_t page_size) -> bool

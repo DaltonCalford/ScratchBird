@@ -344,6 +344,26 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    void HeapPage::applyOwningTableContract(bool temporary_work)
+    {
+        PageHeader *hdr = header();
+        setObjectUuid(*hdr, table_id_);
+        if (temporary_work)
+        {
+            hdr->flags |= static_cast<uint16_t>(PAGE_FLAG_TEMPORARY_WORK);
+        }
+        else
+        {
+            hdr->flags &= static_cast<uint16_t>(~PAGE_FLAG_TEMPORARY_WORK);
+        }
+
+        if (pageSpecial(*hdr) == page_size_ - sizeof(HeapPageSpecial))
+        {
+            HeapPageSpecial *special = getSpecial();
+            special->table_id = table_id_;
+        }
+    }
+
     auto HeapPage::insertTuple(const uint8_t *tuple_data, uint32_t tuple_size, uint64_t xmin,
                                uint16_t *item_id_out, ErrorContext *ctx) -> Status
     {
@@ -1067,8 +1087,36 @@ namespace scratchbird::core
             uint32_t free_space = pageUpper(*hdr) - pageLower(*hdr);
             if (tuple_size > free_space)
             {
-                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "Not enough space for tuple rewrite");
-                return Status::PAGE_FULL;
+                // Stable-slot rewrites can reclaim the tuple's current slot by
+                // compacting the rest of the page and then reusing the same
+                // item pointer with a new offset.
+                if (tuple_size > free_space + old_length)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "Not enough space for tuple rewrite");
+                    return Status::PAGE_FULL;
+                }
+
+                std::vector<uint8_t> original_page(page_data_, page_data_ + page_size_);
+                item_ptr->setUnused();
+
+                uint32_t bytes_reclaimed = 0;
+                Status defrag_status = defragmentPage(&bytes_reclaimed, ctx);
+                if (defrag_status != Status::OK)
+                {
+                    std::memcpy(page_data_, original_page.data(), page_size_);
+                    return defrag_status;
+                }
+
+                hdr = header();
+                items = getItemArray();
+                item_ptr = &items[item_id];
+                free_space = pageUpper(*hdr) - pageLower(*hdr);
+                if (tuple_size > free_space)
+                {
+                    std::memcpy(page_data_, original_page.data(), page_size_);
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "Not enough space for tuple rewrite");
+                    return Status::PAGE_FULL;
+                }
             }
 
             uint32_t new_offset = (pageUpper(*hdr) - tuple_size) & ~uint32_t{7};
@@ -1082,6 +1130,7 @@ namespace scratchbird::core
             std::memcpy(page_data_ + new_offset, tuple_data, tuple_size);
             item_ptr->offset = new_offset;
             item_ptr->length = tuple_size;
+            item_ptr->flags = 0;
             tuple_location_moved = true;
             pageSetUpper(*hdr, new_offset);
         }

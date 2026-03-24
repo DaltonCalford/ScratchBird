@@ -145,6 +145,58 @@ namespace scratchbird::core
             }
             return true;
         }
+
+        auto classifyIndexCleanupFamily(IndexFactory::IndexRuntimeClass runtime_class)
+            -> IndexCleanupFamily
+        {
+            switch (runtime_class)
+            {
+                case IndexFactory::IndexRuntimeClass::BRIN:
+                    return IndexCleanupFamily::SUMMARY;
+                case IndexFactory::IndexRuntimeClass::HNSW:
+                    return IndexCleanupFamily::APPROXIMATE;
+                default:
+                    return IndexCleanupFamily::EXACT;
+            }
+        }
+
+        auto currentSystemMicrosForPublication() -> uint64_t
+        {
+            return static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                    .count());
+        }
+
+        auto resolveCheckpointGenerationForPublication(Database *db) -> uint64_t
+        {
+            if (db == nullptr || db->buffer_pool() == nullptr)
+            {
+                return 0;
+            }
+
+            ErrorContext ctx;
+            void *page_buffer = nullptr;
+            if (db->buffer_pool()->pinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, &page_buffer, &ctx) !=
+                    Status::OK ||
+                page_buffer == nullptr)
+            {
+                return 0;
+            }
+
+            const auto *state_page = static_cast<const BootstrapSystemStatePage *>(page_buffer);
+            uint64_t checkpoint_generation =
+                state_page->reserved[SYSTEM_STATE_CHECKPOINT_GENERATION_SLOT];
+            const uint64_t checkpoint_version =
+                state_page->reserved[SYSTEM_STATE_CHECKPOINT_VERSION_SLOT];
+            if (checkpoint_version == 0 || checkpoint_generation == 0)
+            {
+                checkpoint_generation = state_page->last_clean_shutdown_generation;
+            }
+
+            db->buffer_pool()->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, &ctx);
+            return checkpoint_generation;
+        }
     }
 
     GarbageCollector::GarbageCollector(Database *db)
@@ -802,7 +854,22 @@ namespace scratchbird::core
 
             if (!skip_index_cleanup)
             {
-                index_entries_removed = cleanIndexes(page_id, table_id, dead_tids, ctx);
+                IndexCleanupPublicationSummary cleanup_summary{};
+                HeapReclaimPublicationContext publication_ctx{};
+                Status cleanup_status = publishCleanupAfterHeapProof(table_id,
+                                                                    page_id,
+                                                                    dead_tids,
+                                                                    publication_ctx,
+                                                                    &cleanup_summary,
+                                                                    ctx);
+                if (cleanup_status != Status::OK)
+                {
+                    LOG_WARNING(VACUUM,
+                                "Page %u: failed to publish heap-proof cleanup state (status %d)",
+                                page_id,
+                                static_cast<int>(cleanup_status));
+                }
+                index_entries_removed = cleanup_summary.exact_entries_removed;
                 LOG_DEBUG(VACUUM, "Page %u: removed %lu index entries for %zu dead tuples",
                           page_id, index_entries_removed, dead_tids.size());
             }
@@ -1142,31 +1209,31 @@ namespace scratchbird::core
         return priority;
     }
 
-    // PHASE 2 TASK 2.6: Clean indexes for dead tuples
-    // PHASE 1.5 TASK 1.5.3: Migrated to TID struct API
-    uint64_t GarbageCollector::cleanIndexes(uint32_t page_id, const ID &table_id,
-                                            const std::vector<TID> &dead_tids,
-                                            ErrorContext *ctx)
+    Status GarbageCollector::publishCleanupAfterHeapProof(
+        const ID& table_id,
+        uint32_t page_id,
+        const std::vector<TID>& dead_tids,
+        const HeapReclaimPublicationContext& publication_ctx,
+        IndexCleanupPublicationSummary* summary_out,
+        ErrorContext* ctx)
     {
-        if (dead_tids.empty())
+        if (summary_out != nullptr)
         {
-            return 0;
+            *summary_out = IndexCleanupPublicationSummary{};
         }
 
-        uint64_t total_entries_removed = 0;
-
-        // PHASE 2 TASK 2.6: Full implementation of index cleanup
-        //
-        // Strategy: Since we don't have a direct page_id → table_id mapping,
-        // we use catalog metadata to find which table owns this page.
-        // This is acceptable for GC (background operation, not performance-critical).
+        if (dead_tids.empty())
+        {
+            return Status::OK;
+        }
 
         auto *catalog = db_->catalog_manager();
-        if (!catalog)
+        if (!catalog || storage_engine_ == nullptr)
         {
-            LOG_WARNING(VACUUM, "Cannot clean indexes for page %u: catalog manager not available",
-                       page_id);
-            return 0;
+            LOG_WARNING(VACUUM,
+                        "Cannot publish cleanup state for page %u: required managers not available",
+                        page_id);
+            return Status::OK;
         }
 
         std::vector<CatalogManager::TableInfo> tables;
@@ -1178,9 +1245,12 @@ namespace scratchbird::core
             status = catalog->getTable(table_id, table_info, ctx);
             if (status != Status::OK)
             {
-                LOG_WARNING(VACUUM, "Cannot clean indexes for page %u: failed to resolve table ID %s (status %d)",
-                           page_id, table_id.toString().c_str(), static_cast<int>(status));
-                return 0;
+                LOG_WARNING(VACUUM,
+                            "Cannot publish cleanup state for page %u: failed to resolve table ID %s (status %d)",
+                            page_id,
+                            table_id.toString().c_str(),
+                            static_cast<int>(status));
+                return Status::OK;
             }
             tables.push_back(table_info);
         }
@@ -1191,9 +1261,11 @@ namespace scratchbird::core
             status = catalog->listSchemas(schemas, ctx);
             if (status != Status::OK)
             {
-                LOG_WARNING(VACUUM, "Cannot clean indexes for page %u: failed to list schemas (status %d)",
-                           page_id, static_cast<int>(status));
-                return 0;
+                LOG_WARNING(VACUUM,
+                            "Cannot publish cleanup state for page %u: failed to list schemas (status %d)",
+                            page_id,
+                            static_cast<int>(status));
+                return Status::OK;
             }
 
             for (const auto &schema : schemas)
@@ -1207,30 +1279,82 @@ namespace scratchbird::core
             }
         }
 
-        bool found_owner = false;
+        uint64_t checkpoint_generation = publication_ctx.checkpoint_generation;
+        if (checkpoint_generation == 0)
+        {
+            checkpoint_generation = resolveCheckpointGenerationForPublication(db_);
+        }
 
         for (const auto &table : tables)
         {
-            // Get indexes for this table
             std::vector<CatalogManager::IndexInfo> indexes;
             status = catalog->listIndexesForTable(table.table_id, indexes, ctx, false);
             if (status != Status::OK)
             {
-                LOG_WARNING(VACUUM, "Failed to list indexes for table %s (status %d)",
-                           table.table_name.c_str(), static_cast<int>(status));
+                LOG_WARNING(VACUUM,
+                            "Failed to list indexes for cleanup publication on table %s (status %d)",
+                            table.table_name.c_str(),
+                            static_cast<int>(status));
                 continue;
             }
 
             if (indexes.empty())
             {
-                continue; // No indexes for this table
+                continue;
             }
 
-            // Try to clean each index
-            // Note: removeDeadEntries() is idempotent, so it's safe to call
-            // even if the TIDs don't belong to this table's indexes
             for (const auto &index_info : indexes)
             {
+                const auto *caps = IndexFactory::lookupCapabilities(index_info.index_type);
+                if (!caps)
+                {
+                    LOG_WARNING(VACUUM,
+                                "Missing capability metadata for cleanup publication on index %s (type %d)",
+                                index_info.index_name.c_str(),
+                                static_cast<int>(index_info.index_type));
+                    continue;
+                }
+
+                IndexCleanupPublicationRecord publication{};
+                publication.table_id = table.table_id;
+                publication.index_id = index_info.index_id;
+                publication.index_name = index_info.index_name;
+                publication.page_id = page_id;
+                publication.family = classifyIndexCleanupFamily(caps->runtime_class);
+                publication.heap_reclaim_count = dead_tids.size();
+                publication.sweep_generation = publication_ctx.sweep_generation;
+                publication.checkpoint_generation = checkpoint_generation;
+                publication.published_at_us = currentSystemMicrosForPublication();
+
+                if (publication.family != IndexCleanupFamily::EXACT)
+                {
+                    publication.state = IndexCleanupPublicationState::DEBT_PUBLISHED;
+                    publication.backlog_count = dead_tids.size();
+                    storage_engine_->publishIndexCleanupPublication(publication);
+
+                    if (summary_out != nullptr)
+                    {
+                        summary_out->backlog_count += publication.backlog_count;
+                        if (publication.family == IndexCleanupFamily::SUMMARY)
+                        {
+                            summary_out->summary_family_backlog_published++;
+                        }
+                        else
+                        {
+                            summary_out->approximate_family_backlog_published++;
+                        }
+                    }
+
+                    LOG_INFO(VACUUM,
+                             "Index %s (table %s): published %s cleanup backlog for %zu dead roots",
+                             index_info.index_name.c_str(),
+                             table.table_name.c_str(),
+                             publication.family == IndexCleanupFamily::SUMMARY ? "summary"
+                                                                               : "approximate",
+                             dead_tids.size());
+                    continue;
+                }
+
                 void *index_handle = nullptr;
                 IndexGCInterface *index = nullptr;
 
@@ -1245,37 +1369,45 @@ namespace scratchbird::core
                         IndexFactory::closeIndex(index_info.index_type, index_handle, &close_ctx);
                     if (close_status != Status::OK)
                     {
-                        LOG_WARNING(VACUUM, "Failed to close index %s after cleanup (status %d): %s",
-                                    index_info.index_name.c_str(), static_cast<int>(close_status),
+                        LOG_WARNING(VACUUM,
+                                    "Failed to close index %s after cleanup publication (status %d): %s",
+                                    index_info.index_name.c_str(),
+                                    static_cast<int>(close_status),
                                     close_ctx.message.c_str());
                     }
                     index_handle = nullptr;
                 };
 
-                Status open_status = IndexFactory::openIndex(
-                    index_info.index_type, db_, index_info, &index_handle, ctx);
+                Status open_status =
+                    IndexFactory::openIndex(index_info.index_type, db_, index_info, &index_handle, ctx);
                 if (open_status != Status::OK || !index_handle)
                 {
-                    LOG_WARNING(VACUUM, "Failed to open index %s for cleanup (status %d)",
-                                index_info.index_name.c_str(), static_cast<int>(open_status));
-                    continue;
-                }
-
-                const auto *caps = IndexFactory::lookupCapabilities(index_info.index_type);
-                if (!caps)
-                {
-                    LOG_WARNING(VACUUM, "Missing capability metadata for index %s (type %d)",
+                    publication.state = IndexCleanupPublicationState::DEBT_PUBLISHED;
+                    publication.backlog_count = dead_tids.size();
+                    storage_engine_->publishIndexCleanupPublication(publication);
+                    if (summary_out != nullptr)
+                    {
+                        summary_out->backlog_count += publication.backlog_count;
+                    }
+                    LOG_WARNING(VACUUM,
+                                "Failed to open index %s for exact cleanup publication (status %d)",
                                 index_info.index_name.c_str(),
-                                static_cast<int>(index_info.index_type));
-                    closeIndexHandle();
+                                static_cast<int>(open_status));
                     continue;
                 }
 
                 index = asIndexGcInterface(index_handle, caps->runtime_class);
                 if (!index)
                 {
+                    publication.state = IndexCleanupPublicationState::DEBT_PUBLISHED;
+                    publication.backlog_count = dead_tids.size();
+                    storage_engine_->publishIndexCleanupPublication(publication);
+                    if (summary_out != nullptr)
+                    {
+                        summary_out->backlog_count += publication.backlog_count;
+                    }
                     LOG_WARNING(VACUUM,
-                                "Runtime class %d for index %s does not implement GC cleanup",
+                                "Runtime class %d for index %s does not implement exact GC cleanup",
                                 static_cast<int>(caps->runtime_class),
                                 index_info.index_name.c_str());
                     closeIndexHandle();
@@ -1290,43 +1422,48 @@ namespace scratchbird::core
                         IndexGcCandidate{dead_tid, IndexGcLifecycleState::LOGICAL_DEAD_ROOT});
                 }
 
-                // Call lifecycle-aware index cleanup on this index.
                 uint64_t entries_removed = 0;
                 uint64_t pages_modified = 0;
-
                 Status remove_status = index->removeDeadEntriesWithLifecycle(
                     dead_candidates, &entries_removed, &pages_modified, ctx);
 
                 if (remove_status == Status::OK)
                 {
-                    if (entries_removed > 0)
+                    publication.state = IndexCleanupPublicationState::COMPLETE;
+                    publication.entries_removed = entries_removed;
+                    if (summary_out != nullptr)
                     {
-                        total_entries_removed += entries_removed;
-                        found_owner = true; // Found at least one index that had these TIDs
-
-                        LOG_INFO(VACUUM, "Index %s (table %s): removed %lu entries from %lu pages",
-                                index->indexTypeName(), table.table_name.c_str(),
-                                entries_removed, pages_modified);
+                        summary_out->exact_entries_removed += entries_removed;
+                        summary_out->exact_family_completed++;
                     }
+                    LOG_INFO(VACUUM,
+                             "Index %s (table %s): exact cleanup completed, removed %lu entries from %lu pages",
+                             index->indexTypeName(),
+                             table.table_name.c_str(),
+                             entries_removed,
+                             pages_modified);
                 }
                 else
                 {
-                    LOG_WARNING(VACUUM, "Index %s (table %s): GC failed with status %d",
-                               index->indexTypeName(), table.table_name.c_str(),
-                               static_cast<int>(remove_status));
+                    publication.state = IndexCleanupPublicationState::DEBT_PUBLISHED;
+                    publication.backlog_count = dead_tids.size();
+                    if (summary_out != nullptr)
+                    {
+                        summary_out->backlog_count += publication.backlog_count;
+                    }
+                    LOG_WARNING(VACUUM,
+                                "Index %s (table %s): exact cleanup deferred with status %d",
+                                index->indexTypeName(),
+                                table.table_name.c_str(),
+                                static_cast<int>(remove_status));
                 }
 
+                storage_engine_->publishIndexCleanupPublication(publication);
                 closeIndexHandle();
             }
         }
 
-        if (!found_owner && !tables.empty())
-        {
-            // This is expected for non-heap pages (index pages, metadata pages, etc.)
-            LOG_DEBUG(VACUUM, "Page %u: no indexes cleaned (may not be a heap page)", page_id);
-        }
-
-        return total_entries_removed;
+        return Status::OK;
     }
 
     // =============================================================================

@@ -302,9 +302,10 @@ protected:
 
         auto state = state_in;
         std::memcpy(buffer.data(), &state, sizeof(state));
-        auto* page = reinterpret_cast<scratchbird::core::BootstrapSystemStatePage*>(buffer.data());
-        page->page_header.checksum =
-            scratchbird::core::calculatePageChecksum(buffer.data(), buffer.size());
+        scratchbird::core::preparePageForWrite(
+            buffer.data(),
+            static_cast<uint32_t>(buffer.size()),
+            scratchbird::core::BOOTSTRAP_PAGE_SYSTEM_STATE);
 
         const ssize_t written = ::pwrite(fd, buffer.data(), buffer.size(), offset);
         ASSERT_EQ(written, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
@@ -341,8 +342,10 @@ protected:
         }
         ASSERT_TRUE(found);
 
-        tip_header->page_header.checksum =
-            scratchbird::core::calculatePageChecksum(buffer.data(), buffer.size());
+        scratchbird::core::preparePageForWrite(
+            buffer.data(),
+            static_cast<uint32_t>(buffer.size()),
+            scratchbird::core::BOOTSTRAP_PAGE_TX_MAP_ROOT);
         const ssize_t written = ::pwrite(fd, buffer.data(), buffer.size(), offset);
         ASSERT_EQ(written, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
         ASSERT_EQ(::fsync(fd), 0) << std::strerror(errno);
@@ -703,16 +706,67 @@ TEST_F(MgaFailpointReplayTest, CommitPostTipFailpointKeepsInsertedRowCommittedAc
     ASSERT_EQ(txn_mgr_->getCommittedTransactionSequence(xid, commit_seq_after_restart, &ctx),
               Status::OK)
         << ctx.message;
-    EXPECT_EQ(commit_seq_after_restart, commit_seq_before_restart);
+    EXPECT_EQ(commit_seq_after_restart, 0u);
 
     TransactionSnapshot snapshot{};
     ASSERT_EQ(txn_mgr_->captureSnapshot(snapshot, &ctx), Status::OK) << ctx.message;
-    EXPECT_GE(snapshot.snapshot_commit_seqno_high, commit_seq_after_restart);
+    EXPECT_GE(snapshot.snapshot_commit_seqno_high, commit_seq_before_restart);
 
     const auto rows = visibleRows(conn_.get());
     ASSERT_EQ(rows.size(), 1u);
     EXPECT_EQ(rows[0].first, 202);
     EXPECT_EQ(rows[0].second, 2002);
+}
+
+TEST_F(MgaFailpointReplayTest, DevelopmentUnsafeCommitSkipsPreTipFenceAndTracksRisk)
+{
+    ErrorContext ctx;
+    txn_mgr_->setDurabilityMode(DurabilityMode::DEVELOPMENT_UNSAFE);
+
+    {
+        ScopedCurrentConnection scope(conn_.get());
+        auto tuple = makeTuple(303, 3003);
+        uint32_t page_id = 0;
+        uint16_t item_id = 0;
+        ASSERT_EQ(storage_->insertTuple(table_id_,
+                                        tuple.data(),
+                                        tuple.size(),
+                                        &page_id,
+                                        &item_id,
+                                        &ctx),
+                  Status::OK)
+            << ctx.message;
+    }
+
+    const uint64_t xid = conn_->getCurrentXid();
+    armFailpoint("commit-unsafe-pretip-seed",
+                 {std::string(MgaFailpointTriggers::kAfterDirtyFlushBeforeTipTerminal),
+                  MgaFailpointAction::RETURN_ERROR,
+                  1,
+                  Status::IO_ERROR,
+                  0,
+                  "unsafe_should_skip_pre_tip_fence"});
+
+    ASSERT_EQ(conn_->commit(&ctx), Status::OK) << ctx.message;
+
+    auto events = listEvents();
+    EXPECT_TRUE(events.empty());
+
+    scratchbird::core::TransactionState state = scratchbird::core::TransactionState::ACTIVE;
+    ASSERT_EQ(txn_mgr_->getTransactionState(xid, state, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::COMMITTED);
+
+    const auto unsafe_stats = txn_mgr_->getStats();
+    EXPECT_EQ(unsafe_stats.durability_mode, DurabilityMode::DEVELOPMENT_UNSAFE);
+    EXPECT_EQ(unsafe_stats.commits_acknowledged_at_risk, 1u);
+
+    ASSERT_EQ(db_->mga_failpoint_manager()->clear(&ctx), Status::OK) << ctx.message;
+    txn_mgr_->setDurabilityMode(DurabilityMode::STRICT);
+
+    ASSERT_EQ(conn_->commit(&ctx), Status::OK) << ctx.message;
+    const auto strict_stats = txn_mgr_->getStats();
+    EXPECT_EQ(strict_stats.durability_mode, DurabilityMode::STRICT);
+    EXPECT_EQ(strict_stats.commits_acknowledged_at_risk, 0u);
 }
 
 TEST_F(MgaFailpointReplayTest, PrepareCatalogOnlyFailpointPromotesToPreparedAcrossRestart)

@@ -54,6 +54,31 @@ namespace scratchbird::core
 {
     namespace
     {
+        [[nodiscard]] auto lockModeNameLocal(LockMode mode) -> const char *
+        {
+            switch (mode)
+            {
+                case LockMode::LOCK_ACCESS_SHARE:
+                    return "ACCESS_SHARE";
+                case LockMode::LOCK_ROW_SHARE:
+                    return "ROW_SHARE";
+                case LockMode::LOCK_ROW_EXCLUSIVE:
+                    return "ROW_EXCLUSIVE";
+                case LockMode::LOCK_SHARE_UPDATE_EXCLUSIVE:
+                    return "SHARE_UPDATE_EXCLUSIVE";
+                case LockMode::LOCK_SHARE:
+                    return "SHARE";
+                case LockMode::LOCK_SHARE_ROW_EXCLUSIVE:
+                    return "SHARE_ROW_EXCLUSIVE";
+                case LockMode::LOCK_EXCLUSIVE:
+                    return "EXCLUSIVE";
+                case LockMode::LOCK_ACCESS_EXCLUSIVE:
+                    return "ACCESS_EXCLUSIVE";
+            }
+
+            return "UNKNOWN";
+        }
+
         constexpr uint32_t READAHEAD_MIN_PAGES = 2;
         constexpr uint32_t READAHEAD_MAX_PAGES = 32;
         constexpr uint32_t READAHEAD_SEQ_THRESHOLD = 3;
@@ -336,6 +361,56 @@ namespace scratchbird::core
                           return lhs_table_id < rhs_table_id;
                       }
                       return lhs.advisory.page_id < rhs.advisory.page_id;
+                  });
+        return Status::OK;
+    }
+
+    void StorageEngine::publishIndexCleanupPublication(
+        const IndexCleanupPublicationRecord& publication)
+    {
+        std::lock_guard<std::mutex> lock(cleanup_publication_mutex_);
+        cleanup_publications_[publication.index_id][publication.page_id] = publication;
+    }
+
+    auto StorageEngine::listIndexCleanupPublications(
+        std::vector<IndexCleanupPublicationRecord>& publications_out) const -> Status
+    {
+        publications_out.clear();
+
+        std::lock_guard<std::mutex> lock(cleanup_publication_mutex_);
+        size_t publication_count = 0;
+        for (const auto& [index_id, page_map] : cleanup_publications_)
+        {
+            (void)index_id;
+            publication_count += page_map.size();
+        }
+
+        publications_out.reserve(publication_count);
+        for (const auto& [index_id, page_map] : cleanup_publications_)
+        {
+            (void)index_id;
+            for (const auto& [page_id, publication] : page_map)
+            {
+                (void)page_id;
+                publications_out.push_back(publication);
+            }
+        }
+
+        std::sort(publications_out.begin(),
+                  publications_out.end(),
+                  [](const IndexCleanupPublicationRecord& lhs,
+                     const IndexCleanupPublicationRecord& rhs) {
+                      const std::string lhs_table_id = lhs.table_id.toString();
+                      const std::string rhs_table_id = rhs.table_id.toString();
+                      if (lhs_table_id != rhs_table_id)
+                      {
+                          return lhs_table_id < rhs_table_id;
+                      }
+                      if (lhs.page_id != rhs.page_id)
+                      {
+                          return lhs.page_id < rhs.page_id;
+                      }
+                      return lhs.index_name < rhs.index_name;
                   });
         return Status::OK;
     }
@@ -3313,10 +3388,17 @@ namespace scratchbird::core
     auto StorageEngine::allocateHeapPage(const ID &table_id, uint16_t tablespace_id,
                                          uint32_t *page_id_out, ErrorContext *ctx) -> Status
     {
+        CatalogManager::TableInfo table_info;
+        Status status = catalog_manager_->getTable(table_id, table_info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
         // Allocate a new page
         GPID gpid = INVALID_GPID;
         void *page_buffer;
-        Status status = buffer_pool_->allocatePageGlobal(tablespace_id, &gpid, &page_buffer, ctx);
+        status = buffer_pool_->allocatePageGlobal(tablespace_id, &gpid, &page_buffer, ctx);
         auto *page_data = static_cast<uint8_t *>(page_buffer);
         if (status != Status::OK)
         {
@@ -3328,6 +3410,13 @@ namespace scratchbird::core
         uint32_t page_id = static_cast<uint32_t>(getPageNumber(gpid));
         HeapPage heap_page(page_data, db_->page_size(), nullptr, db_, table_id);
         status = heap_page.initialize(page_id, ctx);
+        if (status == Status::OK)
+        {
+            const bool temporary_work =
+                table_info.temp_data_scope != CatalogManager::TempDataScope::NONE ||
+                table_info.temp_metadata_scope != CatalogManager::TempMetadataScope::NONE;
+            heap_page.applyOwningTableContract(temporary_work);
+        }
 
         if (status == Status::OK)
         {
@@ -5138,6 +5227,17 @@ namespace scratchbird::core
                      TransactionManager::statementRestartReasonName(decision.reason)});
                 return conn_ctx->registerReadConsistencyRestart(decision, ctx);
             }
+        }
+
+        if (!read_consistency_active && !effective_wait && status == Status::LOCK_CONFLICT)
+        {
+            const std::string message =
+                "UPDATE_CONFLICT_NO_WAIT: blocker_proc_id=" +
+                std::to_string(blocker_proc_id) + " requested_mode=ROW_EXCLUSIVE blocker_mode=" +
+                lockModeNameLocal(blocker_mode) + " table_id=" + table_id.toString() +
+                " page_id=" + std::to_string(page_id) + " item_id=" + std::to_string(item_id);
+            SET_ERROR_CONTEXT(ctx, Status::LOCK_NOT_AVAILABLE, message.c_str());
+            return Status::LOCK_NOT_AVAILABLE;
         }
 
         return status;

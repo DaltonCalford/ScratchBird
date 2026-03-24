@@ -42,14 +42,16 @@ TEST(ErrorPaths, CorruptedMagic)
     uint32_t ps = 8192;
     std::vector<uint8_t> page(ps, 0);
     auto *h = reinterpret_cast<PageHeader *>(page.data());
-    h->magic = 0xDEADBEEF; // wrong magic
+    h->magic = K_MAGIC_SBRD;
     h->version = 1;
     h->page_type = PAGE_TYPE_DATABASE_HEADER;
     h->page_size = ps;
-    h->flags = PAGE_FLAG_CHECKSUM_VALID;
-    h->checksum = calculatePageChecksum(page.data(), ps);
-    // validate_page_checksum passes but magic check should fail in higher-level code (future)
-    EXPECT_TRUE(validatePageChecksum(page.data(), ps));
+    pageSetLower(*h, sizeof(PageHeader));
+    pageSetUpper(*h, ps);
+    pageSetSpecial(*h, ps);
+    preparePageForWrite(page.data(), ps, 0);
+    h->magic = 0xDEADBEEF; // wrong magic after checksum publication
+    EXPECT_FALSE(validatePageChecksum(page.data(), ps));
 }
 
 TEST(ErrorPaths, ChecksumMismatch)

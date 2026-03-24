@@ -76,6 +76,122 @@ namespace scratchbird::core
         uint64_t updated_at = 0;
     };
 
+    struct SqlCheckpointStatusRow
+    {
+        uint64_t checkpoint_generation = 0;
+        std::string checkpoint_state;
+        uint64_t start_time = 0;
+        uint64_t dirty_generation_low_watermark = 0;
+        uint64_t dirty_generation_high_watermark = 0;
+        uint64_t captured_flush_debt_pages = 0;
+        uint64_t pages_target = 0;
+        uint64_t pages_remaining = 0;
+        uint64_t blocked_frame_count = 0;
+        bool queue_rebuild_required = false;
+        bool has_failure_reason = false;
+        std::string failure_reason;
+    };
+
+    struct SqlCheckpointHistoryRow
+    {
+        std::string checkpoint_run_uuid;
+        uint64_t checkpoint_generation = 0;
+        std::string checkpoint_state;
+        uint64_t start_time = 0;
+        bool has_end_time = false;
+        uint64_t end_time = 0;
+        uint64_t dirty_generation_low_watermark = 0;
+        uint64_t pages_target = 0;
+        uint64_t pages_flushed = 0;
+        bool has_failure_reason = false;
+        std::string failure_reason;
+    };
+
+    struct SqlRecoveryStatusRow
+    {
+        uint64_t recovery_generation = 0;
+        std::string classification;
+        std::string startup_state;
+        uint64_t normalized_transactions = 0;
+        uint64_t repair_required_pages = 0;
+        bool write_fenced = false;
+        bool queue_rebuild_completed = false;
+        std::string warmup_mode;
+        bool has_start_time = false;
+        uint64_t start_time = 0;
+        bool has_end_time = false;
+        uint64_t end_time = 0;
+    };
+
+    struct SqlRecoveryIncidentRow
+    {
+        std::string recovery_incident_uuid;
+        uint64_t recovery_generation = 0;
+        std::string classification;
+        bool has_checkpoint_generation = false;
+        uint64_t checkpoint_generation = 0;
+        bool has_object_uuid = false;
+        std::string object_uuid;
+        bool has_details = false;
+        std::string details_json;
+        uint64_t created_time = 0;
+    };
+
+    struct SqlWritebackIncidentRow
+    {
+        std::string incident_uuid;
+        bool has_filespace_uuid = false;
+        std::string filespace_uuid;
+        std::string queue_kind;
+        std::string policy_domain;
+        uint64_t page_class = 0;
+        std::string failure_class;
+        uint64_t first_seen_time = 0;
+        uint64_t last_seen_time = 0;
+        uint64_t retry_count = 0;
+        std::string degraded_state;
+        bool has_clearance_condition = false;
+        std::string clearance_condition;
+        bool is_open = false;
+        int64_t last_error_status = 0;
+    };
+
+    struct SqlBufferWritebackDebtRow
+    {
+        std::string db_uuid;
+        uint64_t checkpoint_generation = 0;
+        std::string checkpoint_state;
+        uint64_t dirty_pages = 0;
+        uint64_t checkpoint_flush_debt_pages = 0;
+        uint64_t checkpoint_pages_remaining = 0;
+        uint64_t blocked_frame_count = 0;
+        bool write_admission_fenced = false;
+        bool incident_open = false;
+        uint64_t retry_count = 0;
+        bool reserve_exhaustion_risk = false;
+    };
+
+    struct SqlSweepResumeStatusRow
+    {
+        uint64_t sweep_generation = 0;
+        std::string relation_uuid;
+        std::string filespace_uuid;
+        uint64_t page_id = 0;
+        uint32_t slot_id = 0;
+        uint64_t checkpoint_generation_seen = 0;
+        uint64_t persist_time = 0;
+        bool active = false;
+        uint8_t stage = 0;
+        uint16_t resume_lane_mask = 0;
+        bool resume_strict_audit = true;
+        uint64_t start_horizon = 0;
+        uint64_t reclaimed_version_count = 0;
+        uint64_t reclaimed_bytes = 0;
+        uint64_t index_backlog_count = 0;
+        uint32_t cursor_crc32c = 0;
+        std::string resume_outcome;
+    };
+
     struct SqlMgaActiveTransactionRow
     {
         std::string db_uuid;
@@ -320,6 +436,34 @@ namespace scratchbird::core
         static auto buildMgaTransactionHistoryRows(
             const Database& db,
             std::vector<SqlMgaTransactionHistoryRow>& rows_out) -> Status;
+
+        static auto buildCheckpointStatusRows(
+            const Database& db,
+            std::vector<SqlCheckpointStatusRow>& rows_out) -> Status;
+
+        static auto buildCheckpointHistoryRows(
+            const Database& db,
+            std::vector<SqlCheckpointHistoryRow>& rows_out) -> Status;
+
+        static auto buildRecoveryStatusRows(
+            const Database& db,
+            std::vector<SqlRecoveryStatusRow>& rows_out) -> Status;
+
+        static auto buildRecoveryIncidentRows(
+            const Database& db,
+            std::vector<SqlRecoveryIncidentRow>& rows_out) -> Status;
+
+        static auto buildWritebackIncidentRows(
+            const Database& db,
+            std::vector<SqlWritebackIncidentRow>& rows_out) -> Status;
+
+        static auto buildBufferWritebackDebtRows(
+            const Database& db,
+            std::vector<SqlBufferWritebackDebtRow>& rows_out) -> Status;
+
+        static auto buildSweepResumeStatusRows(
+            const Database& db,
+            std::vector<SqlSweepResumeStatusRow>& rows_out) -> Status;
 
         static auto buildMgaFailpointEventRows(
             const Database& db,

@@ -88,6 +88,13 @@ namespace scratchbird::core
             FAILED = 3
         };
 
+        enum class TemporaryObjectKind : uint8_t
+        {
+            TABLE = 0,
+            VIEW = 1,
+            SEQUENCE = 2
+        };
+
         ConnectionContext(Database *db, uint32_t proc_id);
         ~ConnectionContext();
 
@@ -801,6 +808,13 @@ namespace scratchbird::core
             uint32_t level;                      // Nesting level
             uint64_t xid;                        // Transaction ID at savepoint creation
             uint32_t command_id;                 // Command ID at savepoint (for future use)
+            bool implicit_statement_frame = false; // Internal frame for statement-scope rollback
+
+            struct TemporaryObjectCreation
+            {
+                TemporaryObjectKind kind = TemporaryObjectKind::TABLE;
+                ID object_id{};
+            };
 
             // FIREBIRD MGA: No snapshot needed - use XID for visibility
             // XID field above is sufficient for rollback
@@ -808,6 +822,7 @@ namespace scratchbird::core
             // Canonical per-row backout records. Each stable root TID appears at most once
             // per savepoint, carrying the earliest pre-savepoint row state needed for undo.
             std::vector<SavepointBackoutAction> changes;
+            std::vector<TemporaryObjectCreation> temp_objects_created;
         };
 
         std::vector<Savepoint> savepoint_stack_;  // Stack of active savepoints
@@ -824,25 +839,39 @@ namespace scratchbird::core
         void applyStagedSettings();
         Status createSnapshot(ErrorContext *ctx);
         void clearStatementRestartState();
+        Status pushSavepointFrame(const std::string &name,
+                                  bool implicit_statement_frame,
+                                  ErrorContext *ctx = nullptr);
         auto findSavepointBackoutChange(Savepoint &savepoint,
                                         const ID &table_id,
                                         uint32_t stable_page_id,
                                         uint16_t stable_item_id) -> SavepointBackoutAction *;
+        auto findMostRecentSavepointIndexByName(const std::string &name) const -> size_t;
+        auto findMostRecentImplicitStatementSavepointIndex() const -> size_t;
+        Status openImplicitStatementSavepoint(ErrorContext *ctx = nullptr);
+        Status rollbackImplicitStatementSavepoint(ErrorContext *ctx = nullptr);
+        Status releaseImplicitStatementSavepoint(ErrorContext *ctx = nullptr);
         void recordSavepointBackoutAction(const ID &table_id,
                                           uint32_t stable_page_id,
                                           uint16_t stable_item_id,
                                           const uint8_t *prior_tuple_data,
                                           uint32_t prior_tuple_size);
         void mergeSavepointBackoutChanges(Savepoint &target, const Savepoint &source);
+        void mergeSavepointTemporaryObjects(Savepoint &target, const Savepoint &source);
         auto collectRollbackBackoutChanges(size_t first_savepoint_index) const
             -> std::vector<SavepointBackoutAction>;
+        auto collectRollbackTemporaryObjects(size_t first_savepoint_index) const
+            -> std::vector<Savepoint::TemporaryObjectCreation>;
+        Status dropRollbackTemporaryObjects(
+            const std::vector<Savepoint::TemporaryObjectCreation> &temp_objects,
+            ErrorContext *ctx);
 
     public:
         // Savepoint operations (Issue 2.15: Subtransaction Support)
 
         /**
          * Create a new savepoint
-         * @param name Savepoint name (must be unique in current transaction)
+         * @param name Savepoint name
          * @param ctx Error context
          * @return Status code
          */
@@ -876,6 +905,7 @@ namespace scratchbird::core
                                 uint16_t item_id,
                                 const uint8_t *prior_tuple_data,
                                 uint32_t prior_tuple_size);
+        void trackTemporaryObjectCreation(TemporaryObjectKind kind, const ID &object_id);
         void trackTupleMutation(uint32_t page_id,
                                 uint16_t item_id,
                                 const uint8_t *prior_tuple_data = nullptr,

@@ -171,15 +171,23 @@ TEST(SubtransactionsTest, Comprehensive) {
     }
     std::cout << "✓ Released savepoint 'sp4' (merged into sp1)" << std::endl;
 
-    // Test 8: Error handling - duplicate savepoint name
-    std::cout << "\n--- Test 8: Error Handling - Duplicate Name ---" << std::endl;
+    // Test 8: Duplicate savepoint names shadow older frames
+    std::cout << "\n--- Test 8: Shadowed Savepoint Name ---" << std::endl;
     s = ctx.createSavepoint("sp1", &err_ctx);
-    if (s == Status::OK)
+    if (s != Status::OK)
     {
-        std::cerr << "ERROR: Should not allow duplicate savepoint name" << std::endl;
+        std::cerr << "Failed to create shadowing savepoint sp1: " << err_ctx.message << std::endl;
         FAIL(); return;
     }
-    std::cout << "✓ Correctly rejected duplicate savepoint name: " << err_ctx.message << std::endl;
+
+    s = ctx.rollbackToSavepoint("sp1", &err_ctx);
+    if (s != Status::OK)
+    {
+        std::cerr << "Failed to rollback to most recent savepoint sp1: " << err_ctx.message
+                  << std::endl;
+        FAIL(); return;
+    }
+    std::cout << "✓ Most recent savepoint named 'sp1' shadowed the older frame" << std::endl;
 
     // Test 9: Error handling - rollback to non-existent savepoint
     std::cout << "\n--- Test 9: Error Handling - Non-existent Savepoint ---" << std::endl;

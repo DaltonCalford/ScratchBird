@@ -385,6 +385,9 @@ namespace scratchbird::core
         // Initialize a new heap page
         auto initialize(uint32_t page_id, ErrorContext *ctx = nullptr) -> Status;
 
+        // Publish owner identity and temporary-work durability semantics after initialization.
+        void applyOwningTableContract(bool temporary_work);
+
         // Insert a tuple into the page (with automatic TOASTing)
         // Returns the item ID (slot number) on success
         auto insertTuple(const uint8_t *tuple_data, uint32_t tuple_size, uint64_t xmin,

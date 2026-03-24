@@ -12,10 +12,34 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/error_context.h"
+#include <algorithm>
 #include <cstring>
 
 namespace scratchbird::core
 {
+    namespace
+    {
+        auto clogStatusCanConsumeReserve(ClogStatus status) -> bool
+        {
+            return status == ClogStatus::COMMITTED ||
+                   status == ClogStatus::ABORTED ||
+                   status == ClogStatus::PREPARED;
+        }
+
+        void recordTouchedPage(std::vector<uint32_t> *touched_pages_out, uint32_t page_id)
+        {
+            if (touched_pages_out == nullptr)
+            {
+                return;
+            }
+
+            if (std::find(touched_pages_out->begin(), touched_pages_out->end(), page_id) ==
+                touched_pages_out->end())
+            {
+                touched_pages_out->push_back(page_id);
+            }
+        }
+    }
 
     // ============================================================================
     // CLOG TRANSACTION STATE SIZE CONSTRAINT
@@ -91,7 +115,10 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Clog::setStatus(uint64_t xid, ClogStatus status, ErrorContext *ctx) -> Status
+    auto Clog::setStatus(uint64_t xid,
+                         ClogStatus status,
+                         ErrorContext *ctx,
+                         std::vector<uint32_t> *touched_pages_out) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -105,7 +132,10 @@ namespace scratchbird::core
         if (pin_status == Status::IO_ERROR)
         {
             // Page doesn't exist, need to extend CLOG
-            Status extend_status = extendClog(xid, ctx);
+            Status extend_status = extendClog(xid,
+                                              clogStatusCanConsumeReserve(status),
+                                              ctx,
+                                              touched_pages_out);
             if (extend_status != Status::OK)
             {
                 return extend_status;
@@ -139,6 +169,7 @@ namespace scratchbird::core
 
         // Unpin with dirty flag
         buffer_pool_->unpinPage(page_id, true, ctx);
+        recordTouchedPage(touched_pages_out, page_id);
 
         return Status::OK;
     }
@@ -192,7 +223,10 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Clog::extendClog(uint64_t xid, ErrorContext *ctx) -> Status
+    auto Clog::extendClog(uint64_t xid,
+                          bool allow_reserve_consumption,
+                          ErrorContext *ctx,
+                          std::vector<uint32_t> *touched_pages_out) -> Status
     {
         // Calculate how many pages we need
         uint32_t required_page = getPageForXid(xid);
@@ -233,7 +267,8 @@ namespace scratchbird::core
         {
             // Allocate new page
             uint32_t new_page_id;
-            status = db_->page_manager()->allocatePage(new_page_id, ctx);
+            status = db_->page_manager()->allocatePage(
+                new_page_id, ctx, allow_reserve_consumption);
             if (status != Status::OK)
             {
                 buffer_pool_->unpinPage(current_last_page, false, ctx);
@@ -249,10 +284,12 @@ namespace scratchbird::core
                 buffer_pool_->unpinPage(current_last_page, false, ctx);
                 return status;
             }
+            recordTouchedPage(touched_pages_out, new_page_id);
 
             // Link previous page to this new page
             header->next_clog_page = new_page_id;
             buffer_pool_->unpinPage(current_last_page, true, ctx);
+            recordTouchedPage(touched_pages_out, current_last_page);
 
             // Move to the new page
             current_last_page = new_page_id;

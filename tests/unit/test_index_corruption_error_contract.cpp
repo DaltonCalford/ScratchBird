@@ -55,8 +55,9 @@ auto buildValidIndexPage(uint16_t page_type, uint16_t opaque_len) -> IndexPageFi
     fixture.index_uuid = generateUuidV7();
     setIndexPageHeaderUuid(*idx, fixture.index_uuid);
 
-    header->checksum = calculatePageChecksum(fixture.page.data(),
-                                             static_cast<uint32_t>(fixture.page.size()));
+    preparePageForWrite(fixture.page.data(),
+                        static_cast<uint32_t>(fixture.page.size()),
+                        header->page_id);
     return fixture;
 }
 
@@ -95,7 +96,7 @@ TEST(IndexCorruptionErrorContractTest, InvalidPageTypeReturnsPageCorrupt)
     IndexPageFixture fixture = buildValidIndexPage(PAGE_TYPE_BTREE_LEAF, 16u);
     auto *header = reinterpret_cast<PageHeader *>(fixture.page.data());
     header->page_type = PAGE_TYPE_HEAP;
-    header->checksum = calculatePageChecksum(fixture.page.data(), 8192u);
+    preparePageForWrite(fixture.page.data(), 8192u, header->page_id);
 
     IndexPageDiagnosticReport report{};
     ErrorContext ctx{};
@@ -129,7 +130,7 @@ TEST(IndexCorruptionErrorContractTest, InvalidSiblingContractReturnsPageCorrupt)
     idx->flags = INDEX_PAGE_FLAG_RIGHTMOST;
     idx->left_sibling = 10u;
     idx->right_sibling = 33u;
-    header->checksum = calculatePageChecksum(fixture.page.data(), 8192u);
+    preparePageForWrite(fixture.page.data(), 8192u, header->page_id);
 
     IndexPageDiagnosticReport report{};
     ErrorContext ctx{};

@@ -17,6 +17,10 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "unit/test_user_helpers.h"
+#include <fcntl.h>
+#include <unistd.h>
+#include <cerrno>
+#include <cstring>
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -116,6 +120,47 @@ protected:
         }
         ConnectionContext::setCurrent(nullptr);
         connection_ctx_.reset();
+    }
+
+    void reopenDatabase()
+    {
+        clearConnection();
+        compiler_.reset();
+        executor_.reset();
+        db_.close();
+
+        ErrorContext ctx;
+        auto status = db_.open(db_path_, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to reopen test database: " << ctx.message;
+
+        catalog_ = db_.catalog_manager();
+        ASSERT_NE(catalog_, nullptr);
+
+        compiler_ = std::make_unique<QueryCompilerV3>(&db_);
+        executor_ = std::make_unique<Executor>(&db_);
+    }
+
+    PageHeader readPageHeaderFromFile(uint32_t page_id)
+    {
+        PageHeader header{};
+        std::vector<uint8_t> buffer(db_.page_size());
+        const int fd = ::open(db_path_.c_str(), O_RDWR);
+        EXPECT_GE(fd, 0) << std::strerror(errno);
+        if (fd < 0)
+        {
+            return header;
+        }
+
+        const off_t offset = static_cast<off_t>(page_id) *
+                             static_cast<off_t>(db_.page_size());
+        const ssize_t bytes = ::pread(fd, buffer.data(), buffer.size(), offset);
+        EXPECT_EQ(bytes, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+        if (bytes == static_cast<ssize_t>(buffer.size()))
+        {
+            std::memcpy(&header, buffer.data(), sizeof(header));
+        }
+        ::close(fd);
+        return header;
     }
 
     std::string db_path_;
@@ -262,4 +307,152 @@ TEST_F(TempTableExecutorTest, TempTableSessionCleanupDropsMetadata)
                                return info.table_name == "temp_session";
                            });
     EXPECT_EQ(it, tables.end()) << "Temp table metadata should be dropped on session end";
+}
+
+TEST_F(TempTableExecutorTest, TempTablePagesCarryTemporaryWorkMarkerWithoutDurableGenerations)
+{
+    ErrorContext ctx;
+    ID user_schema_id;
+    auto status = catalog_->createSchemaPath("users.alice",
+                                             CatalogManager::SchemaType::USER_HOME,
+                                             user_schema_id,
+                                             &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    connection_ctx_ = connectAs("alice");
+
+    ASSERT_TRUE(compileAndExecute(
+        "CREATE TEMP TABLE temp_flush_marker (id INT) ON COMMIT PRESERVE ROWS").success());
+    ASSERT_TRUE(compileAndExecute("INSERT INTO temp_flush_marker VALUES (1)").success());
+
+    CatalogManager::SchemaInfo temp_schema;
+    status = catalog_->getSchema("users.alice.temp", temp_schema, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    CatalogManager::TableInfo table_info;
+    status = catalog_->getTable(temp_schema.schema_id, "temp_flush_marker", table_info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    const uint32_t page_id = static_cast<uint32_t>(getPageNumber(table_info.root_gpid));
+    ASSERT_EQ(db_.buffer_pool()->flushPage(page_id, &ctx), Status::OK) << ctx.message;
+
+    const auto header = readPageHeaderFromFile(page_id);
+    EXPECT_NE(header.flags & static_cast<uint16_t>(PAGE_FLAG_TEMPORARY_WORK), 0u);
+    EXPECT_EQ(header.flush_generation, 0u);
+    EXPECT_EQ(header.checkpoint_generation, 0u);
+}
+
+TEST_F(TempTableExecutorTest, TempTableCreatedAfterSavepointDropsOnRollback)
+{
+    ErrorContext ctx;
+    ID user_schema_id;
+    auto status = catalog_->createSchemaPath("users.alice",
+                                             CatalogManager::SchemaType::USER_HOME,
+                                             user_schema_id,
+                                             &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    connection_ctx_ = connectAs("alice");
+
+    auto start_result = compileAndExecute("START TRANSACTION");
+    ASSERT_TRUE(start_result.success()) << start_result.error();
+    auto savepoint_result = compileAndExecute("SAVEPOINT temp_sp");
+    ASSERT_TRUE(savepoint_result.success()) << savepoint_result.error();
+    auto create_result = compileAndExecute(
+        "CREATE TEMP TABLE temp_after_sp (id INT) ON COMMIT PRESERVE ROWS");
+    ASSERT_TRUE(create_result.success()) << create_result.error();
+    auto rollback_result = compileAndExecute("ROLLBACK TO SAVEPOINT temp_sp");
+    ASSERT_TRUE(rollback_result.success()) << rollback_result.error();
+
+    CatalogManager::SchemaInfo temp_schema;
+    status = catalog_->getSchema("users.alice.temp", temp_schema, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    CatalogManager::TableInfo table_info;
+    status = catalog_->getTable(temp_schema.schema_id, "temp_after_sp", table_info, &ctx);
+    EXPECT_NE(status, Status::OK) << "Temp metadata created after savepoint must be removed";
+    EXPECT_NE(ctx.message.find("Table not found"), std::string::npos) << ctx.message;
+}
+
+TEST_F(TempTableExecutorTest, TempTableSavepointRollbackRemovesNewRows)
+{
+    ErrorContext ctx;
+    ID user_schema_id;
+    auto status = catalog_->createSchemaPath("users.alice",
+                                             CatalogManager::SchemaType::USER_HOME,
+                                             user_schema_id,
+                                             &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    connection_ctx_ = connectAs("alice");
+
+    ASSERT_TRUE(compileAndExecute("START TRANSACTION").success());
+    ASSERT_TRUE(compileAndExecute(
+        "CREATE TEMP TABLE temp_rollback_rows (id INT) ON COMMIT PRESERVE ROWS").success());
+    ASSERT_TRUE(compileAndExecute("INSERT INTO temp_rollback_rows VALUES (1)").success());
+    ASSERT_TRUE(compileAndExecute("SAVEPOINT temp_rows_sp").success());
+    ASSERT_TRUE(compileAndExecute("INSERT INTO temp_rollback_rows VALUES (2)").success());
+    ASSERT_TRUE(compileAndExecute("ROLLBACK TO SAVEPOINT temp_rows_sp").success());
+
+    auto select_result =
+        compileAndExecute("SELECT id FROM temp_rollback_rows ORDER BY id");
+    ASSERT_TRUE(select_result.hasResultSet()) << select_result.error();
+    ASSERT_EQ(select_result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(select_result.resultSet()->getValue(0, 0).toInt64(), 1);
+}
+
+TEST_F(TempTableExecutorTest, StartupReopenDropsStaleSessionTempMetadata)
+{
+    ErrorContext ctx;
+    ID user_schema_id;
+    auto status = catalog_->createSchemaPath("users.alice",
+                                             CatalogManager::SchemaType::USER_HOME,
+                                             user_schema_id,
+                                             &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    connection_ctx_ = connectAs("alice");
+
+    ID temp_schema_id;
+    status = catalog_->createSchemaPath("users.alice.temp",
+                                        CatalogManager::SchemaType::USER_HOME,
+                                        temp_schema_id,
+                                        &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    std::vector<CatalogManager::ColumnInfo> columns;
+    CatalogManager::ColumnInfo id_col;
+    id_col.column_id = generateUuidV7();
+    id_col.column_name = "id";
+    id_col.data_type = static_cast<uint16_t>(DataType::INT32);
+    id_col.nullable = false;
+    id_col.ordinal = 0;
+    columns.push_back(id_col);
+
+    const ID stale_session_id = generateUuidV7();
+    CatalogManager::TableCreateOptions create_opts;
+    create_opts.table_type = CatalogManager::TableType::TEMPORARY;
+    create_opts.temp_metadata_scope = CatalogManager::TempMetadataScope::SESSION;
+    create_opts.temp_data_scope = CatalogManager::TempDataScope::SESSION;
+    create_opts.temp_on_commit = CatalogManager::TempOnCommitAction::PRESERVE_ROWS;
+    create_opts.creating_session_id = stale_session_id;
+    create_opts.creating_transaction_id = connection_ctx_->getCurrentXid();
+    create_opts.temp_schema_id = temp_schema_id;
+
+    ID table_id;
+    status = catalog_->createTable(temp_schema_id,
+                                   "stale_temp_restart",
+                                   columns,
+                                   table_id,
+                                   0,
+                                   &ctx,
+                                   &create_opts);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    reopenDatabase();
+
+    std::vector<CatalogManager::TableInfo> tables;
+    status = catalog_->listTemporaryTablesForSession(stale_session_id, tables, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_TRUE(tables.empty()) << "Startup must purge stale session temp metadata";
 }

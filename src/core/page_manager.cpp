@@ -25,6 +25,22 @@ namespace scratchbird::core
 {
     namespace
     {
+        auto pagesNeededToPreserveReserve(uint32_t free_pages,
+                                          bool allow_reserve_consumption) -> uint32_t
+        {
+            if (allow_reserve_consumption)
+            {
+                return free_pages == 0 ? 1u : 0u;
+            }
+
+            if (free_pages > PageManager::kEmergencyReservePages)
+            {
+                return 0u;
+            }
+
+            return (PageManager::kEmergencyReservePages + 1u) - free_pages;
+        }
+
         Status decodeTablespaceHeader(const uint8_t *buffer,
                                       TablespaceHeader *header_out,
                                       uint16_t *version_out,
@@ -47,7 +63,7 @@ namespace scratchbird::core
             {
                 const auto *legacy = reinterpret_cast<const TablespaceHeaderV1 *>(buffer);
                 std::memset(header_out, 0, sizeof(*header_out));
-                header_out->page_header = legacy->page_header;
+                header_out->page_header = canonicalizeLegacyPageHeader(legacy->page_header);
                 std::memcpy(header_out->tablespace_name, legacy->tablespace_name,
                             sizeof(legacy->tablespace_name));
                 header_out->tablespace_name[sizeof(legacy->tablespace_name)] = '\0';
@@ -123,7 +139,7 @@ namespace scratchbird::core
 
     auto PageManager::initialize(ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         // Canonical bootstrap map reserves pages 0..5.
         total_pages_ = BOOTSTRAP_FIXED_PAGE_COUNT;
         free_pages_ = 0;
@@ -155,7 +171,7 @@ namespace scratchbird::core
 
     auto PageManager::load(ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         // Allocate buffer for FSM page
         auto buffer = std::make_unique<uint8_t[]>(page_size_);
         if (!buffer)
@@ -175,7 +191,7 @@ namespace scratchbird::core
         auto *fsm = reinterpret_cast<FSMPage *>(buffer.get());
 
         // Validate page type
-        if (fsm->header.page_type != PAGE_TYPE_FSM_ROOT)
+        if (fsm->page_header.page_type != PAGE_TYPE_FSM_ROOT)
         {
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid FSM page type");
             return Status::PAGE_CORRUPT;
@@ -243,11 +259,36 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto PageManager::allocatePage(uint32_t &page_id, ErrorContext *ctx) -> Status
+    auto PageManager::allocatePage(uint32_t &page_id,
+                                   ErrorContext *ctx,
+                                   bool allow_reserve_consumption) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+        if (db_ != nullptr &&
+            db_->write_admission_fenced() &&
+            !db_->write_admission_enforcement_suspended() &&
+            !allow_reserve_consumption)
+        {
+            const Status fenced_status = db_->write_admission_status();
+            SET_ERROR_CONTEXT(ctx,
+                              fenced_status == Status::OK ? Status::IO_ERROR : fenced_status,
+                              "Write admission is fenced while a writeback incident is open");
+            return fenced_status == Status::OK ? Status::IO_ERROR : fenced_status;
+        }
 
         DEBUG_LOG_PM("allocate_page: total=" << total_pages_ << " free=" << free_pages_);
+
+        const uint32_t pages_to_top_up =
+            pagesNeededToPreserveReserve(free_pages_, allow_reserve_consumption);
+        if (pages_to_top_up > 0)
+        {
+            Status status = extendFile(pages_to_top_up, ctx, allow_reserve_consumption);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
 
         // Find a free page
         uint32_t free_page = findFreePage();
@@ -255,7 +296,7 @@ namespace scratchbird::core
         {
             // No free pages, need to extend file
             DEBUG_LOG_PM("No free pages, extending file");
-            Status status = extendFile(1, ctx);
+            Status status = extendFile(1, ctx, allow_reserve_consumption);
             if (status != Status::OK)
             {
                 return status;
@@ -292,7 +333,7 @@ namespace scratchbird::core
 
     auto PageManager::freePage(uint32_t page_id, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
 
         // Validate page_id
         if (page_id >= total_pages_)
@@ -341,7 +382,7 @@ namespace scratchbird::core
 
     auto PageManager::isAllocated(uint32_t page_id) const -> bool
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
 
         if (page_id >= total_pages_)
         {
@@ -351,11 +392,25 @@ namespace scratchbird::core
         return getBit(page_id);
     }
 
-    auto PageManager::extendFile(uint32_t num_pages, ErrorContext *ctx) -> Status
+    auto PageManager::extendFile(uint32_t num_pages,
+                                 ErrorContext *ctx,
+                                 bool allow_reserve_consumption) -> Status
     {
         if (num_pages == 0)
         {
             return Status::OK;
+        }
+
+        if (db_ != nullptr &&
+            db_->write_admission_fenced() &&
+            !db_->write_admission_enforcement_suspended() &&
+            !allow_reserve_consumption)
+        {
+            const Status fenced_status = db_->write_admission_status();
+            SET_ERROR_CONTEXT(ctx,
+                              fenced_status == Status::OK ? Status::IO_ERROR : fenced_status,
+                              "File growth is fenced while a writeback incident is open");
+            return fenced_status == Status::OK ? Status::IO_ERROR : fenced_status;
         }
 
         // Overflow protection BEFORE any writes (Issue 1.7 fix)
@@ -480,7 +535,7 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         return flushUnlocked(ctx);
     }
 
@@ -526,18 +581,18 @@ namespace scratchbird::core
         auto *fsm = reinterpret_cast<FSMPage *>(buffer);
 
         // Initialize page header
-        fsm->header.magic = K_MAGIC_SBRD;
-        fsm->header.version = 1;
-        fsm->header.page_type = PAGE_TYPE_FSM_ROOT;
-        fsm->header.page_size = page_size_;
-        fsm->header.page_id = FSM_PAGE_ID;
-        fsm->header.generation = 1;
-        fsm->header.checksum = 0;
-        fsm->header.flags = PAGE_FLAG_CHECKSUM_VALID;
-        fsm->header.lsn = 0;
-        setDatabaseUuid(fsm->header, db_->uuid());
-        setObjectUuid(fsm->header, ID{});
-        fsm->header.item_count = 0;
+        fsm->page_header.magic = K_MAGIC_SBRD;
+        fsm->page_header.version = 1;
+        fsm->page_header.page_type = PAGE_TYPE_FSM_ROOT;
+        fsm->page_header.page_size = page_size_;
+        fsm->page_header.page_id = FSM_PAGE_ID;
+        fsm->page_header.generation = 1;
+        fsm->page_header.checksum = 0;
+        fsm->page_header.flags = PAGE_FLAG_CHECKSUM_VALID;
+        fsm->page_header.lsn = 0;
+        setDatabaseUuid(fsm->page_header, db_->uuid());
+        setObjectUuid(fsm->page_header, ID{});
+        fsm->page_header.item_count = 0;
 
         // FSM metadata
         fsm->total_pages = total_pages_;
@@ -549,12 +604,12 @@ namespace scratchbird::core
         memcpy(fsm->bitmap, bitmap_.data(), bitmap_bytes);
 
         // Update header fields
-        pageSetLower(fsm->header, sizeof(PageHeader) + sizeof(uint32_t) * 3 + bitmap_bytes);
-        pageSetUpper(fsm->header, page_size_);
-        pageSetSpecial(fsm->header, page_size_);
+        pageSetLower(fsm->page_header, sizeof(PageHeader) + sizeof(uint32_t) * 3 + bitmap_bytes);
+        pageSetUpper(fsm->page_header, page_size_);
+        pageSetSpecial(fsm->page_header, page_size_);
 
         // Calculate checksum for FSM page
-        fsm->header.checksum = calculatePageChecksum(buffer, page_size_);
+        fsm->page_header.checksum = calculatePageChecksum(buffer, page_size_);
     }
 
     void PageManager::setBit(uint32_t page_id, bool allocated)
@@ -595,7 +650,7 @@ namespace scratchbird::core
     auto PageManager::reconstructFromPages(ReconstructionSummary *summary_out,
                                            ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
 
         LOG_INFO(STORAGE, "FSM reconstruction: Scanning %u pages...", total_pages_);
 
@@ -751,8 +806,10 @@ namespace scratchbird::core
     // GPID-based API (Phase 1, Task 1.2.2)
     // ============================================================================
 
-    Status PageManager::allocatePageInTablespace(uint16_t tablespace_id, GPID *gpid_out,
-                                                ErrorContext *ctx)
+    Status PageManager::allocatePageInTablespace(uint16_t tablespace_id,
+                                                 GPID *gpid_out,
+                                                 ErrorContext *ctx,
+                                                 bool allow_reserve_consumption)
     {
         if (gpid_out == nullptr)
         {
@@ -764,7 +821,7 @@ namespace scratchbird::core
         if (tablespace_id == PRIMARY_TABLESPACE_ID)
         {
             uint32_t page_id = 0;
-            Status status = allocatePage(page_id, ctx);
+            Status status = allocatePage(page_id, ctx, allow_reserve_consumption);
             if (status != Status::OK)
             {
                 return status;
@@ -797,8 +854,11 @@ namespace scratchbird::core
 
             TablespaceFSM &ts_fsm = it->second;
 
-            // Check if there are free pages available
-            if (ts_fsm.free_pages > 0)
+            const uint32_t reserve_top_up_pages =
+                pagesNeededToPreserveReserve(ts_fsm.free_pages, allow_reserve_consumption);
+
+            // Check if there are free pages available without violating the reserve contract.
+            if (reserve_top_up_pages == 0 && ts_fsm.free_pages > 0)
             {
                 // Find a free page in the bitmap
                 for (uint32_t page_num = 0; page_num < ts_fsm.total_pages; page_num++)
@@ -852,21 +912,46 @@ namespace scratchbird::core
                 "Tablespace %u has no free pages, attempting autoextend",
                 tablespace_id);
 
-        // Try to extend the tablespace
-        Status extend_status = extendTablespace(tablespace_id, ctx);
-        if (extend_status != Status::OK)
+        while (true)
         {
-            // Extension failed - return the error from extendTablespace
-            // (could be PAGE_FULL if at MAXSIZE, INVALID_ARGUMENT if autoextend disabled, etc.)
-            LOG_WARNING(STORAGE,
-                       "Failed to extend tablespace %u: status=%d",
-                       tablespace_id, static_cast<int>(extend_status));
-            return extend_status;
-        }
+            Status extend_status = extendTablespace(tablespace_id, ctx);
+            if (extend_status != Status::OK)
+            {
+                // Extension failed - return the error from extendTablespace
+                // (could be PAGE_FULL if at MAXSIZE, INVALID_ARGUMENT if autoextend disabled, etc.)
+                LOG_WARNING(STORAGE,
+                           "Failed to extend tablespace %u: status=%d",
+                           tablespace_id, static_cast<int>(extend_status));
+                return extend_status;
+            }
 
-        LOG_INFO(STORAGE,
-                "Successfully extended tablespace %u, retrying allocation",
-                tablespace_id);
+            LOG_INFO(STORAGE,
+                    "Successfully extended tablespace %u, retrying allocation",
+                    tablespace_id);
+
+            bool reserve_satisfied = false;
+            {
+                std::lock_guard<std::mutex> fsm_lock(tablespace_fsm_mutex_);
+                auto it = tablespace_fsms_.find(tablespace_id);
+                if (it == tablespace_fsms_.end())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                                     ("Tablespace " + std::to_string(tablespace_id) +
+                                      " disappeared after extension").c_str());
+                    return Status::NOT_FOUND;
+                }
+
+                reserve_satisfied =
+                    it->second.free_pages > 0 &&
+                    pagesNeededToPreserveReserve(it->second.free_pages,
+                                                allow_reserve_consumption) == 0;
+            }
+
+            if (reserve_satisfied)
+            {
+                break;
+            }
+        }
 
         // === Retry allocation after successful extension ===
 
@@ -883,15 +968,19 @@ namespace scratchbird::core
 
             TablespaceFSM &ts_fsm = it->second;
 
-            // After extension, there should definitely be free pages
-            if (ts_fsm.free_pages == 0)
+            // After extension, there should definitely be free pages available
+            // without violating the reserve contract.
+            if (ts_fsm.free_pages == 0 ||
+                pagesNeededToPreserveReserve(ts_fsm.free_pages,
+                                            allow_reserve_consumption) != 0)
             {
                 LOG_ERROR(STORAGE,
-                         "Tablespace %u extension succeeded but free_pages still 0!",
-                         tablespace_id);
+                         "Tablespace %u extension succeeded but reserve contract remains unsatisfied (free_pages=%u)",
+                         tablespace_id,
+                         ts_fsm.free_pages);
                 SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
                                  ("Tablespace " + std::to_string(tablespace_id) +
-                                  " extension succeeded but no free pages available").c_str());
+                                  " extension succeeded but no eligible free pages are available").c_str());
                 return Status::PAGE_CORRUPT;
             }
 
@@ -2351,7 +2440,7 @@ namespace scratchbird::core
 
         if (tablespace_id == PRIMARY_TABLESPACE_ID)
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<std::recursive_mutex> lock(mutex_);
             *total_pages_out = total_pages_;
             return Status::OK;
         }
@@ -2380,7 +2469,7 @@ namespace scratchbird::core
         // Handle primary tablespace (0) separately
         if (tablespace_id == PRIMARY_TABLESPACE_ID)
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<std::recursive_mutex> lock(mutex_);
 
             // Scan bitmap for primary tablespace
             uint32_t total = total_pages_;

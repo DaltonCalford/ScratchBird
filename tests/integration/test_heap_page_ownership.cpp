@@ -76,14 +76,15 @@ protected:
 /**
  * Test 1: HeapPageSpecial contains table_id field
  *
- * This test verifies that PageHeader structure is 80 bytes and that
+ * This test verifies that PageHeader structure matches the canonical section-05
+ * layout and that
  * HeapPageSpecial stores the table_id at the expected offset.
  */
 TEST_F(HeapPageOwnershipTest, PageHeaderSize)
 {
-    // Verify PageHeader is 80 bytes
-    EXPECT_EQ(sizeof(PageHeader), 80)
-        << "PageHeader must be 80 bytes per ON_DISK_FORMAT.md v1.4.0";
+    // Verify PageHeader matches the canonical section-05 layout.
+    EXPECT_EQ(sizeof(PageHeader), 106)
+        << "PageHeader must publish the canonical page-marker field set";
 
     // Verify HeapPageSpecial table_id offset and size
     HeapPageSpecial special;

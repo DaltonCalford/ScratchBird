@@ -53,7 +53,7 @@ namespace scratchbird
         // Meta Page - Page 0 of hash index
         struct SBHashIndexMetaPage
         {
-            PageHeader hip_header;       // Standard page header (80 bytes)
+            PageHeader hip_header;       // Standard canonical page header
             uint8_t hip_index_uuid[16];  // Index UUID bytes (16 bytes)
             uint32_t hip_hash_func_id;   // Hash function ID (4 bytes) - always HASH_FUNC_MURMUR3
             uint32_t hip_global_depth;   // Global depth (4 bytes) - max 20
@@ -66,7 +66,7 @@ namespace scratchbird
         // Directory Page - Maps hash values to bucket pages
         struct SBHashDirectoryPage
         {
-            PageHeader hdp_header;  // Standard page header (80 bytes)
+            PageHeader hdp_header;  // Standard canonical page header
             uint64_t hdp_next_page; // Next directory page (0 if last) (8 bytes)
             uint64_t hdp_bucket_pointers[]; // Bucket page numbers (flexible array, capacity depends on page size)
         } SB_PACKED;
@@ -93,7 +93,7 @@ namespace scratchbird
         // Bucket Page - Stores hash entries
         struct SBHashBucketPage
         {
-            PageHeader hbp_header;                   // Standard page header (80 bytes)
+            PageHeader hbp_header;                   // Standard canonical page header
             uint16_t hbp_entry_count;                // Number of entries in this page (2 bytes)
             uint16_t hbp_local_depth;                // Local depth of this bucket (2 bytes)
             uint32_t hbp_deleted_count;              // Number of deleted entries (4 bytes)
@@ -254,6 +254,7 @@ namespace scratchbird
             uint16_t countEntriesInBucket(uint32_t bucket_page, ErrorContext *ctx);
             Status redistributeEntries(SBHashBucketPage *old_bucket, SBHashBucketPage *new_bucket,
                                        uint32_t new_local_depth, ErrorContext *ctx);
+            Status validateReachableEntryCount(uint64_t expected_num_tuples, ErrorContext *ctx);
 
             // P2-5: Helper to refresh cached directory info from meta page
             void refreshCachedDirectoryInfo(ErrorContext *ctx);

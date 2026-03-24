@@ -166,9 +166,7 @@ namespace scratchbird::core
     {
         std::vector<SqlViewSchemaDefinition> views;
         ASSERT_EQ(MgaObservabilityContract::appendSqlViewDefinitions(views), Status::OK);
-        ASSERT_EQ(views.size(), 7u);
-        EXPECT_EQ(views.front().view_name, "sb_mga_active_transactions");
-        EXPECT_EQ(views.back().view_name, "sb_mga_wait_history");
+        ASSERT_EQ(views.size(), 14u);
         for (const SqlViewSchemaDefinition& view : views)
         {
             EXPECT_EQ(view.schema_version, MgaObservabilityContract::sql_view_schema_version());
@@ -194,6 +192,42 @@ namespace scratchbird::core
         EXPECT_EQ(history_view->columns[10].column_name, "publication_fence_seconds");
         EXPECT_TRUE(history_view->columns[10].nullable);
         EXPECT_EQ(history_view->columns[11].column_name, "limbo_state");
+
+        const auto checkpoint_status_view = std::find_if(
+            views.begin(), views.end(), [](const SqlViewSchemaDefinition& view) {
+                return view.view_name == "sb_checkpoint_status";
+            });
+        ASSERT_NE(checkpoint_status_view, views.end());
+        EXPECT_EQ(checkpoint_status_view->columns[0].column_name, "checkpoint_generation");
+        EXPECT_EQ(checkpoint_status_view->columns[5].column_name, "captured_flush_debt_pages");
+        EXPECT_EQ(checkpoint_status_view->columns[9].column_name, "queue_rebuild_required");
+        EXPECT_TRUE(checkpoint_status_view->columns[10].nullable);
+
+        const auto recovery_status_view = std::find_if(
+            views.begin(), views.end(), [](const SqlViewSchemaDefinition& view) {
+                return view.view_name == "sb_recovery_status";
+            });
+        ASSERT_NE(recovery_status_view, views.end());
+        EXPECT_EQ(recovery_status_view->columns[0].column_name, "recovery_generation");
+        EXPECT_EQ(recovery_status_view->columns[4].column_name, "repair_required_pages");
+        EXPECT_EQ(recovery_status_view->columns[7].column_name, "warmup_mode");
+
+        const auto writeback_view = std::find_if(
+            views.begin(), views.end(), [](const SqlViewSchemaDefinition& view) {
+                return view.view_name == "sb_writeback_incidents";
+            });
+        ASSERT_NE(writeback_view, views.end());
+        EXPECT_EQ(writeback_view->columns[0].column_name, "incident_uuid");
+        EXPECT_EQ(writeback_view->columns[10].column_name, "clearance_condition");
+        EXPECT_EQ(writeback_view->columns[12].column_type, "BIGINT");
+
+        const auto sweep_resume_view = std::find_if(
+            views.begin(), views.end(), [](const SqlViewSchemaDefinition& view) {
+                return view.view_name == "sb_sweep_resume_status";
+            });
+        ASSERT_NE(sweep_resume_view, views.end());
+        EXPECT_EQ(sweep_resume_view->columns[0].column_name, "sweep_generation");
+        EXPECT_EQ(sweep_resume_view->columns[16].column_name, "resume_outcome");
 
         std::vector<DashboardSchemaDefinition> dashboards;
         ASSERT_EQ(MgaObservabilityContract::appendDashboardDefinitions(dashboards), Status::OK);
@@ -416,6 +450,197 @@ namespace scratchbird::core
                         "\"relation\":\"orders\"");
         ASSERT_NE(index_backlog_metric, runtime_rows.end());
         EXPECT_DOUBLE_EQ(index_backlog_metric->value, 7.0);
+    }
+
+    TEST_F(MgaObservabilityLiveViewsTest, BuildsDurabilityRowsFromCatalogHistoryAndRuntimeState)
+    {
+        const uint64_t now_us = nowMicros();
+        MetricsRegistry registry;
+
+        CatalogManager::CheckpointRunCatalogInfo checkpoint{};
+        checkpoint.checkpoint_run_uuid = generateUuidV7();
+        checkpoint.checkpoint_generation = 7;
+        checkpoint.checkpoint_state = CheckpointLifecycleState::FAILED;
+        checkpoint.start_time = now_us - 9'000'000;
+        checkpoint.has_end_time = true;
+        checkpoint.end_time = now_us - 8'000'000;
+        checkpoint.dirty_generation_low_watermark = 42;
+        checkpoint.pages_target = 17;
+        checkpoint.pages_flushed = 9;
+        checkpoint.has_failure_reason = true;
+        checkpoint.failure_reason = Status::DISK_FULL;
+        ASSERT_EQ(catalog_->upsertCheckpointRunCatalogEntry(checkpoint, nullptr), Status::OK);
+
+        CatalogManager::RecoveryRunCatalogInfo recovery{};
+        recovery.recovery_run_uuid = generateUuidV7();
+        recovery.recovery_generation = 11;
+        recovery.classification =
+            Database::StartupRecoveryClassification::WRITEBACK_FAILURE_RESUME;
+        recovery.start_time = now_us - 7'000'000;
+        recovery.has_end_time = true;
+        recovery.end_time = now_us - 6'500'000;
+        recovery.normalized_transactions = 3;
+        recovery.repair_required_pages = 5;
+        recovery.degraded_state = Database::StartupServiceState::WRITE_FENCED;
+        ASSERT_EQ(catalog_->upsertRecoveryRunCatalogEntry(recovery, nullptr), Status::OK);
+
+        CatalogManager::RecoveryIncidentCatalogInfo recovery_incident{};
+        recovery_incident.recovery_incident_uuid = generateUuidV7();
+        recovery_incident.recovery_generation = recovery.recovery_generation;
+        recovery_incident.classification = recovery.classification;
+        recovery_incident.has_checkpoint_generation = true;
+        recovery_incident.checkpoint_generation = checkpoint.checkpoint_generation;
+        recovery_incident.has_object_uuid = true;
+        recovery_incident.object_uuid = table_id_;
+        recovery_incident.has_details = true;
+        recovery_incident.details_json = "{\"reason\":\"writeback_resume\"}";
+        recovery_incident.created_time = now_us - 6'400'000;
+        ASSERT_EQ(catalog_->appendRecoveryIncidentCatalogEntry(recovery_incident, nullptr),
+                  Status::OK);
+
+        CatalogManager::WritebackIncidentCatalogInfo incident{};
+        incident.writeback_incident_uuid = generateUuidV7();
+        incident.queue_kind = WritebackQueueKind::CHECKPOINT;
+        incident.policy_domain = WritebackPolicyDomain::CHECKPOINT;
+        incident.page_class = PAGE_TYPE_SYSTEM_STATE;
+        incident.failure_class = WritebackFailureClass::DISK_FULL;
+        incident.first_seen_time = now_us - 5'000'000;
+        incident.last_seen_time = now_us - 4'000'000;
+        incident.retry_count = 2;
+        incident.degraded_state = WritebackDegradedState::WRITE_FENCED;
+        incident.is_open = true;
+        incident.last_error_status = Status::DISK_FULL;
+        ASSERT_EQ(catalog_->upsertWritebackIncidentCatalogEntry(incident, nullptr), Status::OK);
+
+        CatalogManager::SweepCursorStateCatalogInfo sweep{};
+        sweep.sweep_cursor_state_uuid = generateUuidV7();
+        sweep.sweep_generation = 13;
+        sweep.relation_uuid = table_id_;
+        sweep.page_id = 91;
+        sweep.slot_id = 4;
+        sweep.checkpoint_generation_seen = checkpoint.checkpoint_generation;
+        sweep.persist_time = now_us - 2'000'000;
+        sweep.active = true;
+        sweep.stage = 2;
+        sweep.resume_lane_mask = 3;
+        sweep.resume_strict_audit = true;
+        sweep.start_horizon = 77;
+        sweep.reclaimed_version_count = 12;
+        sweep.reclaimed_bytes = 2048;
+        sweep.index_backlog_count = 6;
+        sweep.cursor_crc32c = 0x1234u;
+        ASSERT_EQ(catalog_->appendSweepCursorStateCatalogEntry(sweep, nullptr), Status::OK);
+
+        std::vector<SqlCheckpointStatusRow> checkpoint_status_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildCheckpointStatusRows(
+                      *db_, checkpoint_status_rows),
+                  Status::OK);
+        ASSERT_EQ(checkpoint_status_rows.size(), 1u);
+        EXPECT_EQ(checkpoint_status_rows.front().checkpoint_generation, 7u);
+        EXPECT_EQ(checkpoint_status_rows.front().checkpoint_state, "FAILED");
+        EXPECT_EQ(checkpoint_status_rows.front().pages_remaining, 8u);
+        EXPECT_TRUE(checkpoint_status_rows.front().has_failure_reason);
+        EXPECT_EQ(checkpoint_status_rows.front().failure_reason, "DISK_FULL");
+
+        std::vector<SqlCheckpointHistoryRow> checkpoint_history_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildCheckpointHistoryRows(
+                      *db_, checkpoint_history_rows),
+                  Status::OK);
+        ASSERT_EQ(checkpoint_history_rows.size(), 1u);
+        EXPECT_EQ(checkpoint_history_rows.front().pages_flushed, 9u);
+
+        std::vector<SqlRecoveryStatusRow> recovery_status_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildRecoveryStatusRows(
+                      *db_, recovery_status_rows),
+                  Status::OK);
+        ASSERT_EQ(recovery_status_rows.size(), 1u);
+        EXPECT_EQ(recovery_status_rows.front().recovery_generation, 11u);
+        EXPECT_EQ(recovery_status_rows.front().classification, "writeback_failure_resume");
+        EXPECT_EQ(recovery_status_rows.front().startup_state, "write_fenced");
+        EXPECT_EQ(recovery_status_rows.front().normalized_transactions, 3u);
+        EXPECT_TRUE(recovery_status_rows.front().write_fenced);
+
+        std::vector<SqlRecoveryIncidentRow> recovery_incident_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildRecoveryIncidentRows(
+                      *db_, recovery_incident_rows),
+                  Status::OK);
+        ASSERT_GE(recovery_incident_rows.size(), 1u);
+        const auto recovery_incident_it = std::find_if(
+            recovery_incident_rows.begin(),
+            recovery_incident_rows.end(),
+            [&](const SqlRecoveryIncidentRow& row) {
+                return row.object_uuid == table_id_.toString() &&
+                    row.recovery_generation == recovery.recovery_generation &&
+                    row.has_checkpoint_generation &&
+                    row.checkpoint_generation == checkpoint.checkpoint_generation;
+            });
+        ASSERT_NE(recovery_incident_it, recovery_incident_rows.end());
+        EXPECT_EQ(recovery_incident_it->object_uuid, table_id_.toString());
+
+        std::vector<SqlWritebackIncidentRow> incident_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildWritebackIncidentRows(
+                      *db_, incident_rows),
+                  Status::OK);
+        ASSERT_EQ(incident_rows.size(), 1u);
+        EXPECT_EQ(incident_rows.front().queue_kind, "checkpoint");
+        EXPECT_EQ(incident_rows.front().policy_domain, "checkpoint");
+        EXPECT_EQ(incident_rows.front().degraded_state, "write_fenced");
+        EXPECT_TRUE(incident_rows.front().is_open);
+
+        std::vector<SqlBufferWritebackDebtRow> debt_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildBufferWritebackDebtRows(
+                      *db_, debt_rows),
+                  Status::OK);
+        ASSERT_EQ(debt_rows.size(), 1u);
+        EXPECT_EQ(debt_rows.front().checkpoint_pages_remaining, 8u);
+        EXPECT_TRUE(debt_rows.front().incident_open);
+        EXPECT_EQ(debt_rows.front().retry_count, 2u);
+
+        std::vector<SqlSweepResumeStatusRow> sweep_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildSweepResumeStatusRows(
+                      *db_, sweep_rows),
+                  Status::OK);
+        ASSERT_EQ(sweep_rows.size(), 1u);
+        EXPECT_EQ(sweep_rows.front().sweep_generation, 13u);
+        EXPECT_EQ(sweep_rows.front().relation_uuid, table_id_.toString());
+        EXPECT_EQ(sweep_rows.front().resume_outcome, "rewind_required");
+
+        std::vector<SqlRuntimeMetricRow> runtime_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildMgaRuntimeRows(
+                      *db_, registry, now_us / 1000, runtime_rows),
+                  Status::OK);
+
+        auto find_metric = [&runtime_rows](const std::string& metric_name,
+                                           const std::string& labels_fragment)
+            -> std::vector<SqlRuntimeMetricRow>::const_iterator {
+            return std::find_if(
+                runtime_rows.begin(), runtime_rows.end(),
+                [&](const SqlRuntimeMetricRow& row) {
+                    return row.metric_name == metric_name &&
+                           row.labels_json.find(labels_fragment) != std::string::npos;
+                });
+        };
+
+        const auto checkpoint_generation_metric =
+            find_metric("sb_checkpoint_generation_current", "\"db\":");
+        ASSERT_NE(checkpoint_generation_metric, runtime_rows.end());
+        EXPECT_DOUBLE_EQ(checkpoint_generation_metric->value, 7.0);
+
+        const auto checkpoint_failures_metric =
+            find_metric("sb_checkpoint_failed_total", "\"reason\":\"DISK_FULL\"");
+        ASSERT_NE(checkpoint_failures_metric, runtime_rows.end());
+        EXPECT_DOUBLE_EQ(checkpoint_failures_metric->value, 1.0);
+
+        const auto recovery_generation_metric =
+            find_metric("sb_recovery_generation_current", "\"db\":");
+        ASSERT_NE(recovery_generation_metric, runtime_rows.end());
+        EXPECT_DOUBLE_EQ(recovery_generation_metric->value, 11.0);
+
+        const auto writeback_open_metric =
+            find_metric("sb_writeback_incidents_open",
+                        "\"degraded_state\":\"write_fenced\"");
+        ASSERT_NE(writeback_open_metric, runtime_rows.end());
+        EXPECT_DOUBLE_EQ(writeback_open_metric->value, 1.0);
     }
 
 } // namespace scratchbird::core

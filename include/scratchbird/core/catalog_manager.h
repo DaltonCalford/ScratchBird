@@ -4893,6 +4893,96 @@ public:
             uint64_t last_modified_time = 0;
         };
 
+        struct CheckpointRunCatalogInfo
+        {
+            ID checkpoint_run_uuid;
+            uint64_t checkpoint_generation = 0;
+            CheckpointLifecycleState checkpoint_state = CheckpointLifecycleState::IDLE;
+            uint64_t start_time = 0;
+            bool has_end_time = false;
+            uint64_t end_time = 0;
+            uint64_t dirty_generation_low_watermark = 0;
+            uint64_t pages_target = 0;
+            uint64_t pages_flushed = 0;
+            bool has_failure_reason = false;
+            Status failure_reason = Status::OK;
+            bool is_valid = true;
+        };
+
+        struct RecoveryRunCatalogInfo
+        {
+            ID recovery_run_uuid;
+            uint64_t recovery_generation = 0;
+            Database::StartupRecoveryClassification classification =
+                Database::StartupRecoveryClassification::NOT_CLASSIFIED;
+            uint64_t start_time = 0;
+            bool has_end_time = false;
+            uint64_t end_time = 0;
+            uint64_t normalized_transactions = 0;
+            uint64_t repair_required_pages = 0;
+            Database::StartupServiceState degraded_state =
+                Database::StartupServiceState::NORMAL;
+            bool is_valid = true;
+        };
+
+        struct SweepCursorStateCatalogInfo
+        {
+            ID sweep_cursor_state_uuid;
+            uint64_t sweep_generation = 0;
+            ID relation_uuid;
+            ID filespace_uuid;
+            uint64_t page_id = 0;
+            uint32_t slot_id = 0;
+            uint64_t checkpoint_generation_seen = 0;
+            uint64_t persist_time = 0;
+            bool active = false;
+            uint8_t stage = 0;
+            uint16_t resume_lane_mask = 0;
+            bool resume_strict_audit = true;
+            uint64_t start_horizon = 0;
+            uint64_t reclaimed_version_count = 0;
+            uint64_t reclaimed_bytes = 0;
+            uint64_t index_backlog_count = 0;
+            uint32_t cursor_crc32c = 0;
+            bool is_valid = true;
+        };
+
+        struct WritebackIncidentCatalogInfo
+        {
+            ID writeback_incident_uuid;
+            bool has_filespace_uuid = false;
+            ID filespace_uuid;
+            WritebackQueueKind queue_kind = WritebackQueueKind::UNKNOWN;
+            WritebackPolicyDomain policy_domain = WritebackPolicyDomain::UNKNOWN;
+            uint64_t page_class = 0;
+            WritebackFailureClass failure_class = WritebackFailureClass::NONE;
+            uint64_t first_seen_time = 0;
+            uint64_t last_seen_time = 0;
+            uint64_t retry_count = 0;
+            WritebackDegradedState degraded_state = WritebackDegradedState::NORMAL;
+            bool has_clearance_condition_uuid = false;
+            ID clearance_condition_uuid;
+            bool is_open = false;
+            bool is_valid = true;
+            Status last_error_status = Status::OK;
+        };
+
+        struct RecoveryIncidentCatalogInfo
+        {
+            ID recovery_incident_uuid;
+            uint64_t recovery_generation = 0;
+            Database::StartupRecoveryClassification classification =
+                Database::StartupRecoveryClassification::NOT_CLASSIFIED;
+            bool has_checkpoint_generation = false;
+            uint64_t checkpoint_generation = 0;
+            bool has_object_uuid = false;
+            ID object_uuid;
+            bool has_details = false;
+            std::string details_json;
+            uint64_t created_time = 0;
+            bool is_valid = true;
+        };
+
         struct PrincipalAccountCatalogInfo
         {
             ID account_id;
@@ -7340,6 +7430,7 @@ public:
 
         auto listTemporaryTablesForSession(const ID &session_id, std::vector<TableInfo> &tables,
                                            ErrorContext *ctx = nullptr) -> Status;
+        auto purgeStaleSessionTemporaryTables(ErrorContext *ctx = nullptr) -> Status;
 
         // DDL Modifications (ALPHA Phase 1)
         auto dropTable(const ID &table_id, bool cascade, ErrorContext *ctx = nullptr) -> Status;
@@ -8439,6 +8530,51 @@ public:
             ErrorContext* ctx = nullptr) -> Status;
         auto deleteRuntimeTransactionCatalogEntry(uint64_t txid,
                                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertCheckpointRunCatalogEntry(const CheckpointRunCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getCheckpointRunCatalogEntry(const ID& checkpoint_run_uuid,
+                                          CheckpointRunCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getLatestCheckpointRunCatalogEntry(CheckpointRunCatalogInfo& info_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto listCheckpointRunCatalogEntries(
+            std::vector<CheckpointRunCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertRecoveryRunCatalogEntry(const RecoveryRunCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getRecoveryRunCatalogEntry(const ID& recovery_run_uuid,
+                                        RecoveryRunCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto getLatestRecoveryRunCatalogEntry(RecoveryRunCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto listRecoveryRunCatalogEntries(
+            std::vector<RecoveryRunCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+
+        auto appendSweepCursorStateCatalogEntry(SweepCursorStateCatalogInfo& info,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto listSweepCursorStateCatalogEntries(
+            std::vector<SweepCursorStateCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertWritebackIncidentCatalogEntry(const WritebackIncidentCatalogInfo& info,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getWritebackIncidentCatalogEntry(const ID& writeback_incident_uuid,
+                                              WritebackIncidentCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getOpenWritebackIncidentCatalogEntry(WritebackIncidentCatalogInfo& info_out,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto listWritebackIncidentCatalogEntries(
+            std::vector<WritebackIncidentCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+
+        auto appendRecoveryIncidentCatalogEntry(RecoveryIncidentCatalogInfo& info,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto listRecoveryIncidentCatalogEntries(
+            std::vector<RecoveryIncidentCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
 
         // ============================================================================
         // Canonical security extension and PKI/crypto catalog operations (CAT-020)
@@ -13444,6 +13580,11 @@ public:
         uint32_t forensic_snapshot_capsule_table_page_ = 0; // Retained replay snapshot capsule catalog (NCW-045)
         uint32_t connection_table_page_ = 0; // Runtime connection attribution catalog (CAT-019)
         uint32_t transaction_table_page_ = 0; // Runtime transaction attribution catalog (CAT-019)
+        uint32_t checkpoint_run_table_page_ = 0; // Checkpoint run history catalog (TDRW-014)
+        uint32_t recovery_run_table_page_ = 0; // Recovery run history catalog (TDRW-014)
+        uint32_t sweep_cursor_state_table_page_ = 0; // Sweep cursor history catalog (TDRW-014)
+        uint32_t writeback_incident_table_page_ = 0; // Writeback incident history catalog (TDRW-014)
+        uint32_t recovery_incident_table_page_ = 0; // Recovery incident history catalog (TDRW-014)
         uint32_t principal_account_table_page_ = 0; // Principal account catalog (CAT-020)
         uint32_t account_credential_table_page_ = 0; // Account credential catalog (CAT-020)
         uint32_t account_profile_binding_table_page_ = 0; // Account profile binding catalog (CAT-020)

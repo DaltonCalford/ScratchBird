@@ -9,6 +9,7 @@
  */
 #include <gtest/gtest.h>
 
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <string>
@@ -99,6 +100,39 @@ protected:
     ExecutionResult executeBytecode(const std::vector<uint8_t>& bytecode)
     {
         return executor_->execute(bytecode);
+    }
+
+    void reopenDatabase()
+    {
+        executor_.reset();
+        compiler_.reset();
+        if (db_)
+        {
+            db_->close();
+        }
+
+        ErrorContext ctx;
+        db_ = std::make_unique<Database>();
+        ASSERT_EQ(db_->open(db_file_->path(), &ctx), Status::OK) << ctx.message;
+
+        compiler_ = std::make_unique<QueryCompilerV3>(db_.get());
+        executor_ = std::make_unique<Executor>(db_.get());
+
+        core::CatalogManager::SchemaInfo public_schema_info;
+        ASSERT_EQ(db_->catalog_manager()->getSchema("public", public_schema_info, &ctx), Status::OK)
+            << ctx.message;
+        compiler_->setCurrentSchema(public_schema_info.schema_id);
+        executor_->setCurrentSchema(public_schema_info.schema_id);
+    }
+
+    static void corruptFileByte(const std::string& path, uint64_t offset, uint8_t value)
+    {
+        std::fstream file(path, std::ios::in | std::ios::out | std::ios::binary);
+        ASSERT_TRUE(file.is_open());
+        file.seekp(static_cast<std::streamoff>(offset));
+        file.write(reinterpret_cast<const char*>(&value), 1);
+        file.flush();
+        ASSERT_TRUE(file.good());
     }
 
     static std::vector<uint8_t> mutateV3InstructionPayload(
@@ -412,20 +446,22 @@ TEST_F(IndexExecutorDispatchContractsTest, AlterIndexDiagnosticScanDetectsChecks
     ASSERT_EQ(db_->catalog_manager()->getIndex(table_info.table_id, "idx_users_id", index_info, &ctx), Status::OK)
         << ctx.message;
 
-    void* page_buffer = nullptr;
-    ASSERT_EQ(db_->buffer_pool()->pinPageGlobal(index_info.root_gpid, &page_buffer, &ctx), Status::OK)
-        << ctx.message;
-    auto* page_bytes = static_cast<uint8_t*>(page_buffer);
-    auto* header = reinterpret_cast<core::PageHeader*>(page_bytes);
-    header->flags |= core::PAGE_FLAG_CHECKSUM_VALID;
-    header->checksum = core::calculatePageChecksum(page_bytes, db_->page_size()) ^ 0xFFFFFFFFu;
-    page_bytes[512] ^= 0x5Au;
-    ASSERT_EQ(db_->buffer_pool()->unpinPageGlobal(index_info.root_gpid, true, &ctx), Status::OK)
-        << ctx.message;
+    ASSERT_NE(index_info.root_gpid, 0u);
+    const uint32_t root_page_id = static_cast<uint32_t>(core::getPageNumber(index_info.root_gpid));
+    const uint64_t corrupt_offset =
+        static_cast<uint64_t>(root_page_id) * db_->page_size() +
+        core::CANONICAL_PAGE_HEADER_BYTES + 16u;
+
+    reopenDatabase();
+    uint8_t corrupt_byte = 0x5Au;
+    corruptFileByte(db_file_->path(), corrupt_offset, corrupt_byte);
+    reopenDatabase();
 
     ExecutionResult result = executeSql("ALTER INDEX users.idx_users_id DIAGNOSTIC SCAN");
     ASSERT_TRUE(result.success()) << result.error();
 
+    ASSERT_EQ(db_->catalog_manager()->getIndex(table_info.table_id, "idx_users_id", index_info, &ctx), Status::OK)
+        << ctx.message;
     core::CatalogManager::IndexHealthCatalogInfo health_info;
     ASSERT_EQ(db_->catalog_manager()->getIndexHealthCatalogEntry(index_info.index_id, health_info, &ctx),
               Status::OK)

@@ -29,6 +29,116 @@ namespace scratchbird
     {
         namespace
         {
+            auto getTracedHashValue() -> uint64_t
+            {
+                static const uint64_t traced_hash = []() -> uint64_t
+                {
+                    const char *env = std::getenv("SB_HASH_TRACE_HASH");
+                    if (env == nullptr || *env == '\0')
+                    {
+                        return 0;
+                    }
+                    return std::strtoull(env, nullptr, 10);
+                }();
+                return traced_hash;
+            }
+
+            bool isHashTraceEnabled()
+            {
+                return getTracedHashValue() != 0;
+            }
+
+            bool shouldTraceHash(uint64_t hash)
+            {
+                return isHashTraceEnabled() && getTracedHashValue() == hash;
+            }
+
+            auto getHashValidateEvery() -> uint64_t
+            {
+                static const uint64_t validate_every = []() -> uint64_t
+                {
+                    const char *env = std::getenv("SB_HASH_VALIDATE_EVERY");
+                    if (env == nullptr || *env == '\0')
+                    {
+                        return 0;
+                    }
+                    return std::strtoull(env, nullptr, 10);
+                }();
+                return validate_every;
+            }
+
+            void logHashFailure(const char *operation, Status status, const ErrorContext *ctx)
+            {
+                if (status == Status::OK)
+                {
+                    return;
+                }
+
+                if (ctx != nullptr && !ctx->message.empty())
+                {
+                    LOG_ERROR(HASH,
+                              "%s failed status=%u message=%s origin=%s:%d",
+                              operation,
+                              static_cast<unsigned>(status),
+                              ctx->message.c_str(),
+                              ctx->file != nullptr ? ctx->file : "<unknown>",
+                              ctx->line);
+                }
+                else
+                {
+                    LOG_ERROR(HASH, "%s failed status=%u", operation, static_cast<unsigned>(status));
+                }
+            }
+
+            auto loadHashEntry(const HashEntry *slot) -> HashEntry
+            {
+                HashEntry entry{};
+                if (slot != nullptr)
+                {
+                    std::memcpy(&entry, slot, sizeof(HashEntry));
+                }
+                return entry;
+            }
+
+            void storeHashEntry(HashEntry *slot, const HashEntry &entry)
+            {
+                if (slot != nullptr)
+                {
+                    std::memcpy(slot, &entry, sizeof(HashEntry));
+                }
+            }
+
+            void initializeHashPageHeader(PageHeader *header,
+                                          uint16_t page_type,
+                                          uint32_t page_size,
+                                          uint32_t page_id,
+                                          uint16_t lower_bound)
+            {
+                if (header == nullptr)
+                {
+                    return;
+                }
+
+                header->magic = K_MAGIC_SBRD;
+                header->version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
+                header->header_bytes = CANONICAL_PAGE_HEADER_BYTES;
+                header->page_type = page_type;
+                header->flags = 0;
+                header->page_size = page_size;
+                header->page_id = page_id;
+                header->generation = 1;
+                header->flush_generation = 1;
+                header->checkpoint_generation = 1;
+                header->repair_epoch = 0;
+                header->repair_state_raw = static_cast<uint16_t>(PageRepairState::REPAIR_NONE);
+                header->checksum = 0;
+                header->free_space = 0;
+                header->item_count = 0;
+                header->reserved = 0;
+                pageSetLower(*header, lower_bound);
+                pageSetUpper(*header, page_size);
+                pageSetSpecial(*header, page_size);
+            }
         } // namespace
 
         // Constructor
@@ -43,7 +153,13 @@ namespace scratchbird
         // Dynamic capacity calculation
         uint16_t HashIndex::getMaxEntriesPerBucket() const
         {
-            return (db_->page_size() - 96) / sizeof(HashEntry);
+            const uint32_t fixed_bucket_bytes = static_cast<uint32_t>(sizeof(SBHashBucketPage));
+            if (db_->page_size() <= fixed_bucket_bytes)
+            {
+                return 0;
+            }
+            return static_cast<uint16_t>((db_->page_size() - fixed_bucket_bytes) /
+                                         sizeof(HashEntry));
         }
 
         // Create a new hash index
@@ -76,21 +192,14 @@ namespace scratchbird
             }
 
             auto *meta = reinterpret_cast<SBHashIndexMetaPage *>(meta_page_data);
-            std::memset(meta, 0, sizeof(SBHashIndexMetaPage));
+            std::memset(meta_page_data, 0, db->page_size());
 
             // Initialize meta page header
-            meta->hip_header.magic = K_MAGIC_SBRD;
-            meta->hip_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            meta->hip_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_META);
-            meta->hip_header.page_size = db->page_size();
-            meta->hip_header.page_id = meta_page;
-            meta->hip_header.generation = 1;
-            meta->hip_header.checksum = 0;
-            meta->hip_header.flags = 0;
-            meta->hip_header.lsn = 0;
-            pageSetLower(meta->hip_header, sizeof(SBHashIndexMetaPage));
-            pageSetUpper(meta->hip_header, db->page_size());
-            pageSetSpecial(meta->hip_header, db->page_size());
+            initializeHashPageHeader(&meta->hip_header,
+                                     static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_META),
+                                     db->page_size(),
+                                     meta_page,
+                                     sizeof(SBHashIndexMetaPage));
 
             // Initialize meta data
             std::memcpy(meta->hip_index_uuid, index_uuid.bytes.data(), 16);
@@ -122,20 +231,12 @@ namespace scratchbird
             }
 
             auto *dir = reinterpret_cast<SBHashDirectoryPage *>(dir_page_data);
-            std::memset(dir, 0, sizeof(SBHashDirectoryPage));
-
-            dir->hdp_header.magic = K_MAGIC_SBRD;
-            dir->hdp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            dir->hdp_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_BITMAP);
-            dir->hdp_header.page_size = db->page_size();
-            dir->hdp_header.page_id = dir_page;
-            dir->hdp_header.generation = 1;
-            dir->hdp_header.checksum = 0;
-            dir->hdp_header.flags = 0;
-            dir->hdp_header.lsn = 0;
-            pageSetLower(dir->hdp_header, sizeof(SBHashDirectoryPage));
-            pageSetUpper(dir->hdp_header, db->page_size());
-            pageSetSpecial(dir->hdp_header, db->page_size());
+            std::memset(dir_page_data, 0, db->page_size());
+            initializeHashPageHeader(&dir->hdp_header,
+                                     static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_BITMAP),
+                                     db->page_size(),
+                                     dir_page,
+                                     sizeof(SBHashDirectoryPage));
             dir->hdp_next_page = 0;
 
             // Step 5: Allocate initial bucket pages (2^INITIAL_GLOBAL_DEPTH buckets)
@@ -165,20 +266,12 @@ namespace scratchbird
                 }
 
                 auto *bucket = reinterpret_cast<SBHashBucketPage *>(bucket_data);
-                std::memset(bucket, 0, sizeof(SBHashBucketPage));
-
-                bucket->hbp_header.magic = K_MAGIC_SBRD;
-                bucket->hbp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-                bucket->hbp_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_BUCKET);
-                bucket->hbp_header.page_size = db->page_size();
-                bucket->hbp_header.page_id = bucket_page;
-                bucket->hbp_header.generation = 1;
-                bucket->hbp_header.checksum = 0;
-                bucket->hbp_header.flags = 0;
-                bucket->hbp_header.lsn = 0;
-                pageSetLower(bucket->hbp_header, sizeof(SBHashBucketPage));
-                pageSetUpper(bucket->hbp_header, db->page_size());
-                pageSetSpecial(bucket->hbp_header, db->page_size());
+                std::memset(bucket_data, 0, db->page_size());
+                initializeHashPageHeader(&bucket->hbp_header,
+                                         static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_BUCKET),
+                                         db->page_size(),
+                                         bucket_page,
+                                         sizeof(SBHashBucketPage));
                 bucket->hbp_entry_count = 0;
                 bucket->hbp_local_depth = INITIAL_GLOBAL_DEPTH;
                 bucket->hbp_deleted_count = 0;
@@ -247,15 +340,42 @@ namespace scratchbird
             return makeGPID(tablespace_id_, page_num);
         }
 
-        Status HashIndex::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx)
-        {
-            return buffer_pool_->pinPageGlobal(indexGPID(page_num), buffer, ctx);
+            Status HashIndex::pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx)
+            {
+                GPID gpid = indexGPID(page_num);
+                Status status = buffer_pool_->pinPageGlobal(gpid, buffer, ctx);
+                if (status != Status::OK)
+                {
+                    logHashFailure("pinIndexPage.pinPageGlobal", status, ctx);
+                    return status;
+                }
+
+                status = buffer_pool_->lockPageGlobal(gpid, ctx);
+                if (status != Status::OK)
+                {
+                    logHashFailure("pinIndexPage.lockPageGlobal", status, ctx);
+                    buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+                    return status;
+                }
+
+            return Status::OK;
         }
 
-        Status HashIndex::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx)
-        {
-            return buffer_pool_->unpinPageGlobal(indexGPID(page_num), dirty, ctx);
-        }
+            Status HashIndex::unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx)
+            {
+                GPID gpid = indexGPID(page_num);
+                Status unlock_status = buffer_pool_->unlockPageGlobal(gpid, ctx);
+                Status unpin_status = buffer_pool_->unpinPageGlobal(gpid, dirty, ctx);
+                if (unlock_status != Status::OK)
+                {
+                    logHashFailure("unpinIndexPage.unlockPageGlobal", unlock_status, ctx);
+                }
+                else if (unpin_status != Status::OK)
+                {
+                    logHashFailure("unpinIndexPage.unpinPageGlobal", unpin_status, ctx);
+                }
+                return unlock_status != Status::OK ? unlock_status : unpin_status;
+            }
 
         // Helper: Calculate directory index from hash value
         uint32_t HashIndex::getDirectoryIndex(uint64_t hash, uint32_t global_depth)
@@ -351,6 +471,98 @@ namespace scratchbird
             unpinIndexPage(meta_page_, false, ctx);
         }
 
+        Status HashIndex::validateReachableEntryCount(uint64_t expected_num_tuples,
+                                                      ErrorContext *ctx)
+        {
+            void *meta_buffer = nullptr;
+            Status status = pinIndexPage(meta_page_, &meta_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *meta = reinterpret_cast<SBHashIndexMetaPage *>(meta_buffer);
+            const uint32_t global_depth = meta->hip_global_depth;
+            const uint64_t directory_page = meta->hip_directory_page;
+            unpinIndexPage(meta_page_, false, ctx);
+
+            const uint32_t num_buckets = 1U << global_depth;
+            const size_t pointers_per_page =
+                (db_->page_size() - sizeof(SBHashDirectoryPage)) / sizeof(uint64_t);
+            if (pointers_per_page == 0)
+            {
+                return Status::IO_ERROR;
+            }
+
+            std::unordered_set<uint64_t> visited_buckets;
+            uint64_t reachable_entries = 0;
+            uint64_t current_dir_page = directory_page;
+            uint32_t processed = 0;
+
+            while (current_dir_page != 0 && processed < num_buckets)
+            {
+                void *dir_buffer = nullptr;
+                status = pinIndexPage(current_dir_page, &dir_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                auto *dir = reinterpret_cast<SBHashDirectoryPage *>(dir_buffer);
+                const uint32_t entries_this_page =
+                    static_cast<uint32_t>(std::min<size_t>(pointers_per_page, num_buckets - processed));
+                const uint64_t next_dir_page = dir->hdp_next_page;
+
+                for (uint32_t i = 0; i < entries_this_page; ++i)
+                {
+                    const uint64_t bucket_page = dir->hdp_bucket_pointers[i];
+                    if (bucket_page == 0 || !visited_buckets.insert(bucket_page).second)
+                    {
+                        continue;
+                    }
+
+                    uint64_t current_bucket = bucket_page;
+                    while (current_bucket != 0)
+                    {
+                        void *bucket_buffer = nullptr;
+                        status = pinIndexPage(current_bucket, &bucket_buffer, ctx);
+                        if (status != Status::OK)
+                        {
+                            unpinIndexPage(current_dir_page, false, ctx);
+                            return status;
+                        }
+
+                        auto *bucket = reinterpret_cast<SBHashBucketPage *>(bucket_buffer);
+                        reachable_entries +=
+                            static_cast<uint64_t>(bucket->hbp_entry_count - bucket->hbp_deleted_count);
+                        const uint64_t overflow_page = bucket->hbp_overflow_page;
+                        unpinIndexPage(current_bucket, false, ctx);
+                        current_bucket = overflow_page;
+                    }
+                }
+
+                unpinIndexPage(current_dir_page, false, ctx);
+                current_dir_page = next_dir_page;
+                processed += entries_this_page;
+            }
+
+            if (reachable_entries != expected_num_tuples)
+            {
+                LOG_ERROR(HASH,
+                          "Hash reachable-entry validation failed expected=%llu actual=%llu global_depth=%u meta_page=%u",
+                          static_cast<unsigned long long>(expected_num_tuples),
+                          static_cast<unsigned long long>(reachable_entries),
+                          global_depth,
+                          meta_page_);
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::INDEX_CORRUPTED,
+                                  "Hash reachable-entry validation failed");
+                return Status::INDEX_CORRUPTED;
+            }
+
+            return Status::OK;
+        }
+
         // Helper: Allocate a new bucket page
         Status HashIndex::allocateBucketPage(uint32_t *page_num_out, ErrorContext *ctx)
         {
@@ -371,20 +583,12 @@ namespace scratchbird
             }
 
             auto *bucket = reinterpret_cast<SBHashBucketPage *>(page_data);
-            std::memset(bucket, 0, sizeof(SBHashBucketPage));
-
-            bucket->hbp_header.magic = K_MAGIC_SBRD;
-            bucket->hbp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            bucket->hbp_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_BUCKET);
-            bucket->hbp_header.page_size = db_->page_size();
-            bucket->hbp_header.page_id = page_num;
-            bucket->hbp_header.generation = 1;
-            bucket->hbp_header.checksum = 0;
-            bucket->hbp_header.flags = 0;
-            bucket->hbp_header.lsn = 0;
-            pageSetLower(bucket->hbp_header, sizeof(SBHashBucketPage));
-            pageSetUpper(bucket->hbp_header, db_->page_size());
-            pageSetSpecial(bucket->hbp_header, db_->page_size());
+            std::memset(page_data, 0, db_->page_size());
+            initializeHashPageHeader(&bucket->hbp_header,
+                                     static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_BUCKET),
+                                     db_->page_size(),
+                                     page_num,
+                                     sizeof(SBHashBucketPage));
             bucket->hbp_entry_count = 0;
             bucket->hbp_local_depth = 0; // Will be set by caller
             bucket->hbp_deleted_count = 0;
@@ -468,23 +672,48 @@ namespace scratchbird
                 Status status = pinIndexPage(current_page, (void **)&page_data, ctx);
                 if (status != Status::OK)
                 {
+                    logHashFailure("hash_insert.pinIndexPage", status, ctx);
                     return status;
                 }
 
                 auto *bucket = reinterpret_cast<SBHashBucketPage *>(page_data);
+                const bool trace_hash = shouldTraceHash(hash);
+
+                if (trace_hash)
+                {
+                    LOG_DEBUG(HASH,
+                              "Hash trace insert hash=%llu bucket_page=%u current_page=%u entry_count=%u local_depth=%u overflow=%u",
+                              static_cast<unsigned long long>(hash),
+                              static_cast<uint32_t>(bucket_page),
+                              current_page,
+                              bucket->hbp_entry_count,
+                              bucket->hbp_local_depth,
+                              static_cast<uint32_t>(bucket->hbp_overflow_page));
+                }
 
                 // Check if there's space in this page
                 if (bucket->hbp_entry_count < getMaxEntriesPerBucket())
                 {
                     // Add entry (storing TID with GPID support)
                     // Firebird MGA: Set xmin to creating transaction, xmax to 0 (not deleted)
-                    HashEntry &entry = bucket->hbp_entries[bucket->hbp_entry_count];
+                    HashEntry entry{};
                     entry.he_key_hash = hash;
                     entry.setTID(tid);        // Store full TID (GPID + slot)
                     entry.he_padding = 0;     // Clear padding
                     entry.he_xmin = xid;      // Transaction that created this entry
                     entry.he_xmax = 0;        // Not deleted
+                    storeHashEntry(&bucket->hbp_entries[bucket->hbp_entry_count], entry);
                     bucket->hbp_entry_count++;
+
+                    if (trace_hash)
+                    {
+                        LOG_DEBUG(HASH,
+                                  "Hash trace placed hash=%llu page=%u slot=%u entry_count=%u",
+                                  static_cast<unsigned long long>(hash),
+                                  current_page,
+                                  static_cast<unsigned>(bucket->hbp_entry_count - 1),
+                                  bucket->hbp_entry_count);
+                    }
 
                     unpinIndexPage(current_page, true, ctx);
 
@@ -505,6 +734,32 @@ namespace scratchbird
                         {
                             LOG_WARNING(STORAGE, "Hash bloom filter insert failed: %d",
                                         static_cast<int>(bf_status));
+                        }
+                    }
+
+                    const uint64_t validate_every = getHashValidateEvery();
+                    if (validate_every != 0)
+                    {
+                        uint64_t expected_num_tuples = 0;
+                        uint8_t *verify_meta_data = nullptr;
+                        Status verify_status =
+                            pinIndexPage(meta_page_, (void **)&verify_meta_data, ctx);
+                        if (verify_status != Status::OK)
+                        {
+                            return verify_status;
+                        }
+                        auto *verify_meta =
+                            reinterpret_cast<SBHashIndexMetaPage *>(verify_meta_data);
+                        expected_num_tuples = verify_meta->hip_num_tuples;
+                        unpinIndexPage(meta_page_, false, ctx);
+
+                        if ((expected_num_tuples % validate_every) == 0)
+                        {
+                            verify_status = validateReachableEntryCount(expected_num_tuples, ctx);
+                            if (verify_status != Status::OK)
+                            {
+                                return verify_status;
+                            }
                         }
                     }
 
@@ -530,6 +785,7 @@ namespace scratchbird
                     status = splitBucket(bucket_page, hash, ctx);
                     if (status != Status::OK)
                     {
+                        logHashFailure("hash_insert.splitBucket", status, ctx);
                         return status;
                     }
 
@@ -543,6 +799,7 @@ namespace scratchbird
                     status = allocateOverflowPage(&overflow_page, ctx);
                     if (status != Status::OK)
                     {
+                        logHashFailure("hash_insert.allocateOverflowPage", status, ctx);
                         unpinIndexPage(current_page, false, ctx);
                         return status;
                     }
@@ -620,6 +877,7 @@ namespace scratchbird
             status = allocateBucketPage(&new_bucket_page, ctx);
             if (status != Status::OK)
             {
+                logHashFailure("hash_split.allocateBucketPage", status, ctx);
                 unpinIndexPage(bucket_page, false, ctx);
                 return status;
             }
@@ -629,6 +887,7 @@ namespace scratchbird
             status = pinIndexPage(new_bucket_page, (void **)&new_bucket_data, ctx);
             if (status != Status::OK)
             {
+                logHashFailure("hash_split.pinNewBucket", status, ctx);
                 unpinIndexPage(bucket_page, false, ctx);
                 return status;
             }
@@ -675,6 +934,7 @@ namespace scratchbird
                 status = pinIndexPage(current_dir_page, (void **)&dir_data, ctx);
                 if (status != Status::OK)
                 {
+                    logHashFailure("hash_split.pinDirectoryPage", status, ctx);
                     return status;
                 }
 
@@ -711,6 +971,7 @@ namespace scratchbird
             status = redistributeEntries(old_bucket, new_bucket, new_local_depth, ctx);
             if (status != Status::OK)
             {
+                logHashFailure("hash_split.redistributeEntries", status, ctx);
                 unpinIndexPage(new_bucket_page, false, ctx);
                 unpinIndexPage(bucket_page, false, ctx);
                 return status;
@@ -718,6 +979,25 @@ namespace scratchbird
 
             unpinIndexPage(new_bucket_page, true, ctx);
             unpinIndexPage(bucket_page, true, ctx);
+
+            if (getHashValidateEvery() != 0)
+            {
+                uint8_t *verify_meta_data = nullptr;
+                Status verify_status = pinIndexPage(meta_page_, (void **)&verify_meta_data, ctx);
+                if (verify_status != Status::OK)
+                {
+                    return verify_status;
+                }
+                auto *verify_meta = reinterpret_cast<SBHashIndexMetaPage *>(verify_meta_data);
+                const uint64_t expected_num_tuples = verify_meta->hip_num_tuples;
+                unpinIndexPage(meta_page_, false, ctx);
+
+                verify_status = validateReachableEntryCount(expected_num_tuples, ctx);
+                if (verify_status != Status::OK)
+                {
+                    return verify_status;
+                }
+            }
 
             LOG_DEBUG(HASH, "Hash split complete bucket=%u new_bucket=%u", bucket_page, new_bucket_page);
             return Status::OK;
@@ -731,6 +1011,8 @@ namespace scratchbird
             const uint16_t max_entries = getMaxEntriesPerBucket();
             uint64_t bit_mask = (1ULL << (new_local_depth - 1));
             uint32_t total_before = 0;
+            const uint64_t traced_hash = getTracedHashValue();
+            const bool trace_enabled = traced_hash != 0;
 
             // Temporary storage for entries
             std::vector<HashEntry> old_entries;
@@ -744,7 +1026,7 @@ namespace scratchbird
             // Collect all entries from the primary bucket
             for (uint16_t i = 0; i < old_bucket->hbp_entry_count; i++)
             {
-                const HashEntry &entry = old_bucket->hbp_entries[i];
+                HashEntry entry = loadHashEntry(&old_bucket->hbp_entries[i]);
                 if (entry.he_key_hash & bit_mask)
                 {
                     new_entries.push_back(entry);
@@ -771,7 +1053,7 @@ namespace scratchbird
                 auto *overflow_bucket = reinterpret_cast<SBHashBucketPage *>(overflow_data);
                 for (uint16_t i = 0; i < overflow_bucket->hbp_entry_count; i++)
                 {
-                    const HashEntry &entry = overflow_bucket->hbp_entries[i];
+                    HashEntry entry = loadHashEntry(&overflow_bucket->hbp_entries[i]);
                     if (entry.he_key_hash & bit_mask)
                     {
                         new_entries.push_back(entry);
@@ -810,6 +1092,46 @@ namespace scratchbird
             uint32_t old_page_id = old_bucket->hbp_header.page_id;
             uint32_t new_page_id = new_bucket->hbp_header.page_id;
 
+            if (trace_enabled)
+            {
+                bool traced_entry_found = false;
+                const char *target_bucket = "old";
+                for (const auto &entry : old_entries)
+                {
+                    if (entry.he_key_hash == traced_hash)
+                    {
+                        traced_entry_found = true;
+                        target_bucket = "old";
+                        break;
+                    }
+                }
+                if (!traced_entry_found)
+                {
+                    for (const auto &entry : new_entries)
+                    {
+                        if (entry.he_key_hash == traced_hash)
+                        {
+                            traced_entry_found = true;
+                            target_bucket = "new";
+                            break;
+                        }
+                    }
+                }
+
+                if (traced_entry_found)
+                {
+                    LOG_DEBUG(HASH,
+                              "Hash trace redistribute hash=%llu old_page=%u new_page=%u old_entries=%zu new_entries=%zu target=%s bit_mask=%llu",
+                              static_cast<unsigned long long>(traced_hash),
+                              old_page_id,
+                              new_page_id,
+                              old_entries.size(),
+                              new_entries.size(),
+                              target_bucket,
+                              static_cast<unsigned long long>(bit_mask));
+                }
+            }
+
             auto append_to_page = [&](uint32_t target_page, const HashEntry &entry) -> Status
             {
                 uint32_t current_page = target_page;
@@ -831,6 +1153,7 @@ namespace scratchbird
                         Status status = pinIndexPage(current_page, (void **)&page_data, ctx);
                         if (status != Status::OK)
                         {
+                            logHashFailure("hash_redistribute.pinOverflowPage", status, ctx);
                             return status;
                         }
                         bucket = reinterpret_cast<SBHashBucketPage *>(page_data);
@@ -839,7 +1162,18 @@ namespace scratchbird
 
                     if (bucket->hbp_entry_count < max_entries)
                     {
-                        bucket->hbp_entries[bucket->hbp_entry_count++] = entry;
+                        storeHashEntry(&bucket->hbp_entries[bucket->hbp_entry_count], entry);
+                        bucket->hbp_entry_count++;
+                        if (shouldTraceHash(entry.he_key_hash))
+                        {
+                            LOG_DEBUG(HASH,
+                                      "Hash trace append hash=%llu page=%u slot=%u target_page=%u entry_count=%u",
+                                      static_cast<unsigned long long>(entry.he_key_hash),
+                                      current_page,
+                                      static_cast<unsigned>(bucket->hbp_entry_count - 1),
+                                      target_page,
+                                      bucket->hbp_entry_count);
+                        }
                         if (is_deleted_entry(entry))
                         {
                             bucket->hbp_deleted_count++;
@@ -857,6 +1191,7 @@ namespace scratchbird
                         Status alloc_status = allocateOverflowPage(&next_page, ctx);
                         if (alloc_status != Status::OK)
                         {
+                            logHashFailure("hash_redistribute.allocateOverflowPage", alloc_status, ctx);
                             if (pinned_here)
                             {
                                 unpinIndexPage(current_page, false, ctx);
@@ -1191,19 +1526,12 @@ namespace scratchbird
                     }
 
                     auto *new_dir = reinterpret_cast<SBHashDirectoryPage *>(new_dir_data);
-                    std::memset(new_dir, 0, sizeof(SBHashDirectoryPage));
-                    new_dir->hdp_header.magic = K_MAGIC_SBRD;
-                    new_dir->hdp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-                    new_dir->hdp_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_BITMAP);
-                    new_dir->hdp_header.page_size = db_->page_size();
-                    new_dir->hdp_header.page_id = new_dir_page_num;
-                    new_dir->hdp_header.generation = 1;
-                    new_dir->hdp_header.checksum = 0;
-                    new_dir->hdp_header.flags = 0;
-                    new_dir->hdp_header.lsn = 0;
-                    pageSetLower(new_dir->hdp_header, sizeof(SBHashDirectoryPage));
-                    pageSetUpper(new_dir->hdp_header, db_->page_size());
-                    pageSetSpecial(new_dir->hdp_header, db_->page_size());
+                    std::memset(new_dir_data, 0, db_->page_size());
+                    initializeHashPageHeader(&new_dir->hdp_header,
+                                             static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_BITMAP),
+                                             db_->page_size(),
+                                             new_dir_page_num,
+                                             sizeof(SBHashDirectoryPage));
                     new_dir->hdp_next_page = 0;
 
                     unpinIndexPage(new_dir_page_num, true, ctx);
@@ -1373,7 +1701,7 @@ namespace scratchbird
                 // Scan entries in this page
                 for (uint16_t i = 0; i < bucket->hbp_entry_count; i++)
                 {
-                    const HashEntry &entry = bucket->hbp_entries[i];
+                    HashEntry entry = loadHashEntry(&bucket->hbp_entries[i]);
 
                     // Check if hash matches and entry is not deleted
                     if (entry.he_key_hash == hash)
@@ -1467,7 +1795,7 @@ namespace scratchbird
                 // Search for matching entry
                 for (uint16_t i = 0; i < bucket->hbp_entry_count; i++)
                 {
-                    HashEntry &entry = bucket->hbp_entries[i];
+                    HashEntry entry = loadHashEntry(&bucket->hbp_entries[i]);
 
                     if (entry.he_key_hash == hash && entry.getTID() == tid)
                     {
@@ -1475,6 +1803,7 @@ namespace scratchbird
                         // This allows transactions to still see the entry until their snapshot
                         // Do NOT set he_tuple_id = 0 (that was PostgreSQL MVCC pattern)
                         entry.he_xmax = xid;  // Mark as deleted by this transaction
+                        storeHashEntry(&bucket->hbp_entries[i], entry);
                         bucket->hbp_deleted_count++;
                         found = true;
 
@@ -1542,7 +1871,7 @@ namespace scratchbird
                 auto *bucket = reinterpret_cast<SBHashBucketPage *>(page_data);
                 for (uint16_t i = 0; i < bucket->hbp_entry_count; ++i)
                 {
-                    HashEntry &entry = bucket->hbp_entries[i];
+                    HashEntry entry = loadHashEntry(&bucket->hbp_entries[i]);
                     if (entry.he_key_hash != hash || entry.getTID() != tid)
                     {
                         continue;
@@ -1553,6 +1882,7 @@ namespace scratchbird
                         if (entry.he_xmax != 0)
                         {
                             entry.he_xmax = 0;
+                            storeHashEntry(&bucket->hbp_entries[i], entry);
                             if (bucket->hbp_deleted_count > 0)
                             {
                                 bucket->hbp_deleted_count--;
@@ -1617,7 +1947,7 @@ namespace scratchbird
                 auto *bucket = reinterpret_cast<SBHashBucketPage *>(page_data);
                 for (uint16_t i = 0; i < bucket->hbp_entry_count; ++i)
                 {
-                    HashEntry &entry = bucket->hbp_entries[i];
+                    HashEntry entry = loadHashEntry(&bucket->hbp_entries[i]);
                     if (entry.he_key_hash != hash || entry.getTID() != tid)
                     {
                         continue;
@@ -1625,7 +1955,8 @@ namespace scratchbird
 
                     for (uint16_t j = i + 1; j < bucket->hbp_entry_count; ++j)
                     {
-                        bucket->hbp_entries[j - 1] = bucket->hbp_entries[j];
+                        HashEntry shifted = loadHashEntry(&bucket->hbp_entries[j]);
+                        storeHashEntry(&bucket->hbp_entries[j - 1], shifted);
                     }
                     bucket->hbp_entry_count--;
                     unpinIndexPage(current_page, true, ctx);
@@ -1725,14 +2056,14 @@ namespace scratchbird
                         uint16_t write_idx = 0;
                         for (uint16_t read_idx = 0; read_idx < bucket->hbp_entry_count; read_idx++)
                         {
-                            const HashEntry &entry = bucket->hbp_entries[read_idx];
+                            HashEntry entry = loadHashEntry(&bucket->hbp_entries[read_idx]);
 
                             // Keep non-deleted entries (deleted entries have he_xmax set or invalid TID)
                             if (entry.he_xmax == 0 && entry.getTID() != INVALID_TID)
                             {
                                 if (write_idx != read_idx)
                                 {
-                                    bucket->hbp_entries[write_idx] = entry;
+                                    storeHashEntry(&bucket->hbp_entries[write_idx], entry);
                                 }
                                 write_idx++;
                             }
@@ -2080,7 +2411,7 @@ namespace scratchbird
 
                     for (uint16_t i = 0; i < entry_count; i++)
                     {
-                        HashEntry &entry = bucket->hbp_entries[i];
+                        HashEntry entry = loadHashEntry(&bucket->hbp_entries[i]);
                         if (entry.getTID() == INVALID_TID)
                         {
                             continue;
@@ -2239,7 +2570,7 @@ namespace scratchbird
                     // Scan all entries on this bucket page
                     for (uint16_t i = 0; i < entry_count; i++)
                     {
-                        HashEntry &entry = bucket->hbp_entries[i];
+                        HashEntry entry = loadHashEntry(&bucket->hbp_entries[i]);
 
                         // Skip already deleted entries (INVALID_TID)
                         if (entry.getTID() == INVALID_TID)
@@ -2252,6 +2583,7 @@ namespace scratchbird
                         {
                             // Mark entry as deleted by setting to INVALID_TID
                             entry.setTID(INVALID_TID);
+                            storeHashEntry(&bucket->hbp_entries[i], entry);
                             entries_removed_this_page++;
                             deleted_count++;
                             page_modified = true;
@@ -2485,7 +2817,7 @@ namespace scratchbird
                     // Scan all entries on this bucket page
                     for (uint16_t i = 0; i < entry_count; i++)
                     {
-                        HashEntry &entry = bucket->hbp_entries[i];
+                        HashEntry entry = loadHashEntry(&bucket->hbp_entries[i]);
 
                         // Skip deleted entries (invalid TID)
                         if (entry.getTID() == INVALID_TID)
@@ -2501,6 +2833,7 @@ namespace scratchbird
                         {
                             // Found! Update TID
                             entry.setTID(it->second);
+                            storeHashEntry(&bucket->hbp_entries[i], entry);
                             tids_updated_this_page++;
                             page_modified = true;
                         }

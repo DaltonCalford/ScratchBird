@@ -17,6 +17,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/garbage_collector.h" // Phase 4: TOAST GC
 #include "scratchbird/core/gpid.h"
+#include "scratchbird/core/tid.h"
 #include "scratchbird/core/uuidv7.h"
 #include <chrono>
 #include "scratchbird/core/logger.h"
@@ -231,6 +232,7 @@ namespace scratchbird::core
                     total_stats.pages_dead_space_rewrite += table_stats.pages_dead_space_rewrite;
                     total_stats.rewrite_recommendations += table_stats.rewrite_recommendations;
                     total_stats.slot_stable_compactions += table_stats.slot_stable_compactions;
+                    total_stats.index_backlog_count += table_stats.index_backlog_count;
                 }
                 // Continue with other tables even if one fails
             }
@@ -248,8 +250,11 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto GcManager::gcPage(const ID &table_id, uint32_t page_id, GcStats *stats_out,
-                            ErrorContext *ctx) -> Status
+    auto GcManager::gcPage(const ID &table_id,
+                           uint32_t page_id,
+                           GcStats *stats_out,
+                           ErrorContext *ctx,
+                           const HeapReclaimPublicationContext *publication_ctx) -> Status
     {
         GcStats stats;
 
@@ -291,7 +296,10 @@ namespace scratchbird::core
 
         const auto *special = reinterpret_cast<const HeapPageSpecial *>(
             page_data + db_->page_size() - sizeof(HeapPageSpecial));
-        const ID page_table_id = (special != nullptr) ? special->table_id : table_id;
+        const ID page_table_id =
+            table_id != ID{}
+                ? table_id
+                : ((special != nullptr) ? special->table_id : ID{});
         HeapPage heap(page_data, db_->page_size(), nullptr, db_, page_table_id);
         HeapPage::VersionChainAuditResult chain_audit{};
         status = heap.auditVersionChainMetadata(
@@ -392,6 +400,32 @@ namespace scratchbird::core
             }
         }
 
+        if (!dead_items.empty() && db_->garbage_collector() != nullptr)
+        {
+            std::vector<TID> dead_tids;
+            dead_tids.reserve(dead_items.size());
+            for (uint16_t item_id : dead_items)
+            {
+                dead_tids.push_back(makeTID(PRIMARY_TABLESPACE_ID, page_id, item_id));
+            }
+
+            IndexCleanupPublicationSummary cleanup_summary{};
+            const HeapReclaimPublicationContext effective_publication_ctx =
+                publication_ctx != nullptr ? *publication_ctx : HeapReclaimPublicationContext{};
+            Status cleanup_status = db_->garbage_collector()->publishCleanupAfterHeapProof(
+                page_table_id,
+                page_id,
+                dead_tids,
+                effective_publication_ctx,
+                &cleanup_summary,
+                ctx);
+            if (cleanup_status != Status::OK)
+            {
+                return cleanup_status;
+            }
+            stats.index_backlog_count += cleanup_summary.backlog_count;
+        }
+
         status = pruneVersionChains(page_table_id, page_id, horizon, &stats, ctx);
 
         if (stats_out != nullptr)
@@ -461,7 +495,10 @@ namespace scratchbird::core
 
             const auto *special = reinterpret_cast<const HeapPageSpecial *>(
                 page_data + db_->page_size() - sizeof(HeapPageSpecial));
-            const ID page_table_id = (special != nullptr) ? special->table_id : table_id;
+            const ID page_table_id =
+                table_id != ID{}
+                    ? table_id
+                    : ((special != nullptr) ? special->table_id : ID{});
             HeapPage heap(page_data, db_->page_size(), nullptr, db_, page_table_id);
             HeapPage::VersionChainAuditResult chain_audit{};
             Status audit_status = heap.auditVersionChainMetadata(
@@ -564,7 +601,10 @@ namespace scratchbird::core
         auto *page_data = static_cast<uint8_t *>(page_buffer);
         const auto *special = reinterpret_cast<const HeapPageSpecial *>(
             page_data + db_->page_size() - sizeof(HeapPageSpecial));
-        const ID table_uuid = (special != nullptr) ? special->table_id : table_id;
+        const ID table_uuid =
+            table_id != ID{}
+                ? table_id
+                : ((special != nullptr) ? special->table_id : ID{});
         HeapPage heap(page_data, db_->page_size(), nullptr, db_, table_uuid);
         HeapPage::VersionChainAuditResult chain_audit{};
         Status audit_status = heap.auditVersionChainMetadata(

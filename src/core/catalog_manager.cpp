@@ -4272,7 +4272,7 @@ Status decodeTablespaceHeaderBuffer(const uint8_t *buffer,
     {
         const auto *legacy = reinterpret_cast<const TablespaceHeaderV1 *>(buffer);
         std::memset(header_out, 0, sizeof(*header_out));
-        header_out->page_header = legacy->page_header;
+        header_out->page_header = canonicalizeLegacyPageHeader(legacy->page_header);
         std::memcpy(header_out->tablespace_name, legacy->tablespace_name,
                     sizeof(legacy->tablespace_name));
         header_out->tablespace_name[sizeof(legacy->tablespace_name)] = '\0';
@@ -4956,6 +4956,15 @@ bool bindingResourceScopeMatches(const CatalogManager::ProfileResolutionRequest&
     return false;
 }
 
+bool isInternalChildTableHiddenFromGeneralLookup(const CatalogManager::TableInfo& table)
+{
+    // temp_parent_table_id is used for session/transaction-local temp child tables.
+    // TOAST tables also retain a parent link there in the current catalog format, but
+    // they must remain resolvable by id/name for TOAST writes, detoasting, and reopen.
+    return !isZeroUuidLocal(table.temp_parent_table_id) &&
+           table.table_type != CatalogManager::TableType::TOAST;
+}
+
 std::pair<ID, std::string> makeSequenceNameKey(const ID& schema_id,
                                                const std::string& name,
                                                bool name_is_delimited) {
@@ -5174,6 +5183,11 @@ bool hasTriggerNameConflictInTable(
         uint32_t backup_history_page;       // Page containing backup_history table
         uint32_t connection_page;           // Page containing connection table
         uint32_t transaction_page;          // Page containing transaction table
+        uint32_t checkpoint_run_page;       // Page containing checkpoint_run history table
+        uint32_t recovery_run_page;         // Page containing recovery_run history table
+        uint32_t sweep_cursor_state_page;   // Page containing sweep_cursor_state history table
+        uint32_t writeback_incident_page;   // Page containing writeback_incident history table
+        uint32_t recovery_incident_page;    // Page containing recovery_incident history table
         uint32_t auth_mapping_page;         // Page containing auth_mapping table
         uint32_t role_setting_page;         // Page containing role_setting table
         uint32_t security_label_page;       // Page containing security_label table
@@ -5388,7 +5402,7 @@ bool hasTriggerNameConflictInTable(
         uint32_t shadow_capture_manifest_page; // Page containing shadow_capture_manifest table
         uint32_t forensic_snapshot_capsule_page; // Page containing forensic_snapshot_capsule table
 
-        uint8_t reserved[2892];       // Padding for 4KB page
+        uint8_t reserved[2872];       // Padding for 4KB page
     };
 
     // Database record on disk
@@ -6240,6 +6254,101 @@ bool hasTriggerNameConflictInTable(
         uint8_t reserved1;
         uint64_t created_time;
         uint64_t last_modified_time;
+    };
+
+    struct CheckpointRunRecord
+    {
+        ID checkpoint_run_uuid;
+        uint64_t checkpoint_generation;
+        uint8_t checkpoint_state;
+        uint8_t has_end_time;
+        uint8_t has_failure_reason;
+        uint8_t is_valid;
+        uint32_t failure_reason;
+        uint64_t start_time;
+        uint64_t end_time;
+        uint64_t dirty_generation_low_watermark;
+        uint64_t pages_target;
+        uint64_t pages_flushed;
+        uint64_t last_modified_time;
+    };
+
+    struct RecoveryRunRecord
+    {
+        ID recovery_run_uuid;
+        uint64_t recovery_generation;
+        uint8_t classification;
+        uint8_t has_end_time;
+        uint8_t degraded_state;
+        uint8_t is_valid;
+        uint32_t reserved0;
+        uint64_t start_time;
+        uint64_t end_time;
+        uint64_t normalized_transactions;
+        uint64_t repair_required_pages;
+        uint64_t last_modified_time;
+    };
+
+    struct SweepCursorStateRecord
+    {
+        ID sweep_cursor_state_uuid;
+        uint64_t sweep_generation;
+        ID relation_uuid;
+        ID filespace_uuid;
+        uint64_t page_id;
+        uint32_t slot_id;
+        uint8_t active;
+        uint8_t stage;
+        uint16_t resume_lane_mask;
+        uint8_t resume_strict_audit;
+        uint8_t is_valid;
+        uint16_t reserved0;
+        uint64_t checkpoint_generation_seen;
+        uint64_t persist_time;
+        uint64_t start_horizon;
+        uint64_t reclaimed_version_count;
+        uint64_t reclaimed_bytes;
+        uint64_t index_backlog_count;
+        uint32_t cursor_crc32c;
+        uint32_t padding;
+    };
+
+    struct WritebackIncidentRecord
+    {
+        ID writeback_incident_uuid;
+        ID filespace_uuid;
+        uint8_t has_filespace_uuid;
+        uint8_t queue_kind;
+        uint8_t policy_domain;
+        uint8_t failure_class;
+        uint8_t degraded_state;
+        uint8_t has_clearance_condition_uuid;
+        uint8_t is_open;
+        uint8_t is_valid;
+        uint64_t page_class;
+        uint64_t first_seen_time;
+        uint64_t last_seen_time;
+        uint64_t retry_count;
+        ID clearance_condition_uuid;
+        uint32_t last_error_status;
+        uint32_t padding;
+    };
+
+    struct RecoveryIncidentRecord
+    {
+        ID recovery_incident_uuid;
+        uint64_t recovery_generation;
+        uint8_t classification;
+        uint8_t has_checkpoint_generation;
+        uint8_t has_object_uuid;
+        uint8_t has_details_oid;
+        uint8_t is_valid;
+        uint8_t reserved0[3];
+        uint64_t checkpoint_generation;
+        ID object_uuid;
+        ID details_oid;
+        uint64_t created_time;
+        uint32_t padding;
     };
 
     struct PrincipalAccountRecord
@@ -10862,7 +10971,7 @@ bool hasTriggerNameConflictInTable(
 
         heap->header.magic = K_MAGIC_SBRD;
         heap->header.version = 1;
-        heap->header.page_type = PAGE_TYPE_HEAP;
+        heap->header.page_type = PAGE_TYPE_CATALOG_PAGE;
         heap->header.page_size = db_->page_size();
         heap->header.page_id = database_table_page_;
         heap->header.flags = 0;
@@ -19208,6 +19317,47 @@ bool hasTriggerNameConflictInTable(
         table.last_modified_time = table.created_time;
         table.policy_epoch = security_policy_epoch_;
 
+        auto initialize_table_root_page = [&](const TableInfo &table_info) -> Status
+        {
+            auto *buffer_pool = db_ ? db_->buffer_pool() : nullptr;
+            if (buffer_pool == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "BufferPool not available for table root initialization");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            void *page_buffer = nullptr;
+            Status init_status = buffer_pool->pinPageGlobal(table_info.root_gpid, &page_buffer, ctx);
+            if (init_status != Status::OK)
+            {
+                return init_status;
+            }
+
+            auto *page_data = static_cast<uint8_t *>(page_buffer);
+            HeapPage heap_page(page_data, db_->page_size(), nullptr, db_, table_info.table_id);
+            const uint32_t page_id = static_cast<uint32_t>(getPageNumber(table_info.root_gpid));
+            init_status = heap_page.initialize(page_id, ctx);
+            if (init_status == Status::OK)
+            {
+                const bool temporary_work =
+                    table_info.temp_data_scope != TempDataScope::NONE ||
+                    table_info.temp_metadata_scope != TempMetadataScope::NONE;
+                heap_page.applyOwningTableContract(temporary_work);
+            }
+
+            const bool mark_dirty = (init_status == Status::OK);
+            (void)buffer_pool->unpinPageGlobal(table_info.root_gpid, mark_dirty, ctx);
+            return init_status;
+        };
+
+        status = initialize_table_root_page(table);
+        if (status != Status::OK)
+        {
+            pm->freePageGlobal(root_gpid, ctx);
+            return status;
+        }
+
         // Write table record
         status = writeTableRecord(table, ctx);
         if (status != Status::OK)
@@ -19397,6 +19547,18 @@ bool hasTriggerNameConflictInTable(
         DEBUG_LOG_DB("Created table: " << table_name << " (ID: " << table_id.toString() << ") with "
                                        << columns.size() << " columns");
 
+        if (status == Status::OK &&
+            options != nullptr &&
+            options->temp_metadata_scope == TempMetadataScope::SESSION)
+        {
+            if (ConnectionContext *conn_ctx = ConnectionContext::getCurrent(); conn_ctx != nullptr)
+            {
+                conn_ctx->trackTemporaryObjectCreation(
+                    ConnectionContext::TemporaryObjectKind::TABLE,
+                    table.table_id);
+            }
+        }
+
         return status;
     }
 
@@ -19425,7 +19587,7 @@ bool hasTriggerNameConflictInTable(
 
         const auto& candidate = it->second;
         if (candidate.temp_metadata_scope == TempMetadataScope::SESSION ||
-            !isZeroUuidLocal(candidate.temp_parent_table_id))
+            isInternalChildTableHiddenFromGeneralLookup(candidate))
         {
             ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
             ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
@@ -19476,7 +19638,7 @@ bool hasTriggerNameConflictInTable(
                 IdentifierUtils::namesMatch(table_name, false /*search_delimited*/,
                                             table_info.table_name, table_info.name_is_delimited))
             {
-                if (!isZeroUuidLocal(table_info.temp_parent_table_id))
+                if (isInternalChildTableHiddenFromGeneralLookup(table_info))
                 {
                     continue; // Internal temp instance tables are not name-resolvable
                 }
@@ -19628,6 +19790,61 @@ bool hasTriggerNameConflictInTable(
                 continue;
             }
             tables.push_back(info);
+        }
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::purgeStaleSessionTemporaryTables(ErrorContext *ctx) -> Status
+    {
+        std::vector<TableInfo> tables_to_drop;
+        {
+            std::lock_guard<CatalogMutex> lock(mutex_);
+            for (const auto &[table_id, info] : table_cache_)
+            {
+                if (info.temp_metadata_scope != TempMetadataScope::SESSION)
+                {
+                    continue;
+                }
+                tables_to_drop.push_back(info);
+            }
+        }
+
+        std::stable_sort(
+            tables_to_drop.begin(),
+            tables_to_drop.end(),
+            [](const TableInfo &lhs, const TableInfo &rhs)
+            {
+                const bool lhs_is_child = !isZeroUuidLocal(lhs.temp_parent_table_id);
+                const bool rhs_is_child = !isZeroUuidLocal(rhs.temp_parent_table_id);
+                if (lhs_is_child != rhs_is_child)
+                {
+                    return lhs_is_child && !rhs_is_child;
+                }
+                return lhs.created_time > rhs.created_time;
+            });
+
+        for (const auto &table : tables_to_drop)
+        {
+            ErrorContext drop_ctx;
+            Status drop_status = dropTable(table.table_id, true, &drop_ctx);
+            if (drop_status == Status::OK || drop_status == Status::NOT_FOUND)
+            {
+                continue;
+            }
+            if (ctx != nullptr)
+            {
+                const char *message = drop_ctx.message.empty()
+                    ? "Startup temporary table purge failed"
+                    : drop_ctx.message.c_str();
+                ctx->set(drop_status, message, __FILE__, __LINE__, __func__);
+                ctx->setSQLState(drop_ctx.sqlstate);
+                if (!drop_ctx.vnext_code.empty())
+                {
+                    ctx->setVNextCode(drop_ctx.vnext_code.c_str());
+                }
+            }
+            return drop_status;
         }
 
         return Status::OK;
@@ -20916,6 +21133,11 @@ bool hasTriggerNameConflictInTable(
         root->backup_history_page = backup_history_table_page_;
         root->connection_page = connection_table_page_;
         root->transaction_page = transaction_table_page_;
+        root->checkpoint_run_page = checkpoint_run_table_page_;
+        root->recovery_run_page = recovery_run_table_page_;
+        root->sweep_cursor_state_page = sweep_cursor_state_table_page_;
+        root->writeback_incident_page = writeback_incident_table_page_;
+        root->recovery_incident_page = recovery_incident_table_page_;
         root->principal_account_page = principal_account_table_page_;
         root->account_credential_page = account_credential_table_page_;
         root->account_profile_binding_page = account_profile_binding_table_page_;
@@ -21250,6 +21472,11 @@ bool hasTriggerNameConflictInTable(
         backup_history_table_page_ = root->backup_history_page;
         connection_table_page_ = root->connection_page;
         transaction_table_page_ = root->transaction_page;
+        checkpoint_run_table_page_ = root->checkpoint_run_page;
+        recovery_run_table_page_ = root->recovery_run_page;
+        sweep_cursor_state_table_page_ = root->sweep_cursor_state_page;
+        writeback_incident_table_page_ = root->writeback_incident_page;
+        recovery_incident_table_page_ = root->recovery_incident_page;
         principal_account_table_page_ = root->principal_account_page;
         account_credential_table_page_ = root->account_credential_page;
         account_profile_binding_table_page_ = root->account_profile_binding_page;
@@ -22557,7 +22784,7 @@ bool hasTriggerNameConflictInTable(
 
         heap->header.magic = K_MAGIC_SBRD;
         heap->header.version = 1;
-        heap->header.page_type = PAGE_TYPE_HEAP;
+        heap->header.page_type = PAGE_TYPE_CATALOG_PAGE;
         heap->header.page_size = db_->page_size();
         heap->header.page_id = page_id;
         heap->header.flags = 0;
@@ -22692,7 +22919,7 @@ bool hasTriggerNameConflictInTable(
 
             new_heap->header.magic = K_MAGIC_SBRD;
             new_heap->header.version = 1;
-            new_heap->header.page_type = PAGE_TYPE_HEAP;
+            new_heap->header.page_type = PAGE_TYPE_CATALOG_PAGE;
             new_heap->header.page_size = db_->page_size();
             new_heap->header.page_id = new_page_id;
             new_heap->header.flags = 0;
@@ -35438,6 +35665,16 @@ auto CatalogManager::createSequence(const ID& schema_id, const std::string& name
 
     LOG_INFO(CATALOG, "Created sequence '%s' with ID %s", name.c_str(), "<sequence_id>");
 
+    if (is_temporary)
+    {
+        if (ConnectionContext *conn_ctx = ConnectionContext::getCurrent(); conn_ctx != nullptr)
+        {
+            conn_ctx->trackTemporaryObjectCreation(
+                ConnectionContext::TemporaryObjectKind::SEQUENCE,
+                sequence_id);
+        }
+    }
+
     return Status::OK;
 }
 
@@ -36263,6 +36500,16 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
             view_cache_.erase(view.view_id);
             view_name_to_id_.erase(makeViewNameKey(schema_id, name, view.name_is_delimited));
             return persist_status;
+        }
+    }
+
+    if (is_temporary)
+    {
+        if (ConnectionContext *conn_ctx = ConnectionContext::getCurrent(); conn_ctx != nullptr)
+        {
+            conn_ctx->trackTemporaryObjectCreation(
+                ConnectionContext::TemporaryObjectKind::VIEW,
+                view.view_id);
         }
     }
 
@@ -48793,7 +49040,7 @@ auto CatalogManager::createDormantTransaction(DormantTransactionInfo& info,
         auto *heap = static_cast<CatalogHeapPage *>(page_buffer);
         heap->header.magic = K_MAGIC_SBRD;
         heap->header.version = 1;
-        heap->header.page_type = PAGE_TYPE_HEAP;
+        heap->header.page_type = PAGE_TYPE_CATALOG_PAGE;
         heap->header.page_size = db_->page_size();
         heap->header.page_id = dormant_transactions_table_page_;
         heap->header.flags = 0;
@@ -66249,6 +66496,731 @@ auto CatalogManager::deleteRuntimeTransactionCatalogEntry(uint64_t txid,
     updated.is_valid = 0;
     updated.last_modified_time = catalogNowTicks();
     return updateRecordInHeapPage(transaction_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertCheckpointRunCatalogEntry(const CheckpointRunCatalogInfo& info,
+                                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (info.checkpoint_generation == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "checkpoint_run.checkpoint_generation is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.start_time == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "checkpoint_run.start_time is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (checkpoint_run_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(checkpoint_run_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto existing_predicate = [&info](const CheckpointRunRecord& rec) {
+        return rec.is_valid == 1 && rec.checkpoint_generation == info.checkpoint_generation;
+    };
+    auto existing = findRecordInHeapPage<CheckpointRunRecord>(
+        checkpoint_run_table_page_, existing_predicate, ctx);
+
+    CheckpointRunRecord rec{};
+    rec.checkpoint_run_uuid =
+        (!isZeroUuidLocal(info.checkpoint_run_uuid))
+            ? info.checkpoint_run_uuid
+            : (existing.status == Status::OK ? existing.record.checkpoint_run_uuid
+                                             : generateUuidV7());
+    rec.checkpoint_generation = info.checkpoint_generation;
+    rec.checkpoint_state = static_cast<uint8_t>(info.checkpoint_state);
+    rec.has_end_time = info.has_end_time ? 1 : 0;
+    rec.has_failure_reason = info.has_failure_reason ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.failure_reason = static_cast<uint32_t>(
+        info.has_failure_reason ? info.failure_reason : Status::OK);
+    rec.start_time = info.start_time;
+    rec.end_time = info.has_end_time ? info.end_time : 0;
+    rec.dirty_generation_low_watermark = info.dirty_generation_low_watermark;
+    rec.pages_target = info.pages_target;
+    rec.pages_flushed = info.pages_flushed;
+    rec.last_modified_time =
+        info.has_end_time && info.end_time != 0 ? info.end_time : catalogNowTicks();
+
+    auto matcher = [&rec](const CheckpointRunRecord& row) {
+        return row.is_valid == 1 && row.checkpoint_run_uuid == rec.checkpoint_run_uuid;
+    };
+    return updateRecordInHeapPage(checkpoint_run_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getCheckpointRunCatalogEntry(const ID& checkpoint_run_uuid,
+                                                  CheckpointRunCatalogInfo& info_out,
+                                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (checkpoint_run_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+    auto predicate = [&checkpoint_run_uuid](const CheckpointRunRecord& rec) {
+        return rec.is_valid == 1 && rec.checkpoint_run_uuid == checkpoint_run_uuid;
+    };
+    auto result = findRecordInHeapPage<CheckpointRunRecord>(
+        checkpoint_run_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = CheckpointRunCatalogInfo{};
+    info_out.checkpoint_run_uuid = result.record.checkpoint_run_uuid;
+    info_out.checkpoint_generation = result.record.checkpoint_generation;
+    info_out.checkpoint_state =
+        static_cast<CheckpointLifecycleState>(result.record.checkpoint_state);
+    info_out.start_time = result.record.start_time;
+    info_out.has_end_time = result.record.has_end_time != 0;
+    info_out.end_time = result.record.end_time;
+    info_out.dirty_generation_low_watermark =
+        result.record.dirty_generation_low_watermark;
+    info_out.pages_target = result.record.pages_target;
+    info_out.pages_flushed = result.record.pages_flushed;
+    info_out.has_failure_reason = result.record.has_failure_reason != 0;
+    info_out.failure_reason = static_cast<Status>(result.record.failure_reason);
+    info_out.is_valid = result.record.is_valid == 1;
+    return Status::OK;
+}
+
+auto CatalogManager::getLatestCheckpointRunCatalogEntry(CheckpointRunCatalogInfo& info_out,
+                                                        ErrorContext* ctx) -> Status
+{
+    std::vector<CheckpointRunCatalogInfo> rows;
+    Status status = listCheckpointRunCatalogEntries(rows, ctx);
+    if (status != Status::OK || rows.empty())
+    {
+        return status == Status::OK ? Status::NOT_FOUND : status;
+    }
+    info_out = rows.front();
+    return Status::OK;
+}
+
+auto CatalogManager::listCheckpointRunCatalogEntries(
+    std::vector<CheckpointRunCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (checkpoint_run_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+    auto filter = [](const CheckpointRunRecord& rec) {
+        return rec.is_valid == 1;
+    };
+    auto converter = [](const CheckpointRunRecord& rec, CheckpointRunCatalogInfo& info) {
+        info = CheckpointRunCatalogInfo{};
+        info.checkpoint_run_uuid = rec.checkpoint_run_uuid;
+        info.checkpoint_generation = rec.checkpoint_generation;
+        info.checkpoint_state = static_cast<CheckpointLifecycleState>(rec.checkpoint_state);
+        info.start_time = rec.start_time;
+        info.has_end_time = rec.has_end_time != 0;
+        info.end_time = rec.end_time;
+        info.dirty_generation_low_watermark = rec.dirty_generation_low_watermark;
+        info.pages_target = rec.pages_target;
+        info.pages_flushed = rec.pages_flushed;
+        info.has_failure_reason = rec.has_failure_reason != 0;
+        info.failure_reason = static_cast<Status>(rec.failure_reason);
+        info.is_valid = rec.is_valid == 1;
+    };
+    Status status = readRecordsToVector<CheckpointRunRecord, CheckpointRunCatalogInfo>(
+        checkpoint_run_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const CheckpointRunCatalogInfo& lhs,
+                 const CheckpointRunCatalogInfo& rhs) {
+                  return lhs.checkpoint_generation > rhs.checkpoint_generation;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::upsertRecoveryRunCatalogEntry(const RecoveryRunCatalogInfo& info,
+                                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (info.recovery_generation == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "recovery_run.recovery_generation is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.start_time == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "recovery_run.start_time is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (recovery_run_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(recovery_run_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto existing_predicate = [&info](const RecoveryRunRecord& rec) {
+        return rec.is_valid == 1 && rec.recovery_generation == info.recovery_generation;
+    };
+    auto existing = findRecordInHeapPage<RecoveryRunRecord>(
+        recovery_run_table_page_, existing_predicate, ctx);
+
+    RecoveryRunRecord rec{};
+    rec.recovery_run_uuid =
+        (!isZeroUuidLocal(info.recovery_run_uuid))
+            ? info.recovery_run_uuid
+            : (existing.status == Status::OK ? existing.record.recovery_run_uuid
+                                             : generateUuidV7());
+    rec.recovery_generation = info.recovery_generation;
+    rec.classification = static_cast<uint8_t>(info.classification);
+    rec.has_end_time = info.has_end_time ? 1 : 0;
+    rec.degraded_state = static_cast<uint8_t>(info.degraded_state);
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.start_time = info.start_time;
+    rec.end_time = info.has_end_time ? info.end_time : 0;
+    rec.normalized_transactions = info.normalized_transactions;
+    rec.repair_required_pages = info.repair_required_pages;
+    rec.last_modified_time =
+        info.has_end_time && info.end_time != 0 ? info.end_time : catalogNowTicks();
+
+    auto matcher = [&rec](const RecoveryRunRecord& row) {
+        return row.is_valid == 1 && row.recovery_run_uuid == rec.recovery_run_uuid;
+    };
+    return updateRecordInHeapPage(recovery_run_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getRecoveryRunCatalogEntry(const ID& recovery_run_uuid,
+                                                RecoveryRunCatalogInfo& info_out,
+                                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (recovery_run_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+    auto predicate = [&recovery_run_uuid](const RecoveryRunRecord& rec) {
+        return rec.is_valid == 1 && rec.recovery_run_uuid == recovery_run_uuid;
+    };
+    auto result = findRecordInHeapPage<RecoveryRunRecord>(
+        recovery_run_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = RecoveryRunCatalogInfo{};
+    info_out.recovery_run_uuid = result.record.recovery_run_uuid;
+    info_out.recovery_generation = result.record.recovery_generation;
+    info_out.classification =
+        static_cast<Database::StartupRecoveryClassification>(result.record.classification);
+    info_out.start_time = result.record.start_time;
+    info_out.has_end_time = result.record.has_end_time != 0;
+    info_out.end_time = result.record.end_time;
+    info_out.normalized_transactions = result.record.normalized_transactions;
+    info_out.repair_required_pages = result.record.repair_required_pages;
+    info_out.degraded_state =
+        static_cast<Database::StartupServiceState>(result.record.degraded_state);
+    info_out.is_valid = result.record.is_valid == 1;
+    return Status::OK;
+}
+
+auto CatalogManager::getLatestRecoveryRunCatalogEntry(RecoveryRunCatalogInfo& info_out,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::vector<RecoveryRunCatalogInfo> rows;
+    Status status = listRecoveryRunCatalogEntries(rows, ctx);
+    if (status != Status::OK || rows.empty())
+    {
+        return status == Status::OK ? Status::NOT_FOUND : status;
+    }
+    info_out = rows.front();
+    return Status::OK;
+}
+
+auto CatalogManager::listRecoveryRunCatalogEntries(
+    std::vector<RecoveryRunCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (recovery_run_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+    auto filter = [](const RecoveryRunRecord& rec) {
+        return rec.is_valid == 1;
+    };
+    auto converter = [](const RecoveryRunRecord& rec, RecoveryRunCatalogInfo& info) {
+        info = RecoveryRunCatalogInfo{};
+        info.recovery_run_uuid = rec.recovery_run_uuid;
+        info.recovery_generation = rec.recovery_generation;
+        info.classification =
+            static_cast<Database::StartupRecoveryClassification>(rec.classification);
+        info.start_time = rec.start_time;
+        info.has_end_time = rec.has_end_time != 0;
+        info.end_time = rec.end_time;
+        info.normalized_transactions = rec.normalized_transactions;
+        info.repair_required_pages = rec.repair_required_pages;
+        info.degraded_state =
+            static_cast<Database::StartupServiceState>(rec.degraded_state);
+        info.is_valid = rec.is_valid == 1;
+    };
+    Status status = readRecordsToVector<RecoveryRunRecord, RecoveryRunCatalogInfo>(
+        recovery_run_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const RecoveryRunCatalogInfo& lhs,
+                 const RecoveryRunCatalogInfo& rhs) {
+                  return lhs.recovery_generation > rhs.recovery_generation;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::appendSweepCursorStateCatalogEntry(SweepCursorStateCatalogInfo& info,
+                                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (info.sweep_generation == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "sweep_cursor_state.sweep_generation is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.persist_time == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "sweep_cursor_state.persist_time is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (isZeroUuidLocal(info.sweep_cursor_state_uuid))
+    {
+        info.sweep_cursor_state_uuid = generateUuidV7();
+    }
+    if (sweep_cursor_state_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(sweep_cursor_state_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    SweepCursorStateRecord rec{};
+    rec.sweep_cursor_state_uuid = info.sweep_cursor_state_uuid;
+    rec.sweep_generation = info.sweep_generation;
+    rec.relation_uuid = info.relation_uuid;
+    rec.filespace_uuid = info.filespace_uuid;
+    rec.page_id = info.page_id;
+    rec.slot_id = info.slot_id;
+    rec.active = info.active ? 1 : 0;
+    rec.stage = info.stage;
+    rec.resume_lane_mask = info.resume_lane_mask;
+    rec.resume_strict_audit = info.resume_strict_audit ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.checkpoint_generation_seen = info.checkpoint_generation_seen;
+    rec.persist_time = info.persist_time;
+    rec.start_horizon = info.start_horizon;
+    rec.reclaimed_version_count = info.reclaimed_version_count;
+    rec.reclaimed_bytes = info.reclaimed_bytes;
+    rec.index_backlog_count = info.index_backlog_count;
+    rec.cursor_crc32c = info.cursor_crc32c;
+    return writeRecordToHeapPage(sweep_cursor_state_table_page_, rec, ctx);
+}
+
+auto CatalogManager::listSweepCursorStateCatalogEntries(
+    std::vector<SweepCursorStateCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (sweep_cursor_state_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+    auto filter = [](const SweepCursorStateRecord& rec) {
+        return rec.is_valid == 1;
+    };
+    auto converter = [](const SweepCursorStateRecord& rec,
+                        SweepCursorStateCatalogInfo& info) {
+        info = SweepCursorStateCatalogInfo{};
+        info.sweep_cursor_state_uuid = rec.sweep_cursor_state_uuid;
+        info.sweep_generation = rec.sweep_generation;
+        info.relation_uuid = rec.relation_uuid;
+        info.filespace_uuid = rec.filespace_uuid;
+        info.page_id = rec.page_id;
+        info.slot_id = rec.slot_id;
+        info.checkpoint_generation_seen = rec.checkpoint_generation_seen;
+        info.persist_time = rec.persist_time;
+        info.active = rec.active != 0;
+        info.stage = rec.stage;
+        info.resume_lane_mask = rec.resume_lane_mask;
+        info.resume_strict_audit = rec.resume_strict_audit != 0;
+        info.start_horizon = rec.start_horizon;
+        info.reclaimed_version_count = rec.reclaimed_version_count;
+        info.reclaimed_bytes = rec.reclaimed_bytes;
+        info.index_backlog_count = rec.index_backlog_count;
+        info.cursor_crc32c = rec.cursor_crc32c;
+        info.is_valid = rec.is_valid == 1;
+    };
+    Status status = readRecordsToVector<SweepCursorStateRecord, SweepCursorStateCatalogInfo>(
+        sweep_cursor_state_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const SweepCursorStateCatalogInfo& lhs,
+                 const SweepCursorStateCatalogInfo& rhs) {
+                  if (lhs.sweep_generation != rhs.sweep_generation)
+                  {
+                      return lhs.sweep_generation > rhs.sweep_generation;
+                  }
+                  return lhs.persist_time > rhs.persist_time;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::upsertWritebackIncidentCatalogEntry(
+    const WritebackIncidentCatalogInfo& info,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (info.first_seen_time == 0 || info.last_seen_time == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "writeback_incident timestamps are required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (writeback_incident_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(writeback_incident_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto open_predicate = [](const WritebackIncidentRecord& rec) {
+        return rec.is_valid == 1 && rec.is_open == 1;
+    };
+    auto open_row = findRecordInHeapPage<WritebackIncidentRecord>(
+        writeback_incident_table_page_, open_predicate, ctx);
+
+    ID row_uuid = info.writeback_incident_uuid;
+    uint64_t first_seen_time = info.first_seen_time;
+    if (isZeroUuidLocal(row_uuid) && open_row.status == Status::OK)
+    {
+        row_uuid = open_row.record.writeback_incident_uuid;
+        first_seen_time = open_row.record.first_seen_time;
+    }
+    if (isZeroUuidLocal(row_uuid))
+    {
+        row_uuid = generateUuidV7();
+    }
+
+    if (!info.is_open && open_row.status != Status::OK && isZeroUuidLocal(info.writeback_incident_uuid))
+    {
+        return Status::NOT_FOUND;
+    }
+
+    WritebackIncidentRecord rec{};
+    rec.writeback_incident_uuid = row_uuid;
+    rec.filespace_uuid = info.filespace_uuid;
+    rec.has_filespace_uuid = info.has_filespace_uuid ? 1 : 0;
+    rec.queue_kind = static_cast<uint8_t>(info.queue_kind);
+    rec.policy_domain = static_cast<uint8_t>(info.policy_domain);
+    rec.failure_class = static_cast<uint8_t>(info.failure_class);
+    rec.degraded_state = static_cast<uint8_t>(info.degraded_state);
+    rec.has_clearance_condition_uuid = info.has_clearance_condition_uuid ? 1 : 0;
+    rec.is_open = info.is_open ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.page_class = info.page_class;
+    rec.first_seen_time = first_seen_time;
+    rec.last_seen_time = info.last_seen_time;
+    rec.retry_count = info.retry_count;
+    rec.clearance_condition_uuid = info.clearance_condition_uuid;
+    rec.last_error_status = static_cast<uint32_t>(info.last_error_status);
+
+    auto matcher = [&row_uuid](const WritebackIncidentRecord& row) {
+        return row.is_valid == 1 && row.writeback_incident_uuid == row_uuid;
+    };
+    return updateRecordInHeapPage(writeback_incident_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getWritebackIncidentCatalogEntry(const ID& writeback_incident_uuid,
+                                                      WritebackIncidentCatalogInfo& info_out,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (writeback_incident_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+    auto predicate = [&writeback_incident_uuid](const WritebackIncidentRecord& rec) {
+        return rec.is_valid == 1 && rec.writeback_incident_uuid == writeback_incident_uuid;
+    };
+    auto result = findRecordInHeapPage<WritebackIncidentRecord>(
+        writeback_incident_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    info_out = WritebackIncidentCatalogInfo{};
+    info_out.writeback_incident_uuid = result.record.writeback_incident_uuid;
+    info_out.has_filespace_uuid = result.record.has_filespace_uuid != 0;
+    info_out.filespace_uuid = result.record.filespace_uuid;
+    info_out.queue_kind = static_cast<WritebackQueueKind>(result.record.queue_kind);
+    info_out.policy_domain =
+        static_cast<WritebackPolicyDomain>(result.record.policy_domain);
+    info_out.page_class = result.record.page_class;
+    info_out.failure_class =
+        static_cast<WritebackFailureClass>(result.record.failure_class);
+    info_out.first_seen_time = result.record.first_seen_time;
+    info_out.last_seen_time = result.record.last_seen_time;
+    info_out.retry_count = result.record.retry_count;
+    info_out.degraded_state =
+        static_cast<WritebackDegradedState>(result.record.degraded_state);
+    info_out.has_clearance_condition_uuid =
+        result.record.has_clearance_condition_uuid != 0;
+    info_out.clearance_condition_uuid = result.record.clearance_condition_uuid;
+    info_out.is_open = result.record.is_open != 0;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.last_error_status = static_cast<Status>(result.record.last_error_status);
+    return Status::OK;
+}
+
+auto CatalogManager::getOpenWritebackIncidentCatalogEntry(WritebackIncidentCatalogInfo& info_out,
+                                                          ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (writeback_incident_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+    auto predicate = [](const WritebackIncidentRecord& rec) {
+        return rec.is_valid == 1 && rec.is_open == 1;
+    };
+    auto result = findRecordInHeapPage<WritebackIncidentRecord>(
+        writeback_incident_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    info_out = WritebackIncidentCatalogInfo{};
+    info_out.writeback_incident_uuid = result.record.writeback_incident_uuid;
+    info_out.has_filespace_uuid = result.record.has_filespace_uuid != 0;
+    info_out.filespace_uuid = result.record.filespace_uuid;
+    info_out.queue_kind = static_cast<WritebackQueueKind>(result.record.queue_kind);
+    info_out.policy_domain =
+        static_cast<WritebackPolicyDomain>(result.record.policy_domain);
+    info_out.page_class = result.record.page_class;
+    info_out.failure_class =
+        static_cast<WritebackFailureClass>(result.record.failure_class);
+    info_out.first_seen_time = result.record.first_seen_time;
+    info_out.last_seen_time = result.record.last_seen_time;
+    info_out.retry_count = result.record.retry_count;
+    info_out.degraded_state =
+        static_cast<WritebackDegradedState>(result.record.degraded_state);
+    info_out.has_clearance_condition_uuid =
+        result.record.has_clearance_condition_uuid != 0;
+    info_out.clearance_condition_uuid = result.record.clearance_condition_uuid;
+    info_out.is_open = result.record.is_open != 0;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.last_error_status = static_cast<Status>(result.record.last_error_status);
+    return Status::OK;
+}
+
+auto CatalogManager::listWritebackIncidentCatalogEntries(
+    std::vector<WritebackIncidentCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (writeback_incident_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+    auto filter = [](const WritebackIncidentRecord& rec) {
+        return rec.is_valid == 1;
+    };
+    auto converter = [](const WritebackIncidentRecord& rec,
+                        WritebackIncidentCatalogInfo& info) {
+        info = WritebackIncidentCatalogInfo{};
+        info.writeback_incident_uuid = rec.writeback_incident_uuid;
+        info.has_filespace_uuid = rec.has_filespace_uuid != 0;
+        info.filespace_uuid = rec.filespace_uuid;
+        info.queue_kind = static_cast<WritebackQueueKind>(rec.queue_kind);
+        info.policy_domain = static_cast<WritebackPolicyDomain>(rec.policy_domain);
+        info.page_class = rec.page_class;
+        info.failure_class = static_cast<WritebackFailureClass>(rec.failure_class);
+        info.first_seen_time = rec.first_seen_time;
+        info.last_seen_time = rec.last_seen_time;
+        info.retry_count = rec.retry_count;
+        info.degraded_state = static_cast<WritebackDegradedState>(rec.degraded_state);
+        info.has_clearance_condition_uuid = rec.has_clearance_condition_uuid != 0;
+        info.clearance_condition_uuid = rec.clearance_condition_uuid;
+        info.is_open = rec.is_open != 0;
+        info.is_valid = rec.is_valid == 1;
+        info.last_error_status = static_cast<Status>(rec.last_error_status);
+    };
+    Status status = readRecordsToVector<WritebackIncidentRecord, WritebackIncidentCatalogInfo>(
+        writeback_incident_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const WritebackIncidentCatalogInfo& lhs,
+                 const WritebackIncidentCatalogInfo& rhs) {
+                  return lhs.first_seen_time > rhs.first_seen_time;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::appendRecoveryIncidentCatalogEntry(RecoveryIncidentCatalogInfo& info,
+                                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (info.recovery_generation == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "recovery_incident.recovery_generation is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (isZeroUuidLocal(info.recovery_incident_uuid))
+    {
+        info.recovery_incident_uuid = generateUuidV7();
+    }
+    if (recovery_incident_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(recovery_incident_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    RecoveryIncidentRecord rec{};
+    rec.recovery_incident_uuid = info.recovery_incident_uuid;
+    rec.recovery_generation = info.recovery_generation;
+    rec.classification = static_cast<uint8_t>(info.classification);
+    rec.has_checkpoint_generation = info.has_checkpoint_generation ? 1 : 0;
+    rec.has_object_uuid = info.has_object_uuid ? 1 : 0;
+    rec.has_details_oid = (info.has_details && !info.details_json.empty()) ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.checkpoint_generation = info.has_checkpoint_generation ? info.checkpoint_generation : 0;
+    rec.object_uuid = info.object_uuid;
+    rec.created_time = info.created_time == 0 ? catalogNowTicks() : info.created_time;
+
+    if (info.has_details && !info.details_json.empty())
+    {
+        uint64_t xmin = 0;
+        Status status = storeStringInToast(info.details_json, xmin, rec.details_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    info.created_time = rec.created_time;
+    return writeRecordToHeapPage(recovery_incident_table_page_, rec, ctx);
+}
+
+auto CatalogManager::listRecoveryIncidentCatalogEntries(
+    std::vector<RecoveryIncidentCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (recovery_incident_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+    auto filter = [](const RecoveryIncidentRecord& rec) {
+        return rec.is_valid == 1;
+    };
+    auto converter = [this, ctx](const RecoveryIncidentRecord& rec,
+                                 RecoveryIncidentCatalogInfo& info) {
+        info = RecoveryIncidentCatalogInfo{};
+        info.recovery_incident_uuid = rec.recovery_incident_uuid;
+        info.recovery_generation = rec.recovery_generation;
+        info.classification =
+            static_cast<Database::StartupRecoveryClassification>(rec.classification);
+        info.has_checkpoint_generation = rec.has_checkpoint_generation != 0;
+        info.checkpoint_generation = rec.checkpoint_generation;
+        info.has_object_uuid = rec.has_object_uuid != 0;
+        info.object_uuid = rec.object_uuid;
+        info.has_details = rec.has_details_oid != 0;
+        info.created_time = rec.created_time;
+        info.is_valid = rec.is_valid == 1;
+        if (rec.has_details_oid != 0)
+        {
+            uint64_t xmin = 0;
+            std::string text;
+            if (loadStringFromToast(rec.details_oid, xmin, text, ctx) == Status::OK)
+            {
+                info.details_json = std::move(text);
+            }
+        }
+    };
+    Status status = readRecordsToVector<RecoveryIncidentRecord, RecoveryIncidentCatalogInfo>(
+        recovery_incident_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const RecoveryIncidentCatalogInfo& lhs,
+                 const RecoveryIncidentCatalogInfo& rhs) {
+                  if (lhs.recovery_generation != rhs.recovery_generation)
+                  {
+                      return lhs.recovery_generation > rhs.recovery_generation;
+                  }
+                  return lhs.created_time > rhs.created_time;
+              });
+    return Status::OK;
 }
 
 // ============================================================================

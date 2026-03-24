@@ -37,8 +37,11 @@ static void fill_page(std::vector<uint8_t> &page, uint32_t page_size, uint32_t p
     pageSetLower(*header, sizeof(PageHeader));
     pageSetUpper(*header, page_size);
     pageSetSpecial(*header, page_size);
-    // Compute checksum
-    header->checksum = calculatePageChecksum(page.data(), page_size);
+    setPageRepairState(*header, PageRepairState::REPAIR_NONE);
+    header->payload_checksum =
+        calculatePagePayloadChecksum(page.data(), page_size, header->header_bytes);
+    header->header_checksum =
+        calculatePageHeaderChecksum(page.data(), header->header_bytes);
 }
 
 TEST(Version, VersionStringPrefix)
@@ -77,10 +80,21 @@ TEST(OnDiskFormat, HeaderLayoutAndChecksum)
         EXPECT_EQ(header->page_type, PAGE_TYPE_DATABASE_HEADER);
         EXPECT_EQ(header->page_size, size);
         EXPECT_EQ(header->page_id, 0u);
+        EXPECT_EQ(header->header_bytes, sizeof(PageHeader));
+        EXPECT_EQ(getPageRepairState(*header), PageRepairState::REPAIR_NONE);
+        EXPECT_EQ(header->flush_generation, 0u);
+        EXPECT_EQ(header->checkpoint_generation, 0u);
+        EXPECT_EQ(header->repair_epoch, 0u);
+        EXPECT_NE(header->header_checksum, 0u);
         // Checksum must validate
         EXPECT_TRUE(validatePageChecksum(page.data(), size));
-        // Tamper then expect mismatch
+        // Tamper header bytes then expect header checksum mismatch.
         page[64] ^= 0xFF;
+        EXPECT_FALSE(validatePageChecksum(page.data(), size));
+
+        fill_page(page, size, 0, PAGE_TYPE_DATABASE_HEADER);
+        // Tamper payload bytes then expect payload checksum mismatch.
+        page[256] ^= 0x7Fu;
         EXPECT_FALSE(validatePageChecksum(page.data(), size));
     }
 }

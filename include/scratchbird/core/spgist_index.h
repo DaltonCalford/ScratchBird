@@ -203,7 +203,8 @@ struct SBSPGiSTLeafTuple
 
 #pragma pack(pop)
 
-static_assert(sizeof(SBSPGiSTPage) == 224, "SP-GiST page header must be 224 bytes (80-byte PageHeader + 144 bytes)");
+static_assert(sizeof(SBSPGiSTPage) == sizeof(PageHeader) + 144,
+              "SP-GiST page header must track PageHeader plus 144 bytes");
 static_assert(sizeof(SBSPGiSTInnerTuple) == 24, "SP-GiST inner tuple header must be 24 bytes");
 static_assert(sizeof(SBSPGiSTLeafTuple) == 40, "SP-GiST leaf tuple header must be 40 bytes");
 

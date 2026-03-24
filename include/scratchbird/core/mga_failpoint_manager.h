@@ -30,6 +30,10 @@ namespace scratchbird::core
             "after_chain_unlink_before_compaction_publish";
         inline constexpr std::string_view kAfterHeapReclaimBeforeDeadEntryDelete =
             "after_heap_reclaim_before_dead_entry_delete";
+        inline constexpr std::string_view kWritebackPageWriteFailure =
+            "writeback_page_write_failure";
+        inline constexpr std::string_view kWritebackSyncFailure =
+            "writeback_sync_failure";
         inline constexpr std::string_view kDeadlockDetectorStall =
             "deadlock_detector_stall";
         inline constexpr std::string_view kDeadlockVictimSelectionFailure =

@@ -14,6 +14,7 @@
 // =================================================================================================
 
 #include "scratchbird/core/columnstore_index.h"
+#include "scratchbird/core/columnstore.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/buffer_pool.h"
@@ -23,6 +24,40 @@
 
 namespace scratchbird {
 namespace core {
+
+    namespace
+    {
+        constexpr size_t kColumnstoreSimpleCatalogOffset = sizeof(PageHeader);
+
+        void initializeColumnstoreSimplePageHeader(PageHeader *header,
+                                                   uint16_t page_type,
+                                                   uint32_t page_size,
+                                                   uint32_t page_id)
+        {
+            if (header == nullptr)
+            {
+                return;
+            }
+
+            std::memset(header, 0, sizeof(PageHeader));
+            header->magic = K_MAGIC_SBRD;
+            header->version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
+            header->header_bytes = CANONICAL_PAGE_HEADER_BYTES;
+            header->page_type = page_type;
+            header->flags = 0;
+            header->page_size = page_size;
+            header->page_id = page_id;
+            header->generation = 1;
+            header->flush_generation = 1;
+            header->checkpoint_generation = 1;
+            header->repair_epoch = 0;
+            header->repair_state_raw = static_cast<uint16_t>(PageRepairState::REPAIR_NONE);
+            header->checksum = 0;
+            header->free_space = 0;
+            header->item_count = 0;
+            header->reserved = 0;
+        }
+    } // namespace
 
     ColumnstoreIndexSimple::ColumnstoreIndexSimple(Database *db, const UuidV7Bytes &index_uuid, GPID meta_gpid)
         : db_(db),
@@ -68,50 +103,84 @@ namespace core {
         }
         meta_page_b = static_cast<uint32_t>(getPageNumber(meta_page_b_gpid));
 
-        // Initialize both meta pages with empty catalog (generation = 0)
-        ColumnstoreMetaHeader header;
-        header.magic = COLUMNSTORE_META_MAGIC;
-        header.version = 1;
-        header.reserved = 0;
-        header.generation = 0;
-        header.segment_count = 0;
-        header.peer_page_id = meta_page_b;  // Store peer in meta_page_a
-        header.checksum = 0;  // Will calculate below
+        const uint32_t page_size = db->page_size();
+        if (kColumnstoreSimpleCatalogOffset + sizeof(ColumnstoreMetaHeader) > page_size)
+        {
+            page_mgr->freePageGlobal(makeGPID(tablespace_id, meta_page_a), nullptr);
+            page_mgr->freePageGlobal(makeGPID(tablespace_id, meta_page_b), nullptr);
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                              "Columnstore simple meta page does not fit in page size");
+            return Status::PAGE_FULL;
+        }
 
-        // Calculate checksum (CRC32C of everything after checksum field)
-        // For empty catalog, this checksums fields after checksum in the header
-        const uint8_t* checksum_data_start = reinterpret_cast<const uint8_t*>(&header) +
-                                            offsetof(ColumnstoreMetaHeader, checksum) + sizeof(uint32_t);
-        size_t checksum_data_len = sizeof(ColumnstoreMetaHeader) -
-                                   offsetof(ColumnstoreMetaHeader, checksum) - sizeof(uint32_t);
-        uint32_t crc = crc32cCompute(checksum_data_start, checksum_data_len, 0xFFFFFFFF);
-        header.checksum = crc ^ 0xFFFFFFFF;
+        auto write_meta_page = [&](uint32_t page_id, uint32_t peer_page_id) -> Status
+        {
+            void *buffer = nullptr;
+            Status pin_status = buffer_pool->pinPageGlobal(makeGPID(tablespace_id, page_id),
+                                                           &buffer,
+                                                           ctx,
+                                                           BufferPool::AccessStrategy::BulkWrite);
+            if (pin_status != Status::OK)
+            {
+                return pin_status;
+            }
+
+            std::memset(buffer, 0, page_size);
+
+            auto *page_header = static_cast<PageHeader *>(buffer);
+            initializeColumnstoreSimplePageHeader(page_header,
+                                                  static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE_META),
+                                                  page_size,
+                                                  page_id);
+
+            auto *catalog_header =
+                reinterpret_cast<ColumnstoreMetaHeader *>(static_cast<uint8_t *>(buffer) +
+                                                          kColumnstoreSimpleCatalogOffset);
+            catalog_header->magic = COLUMNSTORE_META_MAGIC;
+            catalog_header->version = 1;
+            catalog_header->reserved = 0;
+            catalog_header->generation = 0;
+            catalog_header->segment_count = 0;
+            catalog_header->peer_page_id = peer_page_id;
+            catalog_header->checksum = 0;
+
+            const uint8_t *checksum_data_start =
+                reinterpret_cast<const uint8_t *>(catalog_header) +
+                offsetof(ColumnstoreMetaHeader, checksum) + sizeof(uint32_t);
+            size_t checksum_data_len =
+                sizeof(ColumnstoreMetaHeader) - offsetof(ColumnstoreMetaHeader, checksum) -
+                sizeof(uint32_t);
+            uint32_t crc = crc32cCompute(checksum_data_start, checksum_data_len, 0xFFFFFFFF);
+            catalog_header->checksum = crc ^ 0xFFFFFFFF;
+
+            pageSetLower(*page_header,
+                         static_cast<uint32_t>(kColumnstoreSimpleCatalogOffset +
+                                               sizeof(ColumnstoreMetaHeader)));
+            pageSetUpper(*page_header, page_size);
+            pageSetSpecial(*page_header, page_size);
+            page_header->free_space = pageUpper(*page_header) - pageLower(*page_header);
+
+            buffer_pool->unpinPageGlobal(makeGPID(tablespace_id, page_id), true, ctx);
+            return Status::OK;
+        };
 
         // Write to meta_page_a
-        void* buffer_a = nullptr;
-        status = buffer_pool->pinPageGlobal(makeGPID(tablespace_id, meta_page_a), &buffer_a, ctx,
-                                            BufferPool::AccessStrategy::BulkWrite);
+        status = write_meta_page(meta_page_a, meta_page_b);
         if (status != Status::OK)
         {
             page_mgr->freePageGlobal(makeGPID(tablespace_id, meta_page_a), nullptr);
             page_mgr->freePageGlobal(makeGPID(tablespace_id, meta_page_b), nullptr);
             return status;
         }
-        memcpy(buffer_a, &header, sizeof(header));
-        buffer_pool->unpinPageGlobal(makeGPID(tablespace_id, meta_page_a), true, ctx);
 
-        // Write to meta_page_b (same content)
-        void* buffer_b = nullptr;
-        status = buffer_pool->pinPageGlobal(makeGPID(tablespace_id, meta_page_b), &buffer_b, ctx,
-                                            BufferPool::AccessStrategy::BulkWrite);
+        // Write to meta_page_b with a back-pointer to meta_page_a
+        status = write_meta_page(meta_page_b, meta_page_a);
         if (status != Status::OK)
         {
             page_mgr->freePageGlobal(makeGPID(tablespace_id, meta_page_a), nullptr);
             page_mgr->freePageGlobal(makeGPID(tablespace_id, meta_page_b), nullptr);
             return status;
         }
-        memcpy(buffer_b, &header, sizeof(header));
-        buffer_pool->unpinPageGlobal(makeGPID(tablespace_id, meta_page_b), true, ctx);
 
         return Status::OK;
     }
@@ -188,8 +257,72 @@ namespace core {
         }
         data_page = static_cast<uint32_t>(getPageNumber(data_gpid));
 
-        // In production: write compressed data to page
-        // For now, we track the page number in metadata
+        const size_t header_size = sizeof(SBColumnstorePage);
+        const uint32_t page_size = db_->page_size();
+        if (header_size > page_size)
+        {
+            page_mgr->freePageGlobal(data_gpid, ctx);
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                              "Columnstore segment header does not fit in page");
+            return Status::PAGE_FULL;
+        }
+        const size_t max_payload_bytes = page_size - header_size;
+        if (compressed.size() > max_payload_bytes)
+        {
+            page_mgr->freePageGlobal(data_gpid, ctx);
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                              "Compressed columnstore segment does not fit on a single page");
+            return Status::PAGE_FULL;
+        }
+
+        void *page_buffer = nullptr;
+        status = db_->buffer_pool()->pinPageGlobal(data_gpid,
+                                                   &page_buffer,
+                                                   ctx,
+                                                   BufferPool::AccessStrategy::BulkWrite);
+        if (status != Status::OK)
+        {
+            page_mgr->freePageGlobal(data_gpid, ctx);
+            return status;
+        }
+
+        std::memset(page_buffer, 0, page_size);
+        auto *segment_page = static_cast<SBColumnstorePage *>(page_buffer);
+        initializeColumnstoreSimplePageHeader(&segment_page->cs_header,
+                                              static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE_SEGMENT),
+                                              page_size,
+                                              data_page);
+        std::memcpy(&segment_page->cs_index_uuid, index_uuid_.bytes.data(), sizeof(ID));
+        std::memset(&segment_page->cs_table_uuid, 0, sizeof(ID));
+        std::memset(&segment_page->cs_column_uuid, 0, sizeof(ID));
+        std::memcpy(&segment_page->cs_column_uuid, &column_id, sizeof(column_id));
+        segment_page->cs_flags = 0;
+        segment_page->cs_row_count = static_cast<uint16_t>(std::min<uint32_t>(row_count, UINT16_MAX));
+        segment_page->cs_null_count = 0;
+        segment_page->cs_compression_type = static_cast<uint8_t>(CompressionType::RLE);
+        segment_page->cs_data_type = 0;
+        segment_page->cs_compressed_size = static_cast<uint32_t>(compressed.size());
+        segment_page->cs_uncompressed_size = static_cast<uint32_t>(column_data.size());
+        segment_page->cs_first_tid = {};
+        segment_page->cs_last_tid = {};
+        segment_page->cs_prev_segment = 0;
+        segment_page->cs_next_segment = 0;
+
+        if (!compressed.empty())
+        {
+            std::memcpy(reinterpret_cast<uint8_t *>(segment_page) + header_size,
+                        compressed.data(),
+                        compressed.size());
+        }
+
+        pageSetLower(segment_page->cs_header,
+                     static_cast<uint32_t>(header_size + compressed.size()));
+        pageSetUpper(segment_page->cs_header, page_size);
+        pageSetSpecial(segment_page->cs_header, page_size);
+        segment_page->cs_header.free_space =
+            pageUpper(segment_page->cs_header) - pageLower(segment_page->cs_header);
+
+        db_->buffer_pool()->unpinPageGlobal(data_gpid, true, ctx);
 
         // Calculate min/max for predicate pushdown
         // Assumes column_data contains int64_t values
@@ -591,8 +724,6 @@ namespace core {
     Status ColumnstoreIndexSimple::loadSegmentCatalog(ErrorContext* ctx)
     {
         // Plan 01 Task C: Read from both meta pages, select newest valid based on generation
-        auto buffer_pool = db_->buffer_pool();
-
         // Helper lambda to read and validate a meta page
         auto readMetaPage = [&](uint32_t page_id, ColumnstoreMetaHeader* header_out, std::vector<ColumnSegment>* segments_out) -> bool
         {
@@ -603,8 +734,19 @@ namespace core {
                 return false;
             }
 
-            // Read header
-            memcpy(header_out, buffer, sizeof(ColumnstoreMetaHeader));
+            auto *page_header = static_cast<const PageHeader *>(buffer);
+            if (page_header->magic != K_MAGIC_SBRD ||
+                page_header->page_type != static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE_META) ||
+                page_header->page_size != db_->page_size())
+            {
+                unpinIndexPage(page_id, false, nullptr);
+                return false;
+            }
+
+            // Read payload header
+            const uint8_t *catalog_base = static_cast<const uint8_t *>(buffer) +
+                                          kColumnstoreSimpleCatalogOffset;
+            memcpy(header_out, catalog_base, sizeof(ColumnstoreMetaHeader));
 
             // Validate magic
             if (header_out->magic != COLUMNSTORE_META_MAGIC)
@@ -613,9 +755,27 @@ namespace core {
                 return false;
             }
 
+            const size_t max_catalog_bytes = db_->page_size() - kColumnstoreSimpleCatalogOffset;
+            if (sizeof(ColumnstoreMetaHeader) > max_catalog_bytes)
+            {
+                unpinIndexPage(page_id, false, nullptr);
+                return false;
+            }
+            const size_t max_segments =
+                (max_catalog_bytes - sizeof(ColumnstoreMetaHeader)) / sizeof(ColumnSegment);
+            if (header_out->segment_count > max_segments)
+            {
+                unpinIndexPage(page_id, false, nullptr);
+                return false;
+            }
+
             // Validate checksum
-            const uint8_t* checksum_data_start = static_cast<const uint8_t*>(buffer) + offsetof(ColumnstoreMetaHeader, checksum) + sizeof(uint32_t);
-            size_t checksum_data_len = sizeof(ColumnstoreMetaHeader) + header_out->segment_count * sizeof(ColumnSegment) - offsetof(ColumnstoreMetaHeader, checksum) - sizeof(uint32_t);
+            const uint8_t* checksum_data_start =
+                catalog_base + offsetof(ColumnstoreMetaHeader, checksum) + sizeof(uint32_t);
+            size_t checksum_data_len =
+                sizeof(ColumnstoreMetaHeader) +
+                (static_cast<size_t>(header_out->segment_count) * sizeof(ColumnSegment)) -
+                offsetof(ColumnstoreMetaHeader, checksum) - sizeof(uint32_t);
             uint32_t calculated_crc = crc32cCompute(checksum_data_start, checksum_data_len, 0xFFFFFFFF) ^ 0xFFFFFFFF;
 
             if (calculated_crc != header_out->checksum)
@@ -627,7 +787,9 @@ namespace core {
             // Read segments
             if (header_out->segment_count > 0)
             {
-                const ColumnSegment* segments_ptr = reinterpret_cast<const ColumnSegment*>(static_cast<const uint8_t*>(buffer) + sizeof(ColumnstoreMetaHeader));
+                const ColumnSegment* segments_ptr =
+                    reinterpret_cast<const ColumnSegment *>(catalog_base +
+                                                           sizeof(ColumnstoreMetaHeader));
                 segments_out->assign(segments_ptr, segments_ptr + header_out->segment_count);
             }
 
@@ -650,7 +812,15 @@ namespace core {
         ColumnstoreMetaHeader header_b;
         std::vector<ColumnSegment> segments_b;
         bool valid_b = false;
-        if (peer_meta_page_ != 0)
+        if (peer_meta_page_ == 0)
+        {
+            // Fallback for a damaged primary page: peer is normally allocated adjacent to meta_page_.
+            if (meta_page_ + 1 != meta_page_)
+            {
+                peer_meta_page_ = meta_page_ + 1;
+            }
+        }
+        if (peer_meta_page_ != 0 && peer_meta_page_ != meta_page_)
         {
             valid_b = readMetaPage(peer_meta_page_, &header_b, &segments_b);
         }
@@ -724,61 +894,95 @@ namespace core {
         // Increment generation
         generation_++;
 
-        // Build catalog data: [header][segment1][segment2]...
-        std::vector<uint8_t> catalog_data;
-        catalog_data.resize(sizeof(ColumnstoreMetaHeader) + total_segments * sizeof(ColumnSegment));
-
-        // Fill header
-        ColumnstoreMetaHeader* header = reinterpret_cast<ColumnstoreMetaHeader*>(catalog_data.data());
-        header->magic = COLUMNSTORE_META_MAGIC;
-        header->version = 1;
-        header->reserved = 0;
-        header->generation = generation_;
-        header->segment_count = total_segments;
-        header->peer_page_id = peer_meta_page_;
-        header->checksum = 0;  // Will calculate below
-
-        // Fill segments
-        ColumnSegment* segments_ptr = reinterpret_cast<ColumnSegment*>(catalog_data.data() + sizeof(ColumnstoreMetaHeader));
-        size_t idx = 0;
-        for (const auto& [column_id, segments] : column_segments_)
+        const uint32_t page_size = db_->page_size();
+        const size_t catalog_payload_bytes =
+            sizeof(ColumnstoreMetaHeader) + (static_cast<size_t>(total_segments) * sizeof(ColumnSegment));
+        if (kColumnstoreSimpleCatalogOffset + catalog_payload_bytes > page_size)
         {
-            for (const auto& seg : segments)
-            {
-                segments_ptr[idx++] = seg;
-            }
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                              "Columnstore simple segment catalog exceeds single-page budget");
+            return Status::PAGE_FULL;
         }
 
-        // Calculate checksum (CRC32C of everything after checksum field)
-        const uint8_t* checksum_data_start = catalog_data.data() + offsetof(ColumnstoreMetaHeader, checksum) + sizeof(uint32_t);
-        size_t checksum_data_len = catalog_data.size() - offsetof(ColumnstoreMetaHeader, checksum) - sizeof(uint32_t);
-        uint32_t crc = crc32cCompute(checksum_data_start, checksum_data_len, 0xFFFFFFFF);
-        header->checksum = crc ^ 0xFFFFFFFF;
+        auto write_catalog_page = [&](uint32_t page_id, uint32_t peer_page_id) -> Status
+        {
+            void *buffer = nullptr;
+            Status pin_status = pinIndexPage(page_id, &buffer, ctx,
+                                             BufferPool::AccessStrategy::BulkWrite);
+            if (pin_status != Status::OK)
+            {
+                return pin_status;
+            }
+
+            std::memset(buffer, 0, page_size);
+
+            auto *page_header = static_cast<PageHeader *>(buffer);
+            initializeColumnstoreSimplePageHeader(page_header,
+                                                  static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE_META),
+                                                  page_size,
+                                                  page_id);
+
+            auto *header = reinterpret_cast<ColumnstoreMetaHeader *>(
+                static_cast<uint8_t *>(buffer) + kColumnstoreSimpleCatalogOffset);
+            header->magic = COLUMNSTORE_META_MAGIC;
+            header->version = 1;
+            header->reserved = 0;
+            header->generation = generation_;
+            header->segment_count = total_segments;
+            header->peer_page_id = peer_page_id;
+            header->checksum = 0;
+
+            ColumnSegment *segments_ptr = reinterpret_cast<ColumnSegment *>(
+                static_cast<uint8_t *>(buffer) + kColumnstoreSimpleCatalogOffset +
+                sizeof(ColumnstoreMetaHeader));
+            size_t idx = 0;
+            for (const auto &entry : column_segments_)
+            {
+                for (const auto &seg : entry.second)
+                {
+                    segments_ptr[idx++] = seg;
+                }
+            }
+
+            const uint8_t *checksum_data_start =
+                reinterpret_cast<const uint8_t *>(header) +
+                offsetof(ColumnstoreMetaHeader, checksum) + sizeof(uint32_t);
+            size_t checksum_data_len =
+                catalog_payload_bytes - offsetof(ColumnstoreMetaHeader, checksum) - sizeof(uint32_t);
+            uint32_t crc = crc32cCompute(checksum_data_start, checksum_data_len, 0xFFFFFFFF);
+            header->checksum = crc ^ 0xFFFFFFFF;
+
+            pageSetLower(*page_header,
+                         static_cast<uint32_t>(kColumnstoreSimpleCatalogOffset +
+                                               catalog_payload_bytes));
+            pageSetUpper(*page_header, page_size);
+            pageSetSpecial(*page_header, page_size);
+            page_header->free_space = pageUpper(*page_header) - pageLower(*page_header);
+
+            unpinIndexPage(page_id, true, ctx);
+            return Status::OK;
+        };
 
         // Write to meta_page_a (primary)
-        void* buffer_a = nullptr;
-        Status status = pinIndexPage(meta_page_, &buffer_a, ctx,
-                                     BufferPool::AccessStrategy::BulkWrite);
+        Status status = write_catalog_page(meta_page_, peer_meta_page_);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to pin meta_page_a for write");
             return status;
         }
-        memcpy(buffer_a, catalog_data.data(), catalog_data.size());
-        unpinIndexPage(meta_page_, true, ctx);
 
         // Write to meta_page_b (peer)
-        void* buffer_b = nullptr;
-        status = pinIndexPage(peer_meta_page_, &buffer_b, ctx,
-                              BufferPool::AccessStrategy::BulkWrite);
+        if (peer_meta_page_ == 0)
+        {
+            peer_meta_page_ = meta_page_ + 1;
+        }
+        status = write_catalog_page(peer_meta_page_, meta_page_);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to pin meta_page_b for write");
             // Note: meta_page_a already written, but that's OK - it has newer generation
             return status;
         }
-        memcpy(buffer_b, catalog_data.data(), catalog_data.size());
-        unpinIndexPage(peer_meta_page_, true, ctx);
 
         return Status::OK;
     }

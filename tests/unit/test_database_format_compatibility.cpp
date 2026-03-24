@@ -110,7 +110,7 @@ protected:
         auto *header = reinterpret_cast<DatabaseHeader *>(page.data());
         header->db_version = db_version;
         header->db_compat_version = db_compat_version;
-        header->page_header.checksum = calculatePageChecksum(page.data(), page.size());
+        preparePageForWrite(page.data(), static_cast<uint32_t>(page.size()), 0);
 
         int fd = ::open(path.c_str(), O_RDWR);
         ASSERT_GE(fd, 0);
@@ -138,6 +138,14 @@ protected:
 
         BackupManifestHeader manifest{};
         ASSERT_TRUE(readFullyAt(fd, &manifest, sizeof(manifest), 0));
+        manifest.source_db_version = db_version;
+        manifest.source_db_compat_version = db_compat_version;
+        manifest.checksum = 0;
+        manifest.checksum = static_cast<uint32_t>(
+            crc32(0L,
+                  reinterpret_cast<const Bytef *>(&manifest),
+                  static_cast<uInt>(sizeof(manifest))));
+        ASSERT_TRUE(writeFullyAt(fd, &manifest, sizeof(manifest), 0));
 
         uint64_t index_offset = manifest.tablespace_info_offset + manifest.tablespace_info_size;
         if (index_offset == 0)
@@ -174,7 +182,7 @@ protected:
         auto *header = reinterpret_cast<DatabaseHeader *>(page.data());
         header->db_version = db_version;
         header->db_compat_version = db_compat_version;
-        header->page_header.checksum = calculatePageChecksum(page.data(), page.size());
+        preparePageForWrite(page.data(), static_cast<uint32_t>(page.size()), 0);
         entry.checksum = static_cast<uint32_t>(
             crc32(0L, page.data(), static_cast<uInt>(page.size())));
 
@@ -268,7 +276,8 @@ TEST_F(DatabaseFormatCompatibilityTest, RestoreFailsClosedWhenBackupRequiresNewe
                                            restore_config,
                                            nullptr,
                                            &ctx),
-              Status::NOT_SUPPORTED);
+              Status::NOT_SUPPORTED)
+        << ctx.message;
     EXPECT_NE(ctx.message.find("requires engine version at least"), std::string::npos);
 
     db.close();

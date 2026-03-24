@@ -9,10 +9,12 @@
  */
 #include <gtest/gtest.h>
 
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/gc_manager.h"
+#include "scratchbird/core/gpid.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
@@ -21,6 +23,7 @@
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <unistd.h>
 #include <vector>
 
@@ -46,6 +49,13 @@ protected:
         ASSERT_EQ(Database::create(test_db_path_, 16384, &ctx), Status::OK) << ctx.message;
         ASSERT_EQ(db_.open(test_db_path_, &ctx), Status::OK) << ctx.message;
         ASSERT_EQ(db_.connect(connection_, &ctx), Status::OK) << ctx.message;
+        ConnectionContext::setCurrent(connection_.get());
+
+        ID system_user = db_.catalog_manager()->getSystemUserId(&ctx);
+        if (system_user != ID{})
+        {
+            connection_->setCurrentUser(system_user, true);
+        }
 
         // Advance into a stable always-active transaction so xmax < horizon is easy to model.
         ASSERT_EQ(connection_->commit(&ctx), Status::OK) << ctx.message;
@@ -54,6 +64,7 @@ protected:
 
     void TearDown() override
     {
+        ConnectionContext::setCurrent(nullptr);
         connection_.reset();
         db_.close();
         std::filesystem::remove(test_db_path_);
@@ -120,6 +131,104 @@ protected:
     {
         const uint64_t current_xid = connection_->getCurrentXid();
         return (current_xid > 1) ? (current_xid - 1) : 1;
+    }
+
+    ID resolveDefaultSchema(ErrorContext *ctx)
+    {
+        std::vector<CatalogManager::SchemaInfo> schemas;
+        Status status = db_.catalog_manager()->listSchemas(schemas, ctx);
+        if (status == Status::OK && !schemas.empty())
+        {
+            return schemas.front().schema_id;
+        }
+
+        ID schema_id;
+        status = db_.catalog_manager()->createSchema("main", "SYSTEM", schema_id, ctx);
+        EXPECT_EQ(status, Status::OK) << ctx->message;
+        return schema_id;
+    }
+
+    ID createCatalogBackedTable(const std::string &name,
+                                const std::string &column_name,
+                                DataType data_type,
+                                uint32_t type_precision = 0)
+    {
+        ErrorContext ctx;
+        const ID schema_id = resolveDefaultSchema(&ctx);
+
+        CatalogManager::ColumnInfo column{};
+        column.column_name = column_name;
+        column.ordinal = 1;
+        column.data_type = static_cast<uint16_t>(data_type);
+        column.type_precision = type_precision;
+        column.nullable = false;
+
+        ID table_id;
+        Status status =
+            db_.catalog_manager()->createTable(schema_id, name, {column}, table_id, 0, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        return table_id;
+    }
+
+    void createCatalogIndex(const ID &table_id,
+                            const std::string &index_name,
+                            const std::string &column_name,
+                            CatalogManager::IndexType index_type)
+    {
+        ErrorContext ctx;
+        ID index_id;
+        Status status = db_.catalog_manager()->createIndex(
+            table_id, index_name, {column_name}, index_id, false, index_type, 0, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+    }
+
+    auto rootPageForTable(const ID &table_id) -> uint32_t
+    {
+        ErrorContext ctx;
+        CatalogManager::TableInfo table_info{};
+        Status status = db_.catalog_manager()->getTable(table_id, table_info, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        return static_cast<uint32_t>(getPageNumber(table_info.root_gpid));
+    }
+
+    void seedDeadTupleOnTableRoot(const ID &table_id, size_t payload_size = 256)
+    {
+        ErrorContext ctx;
+        const uint32_t page_id = rootPageForTable(table_id);
+
+        void *buffer = nullptr;
+        ASSERT_EQ(db_.buffer_pool()->pinPage(page_id, &buffer, &ctx), Status::OK) << ctx.message;
+
+        auto *page_data = static_cast<uint8_t *>(buffer);
+        HeapPage heap(page_data, db_.page_size());
+        auto tuple = buildTuple(payload_size, 0x3C);
+        uint16_t slot_id = 0;
+        ASSERT_EQ(heap.insertTuple(tuple.data(),
+                                   static_cast<uint32_t>(tuple.size()),
+                                   deadXmax(),
+                                   &slot_id,
+                                   &ctx),
+                  Status::OK)
+            << ctx.message;
+        ASSERT_EQ(heap.deleteTuple(slot_id, deadXmax(), &ctx), Status::OK) << ctx.message;
+        markTupleDeadForGc(page_data, slot_id, deadXmax());
+
+        db_.buffer_pool()->unpinPage(page_id, true, &ctx);
+    }
+
+    auto findPublication(const std::string &index_name)
+        -> std::optional<IndexCleanupPublicationRecord>
+    {
+        std::vector<IndexCleanupPublicationRecord> publications;
+        EXPECT_EQ(db_.storage_engine()->listIndexCleanupPublications(publications), Status::OK);
+        for (const auto &publication : publications)
+        {
+            if (publication.index_name == index_name)
+            {
+                return publication;
+            }
+        }
+        return std::nullopt;
     }
 };
 
@@ -294,4 +403,102 @@ TEST_F(MgaFragmentationPolicyTest, GcPagePublishesRewriteRecommendationForHeavyD
     EXPECT_TRUE(items[slots[2]].isUnused());
     db_.buffer_pool()->unpinPage(page_id, false, &ctx);
     db_.page_manager()->freePage(page_id, &ctx);
+}
+
+TEST_F(MgaFragmentationPolicyTest, GcPagePublishesExactCleanupCompletionWithProofContext)
+{
+    const ID table_id = createCatalogBackedTable("gc_exact_table", "id", DataType::INT32, 4);
+    createCatalogIndex(table_id, "idx_gc_exact", "id", CatalogManager::IndexType::BTREE);
+    seedDeadTupleOnTableRoot(table_id);
+
+    ErrorContext ctx;
+    GcStats stats{};
+    HeapReclaimPublicationContext publication_ctx{};
+    publication_ctx.sweep_generation = 7;
+    publication_ctx.checkpoint_generation = 11;
+
+    ASSERT_EQ(db_.gc_manager()->gcPage(table_id,
+                                       rootPageForTable(table_id),
+                                       &stats,
+                                       &ctx,
+                                       &publication_ctx),
+              Status::OK)
+        << ctx.message;
+
+    const auto publication = findPublication("idx_gc_exact");
+    ASSERT_TRUE(publication.has_value());
+    EXPECT_EQ(publication->family, IndexCleanupFamily::EXACT);
+    EXPECT_EQ(publication->state, IndexCleanupPublicationState::COMPLETE);
+    EXPECT_EQ(publication->page_id, rootPageForTable(table_id));
+    EXPECT_EQ(publication->heap_reclaim_count, 1u);
+    EXPECT_EQ(publication->backlog_count, 0u);
+    EXPECT_EQ(publication->sweep_generation, 7u);
+    EXPECT_EQ(publication->checkpoint_generation, 11u);
+    EXPECT_EQ(stats.index_backlog_count, 0u);
+}
+
+TEST_F(MgaFragmentationPolicyTest, GcPagePublishesSummaryCleanupDebtWithProofContext)
+{
+    const ID table_id = createCatalogBackedTable("gc_summary_table", "id", DataType::INT32, 4);
+    createCatalogIndex(table_id, "idx_gc_summary", "id", CatalogManager::IndexType::BRIN);
+    seedDeadTupleOnTableRoot(table_id);
+
+    ErrorContext ctx;
+    GcStats stats{};
+    HeapReclaimPublicationContext publication_ctx{};
+    publication_ctx.sweep_generation = 5;
+    publication_ctx.checkpoint_generation = 9;
+
+    ASSERT_EQ(db_.gc_manager()->gcPage(table_id,
+                                       rootPageForTable(table_id),
+                                       &stats,
+                                       &ctx,
+                                       &publication_ctx),
+              Status::OK)
+        << ctx.message;
+
+    const auto publication = findPublication("idx_gc_summary");
+    ASSERT_TRUE(publication.has_value());
+    EXPECT_EQ(publication->family, IndexCleanupFamily::SUMMARY);
+    EXPECT_EQ(publication->state, IndexCleanupPublicationState::DEBT_PUBLISHED);
+    EXPECT_EQ(publication->heap_reclaim_count, 1u);
+    EXPECT_EQ(publication->backlog_count, 1u);
+    EXPECT_EQ(publication->sweep_generation, 5u);
+    EXPECT_EQ(publication->checkpoint_generation, 9u);
+    EXPECT_EQ(stats.index_backlog_count, 1u);
+}
+
+TEST_F(MgaFragmentationPolicyTest, GcPagePublishesApproximateCleanupDebtWithProofContext)
+{
+    const ID table_id =
+        createCatalogBackedTable("gc_approx_table", "embedding", DataType::VECTOR, 3);
+    createCatalogIndex(table_id,
+                       "idx_gc_approx",
+                       "embedding",
+                       CatalogManager::IndexType::HNSW);
+    seedDeadTupleOnTableRoot(table_id);
+
+    ErrorContext ctx;
+    GcStats stats{};
+    HeapReclaimPublicationContext publication_ctx{};
+    publication_ctx.sweep_generation = 13;
+    publication_ctx.checkpoint_generation = 17;
+
+    ASSERT_EQ(db_.gc_manager()->gcPage(table_id,
+                                       rootPageForTable(table_id),
+                                       &stats,
+                                       &ctx,
+                                       &publication_ctx),
+              Status::OK)
+        << ctx.message;
+
+    const auto publication = findPublication("idx_gc_approx");
+    ASSERT_TRUE(publication.has_value());
+    EXPECT_EQ(publication->family, IndexCleanupFamily::APPROXIMATE);
+    EXPECT_EQ(publication->state, IndexCleanupPublicationState::DEBT_PUBLISHED);
+    EXPECT_EQ(publication->heap_reclaim_count, 1u);
+    EXPECT_EQ(publication->backlog_count, 1u);
+    EXPECT_EQ(publication->sweep_generation, 13u);
+    EXPECT_EQ(publication->checkpoint_generation, 17u);
+    EXPECT_EQ(stats.index_backlog_count, 1u);
 }

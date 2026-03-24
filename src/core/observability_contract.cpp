@@ -15,6 +15,7 @@
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/mga_failpoint_manager.h"
+#include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/transaction_manager.h"
@@ -240,6 +241,324 @@ namespace scratchbird::core
             return "depth_8_plus";
         }
 
+        auto checkpointStateName(CheckpointLifecycleState state) -> const char*
+        {
+            switch (state)
+            {
+                case CheckpointLifecycleState::IDLE:
+                    return "IDLE";
+                case CheckpointLifecycleState::CAPTURING_HORIZONS:
+                    return "CAPTURING_HORIZONS";
+                case CheckpointLifecycleState::DRAINING_DIRTY_SET:
+                    return "DRAINING_DIRTY_SET";
+                case CheckpointLifecycleState::PERSISTING_CHECKPOINT_MARKER:
+                    return "PERSISTING_CHECKPOINT_MARKER";
+                case CheckpointLifecycleState::CLEAN_SHUTDOWN_ARMED:
+                    return "CLEAN_SHUTDOWN_ARMED";
+                case CheckpointLifecycleState::COMPLETE:
+                    return "COMPLETE";
+                case CheckpointLifecycleState::FAILED:
+                    return "FAILED";
+            }
+            return "UNKNOWN";
+        }
+
+        auto startupClassificationName(Database::StartupRecoveryClassification classification)
+            -> const char*
+        {
+            switch (classification)
+            {
+                case Database::StartupRecoveryClassification::NOT_CLASSIFIED:
+                    return "not_classified";
+                case Database::StartupRecoveryClassification::CLEAN_SHUTDOWN_FAST_PATH:
+                    return "clean_shutdown_fast_path";
+                case Database::StartupRecoveryClassification::DIRTY_SHUTDOWN_NORMALIZATION_REQUIRED:
+                    return "dirty_shutdown_normalization_required";
+                case Database::StartupRecoveryClassification::REPAIRABLE_PAGE_DAMAGE:
+                    return "repairable_page_damage";
+                case Database::StartupRecoveryClassification::WRITEBACK_FAILURE_RESUME:
+                    return "writeback_failure_resume";
+                case Database::StartupRecoveryClassification::CATALOG_OR_CONTROL_DAMAGE_FATAL:
+                    return "catalog_or_control_damage_fatal";
+            }
+            return "unknown";
+        }
+
+        auto startupOutcomeName(Database::StartupReconciliationOutcome outcome) -> const char*
+        {
+            switch (outcome)
+            {
+                case Database::StartupReconciliationOutcome::NOT_RUN:
+                    return "not_run";
+                case Database::StartupReconciliationOutcome::CLEAN:
+                    return "clean";
+                case Database::StartupReconciliationOutcome::CLEAN_WITH_FINDINGS:
+                    return "clean_with_findings";
+                case Database::StartupReconciliationOutcome::RECOVERY_WITH_FINDINGS:
+                    return "recovery_with_findings";
+                case Database::StartupReconciliationOutcome::FAILED_PAGE_SCAN:
+                    return "failed_page_scan";
+                case Database::StartupReconciliationOutcome::FAILED_TXN_RECONCILIATION:
+                    return "failed_txn_reconciliation";
+                case Database::StartupReconciliationOutcome::FAILED_CORRUPTION_POLICY:
+                    return "failed_corruption_policy";
+            }
+            return "unknown";
+        }
+
+        auto startupServiceStateName(Database::StartupServiceState state) -> const char*
+        {
+            switch (state)
+            {
+                case Database::StartupServiceState::NORMAL:
+                    return "normal";
+                case Database::StartupServiceState::DEGRADED_READ_WRITE:
+                    return "degraded_read_write";
+                case Database::StartupServiceState::WRITE_FENCED:
+                    return "write_fenced";
+                case Database::StartupServiceState::FATAL:
+                    return "fatal";
+            }
+            return "unknown";
+        }
+
+        auto startupWarmupModeName(const Database::StartupReconciliationState& state) -> const char*
+        {
+            if (state.classification ==
+                Database::StartupRecoveryClassification::CLEAN_SHUTDOWN_FAST_PATH)
+            {
+                return "fast_path";
+            }
+            if (state.service_state == Database::StartupServiceState::FATAL)
+            {
+                return "fatal_hold";
+            }
+            if (state.quarantine_active)
+            {
+                return "quarantine";
+            }
+            return "recovery";
+        }
+
+        auto writebackQueueKindName(WritebackQueueKind kind) -> const char*
+        {
+            switch (kind)
+            {
+                case WritebackQueueKind::UNKNOWN:
+                    return "unknown";
+                case WritebackQueueKind::FOREGROUND_HELP:
+                    return "foreground_help";
+                case WritebackQueueKind::BACKGROUND_AGE:
+                    return "background_age";
+                case WritebackQueueKind::CHECKPOINT:
+                    return "checkpoint";
+                case WritebackQueueKind::METADATA_PRIORITY:
+                    return "metadata_priority";
+                case WritebackQueueKind::WRITE_COMBINE:
+                    return "write_combine";
+                case WritebackQueueKind::REPAIR_RETRY:
+                    return "repair_retry";
+            }
+            return "unknown";
+        }
+
+        auto writebackPolicyDomainName(WritebackPolicyDomain domain) -> const char*
+        {
+            switch (domain)
+            {
+                case WritebackPolicyDomain::UNKNOWN:
+                    return "unknown";
+                case WritebackPolicyDomain::TRANSACTION:
+                    return "transaction";
+                case WritebackPolicyDomain::CHECKPOINT:
+                    return "checkpoint";
+                case WritebackPolicyDomain::ALLOCATOR:
+                    return "allocator";
+                case WritebackPolicyDomain::CATALOG:
+                    return "catalog";
+                case WritebackPolicyDomain::SYSTEM_STATE:
+                    return "system_state";
+            }
+            return "unknown";
+        }
+
+        auto writebackFailureClassName(WritebackFailureClass failure_class) -> const char*
+        {
+            switch (failure_class)
+            {
+                case WritebackFailureClass::NONE:
+                    return "none";
+                case WritebackFailureClass::RETRYABLE_WRITEBACK_IO:
+                    return "retryable_writeback_io";
+                case WritebackFailureClass::RETRYABLE_FSYNC_IO:
+                    return "retryable_fsync_io";
+                case WritebackFailureClass::DISK_FULL:
+                    return "disk_full";
+                case WritebackFailureClass::RESERVE_SPACE_EXHAUSTED:
+                    return "reserve_space_exhausted";
+                case WritebackFailureClass::CORRUPT_TARGET_PAGE:
+                    return "corrupt_target_page";
+                case WritebackFailureClass::FILESYSTEM_OFFLINE:
+                    return "filesystem_offline";
+                case WritebackFailureClass::WRITEBACK_TIMEOUT:
+                    return "writeback_timeout";
+            }
+            return "unknown";
+        }
+
+        auto writebackDegradedStateName(WritebackDegradedState degraded_state) -> const char*
+        {
+            switch (degraded_state)
+            {
+                case WritebackDegradedState::NORMAL:
+                    return "normal";
+                case WritebackDegradedState::DEGRADED_READ_WRITE:
+                    return "degraded_read_write";
+                case WritebackDegradedState::WRITE_FENCED:
+                    return "write_fenced";
+                case WritebackDegradedState::FATAL:
+                    return "fatal";
+            }
+            return "unknown";
+        }
+
+        auto statusName(Status status) -> std::string
+        {
+            switch (status)
+            {
+                case Status::OK:
+                    return "OK";
+                case Status::IO_ERROR:
+                    return "IO_ERROR";
+                case Status::PAGE_CORRUPT:
+                    return "PAGE_CORRUPT";
+                case Status::DATA_CORRUPTED:
+                    return "DATA_CORRUPTED";
+                case Status::INVALID_ARGUMENT:
+                    return "INVALID_ARGUMENT";
+                case Status::DISK_FULL:
+                    return "DISK_FULL";
+                case Status::INTERNAL_ERROR:
+                    return "INTERNAL_ERROR";
+                default:
+                    return std::to_string(static_cast<int>(status));
+            }
+        }
+
+        struct CheckpointTelemetryState
+        {
+            uint64_t checkpoint_generation = 0;
+            CheckpointLifecycleState checkpoint_state = CheckpointLifecycleState::IDLE;
+            uint64_t checkpoint_start_time = 0;
+            uint64_t dirty_generation_low_watermark = 0;
+            uint64_t dirty_generation_high_watermark = 0;
+            uint64_t captured_flush_debt_pages = 0;
+            bool queue_rebuild_required = false;
+            Status checkpoint_failure_reason = Status::OK;
+        };
+
+        struct WritebackTelemetryState
+        {
+            bool incident_open = false;
+            uint64_t retry_count = 0;
+            WritebackDegradedState degraded_state = WritebackDegradedState::NORMAL;
+            Status last_error_status = Status::OK;
+        };
+
+        auto readSystemStatePageLocal(const Database& db,
+                                      BootstrapSystemStatePage* state_page_out) -> Status
+        {
+            if (state_page_out == nullptr)
+            {
+                return Status::INVALID_ARGUMENT;
+            }
+
+            std::vector<uint8_t> page_buffer(db.page_size(), 0);
+            ErrorContext ctx;
+            const Status status =
+                db.read_page(BOOTSTRAP_PAGE_SYSTEM_STATE, page_buffer.data(), &ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            const auto* state_page =
+                reinterpret_cast<const BootstrapSystemStatePage*>(page_buffer.data());
+            if (state_page->page_header.page_type != PAGE_TYPE_SYSTEM_STATE ||
+                state_page->page_header.page_size != db.page_size())
+            {
+                return Status::PAGE_CORRUPT;
+            }
+
+            *state_page_out = *state_page;
+            return Status::OK;
+        }
+
+        void loadCheckpointTelemetryState(const BootstrapSystemStatePage& state_page,
+                                          CheckpointTelemetryState* state_out)
+        {
+            if (state_out == nullptr)
+            {
+                return;
+            }
+
+            CheckpointTelemetryState state{};
+            const uint64_t version =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_VERSION_SLOT];
+            if (version == 0)
+            {
+                *state_out = state;
+                return;
+            }
+
+            state.checkpoint_generation =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_GENERATION_SLOT];
+            state.checkpoint_state = static_cast<CheckpointLifecycleState>(
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_STATE_SLOT]);
+            state.checkpoint_start_time =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_START_TIME_SLOT];
+            state.dirty_generation_low_watermark =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_DIRTY_LOW_SLOT];
+            state.dirty_generation_high_watermark =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_DIRTY_HIGH_SLOT];
+            state.captured_flush_debt_pages =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_FLUSH_DEBT_SLOT];
+            state.queue_rebuild_required =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_QUEUE_REBUILD_SLOT] != 0;
+            state.checkpoint_failure_reason = static_cast<Status>(
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_FAILURE_REASON_SLOT]);
+            *state_out = state;
+        }
+
+        void loadWritebackTelemetryState(const BootstrapSystemStatePage& state_page,
+                                         WritebackTelemetryState* state_out)
+        {
+            if (state_out == nullptr)
+            {
+                return;
+            }
+
+            WritebackTelemetryState state{};
+            const uint64_t version =
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_VERSION_SLOT];
+            if (version == 0)
+            {
+                *state_out = state;
+                return;
+            }
+
+            state.incident_open =
+                (state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_FLAGS_SLOT] &
+                 SYSTEM_STATE_WRITEBACK_INCIDENT_FLAG_OPEN) != 0;
+            state.retry_count =
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_RETRY_COUNT_SLOT];
+            state.degraded_state = static_cast<WritebackDegradedState>(
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_DEGRADED_STATE_SLOT]);
+            state.last_error_status = static_cast<Status>(
+                state_page.reserved[SYSTEM_STATE_WRITEBACK_INCIDENT_LAST_ERROR_STATUS_SLOT]);
+            *state_out = state;
+        }
+
         auto makeLabelsJson(const std::vector<MetricLabel>& labels) -> std::string
         {
             nlohmann::ordered_json doc = nlohmann::ordered_json::object();
@@ -305,6 +624,36 @@ namespace scratchbird::core
                                          {"db"},
                                          "Pending commit-fence publication backlog.",
                                          "count"),
+                    makeMetricDefinition("sb_checkpoint_dirty_boundary_pages",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Dirty pages captured at the checkpoint boundary.",
+                                         "pages"),
+                    makeMetricDefinition("sb_checkpoint_duration_seconds",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Elapsed duration of the current or latest checkpoint.",
+                                         "seconds"),
+                    makeMetricDefinition("sb_checkpoint_failed_total",
+                                         MetricType::COUNTER,
+                                         {"db", "reason"},
+                                         "Checkpoint failures by reason.",
+                                         "events"),
+                    makeMetricDefinition("sb_checkpoint_flush_debt_pages",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Checkpoint flush debt pages captured for the current or latest checkpoint.",
+                                         "pages"),
+                    makeMetricDefinition("sb_checkpoint_generation_current",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Current or latest checkpoint generation.",
+                                         "generation"),
+                    makeMetricDefinition("sb_checkpoint_state",
+                                         MetricType::GAUGE,
+                                         {"db", "state"},
+                                         "Current or latest checkpoint lifecycle state.",
+                                         "state"),
                     makeMetricDefinition("sb_buf_evictions_by_class_total",
                                          MetricType::COUNTER,
                                          {"db", "class", "reason"},
@@ -435,6 +784,26 @@ namespace scratchbird::core
                                          {"db", "reason"},
                                          "Statement restarts triggered by MGA visibility or conflicts.",
                                          "events"),
+                    makeMetricDefinition("sb_recovery_classification_total",
+                                         MetricType::COUNTER,
+                                         {"db", "classification"},
+                                         "Startup recovery classifications by occurrence.",
+                                         "events"),
+                    makeMetricDefinition("sb_recovery_generation_current",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Current recovery generation.",
+                                         "generation"),
+                    makeMetricDefinition("sb_recovery_repair_required_pages",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Repair-required pages found during startup reconciliation.",
+                                         "pages"),
+                    makeMetricDefinition("sb_recovery_startup_seconds",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Elapsed startup recovery duration.",
+                                         "seconds"),
                     makeMetricDefinition("sb_tx_aborted_total",
                                          MetricType::COUNTER,
                                          {"db"},
@@ -465,6 +834,16 @@ namespace scratchbird::core
                                          {"db", "reason"},
                                          "Transactions normalized during restart reconciliation.",
                                          "events"),
+                    makeMetricDefinition("sb_writeback_incident_age_seconds",
+                                         MetricType::GAUGE,
+                                         {"db", "degraded_state"},
+                                         "Age of the oldest open writeback incident by degraded state.",
+                                         "seconds"),
+                    makeMetricDefinition("sb_writeback_incidents_open",
+                                         MetricType::GAUGE,
+                                         {"db", "degraded_state"},
+                                         "Open writeback incidents by degraded state.",
+                                         "incidents"),
                 };
 
                 std::sort(definitions.begin(),
@@ -514,6 +893,64 @@ namespace scratchbird::core
                 };
                 definitions.push_back(std::move(cleanup_debt));
 
+                SqlViewSchemaDefinition buffer_writeback_debt{};
+                buffer_writeback_debt.view_name = "sb_buffer_writeback_debt";
+                buffer_writeback_debt.schema_version = 1;
+                buffer_writeback_debt.purpose =
+                    "Checkpoint debt, writeback fence, and reserve-pressure summary.";
+                buffer_writeback_debt.columns = {
+                    makeColumn("db_uuid", "UUID", false),
+                    makeColumn("checkpoint_generation", "BIGINT", false),
+                    makeColumn("checkpoint_state", "VARCHAR", false),
+                    makeColumn("dirty_pages", "BIGINT", false),
+                    makeColumn("checkpoint_flush_debt_pages", "BIGINT", false),
+                    makeColumn("checkpoint_pages_remaining", "BIGINT", false),
+                    makeColumn("blocked_frame_count", "BIGINT", false),
+                    makeColumn("write_admission_fenced", "BOOLEAN", false),
+                    makeColumn("incident_open", "BOOLEAN", false),
+                    makeColumn("retry_count", "BIGINT", false),
+                    makeColumn("reserve_exhaustion_risk", "BOOLEAN", false),
+                };
+                definitions.push_back(std::move(buffer_writeback_debt));
+
+                SqlViewSchemaDefinition checkpoint_history{};
+                checkpoint_history.view_name = "sb_checkpoint_history";
+                checkpoint_history.schema_version = 1;
+                checkpoint_history.purpose =
+                    "Checkpoint run history with dirty-boundary and failure metadata.";
+                checkpoint_history.columns = {
+                    makeColumn("checkpoint_run_uuid", "UUID", false),
+                    makeColumn("checkpoint_generation", "BIGINT", false),
+                    makeColumn("checkpoint_state", "VARCHAR", false),
+                    makeColumn("start_time", "BIGINT", false),
+                    makeColumn("end_time", "BIGINT", true),
+                    makeColumn("dirty_generation_low_watermark", "BIGINT", false),
+                    makeColumn("pages_target", "BIGINT", false),
+                    makeColumn("pages_flushed", "BIGINT", false),
+                    makeColumn("failure_reason", "VARCHAR", true),
+                };
+                definitions.push_back(std::move(checkpoint_history));
+
+                SqlViewSchemaDefinition checkpoint_status{};
+                checkpoint_status.view_name = "sb_checkpoint_status";
+                checkpoint_status.schema_version = 1;
+                checkpoint_status.purpose =
+                    "Current or latest checkpoint control and progress surface.";
+                checkpoint_status.columns = {
+                    makeColumn("checkpoint_generation", "BIGINT", false),
+                    makeColumn("checkpoint_state", "VARCHAR", false),
+                    makeColumn("start_time", "BIGINT", false),
+                    makeColumn("dirty_generation_low_watermark", "BIGINT", false),
+                    makeColumn("dirty_generation_high_watermark", "BIGINT", false),
+                    makeColumn("captured_flush_debt_pages", "BIGINT", false),
+                    makeColumn("pages_target", "BIGINT", false),
+                    makeColumn("pages_remaining", "BIGINT", false),
+                    makeColumn("blocked_frame_count", "BIGINT", false),
+                    makeColumn("queue_rebuild_required", "BOOLEAN", false),
+                    makeColumn("failure_reason", "VARCHAR", true),
+                };
+                definitions.push_back(std::move(checkpoint_status));
+
                 SqlViewSchemaDefinition failpoint_events{};
                 failpoint_events.view_name = "sb_mga_failpoint_events";
                 failpoint_events.schema_version = 1;
@@ -541,6 +978,41 @@ namespace scratchbird::core
                     makeColumn("updated_at_ms", "BIGINT", false),
                 };
                 definitions.push_back(std::move(runtime_metrics));
+
+                SqlViewSchemaDefinition recovery_incidents{};
+                recovery_incidents.view_name = "sb_recovery_incidents";
+                recovery_incidents.schema_version = 1;
+                recovery_incidents.purpose =
+                    "Persisted recovery incidents with checkpoint and object attribution.";
+                recovery_incidents.columns = {
+                    makeColumn("recovery_incident_uuid", "UUID", false),
+                    makeColumn("recovery_generation", "BIGINT", false),
+                    makeColumn("classification", "VARCHAR", false),
+                    makeColumn("checkpoint_generation", "BIGINT", true),
+                    makeColumn("object_uuid", "UUID", true),
+                    makeColumn("details_json", "JSON", true),
+                    makeColumn("created_time", "BIGINT", false),
+                };
+                definitions.push_back(std::move(recovery_incidents));
+
+                SqlViewSchemaDefinition recovery_status{};
+                recovery_status.view_name = "sb_recovery_status";
+                recovery_status.schema_version = 1;
+                recovery_status.purpose =
+                    "Current startup recovery and degraded-mode status surface.";
+                recovery_status.columns = {
+                    makeColumn("recovery_generation", "BIGINT", false),
+                    makeColumn("classification", "VARCHAR", false),
+                    makeColumn("startup_state", "VARCHAR", false),
+                    makeColumn("normalized_transactions", "BIGINT", false),
+                    makeColumn("repair_required_pages", "BIGINT", false),
+                    makeColumn("write_fenced", "BOOLEAN", false),
+                    makeColumn("queue_rebuild_completed", "BOOLEAN", false),
+                    makeColumn("warmup_mode", "VARCHAR", false),
+                    makeColumn("start_time", "BIGINT", true),
+                    makeColumn("end_time", "BIGINT", true),
+                };
+                definitions.push_back(std::move(recovery_status));
 
                 SqlViewSchemaDefinition snapshot_blockers{};
                 snapshot_blockers.view_name = "sb_mga_snapshot_blockers";
@@ -579,6 +1051,32 @@ namespace scratchbird::core
                 };
                 definitions.push_back(std::move(transaction_history));
 
+                SqlViewSchemaDefinition sweep_resume_status{};
+                sweep_resume_status.view_name = "sb_sweep_resume_status";
+                sweep_resume_status.schema_version = 1;
+                sweep_resume_status.purpose =
+                    "Current or latest sweep resume cursor and rewind decision surface.";
+                sweep_resume_status.columns = {
+                    makeColumn("sweep_generation", "BIGINT", false),
+                    makeColumn("relation_uuid", "UUID", false),
+                    makeColumn("filespace_uuid", "UUID", false),
+                    makeColumn("page_id", "BIGINT", false),
+                    makeColumn("slot_id", "INTEGER", false),
+                    makeColumn("checkpoint_generation_seen", "BIGINT", false),
+                    makeColumn("persist_time", "BIGINT", false),
+                    makeColumn("active", "BOOLEAN", false),
+                    makeColumn("stage", "INTEGER", false),
+                    makeColumn("resume_lane_mask", "INTEGER", false),
+                    makeColumn("resume_strict_audit", "BOOLEAN", false),
+                    makeColumn("start_horizon", "BIGINT", false),
+                    makeColumn("reclaimed_version_count", "BIGINT", false),
+                    makeColumn("reclaimed_bytes", "BIGINT", false),
+                    makeColumn("index_backlog_count", "BIGINT", false),
+                    makeColumn("cursor_crc32c", "BIGINT", false),
+                    makeColumn("resume_outcome", "VARCHAR", false),
+                };
+                definitions.push_back(std::move(sweep_resume_status));
+
                 SqlViewSchemaDefinition wait_history{};
                 wait_history.view_name = "sb_mga_wait_history";
                 wait_history.schema_version = 1;
@@ -596,6 +1094,28 @@ namespace scratchbird::core
                     makeColumn("observed_at_ms", "BIGINT", false),
                 };
                 definitions.push_back(std::move(wait_history));
+
+                SqlViewSchemaDefinition writeback_incidents{};
+                writeback_incidents.view_name = "sb_writeback_incidents";
+                writeback_incidents.schema_version = 1;
+                writeback_incidents.purpose =
+                    "Writeback incident history with queue, domain, and degraded-state attribution.";
+                writeback_incidents.columns = {
+                    makeColumn("incident_uuid", "UUID", false),
+                    makeColumn("filespace_uuid", "UUID", true),
+                    makeColumn("queue_kind", "VARCHAR", false),
+                    makeColumn("policy_domain", "VARCHAR", false),
+                    makeColumn("page_class", "BIGINT", false),
+                    makeColumn("failure_class", "VARCHAR", false),
+                    makeColumn("first_seen_time", "BIGINT", false),
+                    makeColumn("last_seen_time", "BIGINT", false),
+                    makeColumn("retry_count", "BIGINT", false),
+                    makeColumn("degraded_state", "VARCHAR", false),
+                    makeColumn("clearance_condition", "UUID", true),
+                    makeColumn("is_open", "BOOLEAN", false),
+                    makeColumn("last_error_status", "BIGINT", false),
+                };
+                definitions.push_back(std::move(writeback_incidents));
 
                 std::sort(definitions.begin(),
                           definitions.end(),
@@ -744,6 +1264,9 @@ namespace scratchbird::core
             "gc",
             "buf",
             "lock",
+            "checkpoint",
+            "recovery",
+            "writeback",
         };
 
         if (metric_name.size() < 6 || metric_name.substr(0, 3) != "sb_")
@@ -781,7 +1304,10 @@ namespace scratchbird::core
             "reason",
             "relation",
             "class",
+            "classification",
             "bucket",
+            "state",
+            "degraded_state",
             "wait_mode",
             "limbo_state",
             "le",
@@ -1185,6 +1711,57 @@ namespace scratchbird::core
             return status;
         }
 
+        std::vector<SqlCheckpointStatusRow> checkpoint_status_rows;
+        status = buildCheckpointStatusRows(db, checkpoint_status_rows);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<SqlCheckpointHistoryRow> checkpoint_history_rows;
+        status = buildCheckpointHistoryRows(db, checkpoint_history_rows);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<SqlRecoveryStatusRow> recovery_status_rows;
+        status = buildRecoveryStatusRows(db, recovery_status_rows);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<SqlRecoveryIncidentRow> recovery_incident_rows;
+        status = buildRecoveryIncidentRows(db, recovery_incident_rows);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        (void)recovery_incident_rows;
+
+        std::vector<SqlWritebackIncidentRow> writeback_incident_rows;
+        status = buildWritebackIncidentRows(db, writeback_incident_rows);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<SqlBufferWritebackDebtRow> writeback_debt_rows;
+        status = buildBufferWritebackDebtRows(db, writeback_debt_rows);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<SqlSweepResumeStatusRow> sweep_resume_rows;
+        status = buildSweepResumeStatusRows(db, sweep_resume_rows);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        (void)sweep_resume_rows;
+
         std::vector<SqlMgaWaitHistoryRow> wait_rows;
         status = buildMgaWaitHistoryRows(db, wait_rows);
         if (status != Status::OK)
@@ -1328,6 +1905,168 @@ namespace scratchbird::core
             "sb_tx_aborted_total", "counter", static_cast<double>(aborted_total),
             db_labels_json(), updated_at_ms});
 
+        if (!checkpoint_status_rows.empty())
+        {
+            const auto& checkpoint = checkpoint_status_rows.front();
+            add_row(SqlRuntimeMetricRow{
+                "sb_checkpoint_generation_current",
+                "gauge",
+                static_cast<double>(checkpoint.checkpoint_generation),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_checkpoint_state",
+                "gauge",
+                static_cast<double>(checkpoint.checkpoint_generation),
+                makeLabelsJson({{"db", db_uuid}, {"state", checkpoint.checkpoint_state}}),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_checkpoint_dirty_boundary_pages",
+                "gauge",
+                static_cast<double>(checkpoint.pages_target),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_checkpoint_flush_debt_pages",
+                "gauge",
+                static_cast<double>(checkpoint.captured_flush_debt_pages),
+                db_labels_json(),
+                updated_at_ms});
+
+            double checkpoint_duration_seconds = 0.0;
+            if (!checkpoint_history_rows.empty())
+            {
+                const auto& latest = checkpoint_history_rows.front();
+                const uint64_t end_time =
+                    latest.has_end_time ? latest.end_time : updated_at_ms * 1000;
+                if (end_time > latest.start_time)
+                {
+                    checkpoint_duration_seconds =
+                        microsToSeconds(end_time - latest.start_time);
+                }
+            }
+            add_row(SqlRuntimeMetricRow{
+                "sb_checkpoint_duration_seconds",
+                "gauge",
+                checkpoint_duration_seconds,
+                db_labels_json(),
+                updated_at_ms});
+        }
+
+        std::unordered_map<std::string, double> checkpoint_failures_by_reason;
+        for (const auto& row : checkpoint_history_rows)
+        {
+            if (row.has_failure_reason)
+            {
+                checkpoint_failures_by_reason[row.failure_reason] += 1.0;
+            }
+        }
+        for (const auto& [reason, count] : checkpoint_failures_by_reason)
+        {
+            add_row(SqlRuntimeMetricRow{
+                "sb_checkpoint_failed_total",
+                "counter",
+                count,
+                makeLabelsJson({{"db", db_uuid}, {"reason", reason}}),
+                updated_at_ms});
+        }
+
+        if (!recovery_status_rows.empty())
+        {
+            const auto& recovery = recovery_status_rows.front();
+            add_row(SqlRuntimeMetricRow{
+                "sb_recovery_generation_current",
+                "gauge",
+                static_cast<double>(recovery.recovery_generation),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_recovery_repair_required_pages",
+                "gauge",
+                static_cast<double>(recovery.repair_required_pages),
+                db_labels_json(),
+                updated_at_ms});
+
+            double recovery_duration_seconds = 0.0;
+            if (recovery.has_start_time)
+            {
+                const uint64_t end_time =
+                    recovery.has_end_time ? recovery.end_time : updated_at_ms * 1000;
+                if (end_time > recovery.start_time)
+                {
+                    recovery_duration_seconds =
+                        microsToSeconds(end_time - recovery.start_time);
+                }
+            }
+            add_row(SqlRuntimeMetricRow{
+                "sb_recovery_startup_seconds",
+                "gauge",
+                recovery_duration_seconds,
+                db_labels_json(),
+                updated_at_ms});
+        }
+
+        std::unordered_map<std::string, double> recovery_classifications;
+        if (CatalogManager* catalog = const_cast<CatalogManager*>(db.catalog_manager()))
+        {
+            std::vector<CatalogManager::RecoveryRunCatalogInfo> recovery_runs;
+            const Status recovery_status =
+                catalog->listRecoveryRunCatalogEntries(recovery_runs, nullptr);
+            if (recovery_status != Status::OK && recovery_status != Status::NOT_FOUND)
+            {
+                return recovery_status;
+            }
+            for (const auto& run : recovery_runs)
+            {
+                recovery_classifications[startupClassificationName(run.classification)] += 1.0;
+            }
+        }
+        for (const auto& [classification, count] : recovery_classifications)
+        {
+            add_row(SqlRuntimeMetricRow{
+                "sb_recovery_classification_total",
+                "counter",
+                count,
+                makeLabelsJson({{"db", db_uuid}, {"classification", classification}}),
+                updated_at_ms});
+        }
+
+        std::unordered_map<std::string, double> open_writeback_incidents;
+        std::unordered_map<std::string, double> writeback_age_seconds;
+        for (const auto& incident : writeback_incident_rows)
+        {
+            if (!incident.is_open)
+            {
+                continue;
+            }
+            open_writeback_incidents[incident.degraded_state] += 1.0;
+            if (incident.first_seen_time != 0 && updated_at_ms * 1000 > incident.first_seen_time)
+            {
+                const double age =
+                    microsToSeconds(updated_at_ms * 1000 - incident.first_seen_time);
+                auto& oldest = writeback_age_seconds[incident.degraded_state];
+                oldest = std::max(oldest, age);
+            }
+        }
+        for (const auto& [degraded_state, count] : open_writeback_incidents)
+        {
+            add_row(SqlRuntimeMetricRow{
+                "sb_writeback_incidents_open",
+                "gauge",
+                count,
+                makeLabelsJson({{"db", db_uuid}, {"degraded_state", degraded_state}}),
+                updated_at_ms});
+        }
+        for (const auto& [degraded_state, age] : writeback_age_seconds)
+        {
+            add_row(SqlRuntimeMetricRow{
+                "sb_writeback_incident_age_seconds",
+                "gauge",
+                age,
+                makeLabelsJson({{"db", db_uuid}, {"degraded_state", degraded_state}}),
+                updated_at_ms});
+        }
+
         double statement_restart_total = 0.0;
         for (const SqlMgaTransactionHistoryRow& row : history_rows)
         {
@@ -1386,6 +2125,17 @@ namespace scratchbird::core
         add_row(SqlRuntimeMetricRow{
             "sb_gc_sweep_generation", "gauge", static_cast<double>(sweep_generation),
             db_labels_json(), updated_at_ms});
+
+        if (!writeback_debt_rows.empty())
+        {
+            const auto& debt = writeback_debt_rows.front();
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_commit_fence_backlog",
+                "gauge",
+                static_cast<double>(debt.blocked_frame_count),
+                db_labels_json(),
+                updated_at_ms});
+        }
 
         CatalogManager* catalog = const_cast<CatalogManager*>(db.catalog_manager());
         StorageEngine* storage = const_cast<StorageEngine*>(db.storage_engine());
@@ -1861,6 +2611,473 @@ namespace scratchbird::core
                       }
                       return lhs.txid < rhs.txid;
                   });
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildCheckpointStatusRows(
+        const Database& db,
+        std::vector<SqlCheckpointStatusRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        BootstrapSystemStatePage state_page{};
+        Status status = readSystemStatePageLocal(db, &state_page);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        CheckpointTelemetryState checkpoint{};
+        loadCheckpointTelemetryState(state_page, &checkpoint);
+
+        CatalogManager* catalog = const_cast<CatalogManager*>(db.catalog_manager());
+        CatalogManager::CheckpointRunCatalogInfo latest{};
+        const bool has_latest = catalog != nullptr &&
+            catalog->getLatestCheckpointRunCatalogEntry(latest, nullptr) == Status::OK;
+
+        if (checkpoint.checkpoint_generation == 0 && !has_latest)
+        {
+            return Status::OK;
+        }
+
+        const bool prefer_history =
+            has_latest &&
+            (checkpoint.checkpoint_state == CheckpointLifecycleState::IDLE ||
+             latest.checkpoint_generation > checkpoint.checkpoint_generation);
+
+        SqlCheckpointStatusRow row{};
+        row.checkpoint_generation = prefer_history
+            ? latest.checkpoint_generation
+            : (checkpoint.checkpoint_generation != 0
+                   ? checkpoint.checkpoint_generation
+                   : latest.checkpoint_generation);
+        row.checkpoint_state = prefer_history
+            ? checkpointStateName(latest.checkpoint_state)
+            : checkpointStateName(checkpoint.checkpoint_state);
+        row.start_time = prefer_history
+            ? latest.start_time
+            : (checkpoint.checkpoint_start_time != 0
+                   ? checkpoint.checkpoint_start_time
+                   : (has_latest ? latest.start_time : 0));
+        row.dirty_generation_low_watermark =
+            prefer_history
+                ? latest.dirty_generation_low_watermark
+                : checkpoint.dirty_generation_low_watermark != 0
+                ? checkpoint.dirty_generation_low_watermark
+                : (has_latest ? latest.dirty_generation_low_watermark : 0);
+        row.dirty_generation_high_watermark =
+            prefer_history
+                ? row.dirty_generation_low_watermark
+                : checkpoint.dirty_generation_high_watermark != 0
+                ? checkpoint.dirty_generation_high_watermark
+                : row.dirty_generation_low_watermark;
+        row.pages_target = has_latest ? latest.pages_target : 0;
+        row.pages_remaining =
+            has_latest && latest.pages_target > latest.pages_flushed
+                ? latest.pages_target - latest.pages_flushed
+                : 0;
+        row.captured_flush_debt_pages =
+            !prefer_history && checkpoint.captured_flush_debt_pages != 0
+                ? checkpoint.captured_flush_debt_pages
+                : row.pages_remaining;
+        if (const auto* buffer_pool = db.buffer_pool())
+        {
+            const auto stats = buffer_pool->getStats();
+            row.blocked_frame_count = stats.mga_commit_fence_backlog;
+            if (row.pages_remaining == 0 &&
+                checkpoint.checkpoint_state != CheckpointLifecycleState::IDLE)
+            {
+                row.pages_remaining = buffer_pool->currentDirtyPageCount();
+            }
+        }
+        row.queue_rebuild_required = checkpoint.queue_rebuild_required;
+        const Status failure_reason =
+            !prefer_history && checkpoint.checkpoint_failure_reason != Status::OK
+                ? checkpoint.checkpoint_failure_reason
+                : (has_latest && latest.has_failure_reason ? latest.failure_reason : Status::OK);
+        row.has_failure_reason = failure_reason != Status::OK;
+        if (row.has_failure_reason)
+        {
+            row.failure_reason = statusName(failure_reason);
+        }
+
+        rows_out.push_back(std::move(row));
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildCheckpointHistoryRows(
+        const Database& db,
+        std::vector<SqlCheckpointHistoryRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        CatalogManager* catalog = const_cast<CatalogManager*>(db.catalog_manager());
+        if (catalog == nullptr)
+        {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::CheckpointRunCatalogInfo> history_rows;
+        const Status status =
+            catalog->listCheckpointRunCatalogEntries(history_rows, nullptr);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        rows_out.reserve(history_rows.size());
+        for (const auto& history : history_rows)
+        {
+            SqlCheckpointHistoryRow row{};
+            row.checkpoint_run_uuid = history.checkpoint_run_uuid.toString();
+            row.checkpoint_generation = history.checkpoint_generation;
+            row.checkpoint_state = checkpointStateName(history.checkpoint_state);
+            row.start_time = history.start_time;
+            row.has_end_time = history.has_end_time;
+            row.end_time = history.end_time;
+            row.dirty_generation_low_watermark = history.dirty_generation_low_watermark;
+            row.pages_target = history.pages_target;
+            row.pages_flushed = history.pages_flushed;
+            row.has_failure_reason = history.has_failure_reason;
+            if (history.has_failure_reason)
+            {
+                row.failure_reason = statusName(history.failure_reason);
+            }
+            rows_out.push_back(std::move(row));
+        }
+
+        std::sort(rows_out.begin(),
+                  rows_out.end(),
+                  [](const SqlCheckpointHistoryRow& lhs,
+                     const SqlCheckpointHistoryRow& rhs) {
+                      if (lhs.checkpoint_generation != rhs.checkpoint_generation)
+                      {
+                          return lhs.checkpoint_generation > rhs.checkpoint_generation;
+                      }
+                      if (lhs.start_time != rhs.start_time)
+                      {
+                          return lhs.start_time > rhs.start_time;
+                      }
+                      return lhs.checkpoint_run_uuid < rhs.checkpoint_run_uuid;
+                  });
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildRecoveryStatusRows(
+        const Database& db,
+        std::vector<SqlRecoveryStatusRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        const auto& startup = db.last_startup_reconciliation();
+        CatalogManager* catalog = const_cast<CatalogManager*>(db.catalog_manager());
+        CatalogManager::RecoveryRunCatalogInfo latest{};
+        const bool has_latest = catalog != nullptr &&
+            catalog->getLatestRecoveryRunCatalogEntry(latest, nullptr) == Status::OK;
+
+        BootstrapSystemStatePage state_page{};
+        Status status = readSystemStatePageLocal(db, &state_page);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        CheckpointTelemetryState checkpoint{};
+        loadCheckpointTelemetryState(state_page, &checkpoint);
+
+        SqlRecoveryStatusRow row{};
+        row.recovery_generation = has_latest ? latest.recovery_generation : db.startup_generation();
+        row.classification = startupClassificationName(
+            has_latest ? latest.classification : startup.classification);
+        row.startup_state = startupServiceStateName(
+            has_latest ? latest.degraded_state : startup.service_state);
+        row.normalized_transactions = has_latest
+            ? latest.normalized_transactions
+            : startup.tip_active_to_aborted + startup.tip_active_to_prepared +
+                  startup.stale_prepared_records_removed;
+        row.repair_required_pages = has_latest
+            ? latest.repair_required_pages
+            : static_cast<uint64_t>(startup.relinkable_chain_pages) +
+                  static_cast<uint64_t>(startup.cleanup_blocked_chain_pages) +
+                  static_cast<uint64_t>(startup.quarantinable_chain_pages) +
+                  static_cast<uint64_t>(startup.unrecoverable_chain_pages);
+        row.write_fenced =
+            db.write_admission_fenced() ||
+            startup.service_state == Database::StartupServiceState::WRITE_FENCED ||
+            (has_latest &&
+             latest.degraded_state == Database::StartupServiceState::WRITE_FENCED);
+        row.queue_rebuild_completed = !checkpoint.queue_rebuild_required;
+        row.warmup_mode = startupWarmupModeName(startup);
+        row.has_start_time = has_latest && latest.start_time != 0;
+        row.start_time = has_latest ? latest.start_time : 0;
+        row.has_end_time = has_latest && latest.has_end_time;
+        row.end_time = has_latest ? latest.end_time : 0;
+
+        rows_out.push_back(std::move(row));
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildRecoveryIncidentRows(
+        const Database& db,
+        std::vector<SqlRecoveryIncidentRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        CatalogManager* catalog = const_cast<CatalogManager*>(db.catalog_manager());
+        if (catalog == nullptr)
+        {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::RecoveryIncidentCatalogInfo> incidents;
+        const Status status =
+            catalog->listRecoveryIncidentCatalogEntries(incidents, nullptr);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        rows_out.reserve(incidents.size());
+        for (const auto& incident : incidents)
+        {
+            SqlRecoveryIncidentRow row{};
+            row.recovery_incident_uuid = incident.recovery_incident_uuid.toString();
+            row.recovery_generation = incident.recovery_generation;
+            row.classification = startupClassificationName(incident.classification);
+            row.has_checkpoint_generation = incident.has_checkpoint_generation;
+            row.checkpoint_generation = incident.checkpoint_generation;
+            row.has_object_uuid = incident.has_object_uuid;
+            row.object_uuid =
+                incident.has_object_uuid ? incident.object_uuid.toString() : std::string{};
+            row.has_details = incident.has_details;
+            row.details_json = incident.details_json;
+            row.created_time = incident.created_time;
+            rows_out.push_back(std::move(row));
+        }
+
+        std::sort(rows_out.begin(),
+                  rows_out.end(),
+                  [](const SqlRecoveryIncidentRow& lhs,
+                     const SqlRecoveryIncidentRow& rhs) {
+                      if (lhs.created_time != rhs.created_time)
+                      {
+                          return lhs.created_time > rhs.created_time;
+                      }
+                      return lhs.recovery_incident_uuid < rhs.recovery_incident_uuid;
+                  });
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildWritebackIncidentRows(
+        const Database& db,
+        std::vector<SqlWritebackIncidentRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        CatalogManager* catalog = const_cast<CatalogManager*>(db.catalog_manager());
+        if (catalog == nullptr)
+        {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::WritebackIncidentCatalogInfo> incidents;
+        const Status status =
+            catalog->listWritebackIncidentCatalogEntries(incidents, nullptr);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        rows_out.reserve(incidents.size());
+        for (const auto& incident : incidents)
+        {
+            SqlWritebackIncidentRow row{};
+            row.incident_uuid = incident.writeback_incident_uuid.toString();
+            row.has_filespace_uuid = incident.has_filespace_uuid;
+            row.filespace_uuid =
+                incident.has_filespace_uuid ? incident.filespace_uuid.toString() : std::string{};
+            row.queue_kind = writebackQueueKindName(incident.queue_kind);
+            row.policy_domain = writebackPolicyDomainName(incident.policy_domain);
+            row.page_class = incident.page_class;
+            row.failure_class = writebackFailureClassName(incident.failure_class);
+            row.first_seen_time = incident.first_seen_time;
+            row.last_seen_time = incident.last_seen_time;
+            row.retry_count = incident.retry_count;
+            row.degraded_state = writebackDegradedStateName(incident.degraded_state);
+            row.has_clearance_condition = incident.has_clearance_condition_uuid;
+            row.clearance_condition = incident.has_clearance_condition_uuid
+                ? incident.clearance_condition_uuid.toString()
+                : std::string{};
+            row.is_open = incident.is_open;
+            row.last_error_status = static_cast<int64_t>(incident.last_error_status);
+            rows_out.push_back(std::move(row));
+        }
+
+        std::sort(rows_out.begin(),
+                  rows_out.end(),
+                  [](const SqlWritebackIncidentRow& lhs,
+                     const SqlWritebackIncidentRow& rhs) {
+                      if (lhs.is_open != rhs.is_open)
+                      {
+                          return lhs.is_open && !rhs.is_open;
+                      }
+                      if (lhs.first_seen_time != rhs.first_seen_time)
+                      {
+                          return lhs.first_seen_time > rhs.first_seen_time;
+                      }
+                      return lhs.incident_uuid < rhs.incident_uuid;
+                  });
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildBufferWritebackDebtRows(
+        const Database& db,
+        std::vector<SqlBufferWritebackDebtRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        std::vector<SqlCheckpointStatusRow> checkpoint_rows;
+        Status status = buildCheckpointStatusRows(db, checkpoint_rows);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<SqlWritebackIncidentRow> incident_rows;
+        status = buildWritebackIncidentRows(db, incident_rows);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        BootstrapSystemStatePage state_page{};
+        status = readSystemStatePageLocal(db, &state_page);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        WritebackTelemetryState writeback{};
+        loadWritebackTelemetryState(state_page, &writeback);
+
+        SqlBufferWritebackDebtRow row{};
+        row.db_uuid = dbUuidString(db);
+        if (!checkpoint_rows.empty())
+        {
+            row.checkpoint_generation = checkpoint_rows.front().checkpoint_generation;
+            row.checkpoint_state = checkpoint_rows.front().checkpoint_state;
+            row.checkpoint_flush_debt_pages =
+                checkpoint_rows.front().captured_flush_debt_pages;
+            row.checkpoint_pages_remaining = checkpoint_rows.front().pages_remaining;
+            row.blocked_frame_count = checkpoint_rows.front().blocked_frame_count;
+        }
+        row.dirty_pages =
+            db.buffer_pool() ? db.buffer_pool()->currentDirtyPageCount() : 0;
+        row.write_admission_fenced = db.write_admission_fenced();
+        row.incident_open = writeback.incident_open;
+        row.retry_count = writeback.retry_count;
+        if (!incident_rows.empty() && incident_rows.front().is_open)
+        {
+            row.incident_open = true;
+            row.retry_count = incident_rows.front().retry_count;
+        }
+        row.reserve_exhaustion_risk = row.write_admission_fenced || row.incident_open;
+
+        rows_out.push_back(std::move(row));
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildSweepResumeStatusRows(
+        const Database& db,
+        std::vector<SqlSweepResumeStatusRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        CatalogManager* catalog = const_cast<CatalogManager*>(db.catalog_manager());
+        if (catalog == nullptr)
+        {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::SweepCursorStateCatalogInfo> sweep_rows;
+        const Status status =
+            catalog->listSweepCursorStateCatalogEntries(sweep_rows, nullptr);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+        if (sweep_rows.empty())
+        {
+            return Status::OK;
+        }
+
+        std::sort(sweep_rows.begin(),
+                  sweep_rows.end(),
+                  [](const CatalogManager::SweepCursorStateCatalogInfo& lhs,
+                     const CatalogManager::SweepCursorStateCatalogInfo& rhs) {
+                      if (lhs.persist_time != rhs.persist_time)
+                      {
+                          return lhs.persist_time > rhs.persist_time;
+                      }
+                      return lhs.sweep_generation > rhs.sweep_generation;
+                  });
+
+        BootstrapSystemStatePage state_page{};
+        Status read_status = readSystemStatePageLocal(db, &state_page);
+        if (read_status != Status::OK)
+        {
+            return read_status;
+        }
+
+        CheckpointTelemetryState checkpoint{};
+        loadCheckpointTelemetryState(state_page, &checkpoint);
+
+        const auto& latest = sweep_rows.front();
+        const auto& startup = db.last_startup_reconciliation();
+        const bool checkpoint_resume_safe =
+            (checkpoint.checkpoint_state == CheckpointLifecycleState::IDLE ||
+             checkpoint.checkpoint_state == CheckpointLifecycleState::COMPLETE) &&
+            !checkpoint.queue_rebuild_required &&
+            checkpoint.checkpoint_failure_reason == Status::OK &&
+            (checkpoint.checkpoint_generation == 0 ||
+             checkpoint.checkpoint_generation >= latest.checkpoint_generation_seen);
+        const bool recovery_resume_safe =
+            db.last_shutdown_was_clean() &&
+            startup.classification !=
+                Database::StartupRecoveryClassification::WRITEBACK_FAILURE_RESUME &&
+            startup.classification !=
+                Database::StartupRecoveryClassification::CATALOG_OR_CONTROL_DAMAGE_FATAL;
+
+        SqlSweepResumeStatusRow row{};
+        row.sweep_generation = latest.sweep_generation;
+        row.relation_uuid = latest.relation_uuid.toString();
+        row.filespace_uuid = latest.filespace_uuid.toString();
+        row.page_id = latest.page_id;
+        row.slot_id = latest.slot_id;
+        row.checkpoint_generation_seen = latest.checkpoint_generation_seen;
+        row.persist_time = latest.persist_time;
+        row.active = latest.active;
+        row.stage = latest.stage;
+        row.resume_lane_mask = latest.resume_lane_mask;
+        row.resume_strict_audit = latest.resume_strict_audit;
+        row.start_horizon = latest.start_horizon;
+        row.reclaimed_version_count = latest.reclaimed_version_count;
+        row.reclaimed_bytes = latest.reclaimed_bytes;
+        row.index_backlog_count = latest.index_backlog_count;
+        row.cursor_crc32c = latest.cursor_crc32c;
+        if (!latest.active && latest.page_id == 0)
+        {
+            row.resume_outcome = "complete";
+        }
+        else
+        {
+            row.resume_outcome =
+                checkpoint_resume_safe && recovery_resume_safe
+                    ? "resume_possible"
+                    : "rewind_required";
+        }
+
+        rows_out.push_back(std::move(row));
         return Status::OK;
     }
 

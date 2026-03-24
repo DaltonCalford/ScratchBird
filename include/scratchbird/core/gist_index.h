@@ -199,7 +199,8 @@ struct SBGiSTEntry
 
 #pragma pack(pop)
 
-static_assert(sizeof(SBGiSTPage) == 224, "GiST page header must be 224 bytes (80-byte PageHeader + 144 bytes)");
+static_assert(sizeof(SBGiSTPage) == sizeof(PageHeader) + 144,
+              "GiST page header must track PageHeader plus 144 bytes");
 static_assert(sizeof(SBGiSTEntry) == 40, "GiST entry fixed header must be 40 bytes");
 
 /**

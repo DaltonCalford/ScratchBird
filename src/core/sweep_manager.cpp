@@ -16,6 +16,7 @@
 #include "scratchbird/core/gc_manager.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/audit_logger.h"
+#include "scratchbird/core/gpid.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/heap_toast_lob_diagnostics.h"
 #include "scratchbird/core/logger.h"
@@ -42,26 +43,44 @@ namespace scratchbird::core
         constexpr const char* kWalAfterLogManifestMagic = "SB_WAL_AFTER_LOG_SEGMENT_v1";
         constexpr const char* kShadowCaptureProfileName = "__sweep_shadow_capture__";
         constexpr const char* kShadowCaptureManifestMagic = "SB_SHADOW_CAPTURE_MANIFEST_v1";
-        // Startup reconciliation owns reserved slots 0..14 on the system-state
-        // bootstrap page. Sweep progress must live in its own non-overlapping
-        // slot range so a fresh database never mistakes startup metadata for an
-        // in-flight sweep checkpoint.
-        constexpr size_t kSweepProgressSlotGeneration = 16;
-        constexpr size_t kSweepProgressSlotActive = 17;
-        constexpr size_t kSweepProgressSlotStartHorizon = 18;
-        constexpr size_t kSweepProgressSlotRelationHi = 19;
-        constexpr size_t kSweepProgressSlotRelationLo = 20;
-        constexpr size_t kSweepProgressSlotPageCursor = 21;
-        constexpr size_t kSweepProgressSlotReclaimedVersions = 22;
-        constexpr size_t kSweepProgressSlotReclaimedBytes = 23;
-        constexpr size_t kSweepProgressSlotIndexBacklog = 24;
-        constexpr size_t kSweepProgressSlotResumeMeta = 25;
-        constexpr uint64_t kSweepProgressStageShift = 60;
-        constexpr uint64_t kSweepProgressLaneShift = 52;
-        constexpr uint64_t kSweepProgressStrictShift = 51;
-        constexpr uint64_t kSweepProgressLaneMask = 0xFFULL;
-        constexpr uint64_t kSweepProgressResumeOitMask =
-            (uint64_t{1} << kSweepProgressStrictShift) - 1;
+        struct SweepCheckpointResumeState
+        {
+            uint64_t checkpoint_generation = 0;
+            CheckpointLifecycleState checkpoint_state = CheckpointLifecycleState::IDLE;
+            bool queue_rebuild_required = false;
+            Status checkpoint_failure_reason = Status::OK;
+        };
+
+#pragma pack(push, 1)
+        struct SweepProgressChecksumPayload
+        {
+            uint64_t version = SYSTEM_STATE_SWEEP_PROGRESS_VERSION;
+            uint64_t control = 0;
+            uint64_t sweep_generation = 0;
+            uint64_t relation_hi = 0;
+            uint64_t relation_lo = 0;
+            uint64_t filespace_hi = 0;
+            uint64_t filespace_lo = 0;
+            uint64_t page_id = 0;
+            uint64_t captured_oit = 0;
+            uint64_t captured_oat = 0;
+            uint64_t captured_ost = 0;
+            uint64_t checkpoint_generation_seen = 0;
+            uint64_t persist_time = 0;
+            uint64_t start_horizon = 0;
+            uint64_t reclaimed_version_count = 0;
+            uint64_t reclaimed_bytes = 0;
+            uint64_t index_backlog_count = 0;
+        };
+#pragma pack(pop)
+
+        constexpr uint64_t kSweepProgressControlActiveShift = 63;
+        constexpr uint64_t kSweepProgressControlStageShift = 59;
+        constexpr uint64_t kSweepProgressControlLaneShift = 43;
+        constexpr uint64_t kSweepProgressControlStrictShift = 42;
+        constexpr uint64_t kSweepProgressControlStageMask = 0x0FULL;
+        constexpr uint64_t kSweepProgressControlLaneMask = 0xFFFFULL;
+        constexpr uint64_t kSweepProgressControlSlotMask = 0xFFFFFFFFULL;
 
         bool isZeroIdLocal(const ID& id)
         {
@@ -103,6 +122,35 @@ namespace scratchbird::core
             }
         }
 
+        void loadSweepCheckpointResumeState(const BootstrapSystemStatePage& state_page,
+                                            SweepCheckpointResumeState* control_out)
+        {
+            if (control_out == nullptr)
+            {
+                return;
+            }
+
+            SweepCheckpointResumeState control{};
+            const uint64_t version =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_VERSION_SLOT];
+            if (version == 0)
+            {
+                control.checkpoint_generation = state_page.last_clean_shutdown_generation;
+                *control_out = control;
+                return;
+            }
+
+            control.checkpoint_generation =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_GENERATION_SLOT];
+            control.checkpoint_state = static_cast<CheckpointLifecycleState>(
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_STATE_SLOT]);
+            control.queue_rebuild_required =
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_QUEUE_REBUILD_SLOT] != 0;
+            control.checkpoint_failure_reason = static_cast<Status>(
+                state_page.reserved[SYSTEM_STATE_CHECKPOINT_FAILURE_REASON_SLOT]);
+            *control_out = control;
+        }
+
         auto encodeSweepPolicyLaneMask(const std::vector<SweepPolicyLane>& lanes) -> uint16_t
         {
             uint16_t mask = 0;
@@ -140,43 +188,94 @@ namespace scratchbird::core
             return lanes;
         }
 
-        auto packSweepProgressResumeMeta(SweepProgressStage stage,
-                                         uint16_t lane_mask,
-                                         bool strict_audit,
-                                         uint64_t resume_oit_before)
+        auto packSweepProgressControl(bool active,
+                                      SweepProgressStage stage,
+                                      uint16_t lane_mask,
+                                      bool strict_audit,
+                                      uint32_t slot_id)
             -> uint64_t
         {
-            return (static_cast<uint64_t>(stage) << kSweepProgressStageShift) |
-                   ((static_cast<uint64_t>(lane_mask) & kSweepProgressLaneMask)
-                    << kSweepProgressLaneShift) |
-                   ((strict_audit ? 1ULL : 0ULL) << kSweepProgressStrictShift) |
-                   (resume_oit_before & kSweepProgressResumeOitMask);
+            return ((active ? 1ULL : 0ULL) << kSweepProgressControlActiveShift) |
+                   ((static_cast<uint64_t>(stage) & kSweepProgressControlStageMask)
+                    << kSweepProgressControlStageShift) |
+                   ((static_cast<uint64_t>(lane_mask) & kSweepProgressControlLaneMask)
+                    << kSweepProgressControlLaneShift) |
+                   ((strict_audit ? 1ULL : 0ULL) << kSweepProgressControlStrictShift) |
+                   (static_cast<uint64_t>(slot_id) & kSweepProgressControlSlotMask);
         }
 
-        void unpackSweepProgressResumeMeta(uint64_t packed,
-                                           SweepProgressStage* stage_out,
-                                           uint16_t* lane_mask_out,
-                                           bool* strict_audit_out,
-                                           uint64_t* resume_oit_before_out)
+        void unpackSweepProgressControl(uint64_t packed,
+                                        bool* active_out,
+                                        SweepProgressStage* stage_out,
+                                        uint16_t* lane_mask_out,
+                                        bool* strict_audit_out,
+                                        uint32_t* slot_id_out)
         {
+            if (active_out != nullptr)
+            {
+                *active_out = ((packed >> kSweepProgressControlActiveShift) & 0x1ULL) != 0;
+            }
             if (stage_out != nullptr)
             {
                 *stage_out =
-                    decodeSweepProgressStage((packed >> kSweepProgressStageShift) & 0x0FULL);
+                    decodeSweepProgressStage((packed >> kSweepProgressControlStageShift) &
+                                             kSweepProgressControlStageMask);
             }
             if (lane_mask_out != nullptr)
             {
-                *lane_mask_out = static_cast<uint16_t>((packed >> kSweepProgressLaneShift) &
-                                                       kSweepProgressLaneMask);
+                *lane_mask_out = static_cast<uint16_t>(
+                    (packed >> kSweepProgressControlLaneShift) &
+                    kSweepProgressControlLaneMask);
             }
             if (strict_audit_out != nullptr)
             {
-                *strict_audit_out = ((packed >> kSweepProgressStrictShift) & 0x1ULL) != 0;
+                *strict_audit_out =
+                    ((packed >> kSweepProgressControlStrictShift) & 0x1ULL) != 0;
             }
-            if (resume_oit_before_out != nullptr)
+            if (slot_id_out != nullptr)
             {
-                *resume_oit_before_out = packed & kSweepProgressResumeOitMask;
+                *slot_id_out =
+                    static_cast<uint32_t>(packed & kSweepProgressControlSlotMask);
             }
+        }
+
+        auto computeSweepProgressChecksum(uint64_t control,
+                                          uint64_t sweep_generation,
+                                          uint64_t relation_hi,
+                                          uint64_t relation_lo,
+                                          uint64_t filespace_hi,
+                                          uint64_t filespace_lo,
+                                          uint64_t page_id,
+                                          uint64_t captured_oit,
+                                          uint64_t captured_oat,
+                                          uint64_t captured_ost,
+                                          uint64_t checkpoint_generation_seen,
+                                          uint64_t persist_time,
+                                          uint64_t start_horizon,
+                                          uint64_t reclaimed_version_count,
+                                          uint64_t reclaimed_bytes,
+                                          uint64_t index_backlog_count) -> uint32_t
+        {
+            SweepProgressChecksumPayload payload{};
+            payload.control = control;
+            payload.sweep_generation = sweep_generation;
+            payload.relation_hi = relation_hi;
+            payload.relation_lo = relation_lo;
+            payload.filespace_hi = filespace_hi;
+            payload.filespace_lo = filespace_lo;
+            payload.page_id = page_id;
+            payload.captured_oit = captured_oit;
+            payload.captured_oat = captured_oat;
+            payload.captured_ost = captured_ost;
+            payload.checkpoint_generation_seen = checkpoint_generation_seen;
+            payload.persist_time = persist_time;
+            payload.start_horizon = start_horizon;
+            payload.reclaimed_version_count = reclaimed_version_count;
+            payload.reclaimed_bytes = reclaimed_bytes;
+            payload.index_backlog_count = index_backlog_count;
+            return crc32cCompute(reinterpret_cast<const uint8_t*>(&payload),
+                                 sizeof(payload),
+                                 0u);
         }
 
         void encodeIdToSlots(const ID& id, uint64_t& hi_out, uint64_t& lo_out)
@@ -1220,22 +1319,94 @@ namespace scratchbird::core
             return Status::PAGE_CORRUPT;
         }
 
-        state_out->generation_id = state_page->reserved[kSweepProgressSlotGeneration];
-        state_out->active = state_page->reserved[kSweepProgressSlotActive] != 0;
-        state_out->start_horizon = state_page->reserved[kSweepProgressSlotStartHorizon];
-        state_out->last_relation_id = decodeIdFromSlots(
-            state_page->reserved[kSweepProgressSlotRelationHi],
-            state_page->reserved[kSweepProgressSlotRelationLo]);
-        state_out->last_page_cursor = state_page->reserved[kSweepProgressSlotPageCursor];
-        state_out->reclaimed_version_count =
-            state_page->reserved[kSweepProgressSlotReclaimedVersions];
-        state_out->reclaimed_bytes = state_page->reserved[kSweepProgressSlotReclaimedBytes];
-        state_out->index_backlog_count = state_page->reserved[kSweepProgressSlotIndexBacklog];
-        unpackSweepProgressResumeMeta(state_page->reserved[kSweepProgressSlotResumeMeta],
-                                      &state_out->stage,
-                                      &state_out->resume_lane_mask,
-                                      &state_out->resume_strict_audit,
-                                      &state_out->resume_oit_before);
+        const uint64_t version =
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_VERSION_SLOT];
+        if (version != 0 && version != SYSTEM_STATE_SWEEP_PROGRESS_VERSION)
+        {
+            buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+            LOG_WARNING(VACUUM,
+                        "Ignoring unsupported persisted sweep cursor version=%lu",
+                        version);
+            return Status::OK;
+        }
+
+        if (version == SYSTEM_STATE_SWEEP_PROGRESS_VERSION)
+        {
+            const uint64_t control =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CONTROL_SLOT];
+            const uint64_t relation_hi =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RELATION_HI_SLOT];
+            const uint64_t relation_lo =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RELATION_LO_SLOT];
+            const uint64_t filespace_hi =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_FILESPACE_HI_SLOT];
+            const uint64_t filespace_lo =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_FILESPACE_LO_SLOT];
+
+            state_out->sweep_generation =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_GENERATION_SLOT];
+            state_out->relation_uuid = decodeIdFromSlots(relation_hi, relation_lo);
+            state_out->filespace_uuid = decodeIdFromSlots(filespace_hi, filespace_lo);
+            state_out->page_id =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_PAGE_ID_SLOT];
+            state_out->captured_oit =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CAPTURED_OIT_SLOT];
+            state_out->captured_oat =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CAPTURED_OAT_SLOT];
+            state_out->captured_ost =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CAPTURED_OST_SLOT];
+            state_out->checkpoint_generation_seen =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CHECKPOINT_GENERATION_SLOT];
+            state_out->cursor_crc32c = static_cast<uint32_t>(
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CURSOR_CHECKSUM_SLOT]);
+            state_out->persist_time =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_PERSIST_TIME_SLOT];
+            state_out->start_horizon =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_START_HORIZON_SLOT];
+            state_out->reclaimed_version_count =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RECLAIMED_VERSIONS_SLOT];
+            state_out->reclaimed_bytes =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RECLAIMED_BYTES_SLOT];
+            state_out->index_backlog_count =
+                state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_SLOT];
+            unpackSweepProgressControl(control,
+                                       &state_out->active,
+                                       &state_out->stage,
+                                       &state_out->resume_lane_mask,
+                                       &state_out->resume_strict_audit,
+                                       &state_out->slot_id);
+
+            const uint32_t computed_crc = computeSweepProgressChecksum(
+                control,
+                state_out->sweep_generation,
+                relation_hi,
+                relation_lo,
+                filespace_hi,
+                filespace_lo,
+                state_out->page_id,
+                state_out->captured_oit,
+                state_out->captured_oat,
+                state_out->captured_ost,
+                state_out->checkpoint_generation_seen,
+                state_out->persist_time,
+                state_out->start_horizon,
+                state_out->reclaimed_version_count,
+                state_out->reclaimed_bytes,
+                state_out->index_backlog_count);
+            state_out->cursor_checksum_valid =
+                state_out->cursor_crc32c == computed_crc;
+            if (state_out->active && !state_out->cursor_checksum_valid)
+            {
+                LOG_WARNING(VACUUM,
+                            "Persisted sweep cursor checksum mismatch: stored=%u computed=%u generation=%lu stage=%u lane_mask=%u persist_time=%lu",
+                            state_out->cursor_crc32c,
+                            computed_crc,
+                            state_out->sweep_generation,
+                            static_cast<unsigned>(state_out->stage),
+                            static_cast<unsigned>(state_out->resume_lane_mask),
+                            state_out->persist_time);
+            }
+        }
 
         buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
 
@@ -1243,9 +1414,9 @@ namespace scratchbird::core
         {
             if (state_out->stage == SweepProgressStage::NONE)
             {
-                if (state_out->last_page_cursor != 0 || state_out->reclaimed_version_count != 0 ||
+                if (state_out->page_id != 0 || state_out->reclaimed_version_count != 0 ||
                     state_out->reclaimed_bytes != 0 || state_out->index_backlog_count != 0 ||
-                    !isZeroIdLocal(state_out->last_relation_id))
+                    !isZeroIdLocal(state_out->relation_uuid))
                 {
                     state_out->stage = SweepProgressStage::RECLAIM_PENDING;
                 }
@@ -1255,10 +1426,6 @@ namespace scratchbird::core
                 }
             }
 
-            if (state_out->resume_oit_before == 0 && txn_manager_ != nullptr)
-            {
-                state_out->resume_oit_before = txn_manager_->getOldestXid();
-            }
             if (state_out->resume_lane_mask == 0)
             {
                 state_out->resume_lane_mask =
@@ -1271,7 +1438,6 @@ namespace scratchbird::core
             state_out->stage = SweepProgressStage::NONE;
             state_out->resume_lane_mask = 0;
             state_out->resume_strict_audit = true;
-            state_out->resume_oit_before = 0;
         }
 
         return Status::OK;
@@ -1283,14 +1449,6 @@ namespace scratchbird::core
         if (buffer_pool_ == nullptr)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BufferPool not available");
-            return Status::INVALID_ARGUMENT;
-        }
-
-        if ((state.resume_oit_before & ~kSweepProgressResumeOitMask) != 0)
-        {
-            SET_ERROR_CONTEXT(ctx,
-                              Status::INVALID_ARGUMENT,
-                              "Sweep resume OIT exceeds checkpoint encoding capacity");
             return Status::INVALID_ARGUMENT;
         }
 
@@ -1312,22 +1470,64 @@ namespace scratchbird::core
 
         uint64_t relation_hi = 0;
         uint64_t relation_lo = 0;
-        encodeIdToSlots(state.last_relation_id, relation_hi, relation_lo);
-        state_page->reserved[kSweepProgressSlotGeneration] = state.generation_id;
-        state_page->reserved[kSweepProgressSlotActive] = state.active ? 1u : 0u;
-        state_page->reserved[kSweepProgressSlotStartHorizon] = state.start_horizon;
-        state_page->reserved[kSweepProgressSlotRelationHi] = relation_hi;
-        state_page->reserved[kSweepProgressSlotRelationLo] = relation_lo;
-        state_page->reserved[kSweepProgressSlotPageCursor] = state.last_page_cursor;
-        state_page->reserved[kSweepProgressSlotReclaimedVersions] =
+        uint64_t filespace_hi = 0;
+        uint64_t filespace_lo = 0;
+        encodeIdToSlots(state.relation_uuid, relation_hi, relation_lo);
+        encodeIdToSlots(state.filespace_uuid, filespace_hi, filespace_lo);
+
+        const uint64_t persist_time = currentSystemMicros();
+        const uint64_t control = packSweepProgressControl(state.active,
+                                                         state.stage,
+                                                         state.resume_lane_mask,
+                                                         state.resume_strict_audit,
+                                                         state.slot_id);
+        const uint32_t cursor_crc32c = computeSweepProgressChecksum(
+            control,
+            state.sweep_generation,
+            relation_hi,
+            relation_lo,
+            filespace_hi,
+            filespace_lo,
+            state.page_id,
+            state.captured_oit,
+            state.captured_oat,
+            state.captured_ost,
+            state.checkpoint_generation_seen,
+            persist_time,
+            state.start_horizon,
+            state.reclaimed_version_count,
+            state.reclaimed_bytes,
+            state.index_backlog_count);
+
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_VERSION_SLOT] =
+            SYSTEM_STATE_SWEEP_PROGRESS_VERSION;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CONTROL_SLOT] = control;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_GENERATION_SLOT] =
+            state.sweep_generation;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RELATION_HI_SLOT] = relation_hi;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RELATION_LO_SLOT] = relation_lo;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_FILESPACE_HI_SLOT] = filespace_hi;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_FILESPACE_LO_SLOT] = filespace_lo;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_PAGE_ID_SLOT] = state.page_id;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CAPTURED_OIT_SLOT] =
+            state.captured_oit;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CAPTURED_OAT_SLOT] =
+            state.captured_oat;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CAPTURED_OST_SLOT] =
+            state.captured_ost;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CHECKPOINT_GENERATION_SLOT] =
+            state.checkpoint_generation_seen;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CURSOR_CHECKSUM_SLOT] =
+            cursor_crc32c;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_PERSIST_TIME_SLOT] = persist_time;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_START_HORIZON_SLOT] =
+            state.start_horizon;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RECLAIMED_VERSIONS_SLOT] =
             state.reclaimed_version_count;
-        state_page->reserved[kSweepProgressSlotReclaimedBytes] = state.reclaimed_bytes;
-        state_page->reserved[kSweepProgressSlotIndexBacklog] = state.index_backlog_count;
-        state_page->reserved[kSweepProgressSlotResumeMeta] =
-            packSweepProgressResumeMeta(state.stage,
-                                        state.resume_lane_mask,
-                                        state.resume_strict_audit,
-                                        state.resume_oit_before);
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RECLAIMED_BYTES_SLOT] =
+            state.reclaimed_bytes;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_SLOT] =
+            state.index_backlog_count;
 
         if (db_ != nullptr && db_->mga_failpoint_manager() != nullptr)
         {
@@ -1343,6 +1543,243 @@ namespace scratchbird::core
         }
 
         buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, true, ctx);
+
+        if (db_ != nullptr && db_->catalog_manager() != nullptr)
+        {
+            CatalogManager::SweepCursorStateCatalogInfo history{};
+            history.sweep_generation = state.sweep_generation;
+            history.relation_uuid = state.relation_uuid;
+            history.filespace_uuid = state.filespace_uuid;
+            history.page_id = state.page_id;
+            history.slot_id = state.slot_id;
+            history.checkpoint_generation_seen = state.checkpoint_generation_seen;
+            history.persist_time = persist_time;
+            history.active = state.active;
+            history.stage = static_cast<uint8_t>(state.stage);
+            history.resume_lane_mask = state.resume_lane_mask;
+            history.resume_strict_audit = state.resume_strict_audit;
+            history.start_horizon = state.start_horizon;
+            history.reclaimed_version_count = state.reclaimed_version_count;
+            history.reclaimed_bytes = state.reclaimed_bytes;
+            history.index_backlog_count = state.index_backlog_count;
+            history.cursor_crc32c = cursor_crc32c;
+            ErrorContext history_ctx;
+            const Status history_status =
+                db_->catalog_manager()->appendSweepCursorStateCatalogEntry(history, &history_ctx);
+            if (history_status != Status::OK)
+            {
+                LOG_WARNING(VACUUM,
+                            "Failed to persist sweep cursor history row: %d (%s)",
+                            static_cast<int>(history_status),
+                            history_ctx.message.c_str());
+            }
+        }
+        return Status::OK;
+    }
+
+    Status SweepManager::validateSweepResumeState(SweepProgressState *state,
+                                                  bool *resume_compatible_out,
+                                                  uint64_t *rewind_page_cursor_out,
+                                                  ErrorContext *ctx) const
+    {
+        if (state == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "state cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (resume_compatible_out != nullptr)
+        {
+            *resume_compatible_out = false;
+        }
+        if (rewind_page_cursor_out != nullptr)
+        {
+            *rewind_page_cursor_out = 0;
+        }
+
+        if (!state->active)
+        {
+            return Status::OK;
+        }
+
+        auto computeRelationBoundaryCursor = [&]() -> uint64_t {
+            if (!state->cursor_checksum_valid || db_ == nullptr || db_->catalog_manager() == nullptr ||
+                isZeroIdLocal(state->relation_uuid))
+            {
+                state->relation_uuid = ID{};
+                state->filespace_uuid = ID{};
+                return 0;
+            }
+
+            CatalogManager::TableInfo table_info{};
+            ErrorContext table_ctx;
+            if (db_->catalog_manager()->getTable(state->relation_uuid, table_info, &table_ctx) !=
+                Status::OK)
+            {
+                state->relation_uuid = ID{};
+                state->filespace_uuid = ID{};
+                return 0;
+            }
+
+            state->filespace_uuid = table_info.tablespace_uuid;
+            if (getTablespaceID(table_info.root_gpid) != PRIMARY_TABLESPACE_ID)
+            {
+                return 0;
+            }
+
+            const uint64_t root_page = getPageNumber(table_info.root_gpid);
+            return root_page == 0 ? 0 : (root_page - 1);
+        };
+
+        auto requireRewind = [&](const char *reason) -> Status {
+            const uint64_t rewind_page = computeRelationBoundaryCursor();
+            if (rewind_page_cursor_out != nullptr)
+            {
+                *rewind_page_cursor_out = rewind_page;
+            }
+            LOG_WARNING(VACUUM,
+                        "Persisted sweep cursor requires rewind: generation=%lu reason=%s",
+                        state->sweep_generation,
+                        reason);
+            return Status::OK;
+        };
+
+        if (!state->cursor_checksum_valid)
+        {
+            return requireRewind("SWEEP_CURSOR_CHECKSUM_FAIL");
+        }
+
+        if (state->sweep_generation == 0 || state->captured_oit == 0 || state->captured_oat == 0 ||
+            state->captured_ost == 0)
+        {
+            return requireRewind("SWEEP_CURSOR_GENERATION_MISMATCH");
+        }
+
+        if (db_ == nullptr)
+        {
+            return requireRewind("SWEEP_CURSOR_GENERATION_MISMATCH");
+        }
+
+        const bool requires_cursor_scope_resume_validation =
+            state->page_id != 0 || !isZeroIdLocal(state->relation_uuid) ||
+            !isZeroIdLocal(state->filespace_uuid) ||
+            state->stage == SweepProgressStage::RECLAIM_PENDING;
+
+        const auto &startup = db_->last_startup_reconciliation();
+        if (requires_cursor_scope_resume_validation &&
+            (!db_->last_shutdown_was_clean() ||
+             startup.classification ==
+                 Database::StartupRecoveryClassification::WRITEBACK_FAILURE_RESUME ||
+             startup.classification ==
+                 Database::StartupRecoveryClassification::CATALOG_OR_CONTROL_DAMAGE_FATAL))
+        {
+            return requireRewind("SWEEP_CURSOR_REPAIR_REWIND_REQUIRED");
+        }
+
+        void *page_buffer = nullptr;
+        Status status = buffer_pool_->pinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *state_page = static_cast<BootstrapSystemStatePage *>(page_buffer);
+        if (state_page->page_header.page_type != PAGE_TYPE_SYSTEM_STATE ||
+            state_page->page_header.page_size != db_->page_size())
+        {
+            buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid system state bootstrap page");
+            return Status::PAGE_CORRUPT;
+        }
+
+        SweepCheckpointResumeState checkpoint{};
+        loadSweepCheckpointResumeState(*state_page, &checkpoint);
+        buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+
+        const bool checkpoint_state_completed =
+            checkpoint.checkpoint_state == CheckpointLifecycleState::IDLE ||
+            checkpoint.checkpoint_state == CheckpointLifecycleState::COMPLETE;
+        if (!checkpoint_state_completed ||
+            checkpoint.queue_rebuild_required ||
+            checkpoint.checkpoint_failure_reason != Status::OK ||
+            checkpoint.checkpoint_generation < state->checkpoint_generation_seen)
+        {
+            LOG_WARNING(VACUUM,
+                        "Persisted sweep cursor checkpoint gate rejected resume: current_generation=%lu seen_generation=%lu state=%u queue_rebuild=%d failure_reason=%d",
+                        checkpoint.checkpoint_generation,
+                        state->checkpoint_generation_seen,
+                        static_cast<unsigned>(checkpoint.checkpoint_state),
+                        checkpoint.queue_rebuild_required ? 1 : 0,
+                        static_cast<int>(checkpoint.checkpoint_failure_reason));
+            return requireRewind("SWEEP_CURSOR_REPAIR_REWIND_REQUIRED");
+        }
+
+        if (state->page_id != 0 && state->page_id >= db_->total_pages())
+        {
+            return requireRewind("SWEEP_CURSOR_GENERATION_MISMATCH");
+        }
+
+        if (db_->page_manager() != nullptr && state->page_id != 0 &&
+            !db_->page_manager()->isAllocated(static_cast<uint32_t>(state->page_id)))
+        {
+            return requireRewind("SWEEP_CURSOR_GENERATION_MISMATCH");
+        }
+
+        if (!isZeroIdLocal(state->relation_uuid))
+        {
+            CatalogManager::TableInfo table_info{};
+            ErrorContext table_ctx;
+            if (db_->catalog_manager() == nullptr ||
+                db_->catalog_manager()->getTable(state->relation_uuid, table_info, &table_ctx) !=
+                    Status::OK)
+            {
+                return requireRewind("SWEEP_CURSOR_GENERATION_MISMATCH");
+            }
+            if (table_info.tablespace_uuid != state->filespace_uuid)
+            {
+                return requireRewind("SWEEP_CURSOR_GENERATION_MISMATCH");
+            }
+        }
+
+        if (state->page_id != 0)
+        {
+            void *cursor_page = nullptr;
+            Status pin_status = buffer_pool_->pinPage(static_cast<uint32_t>(state->page_id),
+                                                      &cursor_page,
+                                                      ctx,
+                                                      BufferPool::AccessStrategy::Vacuum);
+            if (pin_status != Status::OK)
+            {
+                return pin_status;
+            }
+
+            auto *page_header = static_cast<PageHeader *>(cursor_page);
+            const auto repair_state = getPageRepairState(*page_header);
+            bool compatible = validatePageChecksum(static_cast<const uint8_t *>(cursor_page),
+                                                   db_->page_size()) &&
+                              page_header->page_type == PAGE_TYPE_HEAP &&
+                              (repair_state == PageRepairState::REPAIR_NONE ||
+                               repair_state == PageRepairState::REPAIR_COMPLETE);
+            if (compatible && !isZeroIdLocal(state->relation_uuid))
+            {
+                const auto *special = reinterpret_cast<const HeapPageSpecial *>(
+                    static_cast<const uint8_t *>(cursor_page) + db_->page_size() -
+                    sizeof(HeapPageSpecial));
+                compatible = special != nullptr && special->table_id == state->relation_uuid;
+            }
+
+            buffer_pool_->unpinPage(static_cast<uint32_t>(state->page_id), false, ctx);
+
+            if (!compatible)
+            {
+                return requireRewind("SWEEP_CURSOR_REPAIR_REWIND_REQUIRED");
+            }
+        }
+
+        if (resume_compatible_out != nullptr)
+        {
+            *resume_compatible_out = true;
+        }
         return Status::OK;
     }
 
@@ -1796,30 +2233,96 @@ namespace scratchbird::core
             sweep_in_progress_.store(false, std::memory_order_release);
             return s;
         }
+        const bool had_persisted_active_cursor = sweep_progress.active;
 
-        const bool resuming_incomplete = sweep_progress.active;
+        auto loadCheckpointGenerationSeen = [&](uint64_t *generation_out) -> Status {
+            if (generation_out == nullptr)
+            {
+                return Status::INVALID_ARGUMENT;
+            }
+
+            void *checkpoint_page = nullptr;
+            Status checkpoint_status =
+                buffer_pool_->pinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, &checkpoint_page, ctx);
+            if (checkpoint_status != Status::OK)
+            {
+                return checkpoint_status;
+            }
+
+            auto *state_page = static_cast<BootstrapSystemStatePage *>(checkpoint_page);
+            if (state_page->page_header.page_type != PAGE_TYPE_SYSTEM_STATE ||
+                state_page->page_header.page_size != db_->page_size())
+            {
+                buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::PAGE_CORRUPT,
+                                  "Invalid system state bootstrap page");
+                return Status::PAGE_CORRUPT;
+            }
+
+            SweepCheckpointResumeState checkpoint{};
+            loadSweepCheckpointResumeState(*state_page, &checkpoint);
+            *generation_out = checkpoint.checkpoint_generation;
+            buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+            return Status::OK;
+        };
+
+        bool resume_compatible = false;
+        uint64_t rewind_page_cursor = 0;
+        if (had_persisted_active_cursor)
+        {
+            s = validateSweepResumeState(&sweep_progress,
+                                         &resume_compatible,
+                                         &rewind_page_cursor,
+                                         ctx);
+            if (s != Status::OK)
+            {
+                sweep_in_progress_.store(false, std::memory_order_release);
+                return s;
+            }
+        }
+
+        uint64_t checkpoint_generation_seen = 0;
+        s = loadCheckpointGenerationSeen(&checkpoint_generation_seen);
+        if (s != Status::OK)
+        {
+            sweep_in_progress_.store(false, std::memory_order_release);
+            return s;
+        }
+
+        const bool rewinding_incompatible_cursor =
+            had_persisted_active_cursor && !resume_compatible;
+        const bool resuming_incomplete = had_persisted_active_cursor && resume_compatible;
         if (!resuming_incomplete)
         {
-            sweep_progress.generation_id++;
+            sweep_progress.sweep_generation++;
             sweep_progress.active = true;
             sweep_progress.start_horizon = horizons.heap_reclaim_horizon;
             if (sweep_progress.start_horizon == UINT64_MAX)
             {
                 sweep_progress.start_horizon = horizons.current_xid;
             }
-            sweep_progress.resume_oit_before = horizons.oldest_interesting_xid;
+            sweep_progress.captured_oit = horizons.oldest_interesting_xid;
+            sweep_progress.captured_oat = horizons.oldest_active_xid;
+            sweep_progress.captured_ost = horizons.oldest_snapshot_xid;
+            sweep_progress.checkpoint_generation_seen = checkpoint_generation_seen;
             sweep_progress.resume_lane_mask = encodeSweepPolicyLaneMask(active_binding.lanes);
             sweep_progress.resume_strict_audit = active_binding.strict_audit;
-            sweep_progress.last_relation_id = ID{};
-            sweep_progress.last_page_cursor = 0;
+            if (rewinding_incompatible_cursor)
+            {
+                sweep_progress.page_id = rewind_page_cursor;
+            }
+            else
+            {
+                sweep_progress.relation_uuid = ID{};
+                sweep_progress.filespace_uuid = ID{};
+                sweep_progress.page_id = 0;
+            }
+            sweep_progress.slot_id = 0;
             sweep_progress.reclaimed_version_count = 0;
             sweep_progress.reclaimed_bytes = 0;
             sweep_progress.index_backlog_count = 0;
             sweep_progress.stage = SweepProgressStage::LOCAL_EVIDENCE_PENDING;
-        }
-        else if (sweep_progress.resume_oit_before == 0)
-        {
-            sweep_progress.resume_oit_before = horizons.oldest_interesting_xid;
         }
 
         if (sweep_progress.resume_lane_mask == 0)
@@ -1836,12 +2339,12 @@ namespace scratchbird::core
             return s;
         }
 
-        const uint64_t sweep_oit_before = sweep_progress.resume_oit_before;
+        const uint64_t sweep_oit_before = sweep_progress.captured_oit;
         uint64_t new_oit = findFirstUncommittedTransaction(ctx);
         uint64_t sweep_oit_after = new_oit;
         if (sweep_oit_after == 0 && resuming_incomplete)
         {
-            sweep_oit_after = horizons.oldest_interesting_xid;
+            sweep_oit_after = txn_manager_->getOldestXid();
         }
 
         if (!resuming_incomplete && (sweep_oit_after == 0 || sweep_oit_after == sweep_oit_before))
@@ -1869,7 +2372,6 @@ namespace scratchbird::core
                              false);
 
             sweep_progress.active = false;
-            sweep_progress.resume_oit_before = 0;
             sweep_progress.stage = SweepProgressStage::NONE;
             (void)persistCheckpoint();
 
@@ -1879,7 +2381,7 @@ namespace scratchbird::core
 
         if (sweep_oit_after == 0)
         {
-            sweep_oit_after = horizons.oldest_interesting_xid;
+            sweep_oit_after = sweep_oit_before;
         }
 
         // 2. Update OIT in database header for a newly-started pass. Resumed
@@ -2156,9 +2658,9 @@ namespace scratchbird::core
         sweep_progress.active = false;
         sweep_progress.start_horizon =
             (sweep_progress.start_horizon == 0) ? sweep_oit_after : sweep_progress.start_horizon;
-        sweep_progress.resume_oit_before = 0;
         sweep_progress.resume_lane_mask = 0;
         sweep_progress.resume_strict_audit = true;
+        sweep_progress.slot_id = 0;
         sweep_progress.stage = SweepProgressStage::NONE;
         (void)persistCheckpoint();
 
@@ -2212,23 +2714,23 @@ namespace scratchbird::core
         GcManager gc(db_);
         const uint64_t total_pages = db_->total_pages();
         uint64_t start_page = 0;
-        if (progress->last_page_cursor != 0 && progress->last_page_cursor < total_pages)
+        if (progress->page_id != 0 && progress->page_id < total_pages)
         {
-            start_page = progress->last_page_cursor + 1;
+            start_page = progress->page_id + 1;
         }
 
         LOG_INFO(VACUUM,
                  "Starting foreground reclaim: generation=%lu, start_horizon=%lu, page_cursor=%lu, new_oit=%lu",
-                 progress->generation_id,
+                 progress->sweep_generation,
                  progress->start_horizon,
-                 progress->last_page_cursor,
+                 progress->page_id,
                  new_oit);
 
         for (uint64_t page_id = start_page; page_id < total_pages; ++page_id)
         {
             if (!db_->page_manager()->isAllocated(static_cast<uint32_t>(page_id)))
             {
-                progress->last_page_cursor = page_id;
+                progress->page_id = page_id;
                 Status persist_status = persistSweepProgressState(*progress, ctx);
                 if (persist_status != Status::OK)
                 {
@@ -2244,7 +2746,7 @@ namespace scratchbird::core
                                                       BufferPool::AccessStrategy::Vacuum);
             if (pin_status != Status::OK)
             {
-                progress->last_page_cursor = page_id;
+                progress->page_id = page_id;
                 Status persist_status = persistSweepProgressState(*progress, ctx);
                 if (persist_status != Status::OK)
                 {
@@ -2257,7 +2759,7 @@ namespace scratchbird::core
             if (page_header->page_type != PAGE_TYPE_HEAP)
             {
                 buffer_pool_->unpinPage(static_cast<uint32_t>(page_id), false, ctx);
-                progress->last_page_cursor = page_id;
+                progress->page_id = page_id;
                 Status persist_status = persistSweepProgressState(*progress, ctx);
                 if (persist_status != Status::OK)
                 {
@@ -2272,8 +2774,15 @@ namespace scratchbird::core
             buffer_pool_->unpinPage(static_cast<uint32_t>(page_id), false, ctx);
 
             GcStats page_stats;
+            HeapReclaimPublicationContext publication_ctx{};
+            publication_ctx.sweep_generation = progress->sweep_generation;
+            publication_ctx.checkpoint_generation = progress->checkpoint_generation_seen;
             ErrorContext page_ctx;
-            Status gc_status = gc.gcPage(table_id, static_cast<uint32_t>(page_id), &page_stats, &page_ctx);
+            Status gc_status = gc.gcPage(table_id,
+                                         static_cast<uint32_t>(page_id),
+                                         &page_stats,
+                                         &page_ctx,
+                                         &publication_ctx);
             if (gc_status == Status::DATA_CORRUPTED || gc_status == Status::PAGE_CORRUPT)
             {
                 LOG_WARNING(VACUUM,
@@ -2287,13 +2796,33 @@ namespace scratchbird::core
             }
             else
             {
-                progress->last_relation_id = table_id;
+                progress->relation_uuid = table_id;
+                if (db_->catalog_manager() != nullptr && table_id != ID{})
+                {
+                    CatalogManager::TableInfo table_info{};
+                    ErrorContext table_ctx;
+                    if (db_->catalog_manager()->getTable(table_id, table_info, &table_ctx) ==
+                        Status::OK)
+                    {
+                        progress->filespace_uuid = table_info.tablespace_uuid;
+                    }
+                    else
+                    {
+                        progress->filespace_uuid = ID{};
+                    }
+                }
+                else
+                {
+                    progress->filespace_uuid = ID{};
+                }
                 progress->reclaimed_version_count +=
                     page_stats.dead_tuples_removed + page_stats.version_chains_pruned;
                 progress->reclaimed_bytes += page_stats.free_space_recovered;
+                progress->index_backlog_count += page_stats.index_backlog_count;
             }
 
-            progress->last_page_cursor = page_id;
+            progress->page_id = page_id;
+            progress->slot_id = 0;
             Status persist_status = persistSweepProgressState(*progress, ctx);
             if (persist_status != Status::OK)
             {

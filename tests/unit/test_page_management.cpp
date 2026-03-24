@@ -85,18 +85,19 @@ TEST_F(PageManagementTest, PageAllocation)
     // Initial state: catalog creates many pages during initialization
     // The exact count depends on catalog structures created
     uint32_t initial_pages = pm->totalPages();
+    uint32_t initial_free_pages = pm->freePages();
     EXPECT_GT(initial_pages, 0);  // Should have some pages
-    EXPECT_EQ(pm->freePages(), 0); // No free pages initially
+    EXPECT_EQ(pm->ordinaryFreePages(), 0u);
+    EXPECT_EQ(initial_free_pages, pm->emergencyReservePages());
 
     // Allocate a new page
     uint32_t page_id;
     ASSERT_EQ(pm->allocatePage(page_id, &ctx), Status::OK);
-    EXPECT_EQ(page_id, initial_pages); // Should be next page after initial
-
     // Verify allocation
     EXPECT_TRUE(pm->isAllocated(page_id));
     EXPECT_EQ(pm->totalPages(), initial_pages + 1); // File extended by 1
-    EXPECT_EQ(pm->freePages(), 0);  // New page was allocated
+    EXPECT_EQ(pm->freePages(), initial_free_pages);
+    EXPECT_EQ(pm->ordinaryFreePages(), 0u);
 }
 
 // Page freeing test - unchanged
@@ -109,6 +110,7 @@ TEST_F(PageManagementTest, PageFreeing)
     ASSERT_EQ(db.open(pm_path(), &ctx), Status::OK);
 
     PageManager *pm = db.page_manager();
+    const uint32_t baseline_free_pages = pm->freePages();
 
     // Allocate a page
     uint32_t page_id;
@@ -117,7 +119,7 @@ TEST_F(PageManagementTest, PageFreeing)
     // Free it
     ASSERT_EQ(pm->freePage(page_id, &ctx), Status::OK);
     EXPECT_FALSE(pm->isAllocated(page_id));
-    EXPECT_EQ(pm->freePages(), 1);
+    EXPECT_EQ(pm->freePages(), baseline_free_pages + 1);
 
     // Allocate again - should reuse freed page
     uint32_t reused_id;
@@ -246,6 +248,7 @@ TEST_F(PageManagementTest, BufferPoolDirtyPages)
 
     BufferPool *bp = db.buffer_pool();
     PageManager *pm = db.page_manager();
+    const uint32_t baseline_free_pages = pm->freePages();
 
     // Allocate a new page
     uint32_t page_id;
@@ -335,6 +338,7 @@ TEST_F(PageManagementTest, LargePageAllocation)
     ASSERT_EQ(db.open(pm_path(), &ctx), Status::OK);
 
     PageManager *pm = db.page_manager();
+    const uint32_t baseline_free_pages = pm->freePages();
 
     // Allocate 100 pages
     std::vector<uint32_t> pages;
@@ -352,7 +356,7 @@ TEST_F(PageManagementTest, LargePageAllocation)
         ASSERT_EQ(pm->freePage(pages[i]), Status::OK);
     }
 
-    EXPECT_EQ(pm->freePages(), 50);
+    EXPECT_EQ(pm->freePages(), baseline_free_pages + 50);
 
     // Allocate 50 more - should reuse freed pages
     for (int i = 0; i < 50; i++)
@@ -372,4 +376,6 @@ TEST_F(PageManagementTest, LargePageAllocation)
         }
         EXPECT_TRUE(is_reused) << "Should reuse freed pages";
     }
+
+    EXPECT_EQ(pm->freePages(), baseline_free_pages);
 }

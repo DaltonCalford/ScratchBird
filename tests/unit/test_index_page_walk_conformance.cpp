@@ -46,7 +46,7 @@ auto makeIndexPage(uint32_t page_id, const ID &index_uuid, uint16_t page_type, u
     idx->reserved = 0u;
     setIndexPageHeaderUuid(*idx, index_uuid);
 
-    header->checksum = calculatePageChecksum(page.data(), static_cast<uint32_t>(page.size()));
+    preparePageForWrite(page.data(), static_cast<uint32_t>(page.size()), page_id);
     return page;
 }
 

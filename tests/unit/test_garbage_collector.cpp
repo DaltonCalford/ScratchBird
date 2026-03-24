@@ -45,10 +45,221 @@ using namespace scratchbird::core;
 
 namespace
 {
-    constexpr size_t kSweepProgressSlotGeneration = 16;
-    constexpr size_t kSweepProgressSlotActive = 17;
-    constexpr size_t kSweepProgressSlotStartHorizon = 18;
-    constexpr size_t kSweepProgressSlotPageCursor = 21;
+    struct PersistedSweepStateForTest
+    {
+        uint64_t sweep_generation = 0;
+        bool active = false;
+        SweepProgressStage stage = SweepProgressStage::NONE;
+        uint16_t lane_mask = 0;
+        bool strict_audit = true;
+        ID relation_uuid{};
+        ID filespace_uuid{};
+        uint64_t page_id = 0;
+        uint32_t slot_id = 0;
+        uint64_t captured_oit = 0;
+        uint64_t captured_oat = 0;
+        uint64_t captured_ost = 0;
+        uint64_t checkpoint_generation_seen = 0;
+        uint64_t persist_time = 0;
+        uint64_t start_horizon = 0;
+        uint64_t reclaimed_version_count = 0;
+        uint64_t reclaimed_bytes = 0;
+        uint64_t index_backlog_count = 0;
+        uint32_t cursor_crc32c = 0;
+    };
+
+    constexpr uint64_t kSweepProgressControlActiveShift = 63;
+    constexpr uint64_t kSweepProgressControlStageShift = 59;
+    constexpr uint64_t kSweepProgressControlLaneShift = 43;
+    constexpr uint64_t kSweepProgressControlStrictShift = 42;
+    constexpr uint64_t kSweepProgressControlStageMask = 0x0FULL;
+    constexpr uint64_t kSweepProgressControlLaneMask = 0xFFFFULL;
+    constexpr uint64_t kSweepProgressControlSlotMask = 0xFFFFFFFFULL;
+
+    void encodeIdToSlotsForTest(const ID& id, uint64_t& hi_out, uint64_t& lo_out)
+    {
+        std::memcpy(&hi_out, id.bytes.data(), sizeof(uint64_t));
+        std::memcpy(&lo_out, id.bytes.data() + sizeof(uint64_t), sizeof(uint64_t));
+    }
+
+    auto decodeIdFromSlotsForTest(uint64_t hi, uint64_t lo) -> ID
+    {
+        ID id{};
+        std::memcpy(id.bytes.data(), &hi, sizeof(uint64_t));
+        std::memcpy(id.bytes.data() + sizeof(uint64_t), &lo, sizeof(uint64_t));
+        return id;
+    }
+
+    auto packSweepProgressControlForTest(bool active,
+                                         SweepProgressStage stage,
+                                         uint16_t lane_mask,
+                                         bool strict_audit,
+                                         uint32_t slot_id) -> uint64_t
+    {
+        return ((active ? 1ULL : 0ULL) << kSweepProgressControlActiveShift) |
+               ((static_cast<uint64_t>(stage) & kSweepProgressControlStageMask)
+                << kSweepProgressControlStageShift) |
+               ((static_cast<uint64_t>(lane_mask) & kSweepProgressControlLaneMask)
+                << kSweepProgressControlLaneShift) |
+               ((strict_audit ? 1ULL : 0ULL) << kSweepProgressControlStrictShift) |
+               (static_cast<uint64_t>(slot_id) & kSweepProgressControlSlotMask);
+    }
+
+#pragma pack(push, 1)
+    struct SweepProgressChecksumPayloadForTest
+    {
+        uint64_t version = SYSTEM_STATE_SWEEP_PROGRESS_VERSION;
+        uint64_t control = 0;
+        uint64_t sweep_generation = 0;
+        uint64_t relation_hi = 0;
+        uint64_t relation_lo = 0;
+        uint64_t filespace_hi = 0;
+        uint64_t filespace_lo = 0;
+        uint64_t page_id = 0;
+        uint64_t captured_oit = 0;
+        uint64_t captured_oat = 0;
+        uint64_t captured_ost = 0;
+        uint64_t checkpoint_generation_seen = 0;
+        uint64_t persist_time = 0;
+        uint64_t start_horizon = 0;
+        uint64_t reclaimed_version_count = 0;
+        uint64_t reclaimed_bytes = 0;
+        uint64_t index_backlog_count = 0;
+    };
+#pragma pack(pop)
+
+    auto computeSweepProgressChecksumForTest(const PersistedSweepStateForTest& state) -> uint32_t
+    {
+        uint64_t relation_hi = 0;
+        uint64_t relation_lo = 0;
+        uint64_t filespace_hi = 0;
+        uint64_t filespace_lo = 0;
+        encodeIdToSlotsForTest(state.relation_uuid, relation_hi, relation_lo);
+        encodeIdToSlotsForTest(state.filespace_uuid, filespace_hi, filespace_lo);
+
+        SweepProgressChecksumPayloadForTest payload{};
+        payload.control = packSweepProgressControlForTest(state.active,
+                                                          state.stage,
+                                                          state.lane_mask,
+                                                          state.strict_audit,
+                                                          state.slot_id);
+        payload.sweep_generation = state.sweep_generation;
+        payload.relation_hi = relation_hi;
+        payload.relation_lo = relation_lo;
+        payload.filespace_hi = filespace_hi;
+        payload.filespace_lo = filespace_lo;
+        payload.page_id = state.page_id;
+        payload.captured_oit = state.captured_oit;
+        payload.captured_oat = state.captured_oat;
+        payload.captured_ost = state.captured_ost;
+        payload.checkpoint_generation_seen = state.checkpoint_generation_seen;
+        payload.persist_time = state.persist_time;
+        payload.start_horizon = state.start_horizon;
+        payload.reclaimed_version_count = state.reclaimed_version_count;
+        payload.reclaimed_bytes = state.reclaimed_bytes;
+        payload.index_backlog_count = state.index_backlog_count;
+        return crc32cCompute(reinterpret_cast<const uint8_t*>(&payload), sizeof(payload), 0u);
+    }
+
+    void writePersistedSweepStateForTest(BootstrapSystemStatePage* state_page,
+                                         const PersistedSweepStateForTest& state)
+    {
+        uint64_t relation_hi = 0;
+        uint64_t relation_lo = 0;
+        uint64_t filespace_hi = 0;
+        uint64_t filespace_lo = 0;
+        encodeIdToSlotsForTest(state.relation_uuid, relation_hi, relation_lo);
+        encodeIdToSlotsForTest(state.filespace_uuid, filespace_hi, filespace_lo);
+
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_VERSION_SLOT] =
+            SYSTEM_STATE_SWEEP_PROGRESS_VERSION;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CONTROL_SLOT] =
+            packSweepProgressControlForTest(state.active,
+                                           state.stage,
+                                           state.lane_mask,
+                                           state.strict_audit,
+                                           state.slot_id);
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_GENERATION_SLOT] =
+            state.sweep_generation;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RELATION_HI_SLOT] = relation_hi;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RELATION_LO_SLOT] = relation_lo;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_FILESPACE_HI_SLOT] = filespace_hi;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_FILESPACE_LO_SLOT] = filespace_lo;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_PAGE_ID_SLOT] = state.page_id;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CAPTURED_OIT_SLOT] =
+            state.captured_oit;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CAPTURED_OAT_SLOT] =
+            state.captured_oat;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CAPTURED_OST_SLOT] =
+            state.captured_ost;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CHECKPOINT_GENERATION_SLOT] =
+            state.checkpoint_generation_seen;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_PERSIST_TIME_SLOT] =
+            state.persist_time;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_START_HORIZON_SLOT] =
+            state.start_horizon;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RECLAIMED_VERSIONS_SLOT] =
+            state.reclaimed_version_count;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RECLAIMED_BYTES_SLOT] =
+            state.reclaimed_bytes;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_SLOT] =
+            state.index_backlog_count;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CURSOR_CHECKSUM_SLOT] =
+            state.cursor_crc32c;
+    }
+
+    void finalizeRawPageForWrite(std::vector<uint8_t>& page, uint32_t page_size, uint32_t page_id)
+    {
+        preparePageForWrite(page.data(), page_size, page_id);
+    }
+
+    auto readPersistedSweepStateForTest(const BootstrapSystemStatePage* state_page)
+        -> PersistedSweepStateForTest
+    {
+        PersistedSweepStateForTest state{};
+        state.sweep_generation =
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_GENERATION_SLOT];
+        const uint64_t control =
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CONTROL_SLOT];
+        state.active = ((control >> kSweepProgressControlActiveShift) & 0x1ULL) != 0;
+        state.stage = static_cast<SweepProgressStage>(
+            (control >> kSweepProgressControlStageShift) &
+            kSweepProgressControlStageMask);
+        state.lane_mask = static_cast<uint16_t>(
+            (control >> kSweepProgressControlLaneShift) &
+            kSweepProgressControlLaneMask);
+        state.strict_audit =
+            ((control >> kSweepProgressControlStrictShift) & 0x1ULL) != 0;
+        state.slot_id = static_cast<uint32_t>(control & kSweepProgressControlSlotMask);
+        state.relation_uuid = decodeIdFromSlotsForTest(
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RELATION_HI_SLOT],
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RELATION_LO_SLOT]);
+        state.filespace_uuid = decodeIdFromSlotsForTest(
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_FILESPACE_HI_SLOT],
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_FILESPACE_LO_SLOT]);
+        state.page_id = state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_PAGE_ID_SLOT];
+        state.captured_oit =
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CAPTURED_OIT_SLOT];
+        state.captured_oat =
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CAPTURED_OAT_SLOT];
+        state.captured_ost =
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CAPTURED_OST_SLOT];
+        state.checkpoint_generation_seen =
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CHECKPOINT_GENERATION_SLOT];
+        state.persist_time =
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_PERSIST_TIME_SLOT];
+        state.start_horizon =
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_START_HORIZON_SLOT];
+        state.reclaimed_version_count =
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RECLAIMED_VERSIONS_SLOT];
+        state.reclaimed_bytes =
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RECLAIMED_BYTES_SLOT];
+        state.index_backlog_count =
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_SLOT];
+        state.cursor_crc32c = static_cast<uint32_t>(
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CURSOR_CHECKSUM_SLOT]);
+        return state;
+    }
 
     auto buildTuple(const uint8_t *payload, size_t payload_size) -> std::vector<uint8_t>
     {
@@ -338,8 +549,8 @@ TEST_F(GarbageCollectorTest, SweepPersistsCanonicalHeapReclaimStartHorizon)
     ASSERT_TRUE(readRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
     const auto* state_page =
         reinterpret_cast<const BootstrapSystemStatePage*>(raw_page.data());
-    EXPECT_EQ(state_page->reserved[kSweepProgressSlotStartHorizon],
-              expected.heap_reclaim_horizon);
+    const auto persisted = readPersistedSweepStateForTest(state_page);
+    EXPECT_EQ(persisted.start_horizon, expected.heap_reclaim_horizon);
 }
 
 // ========== Dirty Page Tracking Tests ==========
@@ -914,11 +1125,21 @@ TEST_F(GarbageCollectorTest, SweepResumeStateSurvivesRestartAndReusesGeneration)
     std::vector<uint8_t> raw_page;
     ASSERT_TRUE(readRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
     auto *state_page = reinterpret_cast<BootstrapSystemStatePage *>(raw_page.data());
-    state_page->reserved[kSweepProgressSlotGeneration] = 7;
-    state_page->reserved[kSweepProgressSlotActive] = 1;
-    state_page->reserved[kSweepProgressSlotStartHorizon] = 1234;
-    state_page->reserved[kSweepProgressSlotPageCursor] = 55;
-    state_page->page_header.checksum = calculatePageChecksum(raw_page.data(), db.page_size());
+    PersistedSweepStateForTest persisted_seed{};
+    persisted_seed.sweep_generation = 7;
+    persisted_seed.active = true;
+    persisted_seed.stage = SweepProgressStage::LOCAL_EVIDENCE_PENDING;
+    persisted_seed.lane_mask =
+        static_cast<uint16_t>(uint16_t{1} << static_cast<uint8_t>(SweepPolicyLane::NORMAL));
+    persisted_seed.strict_audit = true;
+    persisted_seed.captured_oit = 1;
+    persisted_seed.captured_oat = 1;
+    persisted_seed.captured_ost = 1;
+    persisted_seed.persist_time = 123456;
+    persisted_seed.start_horizon = 1234;
+    persisted_seed.cursor_crc32c = computeSweepProgressChecksumForTest(persisted_seed);
+    writePersistedSweepStateForTest(state_page, persisted_seed);
+    finalizeRawPageForWrite(raw_page, db.page_size(), BOOTSTRAP_PAGE_SYSTEM_STATE);
     ASSERT_TRUE(writeRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
 
     ErrorContext ctx;
@@ -932,10 +1153,126 @@ TEST_F(GarbageCollectorTest, SweepResumeStateSurvivesRestartAndReusesGeneration)
     raw_page.clear();
     ASSERT_TRUE(readRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
     state_page = reinterpret_cast<BootstrapSystemStatePage *>(raw_page.data());
-    EXPECT_EQ(state_page->reserved[kSweepProgressSlotGeneration], 7u);
-    EXPECT_EQ(state_page->reserved[kSweepProgressSlotActive], 0u);
-    EXPECT_EQ(state_page->reserved[kSweepProgressSlotStartHorizon], 1234u);
-    EXPECT_EQ(state_page->reserved[kSweepProgressSlotPageCursor], 55u);
+    const auto persisted = readPersistedSweepStateForTest(state_page);
+    EXPECT_EQ(persisted.sweep_generation, 7u);
+    EXPECT_FALSE(persisted.active);
+    EXPECT_EQ(persisted.start_horizon, 1234u);
+    EXPECT_EQ(persisted.page_id, 0u);
+}
+
+TEST_F(GarbageCollectorTest, SweepInvalidCursorChecksumStartsFreshGeneration)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    db.close();
+
+    std::vector<uint8_t> raw_page;
+    ASSERT_TRUE(readRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
+    auto *state_page = reinterpret_cast<BootstrapSystemStatePage *>(raw_page.data());
+    PersistedSweepStateForTest persisted_seed{};
+    persisted_seed.sweep_generation = 7;
+    persisted_seed.active = true;
+    persisted_seed.stage = SweepProgressStage::LOCAL_EVIDENCE_PENDING;
+    persisted_seed.lane_mask =
+        static_cast<uint16_t>(uint16_t{1} << static_cast<uint8_t>(SweepPolicyLane::NORMAL));
+    persisted_seed.strict_audit = true;
+    persisted_seed.captured_oit = 1;
+    persisted_seed.captured_oat = 1;
+    persisted_seed.captured_ost = 1;
+    persisted_seed.persist_time = 654321;
+    persisted_seed.start_horizon = 4321;
+    persisted_seed.page_id = 55;
+    persisted_seed.cursor_crc32c = computeSweepProgressChecksumForTest(persisted_seed) + 1;
+    writePersistedSweepStateForTest(state_page, persisted_seed);
+    finalizeRawPageForWrite(raw_page, db.page_size(), BOOTSTRAP_PAGE_SYSTEM_STATE);
+    ASSERT_TRUE(writeRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
+
+    ErrorContext ctx;
+    ASSERT_EQ(db.open(test_db_->path(), &ctx), Status::OK) << ctx.message;
+    auto sweep_mgr = db.sweep_manager();
+    ASSERT_NE(sweep_mgr, nullptr);
+    ASSERT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::OK) << ctx.message;
+
+    db.close();
+    raw_page.clear();
+    ASSERT_TRUE(readRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
+    state_page = reinterpret_cast<BootstrapSystemStatePage *>(raw_page.data());
+    const auto persisted = readPersistedSweepStateForTest(state_page);
+    EXPECT_EQ(persisted.sweep_generation, 8u);
+    EXPECT_FALSE(persisted.active);
+    EXPECT_EQ(persisted.page_id, 0u);
+}
+
+TEST_F(GarbageCollectorTest, SweepDirtyRestartRewindsPersistedCursorAndStartsFreshGeneration)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    db.close();
+
+    std::vector<uint8_t> raw_page;
+    ASSERT_TRUE(readRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
+    auto *state_page = reinterpret_cast<BootstrapSystemStatePage *>(raw_page.data());
+    PersistedSweepStateForTest persisted_seed{};
+    persisted_seed.sweep_generation = 7;
+    persisted_seed.active = true;
+    persisted_seed.stage = SweepProgressStage::LOCAL_EVIDENCE_PENDING;
+    persisted_seed.lane_mask =
+        static_cast<uint16_t>(uint16_t{1} << static_cast<uint8_t>(SweepPolicyLane::NORMAL));
+    persisted_seed.strict_audit = true;
+    persisted_seed.captured_oit = 1;
+    persisted_seed.captured_oat = 1;
+    persisted_seed.captured_ost = 1;
+    persisted_seed.persist_time = 777777;
+    persisted_seed.start_horizon = 1234;
+    persisted_seed.page_id = 55;
+    persisted_seed.cursor_crc32c = computeSweepProgressChecksumForTest(persisted_seed);
+    writePersistedSweepStateForTest(state_page, persisted_seed);
+    state_page->clean_shutdown = 0;
+    finalizeRawPageForWrite(raw_page, db.page_size(), BOOTSTRAP_PAGE_SYSTEM_STATE);
+    ASSERT_TRUE(writeRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
+
+    ErrorContext ctx;
+    ASSERT_EQ(db.open(test_db_->path(), &ctx), Status::OK) << ctx.message;
+    const auto classification = db.last_startup_reconciliation().classification;
+    EXPECT_TRUE(classification ==
+                    Database::StartupRecoveryClassification::DIRTY_SHUTDOWN_NORMALIZATION_REQUIRED ||
+                classification ==
+                    Database::StartupRecoveryClassification::REPAIRABLE_PAGE_DAMAGE);
+    auto sweep_mgr = db.sweep_manager();
+    ASSERT_NE(sweep_mgr, nullptr);
+    ASSERT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::OK) << ctx.message;
+
+    db.close();
+    raw_page.clear();
+    ASSERT_TRUE(readRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
+    state_page = reinterpret_cast<BootstrapSystemStatePage *>(raw_page.data());
+    const auto persisted = readPersistedSweepStateForTest(state_page);
+    EXPECT_EQ(persisted.sweep_generation, 8u);
+    EXPECT_FALSE(persisted.active);
+    EXPECT_EQ(persisted.page_id, 0u);
+}
+
+TEST_F(GarbageCollectorTest, SweepExecutionPersistsCursorHistoryRows)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    auto sweep_mgr = db.sweep_manager();
+    ASSERT_NE(sweep_mgr, nullptr);
+
+    ErrorContext ctx;
+    ASSERT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::OK) << ctx.message;
+
+    std::vector<CatalogManager::SweepCursorStateCatalogInfo> rows;
+    ASSERT_EQ(db.catalog_manager()->listSweepCursorStateCatalogEntries(rows, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_FALSE(rows.empty());
+    EXPECT_GE(rows.front().sweep_generation, 1u);
+    EXPECT_GE(rows.front().persist_time, 1u);
+    EXPECT_FALSE(rows.front().active);
+    EXPECT_EQ(rows.front().page_id, 0u);
 }
 
 TEST_F(GarbageCollectorTest, SweepPolicyResolutionDeterministicByScopeChain)
@@ -1140,9 +1477,10 @@ TEST_F(GarbageCollectorTest, SweepRetriesLocalEvidenceAfterRestartWithoutDroppin
     std::vector<uint8_t> raw_page;
     ASSERT_TRUE(readRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
     auto* state_page = reinterpret_cast<BootstrapSystemStatePage*>(raw_page.data());
-    const uint64_t generation_before = state_page->reserved[kSweepProgressSlotGeneration];
+    const auto persisted_before = readPersistedSweepStateForTest(state_page);
+    const uint64_t generation_before = persisted_before.sweep_generation;
     EXPECT_GT(generation_before, 0u);
-    EXPECT_EQ(state_page->reserved[kSweepProgressSlotActive], 1u);
+    EXPECT_TRUE(persisted_before.active);
 
     ASSERT_TRUE(std::filesystem::remove(blocking_path));
 
@@ -1167,8 +1505,9 @@ TEST_F(GarbageCollectorTest, SweepRetriesLocalEvidenceAfterRestartWithoutDroppin
     raw_page.clear();
     ASSERT_TRUE(readRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
     state_page = reinterpret_cast<BootstrapSystemStatePage*>(raw_page.data());
-    EXPECT_EQ(state_page->reserved[kSweepProgressSlotGeneration], generation_before);
-    EXPECT_EQ(state_page->reserved[kSweepProgressSlotActive], 0u);
+    const auto persisted_after = readPersistedSweepStateForTest(state_page);
+    EXPECT_EQ(persisted_after.sweep_generation, generation_before);
+    EXPECT_FALSE(persisted_after.active);
 }
 
 TEST_F(GarbageCollectorTest, SweepExportsWalAfterLogForCommittedTransactionsOnly)
@@ -1362,7 +1701,7 @@ TEST_F(GarbageCollectorTest, SweepPageSpotAuditDowngradesToLightUnderForegroundP
     item->offset = db.page_size() - 128;
     item->length = 8;
     item->flags = 0;
-    header->checksum = calculatePageChecksum(raw_page.data(), db.page_size());
+    finalizeRawPageForWrite(raw_page, db.page_size(), audit_page_id);
     ASSERT_TRUE(writeRawPage(db, audit_page_id, raw_page));
 
     SweepPolicyBinding binding{};
@@ -1569,9 +1908,10 @@ TEST_F(GarbageCollectorTest, SweepResumesAfterShadowCaptureFailureWithoutDuplica
     std::vector<uint8_t> raw_page;
     ASSERT_TRUE(readRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
     auto* state_page = reinterpret_cast<BootstrapSystemStatePage*>(raw_page.data());
-    const uint64_t generation_before = state_page->reserved[kSweepProgressSlotGeneration];
+    const auto persisted_before = readPersistedSweepStateForTest(state_page);
+    const uint64_t generation_before = persisted_before.sweep_generation;
     EXPECT_GT(generation_before, 0u);
-    EXPECT_EQ(state_page->reserved[kSweepProgressSlotActive], 1u);
+    EXPECT_TRUE(persisted_before.active);
 
     ASSERT_TRUE(std::filesystem::remove(blocking_path));
 
@@ -1604,8 +1944,9 @@ TEST_F(GarbageCollectorTest, SweepResumesAfterShadowCaptureFailureWithoutDuplica
     raw_page.clear();
     ASSERT_TRUE(readRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
     state_page = reinterpret_cast<BootstrapSystemStatePage*>(raw_page.data());
-    EXPECT_EQ(state_page->reserved[kSweepProgressSlotGeneration], generation_before);
-    EXPECT_EQ(state_page->reserved[kSweepProgressSlotActive], 0u);
+    const auto persisted_after = readPersistedSweepStateForTest(state_page);
+    EXPECT_EQ(persisted_after.sweep_generation, generation_before);
+    EXPECT_FALSE(persisted_after.active);
 }
 
 TEST_F(GarbageCollectorTest, ConcurrentAccess)

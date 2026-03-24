@@ -17,6 +17,26 @@
 
 using namespace scratchbird::core;
 
+namespace
+{
+
+void initializeCanonicalChecksummedPage(std::vector<uint8_t>& page,
+                                        uint16_t page_type,
+                                        uint64_t page_id)
+{
+    auto* header = reinterpret_cast<PageHeader*>(page.data());
+    header->magic = K_MAGIC_SBRD;
+    header->version = 1;
+    header->page_type = page_type;
+    header->page_size = static_cast<uint32_t>(page.size());
+    pageSetLower(*header, sizeof(PageHeader));
+    pageSetUpper(*header, static_cast<uint32_t>(page.size()));
+    pageSetSpecial(*header, static_cast<uint32_t>(page.size()));
+    preparePageForWrite(page.data(), static_cast<uint32_t>(page.size()), page_id);
+}
+
+} // namespace
+
 /**
  * Comprehensive CRC32C tests to ensure correctness
  * Addresses CRITICAL issue 1.1 from audit report
@@ -115,52 +135,46 @@ TEST(CRC32C_Comprehensive, ChecksumFieldExclusion)
     EXPECT_EQ(checksum3, checksum4) << "Checksum should be same regardless of checksum field value";
 }
 
-// Test checksum calculation processes bytes 0x00-0x0B and 0x10-end
+// Test canonical checksum split: header checksum excludes its own slot and
+// payload checksum covers only bytes after the page header.
 TEST(CRC32C_Comprehensive, TwoPassCalculation)
 {
     constexpr uint32_t PAGE_SIZE = 8192;
     std::vector<uint8_t> page(PAGE_SIZE, 0);
 
-    auto* header = reinterpret_cast<PageHeader*>(page.data());
-    header->magic = K_MAGIC_SBRD;
-    header->version = 1;
-    header->page_type = PAGE_TYPE_HEAP;
-    header->page_size = PAGE_SIZE;
-
-    // Fill first 12 bytes with known pattern
-    for (size_t i = 0; i < 12; i++) {
+    for (size_t i = CANONICAL_PAGE_HEADER_BYTES;
+         i < CANONICAL_PAGE_HEADER_BYTES + 32;
+         ++i) {
         page[i] = static_cast<uint8_t>(i);
     }
+    initializeCanonicalChecksummedPage(page, PAGE_TYPE_HEAP, 42u);
 
-    // Fill checksum field (bytes 12-15) with different pattern
-    for (size_t i = 12; i < 16; i++) {
-        page[i] = 0xFF;
-    }
+    const auto* header = reinterpret_cast<const PageHeader*>(page.data());
+    const uint32_t header_checksum = header->header_checksum;
+    const uint32_t payload_checksum = header->payload_checksum;
 
-    // Fill remaining bytes with another pattern
-    for (size_t i = 16; i < 32; i++) {
-        page[i] = static_cast<uint8_t>(i * 2);
-    }
-
-    // Calculate checksum - should skip bytes 12-15
-    uint32_t checksum = calculatePageChecksum(page.data(), PAGE_SIZE);
-
-    // Modify bytes 0-11 - checksum should change
+    // Mutating ordinary header bytes must change header CRC only.
     page[5] ^= 0x01;
-    uint32_t checksum_modified1 = calculatePageChecksum(page.data(), PAGE_SIZE);
-    EXPECT_NE(checksum, checksum_modified1) << "Modifying bytes 0-11 should change checksum";
-    page[5] ^= 0x01; // restore
+    EXPECT_NE(calculatePageHeaderChecksum(page.data(), header->header_bytes), header_checksum)
+        << "Mutating header bytes must change header CRC";
+    EXPECT_EQ(calculatePageChecksum(page.data(), PAGE_SIZE), payload_checksum)
+        << "Mutating header bytes must not change payload CRC";
+    page[5] ^= 0x01;
 
-    // Modify bytes 12-15 (checksum field) - checksum should NOT change
-    page[12] ^= 0xFF;
-    uint32_t checksum_modified2 = calculatePageChecksum(page.data(), PAGE_SIZE);
-    EXPECT_EQ(checksum, checksum_modified2) << "Modifying bytes 12-15 should NOT change checksum";
-    page[12] ^= 0xFF; // restore
+    // Mutating the header checksum field itself must not affect recomputation.
+    page[0x10] ^= 0xFF;
+    EXPECT_EQ(calculatePageHeaderChecksum(page.data(), header->header_bytes), header_checksum)
+        << "Header checksum field must be excluded from header CRC";
+    EXPECT_EQ(calculatePageChecksum(page.data(), PAGE_SIZE), payload_checksum)
+        << "Header checksum field must not affect payload CRC";
+    page[0x10] ^= 0xFF;
 
-    // Modify bytes 16+ - checksum should change
-    page[20] ^= 0x01;
-    uint32_t checksum_modified3 = calculatePageChecksum(page.data(), PAGE_SIZE);
-    EXPECT_NE(checksum, checksum_modified3) << "Modifying bytes 16+ should change checksum";
+    // Mutating payload bytes must change payload CRC only.
+    page[CANONICAL_PAGE_HEADER_BYTES + 20] ^= 0x01;
+    EXPECT_EQ(calculatePageHeaderChecksum(page.data(), header->header_bytes), header_checksum)
+        << "Payload bytes must not change header CRC";
+    EXPECT_NE(calculatePageChecksum(page.data(), PAGE_SIZE), payload_checksum)
+        << "Payload bytes must change payload CRC";
 }
 
 // Test validation with correct and incorrect checksums
@@ -169,34 +183,28 @@ TEST(CRC32C_Comprehensive, ValidationCorrectness)
     for (uint32_t page_size : {8192u, 16384u, 32768u, 65536u, 131072u}) {
         std::vector<uint8_t> page(page_size, 0);
 
-        auto* header = reinterpret_cast<PageHeader*>(page.data());
-        header->magic = K_MAGIC_SBRD;
-        header->version = 1;
-        header->page_type = PAGE_TYPE_HEAP;
-        header->page_size = page_size;
-        header->page_id = 0;
-        header->flags = PAGE_FLAG_CHECKSUM_VALID;
-
         // Fill page with test data
-        for (size_t i = 64; i < std::min(size_t(page_size), size_t(256)); i++) {
+        for (size_t i = CANONICAL_PAGE_HEADER_BYTES;
+             i < std::min(size_t(page_size), size_t(256));
+             ++i) {
             page[i] = static_cast<uint8_t>(i);
         }
 
-        // Calculate and set correct checksum
-        header->checksum = calculatePageChecksum(page.data(), page_size);
+        initializeCanonicalChecksummedPage(page, PAGE_TYPE_HEAP, 0);
+        auto* header = reinterpret_cast<PageHeader*>(page.data());
 
         // Validation should pass
         EXPECT_TRUE(validatePageChecksum(page.data(), page_size))
             << "Page with correct checksum should validate (page_size=" << page_size << ")";
 
         // Tamper with data and validation should fail
-        page[100] ^= 0x01;
+        page[CANONICAL_PAGE_HEADER_BYTES + 4] ^= 0x01;
         EXPECT_FALSE(validatePageChecksum(page.data(), page_size))
             << "Page with tampered data should not validate (page_size=" << page_size << ")";
-        page[100] ^= 0x01; // restore
+        page[CANONICAL_PAGE_HEADER_BYTES + 4] ^= 0x01; // restore
 
         // Set incorrect checksum and validation should fail
-        header->checksum ^= 0x12345678;
+        header->payload_checksum ^= 0x12345678;
         EXPECT_FALSE(validatePageChecksum(page.data(), page_size))
             << "Page with incorrect checksum should not validate (page_size=" << page_size << ")";
     }
@@ -208,24 +216,14 @@ TEST(CRC32C_Comprehensive, AllPageSizes)
     for (uint32_t page_size : {8192u, 16384u, 32768u, 65536u, 131072u}) {
         std::vector<uint8_t> page(page_size, 0);
 
-        auto* header = reinterpret_cast<PageHeader*>(page.data());
-        header->magic = K_MAGIC_SBRD;
-        header->version = 1;
-        header->page_type = PAGE_TYPE_DATABASE_HEADER;
-        header->page_size = page_size;
-        header->flags = PAGE_FLAG_CHECKSUM_VALID;
-        header->checksum = 0;
-
         // Fill with random data
         std::mt19937 rng(42); // Fixed seed for reproducibility
         std::uniform_int_distribution<uint32_t> dist(0, 255);
-        for (size_t i = 64; i < page_size; i++) {
+        for (size_t i = CANONICAL_PAGE_HEADER_BYTES; i < page_size; i++) {
             page[i] = static_cast<uint8_t>(dist(rng));
         }
 
-        // Calculate checksum
-        uint32_t checksum = calculatePageChecksum(page.data(), page_size);
-        header->checksum = checksum;
+        initializeCanonicalChecksummedPage(page, PAGE_TYPE_DATABASE_HEADER, 0);
 
         // Validate
         EXPECT_TRUE(validatePageChecksum(page.data(), page_size))
@@ -280,18 +278,10 @@ TEST(CRC32C_Comprehensive, MinimumPageWithMaxData)
     constexpr uint32_t PAGE_SIZE = 8192;
     std::vector<uint8_t> page(PAGE_SIZE);
 
-    auto* header = reinterpret_cast<PageHeader*>(page.data());
-    header->magic = K_MAGIC_SBRD;
-    header->version = 1;
-    header->page_type = PAGE_TYPE_HEAP;
-    header->page_size = PAGE_SIZE;
-    header->flags = PAGE_FLAG_CHECKSUM_VALID;
-
     // Fill entire page (except header) with 0xFF
     std::fill(page.begin() + sizeof(PageHeader), page.end(), 0xFF);
 
-    // Calculate and validate checksum
-    header->checksum = calculatePageChecksum(page.data(), PAGE_SIZE);
+    initializeCanonicalChecksummedPage(page, PAGE_TYPE_HEAP, 0);
     EXPECT_TRUE(validatePageChecksum(page.data(), PAGE_SIZE))
         << "Page filled with 0xFF should validate correctly";
 }
@@ -302,20 +292,12 @@ TEST(CRC32C_Comprehensive, MaximumPageSize)
     constexpr uint32_t PAGE_SIZE = 131072; // 128KB
     std::vector<uint8_t> page(PAGE_SIZE, 0);
 
-    auto* header = reinterpret_cast<PageHeader*>(page.data());
-    header->magic = K_MAGIC_SBRD;
-    header->version = 1;
-    header->page_type = PAGE_TYPE_HEAP;
-    header->page_size = PAGE_SIZE;
-    header->flags = PAGE_FLAG_CHECKSUM_VALID;
-
     // Fill with pattern
     for (size_t i = sizeof(PageHeader); i < PAGE_SIZE; i++) {
         page[i] = static_cast<uint8_t>((i * 7) % 256);
     }
 
-    // Calculate and validate checksum
-    header->checksum = calculatePageChecksum(page.data(), PAGE_SIZE);
+    initializeCanonicalChecksummedPage(page, PAGE_TYPE_HEAP, 0);
     EXPECT_TRUE(validatePageChecksum(page.data(), PAGE_SIZE))
         << "Maximum size page should validate correctly";
 }

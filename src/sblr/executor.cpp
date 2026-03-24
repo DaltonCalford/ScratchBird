@@ -5618,7 +5618,7 @@ namespace scratchbird
                             {
                                 err_msg += ": " + pre_err.message;
                             }
-                            return ExecutionResult(err_msg);
+                            return makeExecutionStatusError(status, &pre_err, err_msg);
                         }
                     }
                     else
@@ -32492,7 +32492,9 @@ namespace scratchbird
                 {
                     err_msg += ": " + err_ctx.message;
                 }
-                error(err_msg);
+                errorWithStatus(status,
+                                err_msg,
+                                err_ctx.sqlstate != nullptr ? err_ctx.sqlstate : "");
             }
 
             if (!retaining)
@@ -32543,7 +32545,9 @@ namespace scratchbird
                 {
                     err_msg += ": " + err_ctx.message;
                 }
-                error(err_msg);
+                errorWithStatus(status,
+                                err_msg,
+                                err_ctx.sqlstate != nullptr ? err_ctx.sqlstate : "");
             }
 
             if (!retaining)
@@ -58409,6 +58413,24 @@ namespace scratchbird
                         return fail("COPY FROM requires a source file");
                     }
 
+                    if (db_ != nullptr &&
+                        db_->write_admission_fenced() &&
+                        !db_->write_admission_enforcement_suspended())
+                    {
+                        core::ErrorContext fence_ctx;
+                        const core::Status fenced_status = db_->write_admission_status();
+                        const core::Status effective_status =
+                            fenced_status == core::Status::OK ? core::Status::IO_ERROR
+                                                              : fenced_status;
+                        SET_ERROR_CONTEXT(&fence_ctx,
+                                          effective_status,
+                                          "COPY FROM is blocked by an open writeback incident");
+                        return makeExecutionStatusError(
+                            effective_status,
+                            &fence_ctx,
+                            "COPY FROM is blocked by an open writeback incident");
+                    }
+
                     std::ifstream file_in;
                     std::istream* in = nullptr;
                     if (target == "STDIN")
@@ -58478,7 +58500,7 @@ namespace scratchbird
                                 {
                                     err_msg += ": " + insert_ctx.message;
                                 }
-                                return fail(err_msg);
+                                return makeExecutionStatusError(status, &insert_ctx, err_msg);
                             }
                             affected_count++;
                         }
@@ -58996,7 +59018,7 @@ namespace scratchbird
                                         {
                                             err_msg += ": " + err_ctx.message;
                                         }
-                                        return ExecutionResult(err_msg);
+                                        return makeExecutionStatusError(status, &err_ctx, err_msg);
                                     }
                                     conn_ctx_->setAutocommitSuspended(false);
                                     break;
@@ -59011,7 +59033,7 @@ namespace scratchbird
                                         {
                                             err_msg += ": " + err_ctx.message;
                                         }
-                                        return ExecutionResult(err_msg);
+                                        return makeExecutionStatusError(status, &err_ctx, err_msg);
                                     }
                                     conn_ctx_->setAutocommitSuspended(false);
                                     break;
@@ -92744,7 +92766,7 @@ namespace scratchbird
                         {
                             err_msg += ": " + auto_err.message;
                         }
-                        return ExecutionResult(err_msg);
+                        return makeExecutionStatusError(status, &auto_err, err_msg);
                     }
                 }
             }
@@ -99887,7 +99909,9 @@ namespace scratchbird
                             {
                                 err_msg += ": " + err_ctx.message;
                             }
-                            error(err_msg);
+                            errorWithStatus(status,
+                                            err_msg,
+                                            err_ctx.sqlstate != nullptr ? err_ctx.sqlstate : "");
                         }
                         conn_ctx_->setAutocommitSuspended(false);
                         break;
@@ -99903,7 +99927,9 @@ namespace scratchbird
                             {
                                 err_msg += ": " + err_ctx.message;
                             }
-                            error(err_msg);
+                            errorWithStatus(status,
+                                            err_msg,
+                                            err_ctx.sqlstate != nullptr ? err_ctx.sqlstate : "");
                         }
                         conn_ctx_->setAutocommitSuspended(false);
                         break;
@@ -119534,6 +119560,20 @@ namespace scratchbird
                     error("COPY FROM requires a source file");
                 }
 
+                if (db_ != nullptr &&
+                    db_->write_admission_fenced() &&
+                    !db_->write_admission_enforcement_suspended())
+                {
+                    const core::Status fenced_status = db_->write_admission_status();
+                    const core::Status effective_status =
+                        fenced_status == core::Status::OK ? core::Status::IO_ERROR
+                                                          : fenced_status;
+                    errorWithStatus(
+                        effective_status,
+                        "COPY FROM is blocked by an open writeback incident",
+                        core::statusToSQLState(effective_status));
+                }
+
                 std::ifstream file_in;
                 std::istream* in = nullptr;
                 if (target == "STDIN")
@@ -120308,12 +120348,20 @@ namespace scratchbird
                     uint32_t page_id;
                     uint16_t item_id;
                     auto insert_status = db_->storage_engine()->insertTuple(
-                        table_info.table_id, tuple_data.data(), static_cast<uint32_t>(tuple_data.size()), &page_id,
-                        &item_id, nullptr);
+                        table_info.table_id,
+                        tuple_data.data(),
+                        static_cast<uint32_t>(tuple_data.size()),
+                        &page_id,
+                        &item_id,
+                        &err_ctx);
 
                     if (insert_status != core::Status::OK)
                     {
-                        error("Failed to insert tuple into storage");
+                        errorWithStatus(insert_status,
+                                        err_ctx.message.empty()
+                                            ? "Failed to insert tuple into storage"
+                                            : err_ctx.message,
+                                        err_ctx.sqlstate);
                     }
 
                     core::TID row_tid(page_id, item_id);
@@ -120577,12 +120625,12 @@ namespace scratchbird
                                         auto flush_status = page_mgr->flush(&flush_ctx);
                                         if (flush_status != core::Status::OK)
                                         {
-                                            std::string err_msg = "COPY batch flush failed";
-                                            if (!flush_ctx.message.empty())
-                                            {
-                                                err_msg += ": " + flush_ctx.message;
-                                            }
-                                            error(err_msg);
+                                            const std::string err_msg = flush_ctx.message.empty()
+                                                ? "COPY batch flush failed"
+                                                : flush_ctx.message;
+                                            errorWithStatus(flush_status,
+                                                            err_msg,
+                                                            flush_ctx.sqlstate);
                                         }
                                     }
                                 }
@@ -120672,12 +120720,12 @@ namespace scratchbird
                                         auto flush_status = page_mgr->flush(&flush_ctx);
                                         if (flush_status != core::Status::OK)
                                         {
-                                            std::string err_msg = "COPY batch flush failed";
-                                            if (!flush_ctx.message.empty())
-                                            {
-                                                err_msg += ": " + flush_ctx.message;
-                                            }
-                                            error(err_msg);
+                                            const std::string err_msg = flush_ctx.message.empty()
+                                                ? "COPY batch flush failed"
+                                                : flush_ctx.message;
+                                            errorWithStatus(flush_status,
+                                                            err_msg,
+                                                            flush_ctx.sqlstate);
                                         }
                                     }
                                 }

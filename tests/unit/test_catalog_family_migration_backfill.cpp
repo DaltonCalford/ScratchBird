@@ -109,7 +109,10 @@ protected:
                   static_cast<ssize_t>(page.size()));
 
         uint8_t* bytes = page.data();
-        const size_t scan_limit = page.size();
+        const auto* header = reinterpret_cast<const PageHeader*>(bytes);
+        const size_t scan_limit =
+            std::min<size_t>(page.size(), static_cast<size_t>(pageLower(*header)));
+        const size_t root_field_start = sizeof(PageHeader);
 
         for (uint32_t page_id : page_ids_to_zero)
         {
@@ -117,7 +120,9 @@ protected:
             size_t match_offset = 0;
             uint32_t matches = 0;
 
-            for (size_t off = 0; off + sizeof(uint32_t) <= scan_limit; off += sizeof(uint32_t))
+            for (size_t off = root_field_start;
+                 off + sizeof(uint32_t) <= scan_limit;
+                 off += sizeof(uint32_t))
             {
                 uint32_t value = 0;
                 std::memcpy(&value, bytes + off, sizeof(value));
@@ -134,6 +139,10 @@ protected:
             const uint32_t zero = 0;
             std::memcpy(bytes + match_offset, &zero, sizeof(zero));
         }
+
+        preparePageForWrite(page.data(),
+                            static_cast<uint32_t>(page.size()),
+                            BOOTSTRAP_PAGE_CATALOG_ROOT);
 
         ASSERT_EQ(::pwrite(fd, page.data(), page.size(), offset),
                   static_cast<ssize_t>(page.size()));

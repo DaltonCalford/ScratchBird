@@ -58,7 +58,7 @@ class ErrorContext;
 #pragma pack(push, 1)
 struct TablespaceHeaderV1
 {
-    PageHeader page_header; // Standard 80-byte header per ON_DISK_FORMAT.md v1.4.0
+    LegacyPageHeaderV1 page_header; // Legacy v1 80-byte page header
 
     // === Identification (64 bytes) ===
     char tablespace_name[32];      // Tablespace name (max 31 chars + null terminator)
@@ -100,7 +100,7 @@ constexpr uint16_t TABLESPACE_HEADER_VERSION_CURRENT = 2;
 #pragma pack(push, 1)
 struct TablespaceHeader
 {
-    PageHeader page_header; // Standard 80-byte header per ON_DISK_FORMAT.md v1.4.0
+    PageHeader page_header; // Canonical section-05 page header
 
     // === Identification (96 bytes) ===
     char tablespace_name[64];      // Tablespace name (max 63 chars + null terminator)
@@ -294,24 +294,24 @@ struct TablespaceConfig
  * The header must be padded to page_size. This is enforced at runtime
  * when creating/opening tablespace files.
  *
- * Fixed fields occupy 304 bytes (updated for ON_DISK_FORMAT.md v1.4.0):
- * - PageHeader: 80 bytes
+ * Fixed fields occupy 330 bytes:
+ * - PageHeader: 106 bytes
  * - Identification: 96 bytes
  * - Configuration: 64 bytes
  * - File Layout: 32 bytes
  * - Transaction Info: 32 bytes
- * Total: 304 bytes
+ * Total: 330 bytes
  *
- * Remaining bytes (page_size - 304) are padding.
+ * Remaining bytes (page_size - 330) are padding.
  */
-static_assert(sizeof(PageHeader) == 80, "PageHeader must be 80 bytes per ON_DISK_FORMAT.md v1.4.0");
-static_assert(offsetof(TablespaceHeader, tablespace_name) == 80,
+static_assert(sizeof(PageHeader) == 106, "PageHeader must expose the canonical section-05 layout");
+static_assert(offsetof(TablespaceHeader, tablespace_name) == 106,
               "tablespace_name offset incorrect");
-static_assert(offsetof(TablespaceHeader, tablespace_id) == 176,
+static_assert(offsetof(TablespaceHeader, tablespace_id) == 202,
               "tablespace_id offset incorrect");
-static_assert(offsetof(TablespaceHeader, total_pages) == 240,
+static_assert(offsetof(TablespaceHeader, total_pages) == 266,
               "total_pages offset incorrect");
-static_assert(offsetof(TablespaceHeader, oldest_transaction_id) == 272,
+static_assert(offsetof(TablespaceHeader, oldest_transaction_id) == 298,
               "oldest_transaction_id offset incorrect");
 
 /**

@@ -49,7 +49,7 @@ namespace scratchbird
         // Meta Page - Page 0 of GIN index
         struct SBGinIndexMetaPage
         {
-            PageHeader hip_header;           // Standard page header (80 bytes)
+            PageHeader hip_header;           // Canonical page header
             uint8_t gin_index_uuid[16];      // Index UUID bytes (16 bytes)
             uint64_t gin_keys_btree_root;    // Root page of Keys B-Tree (8 bytes)
             uint64_t gin_pending_list_head;  // Head of pending list pages (8 bytes)
@@ -80,7 +80,7 @@ namespace scratchbird
         // Pending List Page - Stores pending entries
         struct SBGinPendingListPage
         {
-            PageHeader gpp_header;                       // Standard page header (80 bytes)
+            PageHeader gpp_header;                       // Canonical page header
             uint64_t gpp_next_page;                      // Next page in chain (0 if last) (8 bytes)
             uint16_t gpp_entry_count;                    // Number of entries (2 bytes)
             uint8_t gpp_reserved[54];                    // Reserved for alignment (54 bytes)
@@ -116,7 +116,7 @@ namespace scratchbird
         // For large lists, we use a B-Tree of TIDs instead
         struct SBGinPostingListPage
         {
-            PageHeader gpl_header;                          // Standard page header (80 bytes)
+            PageHeader gpl_header;                          // Canonical page header
             uint16_t gpl_entry_count;                       // Number of TIDs (2 bytes)
             uint8_t gpl_is_tree;                            // 0 = list, 1 = tree root pointer (1 byte)
             uint8_t gpl_is_compressed;                      // 1 = compressed, 0 = uncompressed (1 byte)
@@ -156,7 +156,7 @@ namespace scratchbird
         // Posting Tree Internal Node
         struct SBGinPostingTreeInternal
         {
-            PageHeader gpt_header;                              // Standard page header (80 bytes)
+            PageHeader gpt_header;                              // Canonical page header
             uint16_t gpt_entry_count;                           // Number of entries (2 bytes)
             uint16_t gpt_is_leaf;                               // 0 for internal nodes (2 bytes)
             uint8_t gpt_reserved[24];                           // Reserved for alignment (24 bytes)
@@ -166,7 +166,7 @@ namespace scratchbird
         // Posting Tree Leaf Node
         struct SBGinPostingTreeLeaf
         {
-            PageHeader gpt_header;                      // Standard page header (80 bytes)
+            PageHeader gpt_header;                      // Canonical page header
             uint16_t gpt_entry_count;                   // Number of TIDs (2 bytes)
             uint16_t gpt_is_leaf;                       // 1 for leaf nodes (2 bytes)
             uint64_t gpt_next_leaf;                     // Next leaf page for range scans (8 bytes)
@@ -190,15 +190,19 @@ namespace scratchbird
         namespace GinSettings
         {
             // Structure header sizes (in bytes)
-            constexpr uint32_t PENDING_PAGE_HEADER = 128;      // SBGinPendingListPage header
-            constexpr uint32_t POSTING_PAGE_HEADER = 80;       // SBGinPostingListPage header
-            constexpr uint32_t POSTING_TREE_LEAF_HEADER = 88;  // SBGinPostingTreeLeaf header
-            constexpr uint32_t POSTING_TREE_INTERNAL_HEADER = 92; // SBGinPostingTreeInternal header
+            constexpr uint32_t PENDING_PAGE_HEADER =
+                static_cast<uint32_t>(sizeof(SBGinPendingListPage));
+            constexpr uint32_t POSTING_PAGE_HEADER =
+                static_cast<uint32_t>(sizeof(SBGinPostingListPage));
+            constexpr uint32_t POSTING_TREE_LEAF_HEADER =
+                static_cast<uint32_t>(sizeof(SBGinPostingTreeLeaf));
+            constexpr uint32_t POSTING_TREE_INTERNAL_HEADER =
+                static_cast<uint32_t>(sizeof(SBGinPostingTreeInternal));
 
             /**
              * Calculate maximum pending entries per page
              *
-             * Formula: (page_size - 128) / 72
+             * Formula: (page_size - sizeof(SBGinPendingListPage)) / 72
              * 72 bytes = sizeof(GinPendingEntry)
              *
              * Examples:
@@ -216,7 +220,7 @@ namespace scratchbird
             /**
              * Calculate maximum posting entries per page
              *
-             * Formula: (page_size - 80) / 26
+             * Formula: (page_size - sizeof(SBGinPostingListPage)) / 26
              * 26 bytes = sizeof(GinPostingEntry)
              *
              * Examples:
@@ -234,7 +238,7 @@ namespace scratchbird
             /**
              * Calculate maximum posting tree internal entries per page
              *
-             * Formula: (page_size - 92) / 14
+             * Formula: (page_size - sizeof(SBGinPostingTreeInternal)) / 14
              * 14 bytes = sizeof(GinPostingTreeInternalEntry)
              *
              * Examples:
@@ -252,7 +256,7 @@ namespace scratchbird
             /**
              * Calculate maximum posting tree leaf TIDs per page
              *
-             * Formula: (page_size - 88) / 26
+             * Formula: (page_size - sizeof(SBGinPostingTreeLeaf)) / 26
              * 26 bytes = sizeof(GinPostingEntry)
              *
              * Examples:
@@ -299,13 +303,21 @@ namespace scratchbird
          * in a future version once all usages are migrated to dynamic calculations.
          */
         [[deprecated("Use GinSettings::getMaxPendingEntriesPerPage() instead")]]
-        constexpr uint16_t MAX_PENDING_ENTRIES_PER_PAGE = 225;        // (16384-128)/72
+        constexpr uint16_t MAX_PENDING_ENTRIES_PER_PAGE =
+            static_cast<uint16_t>((16384u - GinSettings::PENDING_PAGE_HEADER) /
+                                  sizeof(GinPendingEntry));
         [[deprecated("Use GinSettings::getMaxPostingTreeLeafTids() instead")]]
-        constexpr uint16_t MAX_POSTING_TREE_LEAF_TIDS = 626;          // (16384-88)/26
+        constexpr uint16_t MAX_POSTING_TREE_LEAF_TIDS =
+            static_cast<uint16_t>((16384u - GinSettings::POSTING_TREE_LEAF_HEADER) /
+                                  sizeof(GinPostingEntry));
         [[deprecated("Use GinSettings::getMaxPostingTreeInternalEntries() instead")]]
-        constexpr uint16_t MAX_POSTING_TREE_INTERNAL_ENTRIES = 1163;  // (16384-92)/14
+        constexpr uint16_t MAX_POSTING_TREE_INTERNAL_ENTRIES =
+            static_cast<uint16_t>((16384u - GinSettings::POSTING_TREE_INTERNAL_HEADER) /
+                                  sizeof(GinPostingTreeInternalEntry));
         [[deprecated("Use GinSettings::getMaxPostingEntriesPerPage() instead")]]
-        constexpr uint16_t MAX_POSTING_ENTRIES_PER_PAGE = 626;        // (16384-80)/26
+        constexpr uint16_t MAX_POSTING_ENTRIES_PER_PAGE =
+            static_cast<uint16_t>((16384u - GinSettings::POSTING_PAGE_HEADER) /
+                                  sizeof(GinPostingEntry));
 
         // Entry in the Keys B-Tree
         // The key is the indexed item (e.g., a word, array element)

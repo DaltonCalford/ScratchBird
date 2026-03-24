@@ -8,6 +8,7 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include <gtest/gtest.h>
+#include <cstddef>
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/storage_engine.h"
@@ -564,7 +565,8 @@ TEST_F(StorageCorruptionTest, PageTypeMismatch)
 
     // Change page type to something invalid for heap pages
     uint16_t invalid_type = PAGE_TYPE_DATABASE_HEADER; // Wrong type for heap page
-    corrupt_file(test_db_path(), heap_page_id * page_size + 0x06,     // Page type offset
+    corrupt_file(test_db_path(),
+                 heap_page_id * page_size + offsetof(PageHeader, page_type),
                  reinterpret_cast<uint8_t *>(&invalid_type), sizeof(invalid_type));
 
     // Try to scan

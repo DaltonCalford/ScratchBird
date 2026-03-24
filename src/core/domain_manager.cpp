@@ -2111,7 +2111,7 @@ namespace scratchbird::core
 
         auto* catalog_page = reinterpret_cast<DomainCatalogPage*>(page_buffer);
         bool needs_init = catalog_page->header.magic != K_MAGIC_SBRD ||
-                          catalog_page->header.page_type != PAGE_TYPE_HEAP ||
+                          catalog_page->header.page_type != PAGE_TYPE_CATALOG_PAGE ||
                           catalog_page->header.page_id != domains_table_page_;
 
         if (needs_init)
@@ -2121,7 +2121,7 @@ namespace scratchbird::core
 
             catalog_page->header.magic = K_MAGIC_SBRD;
             catalog_page->header.version = 1;
-            catalog_page->header.page_type = PAGE_TYPE_HEAP;
+            catalog_page->header.page_type = PAGE_TYPE_CATALOG_PAGE;
             catalog_page->header.page_size = db_->page_size();
             catalog_page->header.page_id = domains_table_page_;
             catalog_page->header.generation = 1;
@@ -5691,7 +5691,7 @@ namespace scratchbird::core
                 auto* new_page = reinterpret_cast<DomainCatalogPage*>(new_buffer);
                 new_page->header.magic = K_MAGIC_SBRD;
                 new_page->header.version = 1;
-                new_page->header.page_type = PAGE_TYPE_HEAP;
+                new_page->header.page_type = PAGE_TYPE_CATALOG_PAGE;
                 new_page->header.page_size = db_->page_size();
                 new_page->header.page_id = new_page_id;
                 new_page->header.generation = 1;
