@@ -2222,6 +2222,10 @@ namespace scratchbird::core
                                         bool skip_sync,
                                         ErrorContext *ctx)
     {
+        // AUDIT CONTRACT:
+        // A persisted writeback incident fences new durability claims. Once this
+        // path runs, commit/publication code must fail closed until the incident is
+        // explicitly cleared or enforcement is suspended for controlled repair.
         WritebackIncidentControlState incident{};
         bool should_persist = false;
 
@@ -5429,7 +5433,10 @@ namespace scratchbird::core
             }
         }
 
-        // Finalize page header contract before durable write.
+        // AUDIT CONTRACT:
+        // Finalize the canonical page contract before durable write. The primary
+        // page image is authoritative MGA truth; shadow mirroring below is a
+        // derivative copy of that already-produced truth, not a recovery log.
         auto *page = const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(buffer));
         preparePageForWrite(page, page_size_, page_id);
 
@@ -5479,6 +5486,11 @@ namespace scratchbird::core
 
     auto Database::sync(ErrorContext *ctx, WritebackAttribution attribution) const -> Status
     {
+        // AUDIT CONTRACT:
+        // sync() is the engine-wide forced-write fence. When it returns OK, the
+        // primary database file, every registered durable tablespace, and every
+        // active shadow filespace participating in durability have been forced to
+        // stable storage. This is conservative MGA publication, not WAL replay.
         if (fd_ < 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database not open");
@@ -6412,6 +6424,9 @@ namespace scratchbird::core
                                                 size_t size,
                                                 ErrorContext* ctx) const
     {
+        // Derivative page-for-page copy only. Failure blocks the caller because the
+        // configured shadow durability contract was not met, but the main recovery
+        // authority remains the primary MGA page state.
         if (buffer == nullptr || size == 0)
         {
             return Status::OK;

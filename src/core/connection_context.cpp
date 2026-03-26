@@ -2764,6 +2764,11 @@ namespace scratchbird::core
 
     Status ConnectionContext::commit(ErrorContext *ctx)
     {
+        // AUDIT CONTRACT:
+        // ConnectionContext keeps the attachment in an always-in-transaction state.
+        // commit() ends the current durable transaction, applies governance and
+        // temp-object rules, then opens a fresh boundary unless governance has
+        // explicitly terminated the attachment.
         if (isForensicReplayActive())
         {
             return closeForensicReplay(ctx);
@@ -2835,6 +2840,10 @@ namespace scratchbird::core
 
     Status ConnectionContext::rollback(ErrorContext *ctx)
     {
+        // AUDIT CONTRACT:
+        // rollback() resolves the current transaction and then reopens a fresh
+        // attachment boundary unless governance has explicitly terminated the
+        // session. This preserves MGA attachment semantics after rollback.
         if (isForensicReplayActive())
         {
             return closeForensicReplay(ctx);
@@ -2911,6 +2920,11 @@ namespace scratchbird::core
 
     Status ConnectionContext::prepareTransaction(const std::string& gid, ErrorContext *ctx)
     {
+        // AUDIT CONTRACT:
+        // PREPARE moves the current transaction into durable limbo and then hands
+        // the attachment a fresh backend slot plus fresh transaction boundary. The
+        // prepared work is later recovered by explicit PREPARED resolution, not by
+        // silently reusing the old attachment transaction.
         if (current_xid_ == 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No active transaction to prepare");
@@ -4564,6 +4578,9 @@ namespace scratchbird::core
 
     Status ConnectionContext::openImplicitStatementSavepoint(ErrorContext *ctx)
     {
+        // Statement restart/backout uses an implicit savepoint frame so a failed
+        // statement can unwind its own stable-head changes without rolling back the
+        // whole transaction.
         if (current_xid_ == 0 || statement_id_ == 0)
         {
             return Status::OK;
@@ -4810,6 +4827,10 @@ namespace scratchbird::core
 
     Status ConnectionContext::rollbackToSavepoint(const std::string &name, ErrorContext *ctx)
     {
+        // AUDIT CONTRACT:
+        // Savepoint rollback is logical MGA backout. It walks recorded stable-head
+        // mutations plus temporary-object side effects, applies MgaBackoutEngine,
+        // keeps the target savepoint frame alive, and discards only younger frames.
         if (current_xid_ == 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,

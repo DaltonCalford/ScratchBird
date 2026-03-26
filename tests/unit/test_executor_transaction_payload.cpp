@@ -657,7 +657,8 @@ protected:
     std::unique_ptr<ConnectionContext> conn_;
 };
 
-TEST_F(ExecutorTransactionPayloadTest, StartTransactionReadConsistencySetsIsolation) {
+TEST_F(ExecutorTransactionPayloadTest,
+       StartTransactionReadCommittedReadConsistencySetsIsolationAndMode) {
     auto compiled = compile(
         "START TRANSACTION ISOLATION LEVEL READ COMMITTED READ CONSISTENCY");
     ASSERT_TRUE(compiled.success()) << joinErrors(compiled.errors());
@@ -669,7 +670,8 @@ TEST_F(ExecutorTransactionPayloadTest, StartTransactionReadConsistencySetsIsolat
     EXPECT_EQ(conn_->getReadCommittedMode(), ReadCommittedMode::READ_CONSISTENCY);
 }
 
-TEST_F(ExecutorTransactionPayloadTest, StartTransactionNoRecordVersionKeepsReadCommitted) {
+TEST_F(ExecutorTransactionPayloadTest,
+       StartTransactionReadCommittedNoRecordVersionKeepsReadCommittedIsolation) {
     auto compiled = compile(
         "START TRANSACTION ISOLATION LEVEL READ COMMITTED NO RECORD VERSION");
     ASSERT_TRUE(compiled.success()) << joinErrors(compiled.errors());
@@ -681,7 +683,8 @@ TEST_F(ExecutorTransactionPayloadTest, StartTransactionNoRecordVersionKeepsReadC
               ReadCommittedMode::NO_RECORD_VERSION);
 }
 
-TEST_F(ExecutorTransactionPayloadTest, AutocommitOnCommitsAfterStatement) {
+TEST_F(ExecutorTransactionPayloadTest,
+       AutocommitOnCommitsStatementAndOpensFreshTransactionBoundary) {
     auto set_compiled = compile("SET AUTOCOMMIT ON");
     ASSERT_TRUE(set_compiled.success()) << joinErrors(set_compiled.errors());
     auto result = executor_->execute(set_compiled.bytecode());
@@ -698,7 +701,8 @@ TEST_F(ExecutorTransactionPayloadTest, AutocommitOnCommitsAfterStatement) {
     EXPECT_NE(xid_before, xid_after);
 }
 
-TEST_F(ExecutorTransactionPayloadTest, AutocommitOffKeepsXid) {
+TEST_F(ExecutorTransactionPayloadTest,
+       AutocommitOffKeepsCurrentTransactionBoundaryOpen) {
     auto set_compiled = compile("SET AUTOCOMMIT OFF");
     ASSERT_TRUE(set_compiled.success()) << joinErrors(set_compiled.errors());
     auto result = executor_->execute(set_compiled.bytecode());
@@ -715,7 +719,8 @@ TEST_F(ExecutorTransactionPayloadTest, AutocommitOffKeepsXid) {
     EXPECT_EQ(xid_before, xid_after);
 }
 
-TEST_F(ExecutorTransactionPayloadTest, PrepareCommitPrepared) {
+TEST_F(ExecutorTransactionPayloadTest,
+       PrepareTransactionPublishesPreparedThenCommitPreparedMakesTerminalStateCommitted) {
     auto *txn_manager = db_.transaction_manager();
     ASSERT_NE(txn_manager, nullptr);
 
@@ -742,7 +747,8 @@ TEST_F(ExecutorTransactionPayloadTest, PrepareCommitPrepared) {
     EXPECT_EQ(state, scratchbird::core::TransactionState::COMMITTED);
 }
 
-TEST_F(ExecutorTransactionPayloadTest, PrepareRollbackPrepared) {
+TEST_F(ExecutorTransactionPayloadTest,
+       PrepareTransactionPublishesPreparedThenRollbackPreparedMakesTerminalStateAborted) {
     auto *txn_manager = db_.transaction_manager();
     ASSERT_NE(txn_manager, nullptr);
 

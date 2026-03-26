@@ -283,6 +283,14 @@ namespace scratchbird::core
         std::string durable_path;
     };
 
+    // AUDIT CONTRACT:
+    // ShardCommitLog is a derivative cluster/shard durability artifact. It provides a
+    // durable append stream for routing, follower apply, and auditability after local
+    // commit, but it is not the authoritative recovery substrate for the main database.
+    // The main engine still recovers from MGA page state, TIP/CLOG truth, and startup
+    // reconciliation rather than replaying this log as redo.
+    // Proof: tests/unit/test_shard_commit_log_pipeline.cpp and
+    // tests/unit/test_cluster_write_fencing.cpp.
     class ShardCommitLog
     {
     public:

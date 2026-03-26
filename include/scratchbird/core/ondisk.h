@@ -303,6 +303,15 @@ namespace scratchbird::core
         uint8_t reserved[3];    // +0x1D
     };
 
+    // AUDIT CONTRACT:
+    // PageRepairState is the on-page corruption/quarantine vocabulary for the MGA engine.
+    // It classifies what restart and repair code are allowed to do with a page, but it is
+    // not a WAL/redo replay marker. Detection, quarantine, validation, and fail-closed
+    // repair publication happen through these states plus the page checksums below.
+    // Proof anchors:
+    // - tests/unit/test_ondisk_crc_uuid.cpp
+    // - tests/unit/test_vnext_page_contract.cpp
+    // - tests/unit/test_storage_corruption.cpp
     enum class PageRepairState : uint16_t
     {
         REPAIR_NONE = 0,
@@ -332,6 +341,9 @@ namespace scratchbird::core
         uint16_t special_size; // 0x4E size of special area at page end
     };
 
+    // Canonical Alpha page header. The header and payload checksums are durable detection and
+    // classification fields for MGA/state-based recovery. They prove what page image was
+    // published, but they are not log sequence numbers and they are not replay authority.
     struct PageHeader
     {
         uint32_t magic;        // 0x00 'SBRD'

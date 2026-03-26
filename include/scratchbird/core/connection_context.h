@@ -61,9 +61,20 @@ namespace scratchbird::core
         PROTECTED = 1, // PROTECTED READ/WRITE - exclusive table access
     };
 
-    // Connection context - per-connection/session state
-    // This class manages the always-in-transaction model where every connection
-    // always has an active transaction.
+    // AUDIT CONTRACT:
+    // - ConnectionContext implements the always-in-transaction attachment model.
+    // - After COMMIT, ROLLBACK, or PREPARE it opens a fresh transaction boundary instead of
+    //   leaving the attachment idle, unless the path is explicit shutdown/termination.
+    // - Statement restart and savepoint rollback are MGA backout operations, not log replay.
+    // - Long-transaction governance and dormant recovery may terminate or reattach the
+    //   attachment, but they must do so by explicit state transitions visible in code.
+    // Proof anchors:
+    // - tests/unit/test_executor_transaction_payload.cpp
+    // - tests/unit/test_storage_engine.cpp
+    // - tests/unit/test_long_transaction_governance_contract.cpp
+    // - tests/unit/test_transaction_vnext_contract.cpp
+    //
+    // Connection context - per-connection/session state.
     class ConnectionContext
     {
     public:
@@ -123,6 +134,11 @@ namespace scratchbird::core
         Status initialize(ErrorContext *ctx = nullptr);
 
         // Transaction lifecycle
+        // AUDIT CONTRACT: commit/rollback/prepare all terminate the current durable
+        // transaction state first and then reopen a fresh boundary for the attachment
+        // unless governance or shutdown explicitly forbids reuse.
+        // Proof: tests/unit/test_executor_transaction_payload.cpp and
+        // tests/unit/test_long_transaction_governance_contract.cpp.
         // Commit current transaction and start new one atomically
         Status commit(ErrorContext *ctx = nullptr);
 
@@ -860,6 +876,11 @@ namespace scratchbird::core
                                         uint16_t stable_item_id) -> SavepointBackoutAction *;
         auto findMostRecentSavepointIndexByName(const std::string &name) const -> size_t;
         auto findMostRecentImplicitStatementSavepointIndex() const -> size_t;
+        // AUDIT CONTRACT: every statement-scoped restart/backout uses an implicit
+        // savepoint frame so partial statement work can be undone without rolling back
+        // the whole transaction.
+        // Proof: tests/unit/test_storage_engine.cpp and
+        // tests/unit/test_transaction_vnext_contract.cpp.
         Status openImplicitStatementSavepoint(ErrorContext *ctx = nullptr);
         Status rollbackImplicitStatementSavepoint(ErrorContext *ctx = nullptr);
         Status releaseImplicitStatementSavepoint(ErrorContext *ctx = nullptr);
@@ -890,11 +911,16 @@ namespace scratchbird::core
         Status createSavepoint(const std::string &name, ErrorContext *ctx = nullptr);
 
         /**
-         * Rollback to a savepoint
-         * Undoes all changes made after the named savepoint was created
-         * @param name Savepoint name to rollback to
-         * @param ctx Error context
-         * @return Status code
+         * Rollback to a savepoint.
+         *
+         * AUDIT CONTRACT:
+         * - applies recorded stable-head backout actions through MgaBackoutEngine
+         * - removes temporary objects created after the savepoint frontier
+         * - keeps the target savepoint active and discards only younger frames
+         *
+         * This is logical MGA backout, not WAL/redo replay.
+         * Proof: tests/unit/test_storage_engine.cpp and
+         * tests/unit/test_transaction_vnext_contract.cpp.
          */
         Status rollbackToSavepoint(const std::string &name, ErrorContext *ctx = nullptr);
 

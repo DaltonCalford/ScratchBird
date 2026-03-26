@@ -26,7 +26,18 @@ namespace scratchbird::core
     class BufferPool;
 
     /**
-     * Page Manager - Handles page allocation and free space tracking
+     * Page Manager - Handles page allocation and free space tracking.
+     *
+     * AUDIT CONTRACT:
+     * - PageManager owns allocation/FSM publication, not transaction visibility truth.
+     * - Startup may reconstruct or quarantine page chains/FSM state when the on-disk graph
+     *   is incomplete, but it does so from published pages and markers, not WAL replay.
+     * - Corrupt or cleanup-blocked chains are surfaced through ReconstructionSummary so the
+     *   restart path can classify, quarantine, or fail closed instead of guessing.
+     * Proof anchors:
+     * - tests/unit/test_page_management.cpp
+     * - tests/unit/test_page_management_edge_cases.cpp
+     * - tests/unit/test_tablespace_recovery.cpp
      *
      * The primary Free Space Map (FSM) is stored on bootstrap page 3 and uses a bitmap
      * to track allocated/free pages. Each bit represents one page:

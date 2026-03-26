@@ -688,8 +688,13 @@ namespace scratchbird::core
             }
         }
 
+        // AUDIT CONTRACT:
         // Persist ACTIVE state and next_xid advance before publishing the
-        // transaction in attachment-visible inventory.
+        // transaction in attachment-visible inventory. ProcArray is only updated
+        // after TIP ACTIVE, CLOG IN_PROGRESS, and page-0 next_xid are durably
+        // published so restart never sees "visible but not durable" activity.
+        // Proof: tests/unit/test_mga_failpoint_replay.cpp and
+        // tests/unit/test_transaction_manager.cpp.
         std::vector<uint32_t> publication_pages;
 
         Status status = writeTipEntry(new_xid,
@@ -787,6 +792,13 @@ namespace scratchbird::core
         const bool require_durable_fence = durabilityModeUsesDurableFence(durability_mode);
         const bool use_group_commit = durability_mode == DurabilityMode::GROUP_COMMIT;
 
+        // AUDIT CONTRACT:
+        // A client-visible commit requires terminal TIP/CLOG publication plus the
+        // forced-write fence before ACK in safe modes. ProcArray visibility is
+        // cleared only after terminal durability is established.
+        // Proof: tests/unit/test_mga_failpoint_replay.cpp,
+        // tests/unit/test_group_commit.cpp, and
+        // tests/unit/test_executor_transaction_payload.cpp.
         Status status = Status::OK;
         if (!use_group_commit && require_durable_fence)
         {
@@ -957,7 +969,7 @@ namespace scratchbird::core
             return status;
         }
 
-        // Clear ProcArray slot after durability guaranteed (Issue 1.14)
+        // Clear ProcArray slot after terminal durability is guaranteed.
         Status clear_status = ProcArrayManager::clearTransactionId(proc_id, ctx);
         if (clear_status != Status::OK)
         {
@@ -1120,6 +1132,12 @@ namespace scratchbird::core
         info.prepared_time = nowMicros();
         info.is_valid = true;
 
+        // AUDIT CONTRACT:
+        // PREPARED publication is catalog-first. The durable prepared record and
+        // lock snapshot must exist before TIP/CLOG move to PREPARED so restart can
+        // distinguish legitimate limbo from corruption.
+        // Proof: tests/unit/test_executor_transaction_payload.cpp and
+        // tests/unit/test_mga_failpoint_replay.cpp.
         status = catalog->createPreparedTransaction(info, ctx);
         if (status != Status::OK)
         {
@@ -1262,6 +1280,10 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
+        // AUDIT CONTRACT:
+        // COMMIT PREPARED first resolves durable TIP/CLOG truth to COMMITTED, then
+        // removes prepared catalog evidence and detached lock-owner state.
+        // Proof: tests/unit/test_executor_transaction_payload.cpp.
         uint64_t commit_seqno = 0;
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -1423,6 +1445,10 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
+        // AUDIT CONTRACT:
+        // ROLLBACK PREPARED first resolves durable TIP/CLOG truth to ABORTED, then
+        // deletes prepared catalog evidence and releases detached lock-owner state.
+        // Proof: tests/unit/test_executor_transaction_payload.cpp.
         status = writeTipEntry(info.txn_id, TransactionState::ABORTED, 0, ctx);
         if (status == Status::OK)
         {
@@ -3723,6 +3749,13 @@ namespace scratchbird::core
 
     auto TransactionManager::flushTransactionState(ErrorContext *ctx) -> Status
     {
+        // AUDIT CONTRACT:
+        // This is the terminal forced-write fence for transaction publication and
+        // commit/rollback resolution. It fails closed when writeback incidents are
+        // open, flushes dirty buffers, and then delegates to Database::sync() so the
+        // fence reaches the primary database plus every registered durable filespace.
+        // Proof: tests/unit/test_mga_failpoint_replay.cpp and
+        // tests/unit/test_transaction_vnext_contract.cpp.
         if (db_ != nullptr &&
             db_->write_admission_fenced() &&
             !db_->write_admission_enforcement_suspended())
@@ -3823,6 +3856,14 @@ namespace scratchbird::core
                                                        StartupReconciliationSummary *startup_summary,
                                                        ErrorContext *ctx) -> Status
     {
+        // AUDIT CONTRACT:
+        // Startup recovery is MGA state reconciliation, not WAL replay. This pass
+        // normalizes orphan ACTIVE entries to ABORTED or PREPARED using catalog
+        // evidence, rejects PREPARED-without-catalog as corruption, removes stale
+        // prepared catalog rows, and durably republishes any repair before admitting
+        // new work.
+        // Proof: tests/unit/test_mga_failpoint_replay.cpp and
+        // tests/unit/test_transaction_vnext_contract.cpp.
         if (startup_repair_out)
         {
             *startup_repair_out = false;

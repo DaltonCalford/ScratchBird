@@ -34,13 +34,27 @@ namespace scratchbird::core
     class ConnectionContext;
     struct ErrorContext;
 
-    // Transaction states
+    // AUDIT CONTRACT:
+    // - TIP is the authoritative durable transaction inventory.
+    // - CLOG is synchronized secondary state used for compact lookup and restart repair.
+    // - ScratchBird Alpha recovery is MGA/state reconciliation, not WAL replay.
+    // - Transaction visibility is published only after durable TIP/CLOG/header publication.
+    // - ProcArray is attachment-visible inventory only; it is never the source of truth
+    //   after restart.
+    // Proof anchors:
+    // - tests/unit/test_transaction_manager.cpp
+    // - tests/unit/test_executor_transaction_payload.cpp
+    // - tests/unit/test_mga_failpoint_replay.cpp
+    // - tests/unit/test_transaction_vnext_contract.cpp
+    //
+    // The enum values below are persisted in TIP pages and therefore define the
+    // terminal state vocabulary used by startup normalization.
     enum class TransactionState : uint8_t
     {
         ACTIVE = 0,
         COMMITTED = 1,
         ABORTED = 2,
-        PREPARED = 3, // For future 2PC support
+        PREPARED = 3, // Durable limbo / 2PC state; resolved by COMMIT PREPARED or ROLLBACK PREPARED
     };
 
     enum class TransactionStateDetail : uint8_t
@@ -290,17 +304,26 @@ namespace scratchbird::core
         // TRANSACTION LIFECYCLE
         // ===========================================================================================
 
-        // Begin a new transaction
+        // AUDIT CONTRACT: begin publication is durable before visibility.
+        // beginTransaction() must not publish the XID into ProcArray until:
+        // - TIP ACTIVE is durable
+        // - CLOG IN_PROGRESS is durable
+        // - page-0 next_xid advance is durable
+        // If publication later fails, the code must best-effort repair the TIP/CLOG state
+        // back to ABORTED before returning.
         // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto beginTransaction(uint32_t proc_id, uint64_t &xid_out, ErrorContext *ctx = nullptr)
             -> Status;
 
-        // Commit a transaction
         // LOCKING: Thread-safe. Acquires mutex_ for pre-commit work, releases before I/O,
         //          then uses group_commit_mutex_ for group commit coordination.
         auto commitTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx = nullptr)
             -> Status;
 
+        // AUDIT CONTRACT: terminal transaction state is durable before ACK.
+        // commitTransactionWithSequence() publishes COMMITTED into TIP/CLOG, applies the
+        // forced-write fence, then clears ProcArray visibility, updates horizons, and
+        // fences again before the client-visible commit path completes in safe modes.
         auto commitTransactionWithSequence(uint32_t proc_id,
                                            uint64_t xid,
                                            uint64_t &commit_seqno_out,
@@ -312,17 +335,23 @@ namespace scratchbird::core
         auto rollbackTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx = nullptr)
             -> Status;
 
-        // Prepare a transaction for 2PC (limbo state)
+        // AUDIT CONTRACT: PREPARED is a real durable limbo state.
+        // prepareTransaction() persists the prepared catalog record and lock snapshot
+        // before TIP/CLOG PREPARED publication. Startup later treats PREPARED-without-
+        // catalog evidence as corruption instead of silently guessing.
         // LOCKING: Thread-safe. Acquires mutex_ for pre-prepare work, releases before I/O.
         auto prepareTransaction(uint32_t proc_id, uint64_t xid, const std::string& gid,
                                 const ID& owner_id, ErrorContext *ctx = nullptr) -> Status;
 
-        // Commit a prepared (2PC) transaction
+        // AUDIT CONTRACT: commitPreparedTransaction() resolves limbo by making COMMITTED
+        // durable in TIP/CLOG before removing the prepared catalog record and detached
+        // lock-owner state.
         // LOCKING: Thread-safe. Acquires mutex_ for state updates, releases before I/O.
         auto commitPreparedTransaction(const std::string& gid,
                                        ErrorContext *ctx = nullptr) -> Status;
 
-        // Roll back a prepared (2PC) transaction
+        // AUDIT CONTRACT: rollbackPreparedTransaction() resolves limbo by making ABORTED
+        // durable in TIP/CLOG before deleting prepared catalog evidence and lock state.
         // LOCKING: Thread-safe. Acquires mutex_ for state updates, releases before I/O.
         auto rollbackPreparedTransaction(const std::string& gid,
                                          ErrorContext *ctx = nullptr) -> Status;
@@ -820,6 +849,10 @@ namespace scratchbird::core
         auto findTipEntry(uint64_t xid, TIPEntry &entry_out, ErrorContext *ctx) -> Status;
 
         // LOCKING: No locks required (performs fsync via Database API).
+        // AUDIT CONTRACT: this is the commit/publication forced-write fence.
+        // It is allowed to fail closed on writeback incidents. When it returns OK, the
+        // caller has forced durable publication across the primary file and every
+        // registered durable filespace touched by Database::sync().
         auto flushTransactionState(ErrorContext *ctx) -> Status;
 
         // Persist begin/abort publication metadata without fencing unrelated user pages.

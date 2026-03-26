@@ -93,6 +93,11 @@ namespace scratchbird
 //
 // Any sweep/export/replication lineage is derivative write-after evidence. It
 // can be shipped or audited, but it is never the source of truth for recovery.
+// Proof anchors:
+// - tests/unit/test_mga_failpoint_replay.cpp
+// - tests/unit/test_shadow_filespaces.cpp
+// - tests/unit/test_executor_transaction_payload.cpp
+// - tests/unit/test_observability_sql_views.cpp
 #pragma pack(push, 1)
         struct DatabaseHeader
         {
@@ -508,6 +513,8 @@ namespace scratchbird
             {
                 return header_ ? header_->db_compat_version : 0;
             }
+            // AUDIT CONTRACT: when write_admission_fenced() is true, commit/publication code
+            // must fail closed instead of pretending that durability succeeded.
             bool write_admission_fenced() const;
             Status write_admission_status() const;
 
@@ -520,6 +527,11 @@ namespace scratchbird
             // === LEGACY API: tablespace 0 only ===
             // Read/write pages
             Status read_page(uint32_t page_id, void *buffer, ErrorContext *ctx = nullptr) const;
+            // AUDIT CONTRACT: write_page() publishes a canonical page image with header and
+            // payload checksums already finalized. It writes primary-storage MGA truth first
+            // and only then mirrors that already-produced truth into any active shadow copy.
+            // Proof: tests/unit/test_shadow_filespaces.cpp and
+            // tests/unit/test_vnext_page_contract.cpp.
             Status write_page(uint32_t page_id,
                               const void *buffer,
                               ErrorContext *ctx = nullptr,
@@ -546,12 +558,10 @@ namespace scratchbird
             /**
              * write_page_global - Write a page identified by GPID
              *
-             * @param gpid Global Page ID of page to write
-             * @param buffer Buffer containing page data to write (must be page_size bytes)
-             * @param ctx Error context
-             * @return Status::OK on success, error status otherwise
-             *
-             * Supports both primary (tablespace 0) and custom tablespaces (1-65535).
+             * AUDIT CONTRACT:
+             * - publishes the canonical page image for the selected filespace
+             * - uses the same writeback-failure fencing model as primary-file writes
+             * - does not turn shadow/export/cluster logs into recovery authority
              */
             Status write_page_global(GPID gpid,
                                      const void *buffer,
@@ -822,8 +832,12 @@ namespace scratchbird
                 return fd_;
             }
 
-            // Sync the primary database file and every registered durable tablespace.
-            // Transaction commit/publication paths rely on this forced-write fence.
+            // AUDIT CONTRACT: sync() is the engine-wide forced-write fence used by
+            // transaction publication, terminal commit/rollback, checkpoint, and startup
+            // repair publication. Returning OK means the primary file plus every registered
+            // durable tablespace and active shadow copy have been forced to stable storage.
+            // Proof: tests/unit/test_mga_failpoint_replay.cpp and
+            // tests/unit/test_executor_transaction_payload.cpp.
             Status sync(ErrorContext *ctx = nullptr,
                         WritebackAttribution attribution = {}) const;
             Status clearWritebackFailureState(ErrorContext *ctx = nullptr);
@@ -902,7 +916,8 @@ namespace scratchbird
 
             // Physical filespace shadowing is derivative durability hardening.
             // It mirrors already-produced MGA page truth into a page-for-page
-            // copy for failover/inspection. It is not recovery authority.
+            // copy for failover/inspection. It is not recovery authority and it is
+            // never replayed like WAL/redo.
             Status createShadowFilespace(uint16_t source_tablespace_id,
                                          const std::string& shadow_path,
                                          ID* shadow_id_out = nullptr,
@@ -1022,6 +1037,11 @@ namespace scratchbird
                                                          ErrorContext *ctx);
             Status markStartupOpen(ErrorContext *ctx);
             Status markCleanShutdown(ErrorContext *ctx);
+            // AUDIT CONTRACT: a persisted writeback incident fences new durability claims
+            // and degrades the engine into fail-closed write admission until the incident is
+            // cleared or enforcement is explicitly suspended for controlled repair/testing.
+            // Proof: tests/unit/test_mga_failpoint_replay.cpp and
+            // tests/unit/test_executor_transaction_payload.cpp.
             void noteWritebackFailure(Status status,
                                       WritebackFailureClass failure_class,
                                       const WritebackAttribution &attribution,
@@ -1029,6 +1049,10 @@ namespace scratchbird
                                       ErrorContext *ctx);
             Status persistStartupReconciliationState(const StartupReconciliationState &state,
                                                      ErrorContext *ctx);
+            // AUDIT CONTRACT: startup repair reconciles MGA truth already present on disk.
+            // It may quarantine, normalize, or fail closed, but it does not replay WAL.
+            // Proof: tests/unit/test_mga_failpoint_replay.cpp and
+            // tests/unit/test_transaction_vnext_contract.cpp.
             Status runStartupReconciliation(ErrorContext *ctx);
             void refreshDormantTransactionPolicyFromConfig();
             Status resolveFilespaceRoute(uint16_t source_tablespace_id,
@@ -1037,11 +1061,15 @@ namespace scratchbird
                                          ErrorContext* ctx) const;
             Status backfillShadowFilespace(ShadowFilespaceEntry& entry,
                                            ErrorContext* ctx);
+            // Derivative page-for-page mirroring only. A failure here blocks the caller but
+            // does not change the fact that the primary database remains recovery authority.
             Status mirrorShadowFilespaceWrite(uint16_t source_tablespace_id,
                                              uint64_t offset,
                                              const void* buffer,
                                              size_t size,
                                              ErrorContext* ctx) const;
+            // Shadow sync participates in the same conservative forced-write fence used by
+            // primary commit/publication paths.
             Status syncShadowFilespacesForSource(uint16_t source_tablespace_id,
                                                 ErrorContext* ctx) const;
             Status validate_bootstrap_page_map(ErrorContext *ctx) const;
