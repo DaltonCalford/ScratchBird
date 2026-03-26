@@ -183,6 +183,55 @@ namespace scratchbird::core
             return "UNKNOWN";
         }
 
+        auto dormantRestartPolicyName(Database::DormantRestartReattachPolicy policy) -> const char*
+        {
+            switch (policy)
+            {
+                case Database::DormantRestartReattachPolicy::ALLOW_REPLACEMENT:
+                    return "allow_replacement";
+                case Database::DormantRestartReattachPolicy::DENY_AFTER_RESTART:
+                    return "deny_after_restart";
+            }
+            return "unknown";
+        }
+
+        auto dormantCleanupPolicyName(Database::DormantCleanupPolicy policy) -> const char*
+        {
+            switch (policy)
+            {
+                case Database::DormantCleanupPolicy::KEEP:
+                    return "keep";
+                case Database::DormantCleanupPolicy::EXPIRE_ONLY:
+                    return "expire_only";
+                case Database::DormantCleanupPolicy::ROLLBACK_EXPIRED:
+                    return "rollback_expired";
+                case Database::DormantCleanupPolicy::ROLLBACK_EXPIRED_AND_PURGE:
+                    return "rollback_expired_and_purge";
+            }
+            return "unknown";
+        }
+
+        auto dormantStateName(uint8_t state) -> const char*
+        {
+            switch (static_cast<CatalogManager::DormantTransactionState>(state))
+            {
+                case CatalogManager::DormantTransactionState::DORMANT:
+                    return "DORMANT";
+                case CatalogManager::DormantTransactionState::REATTACHED:
+                    return "REATTACHED";
+                case CatalogManager::DormantTransactionState::ROLLED_BACK:
+                    return "ROLLED_BACK";
+                case CatalogManager::DormantTransactionState::EXPIRED:
+                    return "EXPIRED";
+            }
+            return "UNKNOWN";
+        }
+
+        auto dormantWaitModeName(bool wait_for_locks) -> const char*
+        {
+            return wait_for_locks ? "WAIT" : "NO_WAIT";
+        }
+
         auto lockModeNameFromByte(uint8_t mode) -> std::string
         {
             switch (static_cast<LockMode>(mode))
@@ -876,6 +925,55 @@ namespace scratchbird::core
                     makeColumn("started_at_ms", "BIGINT", false),
                 };
                 definitions.push_back(std::move(active_transactions));
+
+                SqlViewSchemaDefinition dormant_policy{};
+                dormant_policy.view_name = "sb_mga_dormant_policy";
+                dormant_policy.schema_version = 1;
+                dormant_policy.purpose =
+                    "Dormant restart/cleanup policy summary with hanging-transaction counts.";
+                dormant_policy.columns = {
+                    makeColumn("db_uuid", "UUID", false),
+                    makeColumn("restart_reattach_policy", "VARCHAR", false),
+                    makeColumn("cleanup_policy", "VARCHAR", false),
+                    makeColumn("lease_seconds", "BIGINT", false),
+                    makeColumn("terminal_retention_seconds", "BIGINT", false),
+                    makeColumn("total_rows", "BIGINT", false),
+                    makeColumn("dormant_rows", "BIGINT", false),
+                    makeColumn("restart_stale_rows", "BIGINT", false),
+                    makeColumn("expired_rows", "BIGINT", false),
+                    makeColumn("terminal_rows", "BIGINT", false),
+                    makeColumn("observed_at_ms", "BIGINT", false),
+                };
+                definitions.push_back(std::move(dormant_policy));
+
+                SqlViewSchemaDefinition dormant_transactions{};
+                dormant_transactions.view_name = "sb_mga_dormant_transactions";
+                dormant_transactions.schema_version = 1;
+                dormant_transactions.purpose =
+                    "Dormant transaction inventory for monitoring and maintenance of hanging work.";
+                dormant_transactions.columns = {
+                    makeColumn("db_uuid", "UUID", false),
+                    makeColumn("dormant_id", "UUID", false),
+                    makeColumn("attachment_id", "UUID", false),
+                    makeColumn("session_id", "UUID", false),
+                    makeColumn("user_id", "UUID", false),
+                    makeColumn("txid", "BIGINT", false),
+                    makeColumn("state", "VARCHAR", false),
+                    makeColumn("isolation_mode", "VARCHAR", false),
+                    makeColumn("read_only", "BOOLEAN", false),
+                    makeColumn("wait_mode", "VARCHAR", false),
+                    makeColumn("lock_timeout_seconds", "BIGINT", false),
+                    makeColumn("dormant_age_seconds", "DOUBLE", false),
+                    makeColumn("lease_expires_at_ms", "BIGINT", true),
+                    makeColumn("restart_stale", "BOOLEAN", false),
+                    makeColumn("last_statement_time_ms", "BIGINT", true),
+                    makeColumn("last_statement_hash", "BIGINT", false),
+                    makeColumn("last_rows_affected", "BIGINT", false),
+                    makeColumn("last_error_code", "BIGINT", true),
+                    makeColumn("last_sqlstate", "VARCHAR", true),
+                    makeColumn("last_statement_text", "VARCHAR", true),
+                };
+                definitions.push_back(std::move(dormant_transactions));
 
                 SqlViewSchemaDefinition cleanup_debt{};
                 cleanup_debt.view_name = "sb_mga_cleanup_debt";
@@ -3176,6 +3274,122 @@ namespace scratchbird::core
                           return lhs.observed_at_ms < rhs.observed_at_ms;
                       }
                       return lhs.wait_event_id < rhs.wait_event_id;
+                  });
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildDormantTransactionPolicyRows(
+        const Database& db,
+        uint64_t observed_at_ms,
+        std::vector<SqlDormantTransactionPolicyRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        std::vector<Database::DormantTransactionSnapshot> dormants;
+        Status status = db.snapshotDormantTransactions(dormants, nullptr);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        const auto policy = db.dormantTransactionPolicy();
+        SqlDormantTransactionPolicyRow row{};
+        row.db_uuid = dbUuidString(db);
+        row.restart_reattach_policy =
+            dormantRestartPolicyName(policy.restart_reattach_policy);
+        row.cleanup_policy = dormantCleanupPolicyName(policy.cleanup_policy);
+        row.lease_seconds = policy.lease_seconds;
+        row.terminal_retention_seconds = policy.terminal_retention_seconds;
+        row.observed_at_ms = observed_at_ms;
+
+        for (const Database::DormantTransactionSnapshot& dormant : dormants)
+        {
+            ++row.total_rows;
+            if (static_cast<CatalogManager::DormantTransactionState>(dormant.state) ==
+                CatalogManager::DormantTransactionState::DORMANT)
+            {
+                ++row.dormant_rows;
+            }
+            if (!isZeroId(dormant.server_instance_id) &&
+                dormant.server_instance_id != db.server_instance_id())
+            {
+                ++row.restart_stale_rows;
+            }
+            if (static_cast<CatalogManager::DormantTransactionState>(dormant.state) ==
+                CatalogManager::DormantTransactionState::EXPIRED)
+            {
+                ++row.expired_rows;
+            }
+            if (static_cast<CatalogManager::DormantTransactionState>(dormant.state) !=
+                CatalogManager::DormantTransactionState::DORMANT)
+            {
+                ++row.terminal_rows;
+            }
+        }
+
+        rows_out.push_back(std::move(row));
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildDormantTransactionRows(
+        const Database& db,
+        uint64_t observed_at_ms,
+        std::vector<SqlDormantTransactionRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        std::vector<Database::DormantTransactionSnapshot> dormants;
+        Status status = db.snapshotDormantTransactions(dormants, nullptr);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        const std::string db_uuid = dbUuidString(db);
+        rows_out.reserve(dormants.size());
+        for (const Database::DormantTransactionSnapshot& dormant : dormants)
+        {
+            SqlDormantTransactionRow row{};
+            row.db_uuid = db_uuid;
+            row.dormant_id = dormant.dormant_id;
+            row.attachment_id = dormant.attachment_id;
+            row.session_id = dormant.session_id;
+            row.user_id = dormant.user_id;
+            row.txid = dormant.txn_id;
+            row.state = dormantStateName(dormant.state);
+            row.isolation_mode = isolationModeName(dormant.isolation_level);
+            row.read_only = dormant.read_only;
+            row.wait_mode = dormantWaitModeName(dormant.wait_for_locks);
+            row.lock_timeout_seconds = dormant.lock_timeout_seconds;
+            row.dormant_age_seconds =
+                ageSecondsFromMicros(observed_at_ms, dormant.dormant_since);
+            row.has_lease_expires_at_ms = dormant.lease_expires_at != 0;
+            row.lease_expires_at_ms = microsToMillis(dormant.lease_expires_at);
+            row.restart_stale =
+                !isZeroId(dormant.server_instance_id) &&
+                dormant.server_instance_id != db.server_instance_id();
+            row.has_last_statement_time_ms = dormant.last_statement_time != 0;
+            row.last_statement_time_ms = microsToMillis(dormant.last_statement_time);
+            row.last_statement_hash = dormant.last_statement_hash;
+            row.last_rows_affected = dormant.last_rows_affected;
+            row.has_last_error_code = dormant.last_error_code != 0;
+            row.last_error_code = dormant.last_error_code;
+            row.has_last_sqlstate = !dormant.last_sqlstate.empty();
+            row.last_sqlstate = dormant.last_sqlstate;
+            row.has_last_statement_text = !dormant.last_statement_text.empty();
+            row.last_statement_text = dormant.last_statement_text;
+            rows_out.push_back(std::move(row));
+        }
+
+        std::sort(rows_out.begin(),
+                  rows_out.end(),
+                  [](const SqlDormantTransactionRow& lhs,
+                     const SqlDormantTransactionRow& rhs) {
+                      if (lhs.dormant_age_seconds != rhs.dormant_age_seconds)
+                      {
+                          return lhs.dormant_age_seconds > rhs.dormant_age_seconds;
+                      }
+                      return lhs.dormant_id < rhs.dormant_id;
                   });
         return Status::OK;
     }

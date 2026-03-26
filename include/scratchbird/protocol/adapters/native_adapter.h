@@ -121,6 +121,7 @@ private:
     core::Status handleReleaseSavepoint(network::Connection* conn);
     core::Status handleRollbackTo(network::Connection* conn);
     core::Status handlePing(network::Connection* conn);
+    core::Status handleAttachDetach(network::Connection* conn);
     core::Status handleStatusRequest(network::Connection* conn);
     core::Status handleSubscribe(network::Connection* conn);
     core::Status handleUnsubscribe(network::Connection* conn);
@@ -270,6 +271,9 @@ private:
     // Session info
     uint8_t session_id_[SESSION_ID_SIZE] = {0};
     uint32_t client_version_ = 0;
+    bool has_pending_dormant_reattach_ = false;
+    core::ID pending_dormant_id_{};
+    core::ID pending_dormant_reattach_authkey_{};
 
     // Prepared statements (id -> query)
     uint32_t next_stmt_id_ = 1;

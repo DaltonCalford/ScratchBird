@@ -306,10 +306,13 @@ Message ProtocolCodec::buildConnectRequest(const std::string& database,
                                            const std::string& client_name,
                                            uint32_t client_pid,
                                            uint16_t client_flags,
-                                           const uint8_t* bound_db_uuid) {
+                                           const uint8_t* bound_db_uuid,
+                                           const uint8_t* dormant_id,
+                                           const uint8_t* dormant_reattach_authkey) {
     Message msg(MessageType::CONNECT_REQUEST);
     msg.reservePayload(sizeof(ConnectRequestPayload) +
-                       (bound_db_uuid ? SESSION_ID_SIZE : 0));
+                       (bound_db_uuid ? SESSION_ID_SIZE : 0) +
+                       (dormant_id && dormant_reattach_authkey ? (SESSION_ID_SIZE * 2) : 0));
 
     msg.writeUInt16(PROTOCOL_VERSION);
     msg.writeUInt16(client_flags);
@@ -319,6 +322,10 @@ Message ProtocolCodec::buildConnectRequest(const std::string& database,
     msg.writeNullTerminatedString("1.0.0", 32);  // client_version
     if (bound_db_uuid) {
         msg.writeBytes(bound_db_uuid, SESSION_ID_SIZE);
+    }
+    if (dormant_id && dormant_reattach_authkey) {
+        msg.writeBytes(dormant_id, SESSION_ID_SIZE);
+        msg.writeBytes(dormant_reattach_authkey, SESSION_ID_SIZE);
     }
 
     return msg;
@@ -331,7 +338,11 @@ core::Status ProtocolCodec::parseConnectRequest(const Message& msg,
                                                 uint16_t* client_flags_out,
                                                 core::ErrorContext* ctx,
                                                 std::array<uint8_t, 16>* bound_db_uuid_out,
-                                                bool* has_bound_db_uuid_out) {
+                                                bool* has_bound_db_uuid_out,
+                                                std::array<uint8_t, 16>* dormant_id_out,
+                                                bool* has_dormant_id_out,
+                                                std::array<uint8_t, 16>* dormant_reattach_authkey_out,
+                                                bool* has_dormant_reattach_authkey_out) {
     Message& m = const_cast<Message&>(msg);
     m.resetReadOffset();
 
@@ -340,6 +351,18 @@ core::Status ProtocolCodec::parseConnectRequest(const Message& msg,
     }
     if (has_bound_db_uuid_out) {
         *has_bound_db_uuid_out = false;
+    }
+    if (dormant_id_out) {
+        dormant_id_out->fill(0);
+    }
+    if (has_dormant_id_out) {
+        *has_dormant_id_out = false;
+    }
+    if (dormant_reattach_authkey_out) {
+        dormant_reattach_authkey_out->fill(0);
+    }
+    if (has_dormant_reattach_authkey_out) {
+        *has_dormant_reattach_authkey_out = false;
     }
 
     uint16_t version = 0;
@@ -364,11 +387,21 @@ core::Status ProtocolCodec::parseConnectRequest(const Message& msg,
         return core::Status::PROTOCOL_VIOLATION;
     }
 
-    if (m.getRemainingBytes() != 0) {
-        if (m.getRemainingBytes() < SESSION_ID_SIZE) {
+    const bool expect_bound_db_uuid =
+        (flags & CONNECT_FLAG_BOUND_DB_UUID) != 0 ||
+        (!(flags & CONNECT_FLAG_DORMANT_REATTACH) && m.getRemainingBytes() == SESSION_ID_SIZE);
+    if (expect_bound_db_uuid) {
+        const size_t remaining = m.getRemainingBytes();
+        if (remaining != 0 && remaining < SESSION_ID_SIZE) {
             SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
                               "Truncated CONNECT_REQUEST bound UUID");
             return core::Status::PROTOCOL_VIOLATION;
+        }
+        if (remaining == 0) {
+            if (client_flags_out) {
+                *client_flags_out = flags;
+            }
+            return core::Status::OK;
         }
 
         uint8_t uuid_bytes[SESSION_ID_SIZE];
@@ -384,12 +417,50 @@ core::Status ProtocolCodec::parseConnectRequest(const Message& msg,
         if (has_bound_db_uuid_out) {
             *has_bound_db_uuid_out = true;
         }
+    }
 
-        if (m.getRemainingBytes() != 0) {
+    if ((flags & CONNECT_FLAG_DORMANT_REATTACH) != 0) {
+        if (m.getRemainingBytes() < SESSION_ID_SIZE * 2) {
             SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
-                              "CONNECT_REQUEST trailing bytes");
+                              "Truncated CONNECT_REQUEST dormant reattach payload");
             return core::Status::PROTOCOL_VIOLATION;
         }
+
+        uint8_t dormant_id_bytes[SESSION_ID_SIZE];
+        if (!m.readBytes(dormant_id_bytes, SESSION_ID_SIZE)) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Truncated CONNECT_REQUEST dormant id payload");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+        if (dormant_id_out) {
+            std::copy(dormant_id_bytes,
+                      dormant_id_bytes + SESSION_ID_SIZE,
+                      dormant_id_out->begin());
+        }
+        if (has_dormant_id_out) {
+            *has_dormant_id_out = true;
+        }
+
+        uint8_t authkey_id_bytes[SESSION_ID_SIZE];
+        if (!m.readBytes(authkey_id_bytes, SESSION_ID_SIZE)) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Truncated CONNECT_REQUEST dormant reattach authkey payload");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+        if (dormant_reattach_authkey_out) {
+            std::copy(authkey_id_bytes,
+                      authkey_id_bytes + SESSION_ID_SIZE,
+                      dormant_reattach_authkey_out->begin());
+        }
+        if (has_dormant_reattach_authkey_out) {
+            *has_dormant_reattach_authkey_out = true;
+        }
+    }
+
+    if (m.getRemainingBytes() != 0) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "CONNECT_REQUEST trailing bytes");
+        return core::Status::PROTOCOL_VIOLATION;
     }
 
     if (client_flags_out) {
@@ -2022,6 +2093,38 @@ core::Status ProtocolCodec::parsePing(const Message& msg,
     return core::Status::OK;
 }
 
+Message ProtocolCodec::buildDormantDetach() {
+    return Message(MessageType::DORMANT_DETACH);
+}
+
+Message ProtocolCodec::buildDormantDetachResult(const uint8_t dormant_id[16],
+                                                const uint8_t reattach_authkey_id[16]) {
+    Message msg(MessageType::DORMANT_DETACH_RESULT);
+    msg.writeBytes(dormant_id, SESSION_ID_SIZE);
+    msg.writeBytes(reattach_authkey_id, SESSION_ID_SIZE);
+    return msg;
+}
+
+core::Status ProtocolCodec::parseDormantDetachResult(
+    const Message& msg,
+    std::array<uint8_t, 16>& dormant_id_out,
+    std::array<uint8_t, 16>& reattach_authkey_id_out,
+    core::ErrorContext* ctx) {
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    if (!m.readBytes(dormant_id_out.data(), SESSION_ID_SIZE) ||
+        !m.readBytes(reattach_authkey_id_out.data(), SESSION_ID_SIZE) ||
+        m.getRemainingBytes() != 0) {
+        SET_ERROR_CONTEXT(ctx,
+                          core::Status::PROTOCOL_VIOLATION,
+                          "Malformed DORMANT_DETACH_RESULT");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    return core::Status::OK;
+}
+
 // Status Messages
 
 Message ProtocolCodec::buildStatusRequest(StatusRequestType request_type) {
@@ -2516,6 +2619,9 @@ const char* messageTypeToString(MessageType type) {
         case MessageType::MCP_DB_LIST:        return "MCP_DB_LIST";
         case MessageType::MCP_DB_CONNECT:     return "MCP_DB_CONNECT";
         case MessageType::MCP_DB_INFO:        return "MCP_DB_INFO";
+        case MessageType::DORMANT_DETACH:     return "DORMANT_DETACH";
+        case MessageType::DORMANT_DETACH_RESULT:
+                                            return "DORMANT_DETACH_RESULT";
         case MessageType::COPY_DATA:          return "COPY_DATA";
         case MessageType::COPY_DONE:          return "COPY_DONE";
         case MessageType::COPY_FAIL:          return "COPY_FAIL";

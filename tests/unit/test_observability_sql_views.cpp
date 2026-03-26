@@ -166,7 +166,7 @@ namespace scratchbird::core
     {
         std::vector<SqlViewSchemaDefinition> views;
         ASSERT_EQ(MgaObservabilityContract::appendSqlViewDefinitions(views), Status::OK);
-        ASSERT_EQ(views.size(), 14u);
+        ASSERT_EQ(views.size(), 16u);
         for (const SqlViewSchemaDefinition& view : views)
         {
             EXPECT_EQ(view.schema_version, MgaObservabilityContract::sql_view_schema_version());
@@ -183,6 +183,24 @@ namespace scratchbird::core
         EXPECT_EQ(runtime_view->columns[0].column_type, "VARCHAR");
         EXPECT_EQ(runtime_view->columns[3].column_name, "labels_json");
         EXPECT_EQ(runtime_view->columns[3].column_type, "JSON");
+
+        const auto dormant_policy_view = std::find_if(
+            views.begin(), views.end(), [](const SqlViewSchemaDefinition& view) {
+                return view.view_name == "sb_mga_dormant_policy";
+            });
+        ASSERT_NE(dormant_policy_view, views.end());
+        EXPECT_EQ(dormant_policy_view->columns[1].column_name, "restart_reattach_policy");
+        EXPECT_EQ(dormant_policy_view->columns[2].column_name, "cleanup_policy");
+        EXPECT_EQ(dormant_policy_view->columns[7].column_name, "restart_stale_rows");
+
+        const auto dormant_transactions_view = std::find_if(
+            views.begin(), views.end(), [](const SqlViewSchemaDefinition& view) {
+                return view.view_name == "sb_mga_dormant_transactions";
+            });
+        ASSERT_NE(dormant_transactions_view, views.end());
+        EXPECT_EQ(dormant_transactions_view->columns[1].column_name, "dormant_id");
+        EXPECT_EQ(dormant_transactions_view->columns[12].column_name, "lease_expires_at_ms");
+        EXPECT_EQ(dormant_transactions_view->columns[19].column_name, "last_statement_text");
 
         const auto history_view = std::find_if(
             views.begin(), views.end(), [](const SqlViewSchemaDefinition& view) {
@@ -450,6 +468,66 @@ namespace scratchbird::core
                         "\"relation\":\"orders\"");
         ASSERT_NE(index_backlog_metric, runtime_rows.end());
         EXPECT_DOUBLE_EQ(index_backlog_metric->value, 7.0);
+    }
+
+    TEST_F(MgaObservabilityLiveViewsTest, BuildsDormantPolicyAndDormantTransactionRows)
+    {
+        ErrorContext ctx;
+
+        std::unique_ptr<ConnectionContext> dormant_conn;
+        ASSERT_EQ(db_->connect(dormant_conn, &ctx), Status::OK) << ctx.message;
+        ASSERT_NE(dormant_conn, nullptr);
+        dormant_conn->setCurrentUser(catalog_->getSystemUserId(&ctx), true);
+        dormant_conn->setProtocolSessionId(generateUuidV7());
+        dormant_conn->setWaitForLocks(false);
+        dormant_conn->setLockTimeout(15);
+        ASSERT_EQ(dormant_conn->beginStatementTracking(
+                      "UPDATE mga_obs.orders SET id = 1",
+                      &ctx),
+                  Status::OK)
+            << ctx.message;
+        dormant_conn->endStatementTrackingSuccess(3);
+
+        ID dormant_id{};
+        ID reattach_authkey_id{};
+        ASSERT_EQ(db_->detachToDormant(dormant_conn, dormant_id, &ctx, &reattach_authkey_id),
+                  Status::OK)
+            << ctx.message;
+        EXPECT_EQ(dormant_conn, nullptr);
+
+        const uint64_t now_ms = nowMicros() / 1000;
+
+        std::vector<SqlDormantTransactionPolicyRow> policy_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildDormantTransactionPolicyRows(
+                      *db_, now_ms, policy_rows),
+                  Status::OK);
+        ASSERT_EQ(policy_rows.size(), 1u);
+        EXPECT_EQ(policy_rows[0].db_uuid, db_->uuid().toString());
+        EXPECT_FALSE(policy_rows[0].restart_reattach_policy.empty());
+        EXPECT_FALSE(policy_rows[0].cleanup_policy.empty());
+        EXPECT_GE(policy_rows[0].total_rows, 1u);
+        EXPECT_GE(policy_rows[0].dormant_rows, 1u);
+
+        std::vector<SqlDormantTransactionRow> dormant_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildDormantTransactionRows(
+                      *db_, now_ms, dormant_rows),
+                  Status::OK);
+        auto it = std::find_if(
+            dormant_rows.begin(), dormant_rows.end(),
+            [&](const SqlDormantTransactionRow& row) {
+                return row.dormant_id == dormant_id;
+            });
+        ASSERT_NE(it, dormant_rows.end());
+        EXPECT_EQ(it->state, "DORMANT");
+        EXPECT_EQ(it->wait_mode, "NO_WAIT");
+        EXPECT_EQ(it->lock_timeout_seconds, 15u);
+        EXPECT_TRUE(it->has_lease_expires_at_ms);
+        EXPECT_TRUE(it->has_last_statement_time_ms);
+        EXPECT_EQ(it->last_rows_affected, 3);
+        EXPECT_TRUE(it->has_last_statement_text);
+        EXPECT_EQ(it->last_statement_text, "UPDATE mga_obs.orders SET id = 1");
+        EXPECT_GT(it->last_statement_hash, 0u);
+        EXPECT_FALSE(it->restart_stale);
     }
 
     TEST_F(MgaObservabilityLiveViewsTest, BuildsDurabilityRowsFromCatalogHistoryAndRuntimeState)

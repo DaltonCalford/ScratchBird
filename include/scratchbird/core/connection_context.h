@@ -440,8 +440,18 @@ namespace scratchbird::core
         Status registerReadConsistencyRestart(const StatementRestartDecision& decision,
                                               ErrorContext *ctx = nullptr);
 
-        // Check if termination has been requested (for long transaction monitor)
-        // Returns Status::IO_ERROR if termination requested, Status::OK otherwise
+        enum class GovernanceIntervention : uint8_t
+        {
+            NONE = 0,
+            NOTICE_ONLY = 1,
+            ROLLED_BACK = 2,
+            TERMINATED = 3,
+        };
+
+        // Poll and apply long-transaction governance directives issued by the
+        // monitor. Notices are attachment-visible, forced rollback is
+        // attachment-owned, and termination remains explicit instead of a
+        // hidden monitor-side transaction mutation.
         Status checkTerminationRequested(ErrorContext *ctx = nullptr);
 
         // Connection settings
@@ -836,6 +846,8 @@ namespace scratchbird::core
         // Helper methods
         Status beginNewTransaction(ErrorContext *ctx);
         Status endCurrentTransaction(bool commit, ErrorContext *ctx);
+        Status pollLongTransactionGovernance(GovernanceIntervention *intervention_out,
+                                             ErrorContext *ctx);
         void applyStagedSettings();
         Status createSnapshot(ErrorContext *ctx);
         void clearStatementRestartState();

@@ -120,6 +120,8 @@ private:
     Status queryPreparedStatements(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMgaRuntimeMetrics(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMgaActiveTransactions(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMgaDormantPolicy(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMgaDormantTransactions(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMgaCleanupDebt(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMgaSnapshotBlockers(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMgaTransactionHistory(VirtualResultSet& results, ErrorContext* ctx);

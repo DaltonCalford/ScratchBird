@@ -459,6 +459,55 @@ protected:
         return manifest.substr(value_start, end - value_start);
     }
 
+    std::string buildWalAfterProfileConfig(const std::string& queue_root,
+                                           const std::string& database_path,
+                                           const std::string& topic,
+                                           const std::string& shipping_mode = "DEBUG") const
+    {
+        std::ostringstream out;
+        out << "{\"profile_kind\":\"SWEEP_WAL_AFTER_LOG\"";
+        if (!queue_root.empty())
+        {
+            out << ",\"queue_root\":\"" << queue_root << "\"";
+        }
+        if (!database_path.empty())
+        {
+            out << ",\"database_path\":\"" << database_path << "\"";
+        }
+        if (!topic.empty())
+        {
+            out << ",\"topic\":\"" << topic << "\"";
+        }
+        out << ",\"shipping_mode\":\"" << shipping_mode << "\"}";
+        return out.str();
+    }
+
+    bool upsertWalAfterProfile(Database& db,
+                               const std::string& profile_name,
+                               const std::string& sink_type,
+                               const std::string& queue_root,
+                               const std::string& database_path,
+                               const std::string& topic,
+                               ID& profile_id_out)
+    {
+        CatalogManager::AuditSinkProfileCatalogInfo profile{};
+        profile.audit_sink_profile_id = generateUuidV7();
+        profile.profile_name = profile_name;
+        profile.sink_type = sink_type;
+        profile.failure_policy = "BEST_EFFORT";
+        profile.config_json =
+            buildWalAfterProfileConfig(queue_root, database_path, topic);
+
+        ErrorContext ctx;
+        if (db.catalog_manager()->upsertAuditSinkProfileCatalogEntry(profile, &ctx) != Status::OK)
+        {
+            return false;
+        }
+
+        profile_id_out = profile.audit_sink_profile_id;
+        return true;
+    }
+
     std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_;
 };
 
@@ -1624,6 +1673,263 @@ TEST_F(GarbageCollectorTest, SweepWalAfterLogFailureDoesNotBlockPrune)
     std::vector<SweepWalAfterLogSegment> segments;
     ASSERT_EQ(sweep_mgr->listWalAfterLogSegments(segments, &ctx), Status::OK) << ctx.message;
     EXPECT_TRUE(segments.empty());
+}
+
+TEST_F(GarbageCollectorTest, SweepExportsWalAfterLogToAdditionalConfiguredDestinations)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    auto* sweep_mgr = db.sweep_manager();
+    auto* gc = db.garbage_collector();
+    ASSERT_NE(sweep_mgr, nullptr);
+    ASSERT_NE(gc, nullptr);
+
+    ID tx_uuid{};
+    uint64_t txid = 0;
+    ASSERT_TRUE(createCommittedRetainedTransaction(db, tx_uuid, txid));
+
+    SweepPolicyBinding binding{};
+    binding.scope_kind = SweepScopeKind::DATABASE;
+    binding.scope_id = db.uuid();
+    binding.lanes = {SweepPolicyLane::LINEAGE_RETENTION, SweepPolicyLane::WAL_AFTER_EXPORT};
+    binding.strict_audit = true;
+
+    ErrorContext ctx;
+    ASSERT_EQ(sweep_mgr->setPolicyBindings({binding}, &ctx), Status::OK) << ctx.message;
+
+    const std::filesystem::path base_path(test_db_->path());
+    const std::filesystem::path local_root = base_path.string() + ".wal_after_local";
+    const std::filesystem::path remote_db_path =
+        base_path.string() + ".wal_after_remote.db";
+    const std::filesystem::path kafka_root = base_path.string() + ".wal_after_kafka";
+    struct PathCleanupGuard
+    {
+        std::vector<std::filesystem::path> paths;
+        ~PathCleanupGuard()
+        {
+            for (const auto& path : paths)
+            {
+                std::error_code ec;
+                std::filesystem::remove_all(path, ec);
+            }
+        }
+    } cleanup{{local_root, remote_db_path, kafka_root}};
+    std::error_code ec;
+    std::filesystem::remove_all(local_root, ec);
+    std::filesystem::remove(remote_db_path, ec);
+    std::filesystem::remove_all(kafka_root, ec);
+
+    ID local_profile_id{};
+    ID remote_profile_id{};
+    ID kafka_profile_id{};
+    ASSERT_TRUE(upsertWalAfterProfile(db,
+                                      "test_gc_wal_after_local",
+                                      "LOCAL_APPEND_ONLY",
+                                      local_root.string(),
+                                      std::string(),
+                                      std::string(),
+                                      local_profile_id));
+    ASSERT_TRUE(upsertWalAfterProfile(db,
+                                      "test_gc_wal_after_remote",
+                                      "REMOTE_DATABASE",
+                                      std::string(),
+                                      remote_db_path.string(),
+                                      std::string(),
+                                      remote_profile_id));
+    ASSERT_TRUE(upsertWalAfterProfile(db,
+                                      "test_gc_wal_after_kafka",
+                                      "KAFKA_CHANNEL",
+                                      kafka_root.string(),
+                                      std::string(),
+                                      "wal_after",
+                                      kafka_profile_id));
+
+    ASSERT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::OK) << ctx.message;
+    EXPECT_FALSE(gc->isSweepPruneBlocked());
+
+    const auto stats = sweep_mgr->getStatistics();
+    EXPECT_GE(stats.last_evidence_items_emitted, 1u);
+    EXPECT_EQ(stats.last_wal_after_segments_emitted, 3u);
+    EXPECT_EQ(stats.wal_after_backlog_depth, 0u);
+    EXPECT_EQ(stats.wal_after_export_failures, 0u);
+
+    std::vector<SweepWalAfterLogSegment> segments;
+    ASSERT_EQ(sweep_mgr->listWalAfterLogSegments(segments, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(segments.size(), 3u);
+    EXPECT_EQ(std::count_if(segments.begin(),
+                            segments.end(),
+                            [](const SweepWalAfterLogSegment& segment) {
+                                return segment.sink_type == "LOCAL_APPEND_ONLY";
+                            }),
+              1);
+    EXPECT_EQ(std::count_if(segments.begin(),
+                            segments.end(),
+                            [](const SweepWalAfterLogSegment& segment) {
+                                return segment.sink_type == "REMOTE_DATABASE";
+                            }),
+              1);
+    EXPECT_EQ(std::count_if(segments.begin(),
+                            segments.end(),
+                            [](const SweepWalAfterLogSegment& segment) {
+                                return segment.sink_type == "KAFKA_CHANNEL";
+                            }),
+              1);
+
+    const auto local_segment =
+        std::find_if(segments.begin(), segments.end(), [](const auto& segment) {
+            return segment.sink_type == "LOCAL_APPEND_ONLY";
+        });
+    const auto remote_segment =
+        std::find_if(segments.begin(), segments.end(), [](const auto& segment) {
+            return segment.sink_type == "REMOTE_DATABASE";
+        });
+    const auto kafka_segment =
+        std::find_if(segments.begin(), segments.end(), [](const auto& segment) {
+            return segment.sink_type == "KAFKA_CHANNEL";
+        });
+    ASSERT_NE(local_segment, segments.end());
+    ASSERT_NE(remote_segment, segments.end());
+    ASSERT_NE(kafka_segment, segments.end());
+    EXPECT_EQ(local_segment->txid, txid);
+    EXPECT_EQ(remote_segment->txid, txid);
+    EXPECT_EQ(kafka_segment->txid, txid);
+    EXPECT_EQ(remote_segment->destination_hint, remote_db_path.string());
+    EXPECT_TRUE(std::filesystem::exists(local_segment->segment_path));
+    EXPECT_TRUE(std::filesystem::exists(kafka_segment->segment_path));
+    EXPECT_TRUE(std::filesystem::exists(remote_db_path));
+
+    Database remote_db;
+    ASSERT_EQ(remote_db.open(remote_db_path.string(), &ctx), Status::OK) << ctx.message;
+    auto* remote_sweep_mgr = remote_db.sweep_manager();
+    ASSERT_NE(remote_sweep_mgr, nullptr);
+    std::vector<SweepWalAfterLogSegment> remote_segments;
+    ASSERT_EQ(remote_sweep_mgr->listWalAfterLogSegments(remote_segments, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(remote_segments.size(), 1u);
+    EXPECT_EQ(remote_segments.front().txid, txid);
+    EXPECT_EQ(remote_segments.front().sink_type, "REMOTE_DATABASE");
+    remote_db.close();
+}
+
+TEST_F(GarbageCollectorTest, SweepWalAfterLogFailureTracksBacklogPerDestination)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    auto* sweep_mgr = db.sweep_manager();
+    auto* gc = db.garbage_collector();
+    ASSERT_NE(sweep_mgr, nullptr);
+    ASSERT_NE(gc, nullptr);
+
+    ID tx_uuid{};
+    uint64_t txid = 0;
+    ASSERT_TRUE(createCommittedRetainedTransaction(db, tx_uuid, txid));
+
+    SweepPolicyBinding binding{};
+    binding.scope_kind = SweepScopeKind::DATABASE;
+    binding.scope_id = db.uuid();
+    binding.lanes = {SweepPolicyLane::LINEAGE_RETENTION, SweepPolicyLane::WAL_AFTER_EXPORT};
+    binding.strict_audit = true;
+
+    ErrorContext ctx;
+    ASSERT_EQ(sweep_mgr->setPolicyBindings({binding}, &ctx), Status::OK) << ctx.message;
+
+    const std::filesystem::path base_path(test_db_->path());
+    const std::filesystem::path local_root = base_path.string() + ".wal_after_local_ok";
+    const std::filesystem::path remote_db_path =
+        base_path.string() + ".wal_after_remote_ok.db";
+    const std::filesystem::path blocked_queue_root =
+        base_path.string() + ".wal_after_blocked";
+    struct PathCleanupGuard
+    {
+        std::vector<std::filesystem::path> paths;
+        ~PathCleanupGuard()
+        {
+            for (const auto& path : paths)
+            {
+                std::error_code ec;
+                std::filesystem::remove_all(path, ec);
+            }
+        }
+    } cleanup{{local_root, remote_db_path, blocked_queue_root}};
+    std::error_code ec;
+    std::filesystem::remove_all(local_root, ec);
+    std::filesystem::remove(remote_db_path, ec);
+    std::filesystem::remove_all(blocked_queue_root, ec);
+
+    {
+        std::ofstream out(blocked_queue_root, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(out.is_open());
+        out << "blocked";
+    }
+
+    ID local_profile_id{};
+    ID remote_profile_id{};
+    ID kafka_profile_id{};
+    ASSERT_TRUE(upsertWalAfterProfile(db,
+                                      "test_gc_wal_after_local_ok",
+                                      "LOCAL_APPEND_ONLY",
+                                      local_root.string(),
+                                      std::string(),
+                                      std::string(),
+                                      local_profile_id));
+    ASSERT_TRUE(upsertWalAfterProfile(db,
+                                      "test_gc_wal_after_remote_ok",
+                                      "REMOTE_DATABASE",
+                                      std::string(),
+                                      remote_db_path.string(),
+                                      std::string(),
+                                      remote_profile_id));
+    ASSERT_TRUE(upsertWalAfterProfile(db,
+                                      "test_gc_wal_after_kafka_blocked",
+                                      "KAFKA_CHANNEL",
+                                      blocked_queue_root.string(),
+                                      std::string(),
+                                      "wal_after",
+                                      kafka_profile_id));
+
+    ASSERT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::OK) << ctx.message;
+    EXPECT_FALSE(gc->isSweepPruneBlocked());
+
+    const auto stats = sweep_mgr->getStatistics();
+    EXPECT_GE(stats.last_evidence_items_emitted, 1u);
+    EXPECT_EQ(stats.last_wal_after_segments_emitted, 2u);
+    EXPECT_EQ(stats.wal_after_backlog_depth, 1u);
+    EXPECT_EQ(stats.wal_after_export_failures, 1u);
+
+    std::vector<SweepWalAfterLogSegment> segments;
+    ASSERT_EQ(sweep_mgr->listWalAfterLogSegments(segments, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(segments.size(), 2u);
+    EXPECT_EQ(std::count_if(segments.begin(),
+                            segments.end(),
+                            [](const SweepWalAfterLogSegment& segment) {
+                                return segment.sink_type == "LOCAL_APPEND_ONLY";
+                            }),
+              1);
+    EXPECT_EQ(std::count_if(segments.begin(),
+                            segments.end(),
+                            [](const SweepWalAfterLogSegment& segment) {
+                                return segment.sink_type == "REMOTE_DATABASE";
+                            }),
+              1);
+    EXPECT_EQ(std::count_if(segments.begin(),
+                            segments.end(),
+                            [](const SweepWalAfterLogSegment& segment) {
+                                return segment.sink_type == "KAFKA_CHANNEL";
+                            }),
+              0);
+
+    Database remote_db;
+    ASSERT_EQ(remote_db.open(remote_db_path.string(), &ctx), Status::OK) << ctx.message;
+    auto* remote_sweep_mgr = remote_db.sweep_manager();
+    ASSERT_NE(remote_sweep_mgr, nullptr);
+    std::vector<SweepWalAfterLogSegment> remote_segments;
+    ASSERT_EQ(remote_sweep_mgr->listWalAfterLogSegments(remote_segments, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(remote_segments.size(), 1u);
+    EXPECT_EQ(remote_segments.front().txid, txid);
+    remote_db.close();
 }
 
 TEST_F(GarbageCollectorTest, SweepPageSpotAuditEmitsDeterministicFindingsWithoutInlineRepair)

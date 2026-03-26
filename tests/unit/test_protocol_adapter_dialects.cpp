@@ -2090,6 +2090,217 @@ TEST(ProtocolAdapterDialectsNative, NativeQueryAcceptsBytecodePayloads) {
     EXPECT_EQ(header.type, sbwp::MessageType::CommandComplete);
 }
 
+TEST(ProtocolAdapterDialectsNative, NativeTxnBeginPayloadMapsDriverIsolationAndReadConsistency) {
+    cleanupDb("test_native_txn_begin_mapping.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_native_txn_begin_mapping.sbdb").string();
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 208);
+
+    core::ErrorContext ctx;
+    ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+    ASSERT_EQ(adapter.forceAuthSuccess(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.assumePublicSuperuserForTest(&ctx), core::Status::OK) << ctx.message;
+    conn.clearWriteBuffer();
+
+    auto* conn_ctx = adapter.connectionContextForTest();
+    ASSERT_NE(conn_ctx, nullptr);
+
+    const uint16_t flags = 0x0001 | 0x0002 | 0x0008 | 0x0010 | 0x0100;
+    const auto payload = sbwp::buildTxnBeginPayload(
+        flags,
+        0,
+        0,
+        1,
+        1,
+        0,
+        1,
+        2500,
+        static_cast<uint8_t>(core::ReadCommittedMode::READ_CONSISTENCY));
+    const auto packet = buildSbwpFrontendMessage(sbwp::MessageType::TxnBegin, payload, 17);
+
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), packet.begin(), packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    const auto messages = decodeSbwpMessages(conn.getWriteBuffer());
+    EXPECT_FALSE(std::any_of(messages.begin(),
+                             messages.end(),
+                             [](const auto& message) {
+                                 return message.first.type == sbwp::MessageType::Error;
+                             }));
+    EXPECT_TRUE(std::any_of(messages.begin(),
+                            messages.end(),
+                            [](const auto& message) {
+                                return message.first.type == sbwp::MessageType::TxnStatus;
+                            }));
+    EXPECT_TRUE(std::any_of(messages.begin(),
+                            messages.end(),
+                            [](const auto& message) {
+                                return message.first.type == sbwp::MessageType::Ready;
+                            }));
+
+    EXPECT_EQ(conn_ctx->getReadCommittedMode(), core::ReadCommittedMode::READ_CONSISTENCY);
+    EXPECT_EQ(conn_ctx->getIsolationLevel(),
+              core::IsolationLevel::READ_COMMITTED_READ_CONSISTENCY);
+    EXPECT_TRUE(conn_ctx->isReadOnly());
+    EXPECT_TRUE(conn_ctx->getWaitForLocks());
+    EXPECT_EQ(conn_ctx->getLockTimeout(), 2500u);
+    EXPECT_TRUE(conn_ctx->autocommitSuspended());
+}
+
+TEST(ProtocolAdapterDialectsNative, NativeAttachDetachPublishesDormantIdentifiersAndClearsReadyState) {
+    cleanupDb("test_native_attach_detach.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_native_attach_detach.sbdb").string();
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 208);
+
+    core::ErrorContext ctx;
+    ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+    ASSERT_EQ(adapter.forceAuthSuccess(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.assumePublicSuperuserForTest(&ctx), core::Status::OK) << ctx.message;
+
+    auto* conn_ctx = adapter.connectionContextForTest();
+    ASSERT_NE(conn_ctx, nullptr);
+    ASSERT_NE(conn_ctx->getCurrentXid(), 0u);
+    conn.clearWriteBuffer();
+
+    const auto packet = buildSbwpFrontendMessage(sbwp::MessageType::AttachDetach, {}, 18);
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), packet.begin(), packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    std::map<std::string, std::string> parameter_statuses;
+    bool saw_command_complete = false;
+    bool saw_ready = false;
+    uint8_t ready_status = 1;
+    uint64_t ready_txn_id = 1;
+    uint64_t ready_epoch = 1;
+
+    for (const auto& message : decodeSbwpMessages(conn.getWriteBuffer())) {
+        if (message.first.type == sbwp::MessageType::ParameterStatus) {
+            std::string name;
+            std::string value;
+            ASSERT_EQ(sbwp::parseParameterStatus(message.second, name, value, &ctx), core::Status::OK)
+                << ctx.message;
+            parameter_statuses.emplace(std::move(name), std::move(value));
+        } else if (message.first.type == sbwp::MessageType::CommandComplete) {
+            uint8_t command_type = 0;
+            uint64_t rows = 0;
+            uint64_t last_id = 0;
+            std::string tag;
+            ASSERT_EQ(sbwp::parseCommandComplete(message.second,
+                                                command_type,
+                                                rows,
+                                                last_id,
+                                                tag,
+                                                &ctx),
+                      core::Status::OK)
+                << ctx.message;
+            EXPECT_EQ(tag, "ATTACH DETACH");
+            saw_command_complete = true;
+        } else if (message.first.type == sbwp::MessageType::Ready) {
+            ASSERT_EQ(sbwp::parseReady(message.second, ready_status, ready_txn_id, ready_epoch, &ctx),
+                      core::Status::OK)
+                << ctx.message;
+            saw_ready = true;
+        }
+    }
+
+    ASSERT_TRUE(saw_command_complete);
+    ASSERT_TRUE(saw_ready);
+    EXPECT_EQ(ready_status, 0);
+    EXPECT_EQ(ready_txn_id, 0u);
+    EXPECT_EQ(adapter.connectionContextForTest(), nullptr);
+    EXPECT_TRUE(parameter_statuses.count("dormant_id") != 0);
+    EXPECT_TRUE(parameter_statuses.count("dormant_reattach_token") != 0);
+    EXPECT_EQ(parameter_statuses["dormant_id"].size(), 36u);
+    EXPECT_EQ(parameter_statuses["dormant_reattach_token"].size(), 36u);
+}
+
+TEST(ProtocolAdapterDialectsNative, NativeStartupDormantReattachAdoptsDormantTransactionBoundary) {
+    cleanupDb("test_native_startup_dormant_reattach.sbdb");
+
+    const auto path = dbPath("test_native_startup_dormant_reattach.sbdb");
+    core::ErrorContext ctx;
+    ASSERT_EQ(core::Database::create(path.string(), 16384, &ctx), core::Status::OK)
+        << ctx.message;
+
+    core::Database db;
+    ASSERT_EQ(db.open(path.string(), &ctx), core::Status::OK) << ctx.message;
+
+    std::unique_ptr<core::ConnectionContext> dormant_conn;
+    ASSERT_EQ(db.connect(dormant_conn, &ctx), core::Status::OK) << ctx.message;
+    ASSERT_NE(dormant_conn, nullptr);
+    dormant_conn->setCurrentUser(db.catalog_manager()->getSystemUserId(&ctx), true);
+    dormant_conn->setProtocolSessionId(core::generateUuidV7());
+    ASSERT_EQ(dormant_conn->beginStatementTracking("SELECT 1", &ctx), core::Status::OK)
+        << ctx.message;
+    dormant_conn->endStatementTrackingSuccess(1);
+
+    core::ID dormant_id{};
+    core::ID reattach_authkey{};
+    ASSERT_EQ(db.detachToDormant(dormant_conn, dormant_id, &ctx, &reattach_authkey), core::Status::OK)
+        << ctx.message;
+    EXPECT_EQ(dormant_conn, nullptr);
+
+    // Simulate restart-time dormant recovery rather than a second concurrent engine instance.
+    db.close();
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = path.string();
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 209);
+
+    const auto startup_packet = buildNativeStartupPacket(
+        "sysarch",
+        "default",
+        {
+            {"dormant_id", dormant_id.toString()},
+            {"dormant_reattach_token", reattach_authkey.toString()},
+        });
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    const auto auth_packet = buildSbwpFrontendMessage(sbwp::MessageType::AuthResponse, {}, 2);
+    read_buffer.insert(read_buffer.end(), auth_packet.begin(), auth_packet.end());
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    auto* reattached = adapter.connectionContextForTest();
+    ASSERT_NE(reattached, nullptr);
+    EXPECT_NE(reattached->getCurrentXid(), 0u);
+
+    uint8_t ready_status = 0;
+    uint64_t ready_txn_id = 0;
+    uint64_t ready_epoch = 0;
+    bool saw_ready = false;
+    for (const auto& message : decodeSbwpMessages(conn.getWriteBuffer())) {
+        if (message.first.type == sbwp::MessageType::Ready) {
+            ASSERT_EQ(sbwp::parseReady(message.second, ready_status, ready_txn_id, ready_epoch, &ctx),
+                      core::Status::OK)
+                << ctx.message;
+            saw_ready = true;
+        }
+    }
+
+    ASSERT_TRUE(saw_ready);
+    EXPECT_EQ(ready_status, 1);
+    EXPECT_NE(ready_txn_id, 0u);
+}
+
 TEST(ProtocolAdapterDialectsNative, NativeRemoteAuthBindingDoesNotOpenLockedDatabaseFile) {
     cleanupDb("test_native_remote_auth_lock.sbdb");
 

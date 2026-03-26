@@ -240,7 +240,16 @@ namespace scratchbird::core
         pcb->query_start_time = 0;
         pcb->state_change_time = pcb->start_time;
         pcb->termination_requested = false;
+        pcb->rollback_requested = false;
+        pcb->governance_notice_pending = false;
+        pcb->governance_action = static_cast<uint8_t>(BackendGovernanceAction::NONE);
+        pcb->governance_reason_mask = 0;
+        pcb->governance_event_time = 0;
+        pcb->governance_age_seconds = 0;
+        pcb->governance_xid_lag = 0;
+        pcb->governance_snapshot_lag = 0;
         pcb->session_id = ID{};
+        std::memset(pcb->governance_message, 0, sizeof(pcb->governance_message));
         std::memset(pcb->query_text, 0, sizeof(pcb->query_text));
 
         array->num_active++;
@@ -329,7 +338,16 @@ namespace scratchbird::core
         pcb->query_start_time = 0;
         pcb->state_change_time = 0;
         pcb->termination_requested = false;
+        pcb->rollback_requested = false;
+        pcb->governance_notice_pending = false;
+        pcb->governance_action = static_cast<uint8_t>(BackendGovernanceAction::NONE);
+        pcb->governance_reason_mask = 0;
+        pcb->governance_event_time = 0;
+        pcb->governance_age_seconds = 0;
+        pcb->governance_xid_lag = 0;
+        pcb->governance_snapshot_lag = 0;
         std::memset(pcb->query_text, 0, sizeof(pcb->query_text));
+        std::memset(pcb->governance_message, 0, sizeof(pcb->governance_message));
 
         array->num_active--;
         pthread_rwlock_unlock(&array->array_lock);
@@ -932,6 +950,19 @@ namespace scratchbird::core
     auto ProcArrayManager::requestBackendTermination(uint32_t proc_id, ErrorContext *ctx)
         -> Status
     {
+        BackendGovernanceDirective directive;
+        directive.action = BackendGovernanceAction::TERMINATE_CONNECTION;
+        directive.notice_pending = true;
+        directive.termination_requested = true;
+        directive.message = "Connection terminated due to long-running transaction policy";
+        return requestBackendGovernanceDirective(proc_id, directive, ctx);
+    }
+
+    auto ProcArrayManager::requestBackendGovernanceDirective(
+        uint32_t proc_id,
+        const BackendGovernanceDirective& directive,
+        ErrorContext *ctx) -> Status
+    {
         ProcArray *array = proc_array_.load(std::memory_order_acquire);
         if (!array)
         {
@@ -947,7 +978,131 @@ namespace scratchbird::core
         }
 
         pthread_rwlock_wrlock(&array->array_lock);
-        pcb->termination_requested = true;
+        pcb->termination_requested = directive.termination_requested;
+        pcb->rollback_requested = directive.rollback_requested;
+        pcb->governance_notice_pending = directive.notice_pending;
+        pcb->governance_action = static_cast<uint8_t>(directive.action);
+        pcb->governance_reason_mask = directive.reason_mask;
+        pcb->governance_event_time = directive.event_time;
+        pcb->governance_age_seconds = directive.age_seconds;
+        pcb->governance_xid_lag = directive.xid_lag;
+        pcb->governance_snapshot_lag = directive.snapshot_lag;
+        std::memset(pcb->governance_message, 0, sizeof(pcb->governance_message));
+        if (!directive.message.empty())
+        {
+            std::strncpy(pcb->governance_message,
+                         directive.message.c_str(),
+                         sizeof(pcb->governance_message) - 1);
+            pcb->governance_message[sizeof(pcb->governance_message) - 1] = '\0';
+        }
+        pthread_rwlock_unlock(&array->array_lock);
+
+        return Status::OK;
+    }
+
+    auto ProcArrayManager::getBackendGovernanceDirective(uint32_t proc_id,
+                                                         BackendGovernanceDirective *directive_out,
+                                                         ErrorContext *ctx) -> Status
+    {
+        ProcArray *array = proc_array_.load(std::memory_order_acquire);
+        if (!array)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (!directive_out)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "directive_out is null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_rdlock(&array->array_lock);
+        directive_out->action = static_cast<BackendGovernanceAction>(pcb->governance_action);
+        directive_out->reason_mask = pcb->governance_reason_mask;
+        directive_out->notice_pending = pcb->governance_notice_pending;
+        directive_out->rollback_requested = pcb->rollback_requested;
+        directive_out->termination_requested = pcb->termination_requested;
+        directive_out->event_time = pcb->governance_event_time;
+        directive_out->age_seconds = pcb->governance_age_seconds;
+        directive_out->xid_lag = pcb->governance_xid_lag;
+        directive_out->snapshot_lag = pcb->governance_snapshot_lag;
+        directive_out->message = pcb->governance_message;
+        pthread_rwlock_unlock(&array->array_lock);
+
+        return Status::OK;
+    }
+
+    auto ProcArrayManager::clearBackendGovernanceNotice(uint32_t proc_id,
+                                                        ErrorContext *ctx) -> Status
+    {
+        ProcArray *array = proc_array_.load(std::memory_order_acquire);
+        if (!array)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_wrlock(&array->array_lock);
+        pcb->governance_notice_pending = false;
+        if (!pcb->termination_requested && !pcb->rollback_requested)
+        {
+            pcb->governance_action = static_cast<uint8_t>(BackendGovernanceAction::NONE);
+            pcb->governance_reason_mask = 0;
+            pcb->governance_event_time = 0;
+            pcb->governance_age_seconds = 0;
+            pcb->governance_xid_lag = 0;
+            pcb->governance_snapshot_lag = 0;
+            std::memset(pcb->governance_message, 0, sizeof(pcb->governance_message));
+        }
+        pthread_rwlock_unlock(&array->array_lock);
+
+        return Status::OK;
+    }
+
+    auto ProcArrayManager::clearBackendRollbackRequest(uint32_t proc_id,
+                                                       ErrorContext *ctx) -> Status
+    {
+        ProcArray *array = proc_array_.load(std::memory_order_acquire);
+        if (!array)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_wrlock(&array->array_lock);
+        pcb->rollback_requested = false;
+        if (!pcb->termination_requested && !pcb->governance_notice_pending)
+        {
+            pcb->governance_action = static_cast<uint8_t>(BackendGovernanceAction::NONE);
+            pcb->governance_reason_mask = 0;
+            pcb->governance_event_time = 0;
+            pcb->governance_age_seconds = 0;
+            pcb->governance_xid_lag = 0;
+            pcb->governance_snapshot_lag = 0;
+            std::memset(pcb->governance_message, 0, sizeof(pcb->governance_message));
+        }
         pthread_rwlock_unlock(&array->array_lock);
 
         return Status::OK;
@@ -1001,6 +1156,16 @@ namespace scratchbird::core
 
         pthread_rwlock_wrlock(&array->array_lock);
         pcb->termination_requested = false;
+        if (!pcb->rollback_requested && !pcb->governance_notice_pending)
+        {
+            pcb->governance_action = static_cast<uint8_t>(BackendGovernanceAction::NONE);
+            pcb->governance_reason_mask = 0;
+            pcb->governance_event_time = 0;
+            pcb->governance_age_seconds = 0;
+            pcb->governance_xid_lag = 0;
+            pcb->governance_snapshot_lag = 0;
+            std::memset(pcb->governance_message, 0, sizeof(pcb->governance_message));
+        }
         pthread_rwlock_unlock(&array->array_lock);
 
         return Status::OK;

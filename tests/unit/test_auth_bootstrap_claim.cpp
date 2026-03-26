@@ -31,6 +31,7 @@
 
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/auth_provider.h"
+#include "scratchbird/core/config.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/error_context.h"
@@ -104,11 +105,42 @@ private:
     std::string original_value_;
 };
 
+class ScopedConfigValue {
+public:
+    ScopedConfigValue(std::string section,
+                      std::string key,
+                      std::string value,
+                      std::string reset_value)
+        : section_(std::move(section)),
+          key_(std::move(key)),
+          reset_value_(std::move(reset_value)) {
+        Config::getInstance().set(section_, key_, value);
+    }
+
+    ~ScopedConfigValue() {
+        Config::getInstance().set(section_, key_, reset_value_);
+    }
+
+private:
+    std::string section_;
+    std::string key_;
+    std::string reset_value_;
+};
+
 std::string toUpperAscii(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
         return static_cast<char>(std::toupper(c));
     });
     return value;
+}
+
+bool noticesContain(const std::vector<std::string>& notices, const std::string& needle) {
+    for (const auto& notice : notices) {
+        if (notice.find(needle) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::vector<uint8_t> buildAuthKeyTokenProof(const std::string& token_secret,
@@ -1083,7 +1115,72 @@ TEST_F(AuthBootstrapClaimTest, DormantDetachIssuesReattachAuthKeyAndRequiresToke
     EXPECT_GT(consumed_key.last_used_time, 0u);
 }
 
-TEST_F(AuthBootstrapClaimTest, DormantReattachAuthKeyRevokedOnDatabaseClose) {
+TEST_F(AuthBootstrapClaimTest, DormantReattachRecoversReplacementTransactionAfterDatabaseClose) {
+    const ScopedConfigValue restart_policy("transactions",
+                                           "dormant_restart_reattach_policy",
+                                           "allow_replacement",
+                                           "allow_replacement");
+    ErrorContext ctx;
+
+    CatalogManager::UserInfo system_user{};
+    ASSERT_EQ(catalog_->getUserByName("SYSTEM", system_user, &ctx), Status::OK) << ctx.message;
+
+    std::unique_ptr<ConnectionContext> conn;
+    ASSERT_EQ(db_->connect(conn, &ctx), Status::OK) << ctx.message;
+    ASSERT_NE(conn, nullptr);
+    conn->setCurrentUser(system_user.user_id, true);
+    conn->setProtocolSessionId(generateUuidV7());
+    conn->setWaitForLocks(false);
+    conn->setLockTimeout(9);
+    const uint64_t original_xid = conn->getCurrentXid();
+
+    ID dormant_id{};
+    ID reattach_authkey_id{};
+    ASSERT_EQ(db_->detachToDormant(conn, dormant_id, &ctx, &reattach_authkey_id), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(conn, nullptr);
+
+    db_->close();
+
+    ASSERT_EQ(db_->open(db_path_, &ctx), Status::OK) << ctx.message;
+    catalog_ = db_->catalog_manager();
+    ASSERT_NE(catalog_, nullptr);
+
+    std::unique_ptr<ConnectionContext> reattached;
+    ErrorContext reattach_ctx;
+    ASSERT_EQ(db_->reattachDormant(dormant_id, reattached, &reattach_ctx, &reattach_authkey_id),
+              Status::OK)
+        << reattach_ctx.message;
+    ASSERT_NE(reattached, nullptr);
+    EXPECT_NE(reattached->getCurrentXid(), 0u);
+    EXPECT_NE(reattached->getCurrentXid(), original_xid);
+    EXPECT_FALSE(reattached->getWaitForLocks());
+    EXPECT_EQ(reattached->getLockTimeout(), 9u);
+    EXPECT_TRUE(noticesContain(
+        reattached->consumeNotices(),
+        "Dormant transaction recovered after server restart"));
+
+    CatalogManager::AuthKeyInfo consumed{};
+    ASSERT_EQ(catalog_->getAuthKey(reattach_authkey_id, consumed, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(consumed.scope, CatalogManager::AuthKeyScope::REATTACH);
+    EXPECT_EQ(consumed.status, CatalogManager::AuthKeyStatus::EXPIRED);
+
+    std::vector<Database::DormantTransactionSnapshot> dormants;
+    ASSERT_EQ(db_->snapshotDormantTransactions(dormants, &ctx), Status::OK) << ctx.message;
+    auto it = std::find_if(dormants.begin(), dormants.end(), [&](const auto& row) {
+        return row.dormant_id == dormant_id;
+    });
+    ASSERT_NE(it, dormants.end());
+    EXPECT_EQ(it->state,
+              static_cast<uint8_t>(CatalogManager::DormantTransactionState::REATTACHED));
+}
+
+TEST_F(AuthBootstrapClaimTest, DormantRestartPolicyCanDenyReattachAfterDatabaseClose) {
+    const ScopedConfigValue restart_policy("transactions",
+                                           "dormant_restart_reattach_policy",
+                                           "deny_after_restart",
+                                           "allow_replacement");
     ErrorContext ctx;
 
     CatalogManager::UserInfo system_user{};
@@ -1099,19 +1196,80 @@ TEST_F(AuthBootstrapClaimTest, DormantReattachAuthKeyRevokedOnDatabaseClose) {
     ID reattach_authkey_id{};
     ASSERT_EQ(db_->detachToDormant(conn, dormant_id, &ctx, &reattach_authkey_id), Status::OK)
         << ctx.message;
-    EXPECT_EQ(conn, nullptr);
 
     db_->close();
-
     ASSERT_EQ(db_->open(db_path_, &ctx), Status::OK) << ctx.message;
     catalog_ = db_->catalog_manager();
     ASSERT_NE(catalog_, nullptr);
 
-    CatalogManager::AuthKeyInfo reloaded{};
-    ASSERT_EQ(catalog_->getAuthKey(reattach_authkey_id, reloaded, &ctx), Status::OK)
+    std::vector<Database::DormantTransactionSnapshot> dormants;
+    ASSERT_EQ(db_->snapshotDormantTransactions(dormants, &ctx), Status::OK) << ctx.message;
+    auto it = std::find_if(dormants.begin(), dormants.end(), [&](const auto& row) {
+        return row.dormant_id == dormant_id;
+    });
+    ASSERT_NE(it, dormants.end());
+    EXPECT_EQ(it->state,
+              static_cast<uint8_t>(CatalogManager::DormantTransactionState::EXPIRED));
+
+    std::unique_ptr<ConnectionContext> rejected;
+    ErrorContext rejected_ctx;
+    EXPECT_EQ(db_->reattachDormant(dormant_id, rejected, &rejected_ctx, &reattach_authkey_id),
+              Status::INVALID_AUTHORIZATION);
+}
+
+TEST_F(AuthBootstrapClaimTest, DormantCleanupPolicyRollsBackExpiredDormantAttachment) {
+    const ScopedConfigValue cleanup_policy("transactions",
+                                           "dormant_cleanup_policy",
+                                           "rollback_expired",
+                                           "rollback_expired");
+    ErrorContext ctx;
+
+    CatalogManager::UserInfo system_user{};
+    ASSERT_EQ(catalog_->getUserByName("SYSTEM", system_user, &ctx), Status::OK) << ctx.message;
+
+    std::unique_ptr<ConnectionContext> conn;
+    ASSERT_EQ(db_->connect(conn, &ctx), Status::OK) << ctx.message;
+    ASSERT_NE(conn, nullptr);
+    conn->setCurrentUser(system_user.user_id, true);
+    conn->setProtocolSessionId(generateUuidV7());
+
+    ID dormant_id{};
+    ID reattach_authkey_id{};
+    ASSERT_EQ(db_->detachToDormant(conn, dormant_id, &ctx, &reattach_authkey_id), Status::OK)
         << ctx.message;
-    EXPECT_EQ(reloaded.scope, CatalogManager::AuthKeyScope::REATTACH);
-    EXPECT_EQ(reloaded.status, CatalogManager::AuthKeyStatus::REVOKED);
+
+    CatalogManager::DormantTransactionInfo info{};
+    ASSERT_EQ(catalog_->getDormantTransaction(dormant_id, info, &ctx), Status::OK) << ctx.message;
+    info.lease_expires_at = 1;
+    ASSERT_EQ(catalog_->updateDormantTransaction(info, &ctx), Status::OK) << ctx.message;
+
+    uint32_t normalized = 0;
+    ASSERT_EQ(db_->maintainDormantTransactions(&normalized, &ctx), Status::OK) << ctx.message;
+    EXPECT_GE(normalized, 1u);
+
+    CatalogManager::DormantTransactionInfo refreshed{};
+    ASSERT_EQ(catalog_->getDormantTransaction(dormant_id, refreshed, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(refreshed.state, CatalogManager::DormantTransactionState::ROLLED_BACK);
+
+    CatalogManager::AuthKeyInfo reloaded_key{};
+    ASSERT_EQ(catalog_->getAuthKey(reattach_authkey_id, reloaded_key, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(reloaded_key.status, CatalogManager::AuthKeyStatus::REVOKED);
+
+    std::vector<Database::DormantTransactionSnapshot> dormants;
+    ASSERT_EQ(db_->snapshotDormantTransactions(dormants, &ctx), Status::OK) << ctx.message;
+    auto it = std::find_if(dormants.begin(), dormants.end(), [&](const auto& row) {
+        return row.dormant_id == dormant_id;
+    });
+    ASSERT_NE(it, dormants.end());
+    EXPECT_EQ(it->state,
+              static_cast<uint8_t>(CatalogManager::DormantTransactionState::ROLLED_BACK));
+
+    std::unique_ptr<ConnectionContext> rejected;
+    ErrorContext rejected_ctx;
+    EXPECT_EQ(db_->reattachDormant(dormant_id, rejected, &rejected_ctx, &reattach_authkey_id),
+              Status::INVALID_AUTHORIZATION);
 }
 
 TEST_F(AuthBootstrapClaimTest, LocalAuthReloadsToastedUserStateAfterReopen) {

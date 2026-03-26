@@ -3127,6 +3127,10 @@ namespace scratchbird::core
                                              ErrorContext *ctx,
                                              bool allow_reserve_consumption) -> Status
     {
+        WritebackAttribution attribution{};
+        attribution.queue_kind = WritebackQueueKind::FOREGROUND_HELP;
+        attribution.policy_domain = WritebackPolicyDomain::TRANSACTION;
+
         // Allocate a new page for TIP
         Status status =
             page_manager_->allocatePage(page_id_out, ctx, allow_reserve_consumption);
@@ -3158,19 +3162,24 @@ namespace scratchbird::core
         // Calculate checksum before writing
         ph->checksum = calculatePageChecksum(new_page.get(), db_->page_size());
 
-        // Write the page to disk at the correct offset
-        off_t offset = static_cast<off_t>(page_id_out) * db_->page_size();
-        if (platform::seekFd(db_->fd(), offset, SEEK_SET) < 0 ||
-            write(db_->fd(), new_page.get(), db_->page_size()) !=
-                static_cast<ssize_t>(db_->page_size()))
+        // Publish the bootstrap TIP page through the regular page-write path so
+        // transaction inventory allocation participates in the same writeback
+        // failure attribution and forced-write fence as every other durable
+        // metadata page.
+        status = db_->write_page(page_id_out, new_page.get(), ctx, attribution);
+        if (status != Status::OK)
         {
             page_manager_->freePage(page_id_out, ctx);
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write TIP page");
-            return Status::IO_ERROR;
+            return status;
         }
 
-        // Sync to ensure page is on disk before BufferPool reads it
-        platform::syncFd(db_->fd());
+        status = db_->sync(ctx, attribution);
+        if (status != Status::OK)
+        {
+            // Do not recycle the page on sync failure. The writeback incident
+            // fence now owns recovery of this partially published durable state.
+            return status;
+        }
 
         // Flush page manager to ensure FSM is updated with new total_pages
         status = page_manager_->flush(ctx);
@@ -3732,6 +3741,9 @@ namespace scratchbird::core
         Status status = buffer_pool_->flushAll(ctx);
         if (status == Status::OK)
         {
+            // Firebird-style forced writes require the terminal fence to reach
+            // every registered durable filespace before ACK. Database::sync()
+            // currently uses a conservative all-filespace fence here.
             WritebackAttribution attribution{};
             attribution.queue_kind = WritebackQueueKind::FOREGROUND_HELP;
             attribution.policy_domain = WritebackPolicyDomain::TRANSACTION;
@@ -3801,6 +3813,8 @@ namespace scratchbird::core
         WritebackAttribution attribution{};
         attribution.queue_kind = WritebackQueueKind::FOREGROUND_HELP;
         attribution.policy_domain = WritebackPolicyDomain::TRANSACTION;
+        // Publication ordering uses the same conservative all-filespace forced
+        // write fence as terminal transaction durability.
         return db_->sync(ctx, attribution);
     }
 

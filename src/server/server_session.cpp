@@ -2129,6 +2129,9 @@ core::Status ServerSession::processMessage(const protocol::Message& msg, core::E
         case protocol::MessageType::PING:
             return handlePing(msg, ctx);
 
+        case protocol::MessageType::DORMANT_DETACH:
+            return handleDormantDetach(msg, ctx);
+
         case protocol::MessageType::QUERY_CANCEL:
             return handleCancel(msg, ctx);
 
@@ -2146,10 +2149,15 @@ core::Status ServerSession::handleConnect(const protocol::Message& msg, core::Er
     uint16_t client_flags = 0;
     std::array<uint8_t, 16> bound_db_uuid{};
     bool has_bound_db_uuid = false;
+    std::array<uint8_t, 16> dormant_id{};
+    bool has_dormant_id = false;
+    std::array<uint8_t, 16> dormant_reattach_authkey{};
+    bool has_dormant_reattach_authkey = false;
 
     core::Status status = protocol::ProtocolCodec::parseConnectRequest(
         msg, database, client_name, client_pid, &client_flags, ctx, &bound_db_uuid,
-        &has_bound_db_uuid);
+        &has_bound_db_uuid, &dormant_id, &has_dormant_id, &dormant_reattach_authkey,
+        &has_dormant_reattach_authkey);
 
     if (status != core::Status::OK) {
         sendError("Invalid connect request");
@@ -2159,6 +2167,22 @@ core::Status ServerSession::handleConnect(const protocol::Message& msg, core::Er
     client_connect_flags_ = client_flags;
     auth_database_context_ = database;
     client_name_ = client_name;
+    pending_dormant_reattach_ = PendingDormantReattachState{};
+    if ((client_flags & protocol::CONNECT_FLAG_DORMANT_REATTACH) != 0) {
+        if (!has_dormant_id || !has_dormant_reattach_authkey) {
+            protocol::Message response = protocol::ProtocolCodec::buildConnectResponse(
+                false, session_id_, "Dormant reattach connect missing identifiers");
+            protocol_session_->sendMessage(response, ctx);
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+        std::copy(dormant_id.begin(),
+                  dormant_id.end(),
+                  pending_dormant_reattach_.dormant_id.bytes.begin());
+        std::copy(dormant_reattach_authkey.begin(),
+                  dormant_reattach_authkey.end(),
+                  pending_dormant_reattach_.reattach_authkey.bytes.begin());
+        pending_dormant_reattach_.active = true;
+    }
 
     const bool manager_bound_connect =
         (client_flags & protocol::CONNECT_FLAG_MANAGER_DBBT) != 0;
@@ -2361,91 +2385,146 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         clear_auth_negotiation();
         clear_pending_mfa();
         scram_state_.reset();
+        const bool used_dormant_reattach = pending_dormant_reattach_.active;
 
-        // Create connection context
-        core::Status connect_status = database_->connect(conn_ctx_, ctx);
-        if (connect_status != core::Status::OK || !conn_ctx_) {
-            sendError("Failed to initialize connection context");
-            return connect_status;
-        }
-        const bool autocommit_enabled =
-            (client_connect_flags_ & protocol::CONNECT_FLAG_AUTOCOMMIT_OFF) == 0;
-        conn_ctx_->setAutocommitMode(autocommit_enabled);
-
-        // Preserve the protocol session UUID for dormant reattach diagnostics.
-        core::ID protocol_session_id;
-        std::memcpy(protocol_session_id.bytes.data(), session_id_, 16);
-        conn_ctx_->setProtocolSessionId(protocol_session_id);
-
-        // Set user with ID and superuser flag
-        conn_ctx_->setCurrentUser(user_info.user_id, user_info.is_superuser);
-        if (peer_credentials_available_) {
-            conn_ctx_->setSessionVariable("SB$PEER_UID", std::to_string(peer_credentials_.uid));
-            conn_ctx_->setSessionVariable("SB$PEER_GID", std::to_string(peer_credentials_.gid));
-            conn_ctx_->setSessionVariable("SB$PEER_PID", std::to_string(peer_credentials_.pid));
-        } else if (connection_ &&
-                   connection_->getMethod() == IPCMethod::NAMED_PIPE &&
-                   peer_credentials_.pid != 0) {
-            conn_ctx_->setSessionVariable("SB$PEER_PID", std::to_string(peer_credentials_.pid));
-        }
-
-        // Create and bind catalog session
-        auto* catalog = database_->catalog_manager();
-        if (catalog) {
-            core::CatalogManager::SessionInfo session_info;
-            core::Status session_status = catalog->createSession(
-                user_info.user_id, user_info.authkey_id, conn_ctx_->emulationMode(),
-                session_info, ctx);
-            if (session_status != core::Status::OK) {
-                sendError("Failed to create session");
-                return session_status;
+        if (pending_dormant_reattach_.active) {
+            auto* catalog = database_->catalog_manager();
+            if (!catalog) {
+                protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+                    protocol::AuthStatus::FAILURE, 0, "Dormant reattach requires catalog access");
+                protocol_session_->sendMessage(response, ctx);
+                return core::Status::INVALID_ARGUMENT;
             }
 
-            session_id_uuid_ = session_info.session_id;
-            authkey_id_ = user_info.authkey_id;
-
-            conn_ctx_->setCurrentSchemaId(session_info.current_schema_id);
-            if (!session_info.search_path.empty())
-            {
-                conn_ctx_->set_search_path(session_info.search_path);
+            core::CatalogManager::DormantTransactionInfo dormant_info;
+            core::Status dormant_status = catalog->getDormantTransaction(
+                pending_dormant_reattach_.dormant_id, dormant_info, ctx);
+            if (dormant_status != core::Status::OK) {
+                protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+                    protocol::AuthStatus::FAILURE,
+                    0,
+                    ctx && !ctx->message.empty() ? ctx->message : "Dormant transaction not found");
+                protocol_session_->sendMessage(response, ctx);
+                return dormant_status;
             }
 
-            core::CatalogManager::SchemaInfo schema_info;
-            if (catalog->getSchema(session_info.current_schema_id, schema_info, nullptr) == core::Status::OK)
-            {
-                std::string schema_path;
-                if (catalog->getSchemaPath(session_info.current_schema_id, schema_path, nullptr) !=
-                        core::Status::OK ||
-                    schema_path.empty())
-                {
-                    schema_path = schema_info.schema_name;
-                }
-                conn_ctx_->set_current_schema(schema_path);
-                if (session_info.search_path.empty() && !schema_path.empty())
-                {
-                    conn_ctx_->set_search_path({schema_path});
-                }
+            const bool same_authenticated_user =
+                dormant_info.user_id == user_info.user_id ||
+                dormant_info.session_user_id == user_info.user_id;
+            if (!same_authenticated_user) {
+                protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+                    protocol::AuthStatus::FAILURE, 0, "Dormant reattach user mismatch");
+                protocol_session_->sendMessage(response, ctx);
+                return core::Status::INVALID_AUTHORIZATION;
             }
 
-            conn_ctx_->setSessionContext(session_info.session_id,
-                                         user_info.authkey_id,
-                                         session_info.emulation_mode,
-                                         session_info.policy_epoch_global,
-                                         session_info.policy_epoch_table);
+            core::Status reattach_status = database_->reattachDormant(
+                pending_dormant_reattach_.dormant_id,
+                conn_ctx_,
+                ctx,
+                &pending_dormant_reattach_.reattach_authkey);
+            if (reattach_status != core::Status::OK || !conn_ctx_) {
+                protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+                    protocol::AuthStatus::FAILURE,
+                    0,
+                    ctx && !ctx->message.empty() ? ctx->message : "Dormant reattach failed");
+                protocol_session_->sendMessage(response, ctx);
+                return reattach_status != core::Status::OK
+                    ? reattach_status
+                    : core::Status::INVALID_AUTHORIZATION;
+            }
+
+            session_id_uuid_ = conn_ctx_->sessionId();
+            authkey_id_ = conn_ctx_->authKeyId();
+            pending_dormant_reattach_ = PendingDormantReattachState{};
         } else {
-            authkey_id_ = user_info.authkey_id;
-            session_id_uuid_ = core::generateUuidV7();
-            conn_ctx_->setSessionContext(session_id_uuid_,
-                                         authkey_id_,
-                                         conn_ctx_->emulationMode(),
-                                         0,
-                                         0);
+            // Create connection context
+            core::Status connect_status = database_->connect(conn_ctx_, ctx);
+            if (connect_status != core::Status::OK || !conn_ctx_) {
+                sendError("Failed to initialize connection context");
+                return connect_status;
+            }
+            const bool autocommit_enabled =
+                (client_connect_flags_ & protocol::CONNECT_FLAG_AUTOCOMMIT_OFF) == 0;
+            conn_ctx_->setAutocommitMode(autocommit_enabled);
+
+            // Preserve the protocol session UUID for dormant reattach diagnostics.
+            core::ID protocol_session_id;
+            std::memcpy(protocol_session_id.bytes.data(), session_id_, 16);
+            conn_ctx_->setProtocolSessionId(protocol_session_id);
+
+            // Set user with ID and superuser flag
+            conn_ctx_->setCurrentUser(user_info.user_id, user_info.is_superuser);
+            if (peer_credentials_available_) {
+                conn_ctx_->setSessionVariable("SB$PEER_UID", std::to_string(peer_credentials_.uid));
+                conn_ctx_->setSessionVariable("SB$PEER_GID", std::to_string(peer_credentials_.gid));
+                conn_ctx_->setSessionVariable("SB$PEER_PID", std::to_string(peer_credentials_.pid));
+            } else if (connection_ &&
+                       connection_->getMethod() == IPCMethod::NAMED_PIPE &&
+                       peer_credentials_.pid != 0) {
+                conn_ctx_->setSessionVariable("SB$PEER_PID", std::to_string(peer_credentials_.pid));
+            }
+
+            // Create and bind catalog session
+            auto* catalog = database_->catalog_manager();
+            if (catalog) {
+                core::CatalogManager::SessionInfo session_info;
+                core::Status session_status = catalog->createSession(
+                    user_info.user_id, user_info.authkey_id, conn_ctx_->emulationMode(),
+                    session_info, ctx);
+                if (session_status != core::Status::OK) {
+                    sendError("Failed to create session");
+                    return session_status;
+                }
+
+                session_id_uuid_ = session_info.session_id;
+                authkey_id_ = user_info.authkey_id;
+
+                conn_ctx_->setCurrentSchemaId(session_info.current_schema_id);
+                if (!session_info.search_path.empty())
+                {
+                    conn_ctx_->set_search_path(session_info.search_path);
+                }
+
+                core::CatalogManager::SchemaInfo schema_info;
+                if (catalog->getSchema(session_info.current_schema_id, schema_info, nullptr) == core::Status::OK)
+                {
+                    std::string schema_path;
+                    if (catalog->getSchemaPath(session_info.current_schema_id, schema_path, nullptr) !=
+                            core::Status::OK ||
+                        schema_path.empty())
+                    {
+                        schema_path = schema_info.schema_name;
+                    }
+                    conn_ctx_->set_current_schema(schema_path);
+                    if (session_info.search_path.empty() && !schema_path.empty())
+                    {
+                        conn_ctx_->set_search_path({schema_path});
+                    }
+                }
+
+                conn_ctx_->setSessionContext(session_info.session_id,
+                                             user_info.authkey_id,
+                                             session_info.emulation_mode,
+                                             session_info.policy_epoch_global,
+                                             session_info.policy_epoch_table);
+            } else {
+                authkey_id_ = user_info.authkey_id;
+                session_id_uuid_ = core::generateUuidV7();
+                conn_ctx_->setSessionContext(session_id_uuid_,
+                                             authkey_id_,
+                                             conn_ctx_->emulationMode(),
+                                             0,
+                                             0);
+            }
         }
 
         executor_->setConnectionContext(conn_ctx_.get());
 
-        // Fire ON CONNECT database triggers (Firebird-style)
-        fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent::ON_CONNECT);
+        if (!used_dormant_reattach) {
+            // Fire ON CONNECT database triggers (Firebird-style)
+            fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent::ON_CONNECT);
+        }
 
         // Audit login success with session/authkey context
         auto* audit_logger = database_->audit_logger();
@@ -3264,6 +3343,40 @@ core::Status ServerSession::handlePing(const protocol::Message& msg, core::Error
 
     // Send PONG response with same timestamp/sequence
     protocol::Message response = protocol::ProtocolCodec::buildPong(timestamp, sequence);
+    return protocol_session_->sendMessage(response, ctx);
+}
+
+core::Status ServerSession::handleDormantDetach(const protocol::Message&,
+                                                core::ErrorContext* ctx) {
+    if (state_ != SessionState::AUTHENTICATED && state_ != SessionState::IN_TRANSACTION) {
+        sendError("Dormant detach not allowed before authentication");
+        return core::Status::INVALID_TRANSACTION_STATE;
+    }
+
+    if (!conn_ctx_) {
+        sendError("Dormant detach requires an active connection context",
+                  core::SQLSTATE_INVALID_TRANSACTION_STATE,
+                  ctx);
+        return core::Status::INVALID_TRANSACTION_STATE;
+    }
+
+    core::ID dormant_id{};
+    core::ID reattach_authkey{};
+    core::Status status = database_->detachToDormant(conn_ctx_, dormant_id, ctx, &reattach_authkey);
+    if (status != core::Status::OK) {
+        return sendError(ctx && !ctx->message.empty() ? ctx->message
+                                                      : "Dormant detach failed",
+                         core::SQLSTATE_INVALID_TRANSACTION_STATE,
+                         ctx);
+    }
+
+    if (executor_) {
+        executor_->setConnectionContext(nullptr);
+    }
+
+    state_ = SessionState::AUTHENTICATED;
+    protocol::Message response = protocol::ProtocolCodec::buildDormantDetachResult(
+        dormant_id.bytes.data(), reattach_authkey.bytes.data());
     return protocol_session_->sendMessage(response, ctx);
 }
 

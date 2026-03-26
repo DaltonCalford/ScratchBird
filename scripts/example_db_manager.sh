@@ -418,6 +418,45 @@ wait_for_socket_path() {
     return 1
 }
 
+wait_for_port_while_process_alive() {
+    local host="$1"
+    local port="$2"
+    local pid="$3"
+    local attempts="${4:-120}"
+    local sleep_sec="${5:-0.25}"
+    local i
+
+    for ((i = 0; i < attempts; i++)); do
+        if (echo > "/dev/tcp/${host}/${port}") >/dev/null 2>&1; then
+            return 0
+        fi
+        if [[ -n "${pid}" ]] && ! pid_is_running "${pid}"; then
+            return 2
+        fi
+        sleep "${sleep_sec}"
+    done
+    return 1
+}
+
+wait_for_socket_path_while_process_alive() {
+    local path="$1"
+    local pid="$2"
+    local attempts="${3:-120}"
+    local sleep_sec="${4:-0.25}"
+    local i
+
+    for ((i = 0; i < attempts; i++)); do
+        if [[ -S "${path}" ]]; then
+            return 0
+        fi
+        if [[ -n "${pid}" ]] && ! pid_is_running "${pid}"; then
+            return 2
+        fi
+        sleep "${sleep_sec}"
+    done
+    return 1
+}
+
 run_native_probe() {
     local user="$1"
     local password="$2"
@@ -559,34 +598,92 @@ start_server() {
     local max_attempts=2
     local attempt
     local startup_error=""
+    local server_pid=""
+    local wait_status=0
     for ((attempt = 1; attempt <= max_attempts; attempt++)); do
         : > "${SERVER_LOG}"
+        rm -f "${PID_FILE}"
         if ! SCRATCHBIRD_BOOTSTRAP_TOKEN_FILE="${TOKEN_FILE}" \
             SCRATCHBIRD_BOOTSTRAP_REQUIRE_OWNER_UID="${SCRATCHBIRD_EXAMPLE_BOOTSTRAP_REQUIRE_OWNER_UID:-0}" \
             SCRATCHBIRD_EMULATION_RELAXED_PASSWORD_POLICY="${SCRATCHBIRD_EXAMPLE_RELAXED_PASSWORD_POLICY:-1}" \
             SCRATCHBIRD_NATIVE_FORCE_PASSWORD_AUTH="${SCRATCHBIRD_EXAMPLE_NATIVE_FORCE_PASSWORD_AUTH:-1}" \
             "${SERVER_BIN}" --config "${CONF_FILE}" >> "${SERVER_LOG}" 2>&1; then
             startup_error="failed to start sb_server"
-        elif ! wait_for_port "${BIND_HOST}" "${NATIVE_PORT}" 240 0.25; then
-            startup_error="native listener failed to come up on ${BIND_HOST}:${NATIVE_PORT}"
-        elif ! wait_for_port "${BIND_HOST}" "${PG_PORT}" 240 0.25; then
-            startup_error="postgres listener failed to come up on ${BIND_HOST}:${PG_PORT}"
-        elif ! wait_for_port "${BIND_HOST}" "${MYSQL_PORT}" 320 0.25; then
-            startup_error="mysql listener failed to come up on ${BIND_HOST}:${MYSQL_PORT}"
-        elif ! wait_for_port "${BIND_HOST}" "${FB_PORT}" 240 0.25; then
-            startup_error="firebird listener failed to come up on ${BIND_HOST}:${FB_PORT}"
-        elif ! wait_for_socket_path "${CONTROL_DIR}/sb_engine.main.sock" 120 0.25; then
-            startup_error="engine control socket did not come up at ${CONTROL_DIR}/sb_engine.main.sock"
-        elif ! wait_for_socket_path "${CONTROL_DIR}/sb_listener.scratchbird.${NATIVE_PORT}.sock" 120 0.25; then
-            startup_error="native listener control socket did not come up at ${CONTROL_DIR}/sb_listener.scratchbird.${NATIVE_PORT}.sock"
-        elif ! wait_for_socket_path "${CONTROL_DIR}/sb_listener.postgresql.${PG_PORT}.sock" 120 0.25; then
-            startup_error="postgres listener control socket did not come up at ${CONTROL_DIR}/sb_listener.postgresql.${PG_PORT}.sock"
-        elif ! wait_for_socket_path "${CONTROL_DIR}/sb_listener.mysql.${MYSQL_PORT}.sock" 120 0.25; then
-            startup_error="mysql listener control socket did not come up at ${CONTROL_DIR}/sb_listener.mysql.${MYSQL_PORT}.sock"
-        elif ! wait_for_socket_path "${CONTROL_DIR}/sb_listener.firebird.${FB_PORT}.sock" 120 0.25; then
-            startup_error="firebird listener control socket did not come up at ${CONTROL_DIR}/sb_listener.firebird.${FB_PORT}.sock"
         else
-            return 0
+            server_pid="$(load_pid)"
+            wait_for_port_while_process_alive "${BIND_HOST}" "${NATIVE_PORT}" "${server_pid}" 240 0.25
+            wait_status=$?
+            if (( wait_status == 2 )); then
+                startup_error="sb_server exited before native listener became ready on ${BIND_HOST}:${NATIVE_PORT}"
+            elif (( wait_status != 0 )); then
+                startup_error="native listener failed to come up on ${BIND_HOST}:${NATIVE_PORT}"
+            else
+                wait_for_port_while_process_alive "${BIND_HOST}" "${PG_PORT}" "${server_pid}" 240 0.25
+                wait_status=$?
+                if (( wait_status == 2 )); then
+                    startup_error="sb_server exited before postgres listener became ready on ${BIND_HOST}:${PG_PORT}"
+                elif (( wait_status != 0 )); then
+                    startup_error="postgres listener failed to come up on ${BIND_HOST}:${PG_PORT}"
+                else
+                    wait_for_port_while_process_alive "${BIND_HOST}" "${MYSQL_PORT}" "${server_pid}" 320 0.25
+                    wait_status=$?
+                    if (( wait_status == 2 )); then
+                        startup_error="sb_server exited before mysql listener became ready on ${BIND_HOST}:${MYSQL_PORT}"
+                    elif (( wait_status != 0 )); then
+                        startup_error="mysql listener failed to come up on ${BIND_HOST}:${MYSQL_PORT}"
+                    else
+                        wait_for_port_while_process_alive "${BIND_HOST}" "${FB_PORT}" "${server_pid}" 240 0.25
+                        wait_status=$?
+                        if (( wait_status == 2 )); then
+                            startup_error="sb_server exited before firebird listener became ready on ${BIND_HOST}:${FB_PORT}"
+                        elif (( wait_status != 0 )); then
+                            startup_error="firebird listener failed to come up on ${BIND_HOST}:${FB_PORT}"
+                        else
+                            wait_for_socket_path_while_process_alive "${CONTROL_DIR}/sb_engine.main.sock" "${server_pid}" 120 0.25
+                            wait_status=$?
+                            if (( wait_status == 2 )); then
+                                startup_error="sb_server exited before engine control socket became ready at ${CONTROL_DIR}/sb_engine.main.sock"
+                            elif (( wait_status != 0 )); then
+                                startup_error="engine control socket did not come up at ${CONTROL_DIR}/sb_engine.main.sock"
+                            else
+                                wait_for_socket_path_while_process_alive "${CONTROL_DIR}/sb_listener.scratchbird.${NATIVE_PORT}.sock" "${server_pid}" 120 0.25
+                                wait_status=$?
+                                if (( wait_status == 2 )); then
+                                    startup_error="sb_server exited before native listener control socket became ready at ${CONTROL_DIR}/sb_listener.scratchbird.${NATIVE_PORT}.sock"
+                                elif (( wait_status != 0 )); then
+                                    startup_error="native listener control socket did not come up at ${CONTROL_DIR}/sb_listener.scratchbird.${NATIVE_PORT}.sock"
+                                else
+                                    wait_for_socket_path_while_process_alive "${CONTROL_DIR}/sb_listener.postgresql.${PG_PORT}.sock" "${server_pid}" 120 0.25
+                                    wait_status=$?
+                                    if (( wait_status == 2 )); then
+                                        startup_error="sb_server exited before postgres listener control socket became ready at ${CONTROL_DIR}/sb_listener.postgresql.${PG_PORT}.sock"
+                                    elif (( wait_status != 0 )); then
+                                        startup_error="postgres listener control socket did not come up at ${CONTROL_DIR}/sb_listener.postgresql.${PG_PORT}.sock"
+                                    else
+                                        wait_for_socket_path_while_process_alive "${CONTROL_DIR}/sb_listener.mysql.${MYSQL_PORT}.sock" "${server_pid}" 120 0.25
+                                        wait_status=$?
+                                        if (( wait_status == 2 )); then
+                                            startup_error="sb_server exited before mysql listener control socket became ready at ${CONTROL_DIR}/sb_listener.mysql.${MYSQL_PORT}.sock"
+                                        elif (( wait_status != 0 )); then
+                                            startup_error="mysql listener control socket did not come up at ${CONTROL_DIR}/sb_listener.mysql.${MYSQL_PORT}.sock"
+                                        else
+                                            wait_for_socket_path_while_process_alive "${CONTROL_DIR}/sb_listener.firebird.${FB_PORT}.sock" "${server_pid}" 120 0.25
+                                            wait_status=$?
+                                            if (( wait_status == 2 )); then
+                                                startup_error="sb_server exited before firebird listener control socket became ready at ${CONTROL_DIR}/sb_listener.firebird.${FB_PORT}.sock"
+                                            elif (( wait_status != 0 )); then
+                                                startup_error="firebird listener control socket did not come up at ${CONTROL_DIR}/sb_listener.firebird.${FB_PORT}.sock"
+                                            else
+                                                return 0
+                                            fi
+                                        fi
+                                    fi
+                                fi
+                            fi
+                        fi
+                    fi
+                fi
+            fi
         fi
 
         tail -n 100 "${SERVER_LOG}" >&2 || true
@@ -980,6 +1077,11 @@ dynamic_status() {
 static_up() {
     set_mode_paths static
     resolve_binaries
+    if [[ ! -f "${SEED_MARKER}" && -e "${DB_FILE}" ]]; then
+        log "static example database exists without seed marker; recreating stale partial runtime"
+        stop_server
+        rm -rf "${EXAMPLE_ROOT}"
+    fi
     prepare_layout
     load_auth_defaults
     write_token

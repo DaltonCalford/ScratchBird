@@ -18,13 +18,80 @@
 
 namespace scratchbird::core
 {
+    namespace
+    {
+        auto toReasonMask(LongTransactionReason reasons) -> uint8_t
+        {
+            return static_cast<uint8_t>(reasons);
+        }
+
+        auto describeReasons(LongTransactionReason reasons) -> std::string
+        {
+            if (reasons == LongTransactionReason::NONE)
+            {
+                return "none";
+            }
+
+            std::string result;
+            auto append = [&result](const char *token) {
+                if (!result.empty())
+                {
+                    result += ",";
+                }
+                result += token;
+            };
+
+            if (hasLongTransactionReason(reasons, LongTransactionReason::AGE_THRESHOLD))
+            {
+                append("age_threshold");
+            }
+            if (hasLongTransactionReason(reasons, LongTransactionReason::GC_HORIZON_PIN))
+            {
+                append("gc_horizon_pin");
+            }
+            if (hasLongTransactionReason(reasons, LongTransactionReason::SNAPSHOT_HORIZON_PIN))
+            {
+                append("snapshot_horizon_pin");
+            }
+
+            return result;
+        }
+
+        auto formatGovernanceMessage(LongTransactionPolicy policy,
+                                     uint64_t xid,
+                                     uint64_t age_seconds,
+                                     uint64_t xid_lag,
+                                     uint64_t snapshot_lag,
+                                     LongTransactionReason reasons) -> std::string
+        {
+            std::string action =
+                policy == LongTransactionPolicy::TERMINATE_CONNECTION
+                    ? "Connection termination requested by long-running transaction policy"
+                : policy == LongTransactionPolicy::ROLLBACK_ALL ||
+                        policy == LongTransactionPolicy::ROLLBACK_READONLY
+                    ? "Transaction rollback requested by long-running transaction policy"
+                    : "Long-running transaction warning";
+
+            return action + ": xid=" + std::to_string(xid) +
+                   ", age_seconds=" + std::to_string(age_seconds) +
+                   ", xid_lag=" + std::to_string(xid_lag) +
+                   ", snapshot_lag=" + std::to_string(snapshot_lag) +
+                   ", reasons=" + describeReasons(reasons);
+        }
+    } // namespace
+
     LongTransactionMonitor::LongTransactionMonitor(Database *db)
         : db_(db), enabled_(true), warning_threshold_seconds_(600) // 10 minutes default
           ,
           critical_threshold_seconds_(3600) // 1 hour default
           ,
+          warning_xid_lag_threshold_(0) // Disabled until explicitly configured
+          ,
+          critical_xid_lag_threshold_(0) // Disabled until explicitly configured
+          ,
           check_interval_seconds_(60) // Check every minute default
-          , policy_(LongTransactionPolicy::LOG)
+          ,
+          client_notice_enabled_(true), policy_(LongTransactionPolicy::LOG)
     {
     }
 
@@ -47,9 +114,13 @@ namespace scratchbird::core
         readConfiguration();
 
         LOG_INFO(TRANSACTION,
-                 "LongTransactionMonitor initialized: warn=%us, critical=%us, check=%us, policy=%d",
+                 "LongTransactionMonitor initialized: warn=%us, critical=%us, warn_xid_lag=%lu, critical_xid_lag=%lu, check=%us, notices=%d, policy=%d",
                  warning_threshold_seconds_.load(), critical_threshold_seconds_.load(),
-                 check_interval_seconds_.load(), static_cast<int>(policy_));
+                 static_cast<unsigned long>(warning_xid_lag_threshold_.load()),
+                 static_cast<unsigned long>(critical_xid_lag_threshold_.load()),
+                 check_interval_seconds_.load(),
+                 client_notice_enabled_.load(std::memory_order_acquire) ? 1 : 0,
+                 static_cast<int>(policy_));
 
         return Status::OK;
     }
@@ -66,6 +137,14 @@ namespace scratchbird::core
 
         // Read check interval (default: 60 seconds)
         check_interval_seconds_ = cfg.getUInt("long_transactions", "check_interval", 60);
+
+        // Optional OAT/OST lag thresholds. These keep Firebird-style long
+        // snapshot pressure explicit in code instead of treating age alone as
+        // the only governance input.
+        warning_xid_lag_threshold_ =
+            static_cast<uint64_t>(cfg.getUInt("long_transactions", "warning_xid_lag_threshold", 0));
+        critical_xid_lag_threshold_ =
+            static_cast<uint64_t>(cfg.getUInt("long_transactions", "critical_xid_lag_threshold", 0));
 
         // Validate thresholds
         if (warning_threshold_seconds_ < 1)
@@ -118,6 +197,9 @@ namespace scratchbird::core
         // Read enabled flag (default: true)
         bool enabled = cfg.getBool("long_transactions", "enabled", true);
         enabled_.store(enabled, std::memory_order_release);
+        client_notice_enabled_.store(
+            cfg.getBool("long_transactions", "client_notice_enabled", true),
+            std::memory_order_release);
     }
 
     Status LongTransactionMonitor::startMonitoring(ErrorContext *ctx)
@@ -219,6 +301,20 @@ namespace scratchbird::core
         LOG_INFO(TRANSACTION, "Long transaction check interval set to %u seconds", seconds);
     }
 
+    void LongTransactionMonitor::setWarningXidLagThreshold(uint64_t xid_lag)
+    {
+        warning_xid_lag_threshold_.store(xid_lag, std::memory_order_release);
+        LOG_INFO(TRANSACTION, "Long transaction warning XID lag threshold set to %lu",
+                 static_cast<unsigned long>(xid_lag));
+    }
+
+    void LongTransactionMonitor::setCriticalXidLagThreshold(uint64_t xid_lag)
+    {
+        critical_xid_lag_threshold_.store(xid_lag, std::memory_order_release);
+        LOG_INFO(TRANSACTION, "Long transaction critical XID lag threshold set to %lu",
+                 static_cast<unsigned long>(xid_lag));
+    }
+
     void LongTransactionMonitor::setPolicy(LongTransactionPolicy policy)
     {
         policy_ = policy;
@@ -228,6 +324,13 @@ namespace scratchbird::core
             : policy == LongTransactionPolicy::ROLLBACK_ALL      ? "ROLLBACK_ALL"
                                                                  : "TERMINATE_CONNECTION";
         LOG_INFO(TRANSACTION, "Long transaction policy set to %s", policy_name);
+    }
+
+    void LongTransactionMonitor::setClientNoticeEnabled(bool enabled)
+    {
+        client_notice_enabled_.store(enabled, std::memory_order_release);
+        LOG_INFO(TRANSACTION, "Long transaction client notice delivery %s",
+                 enabled ? "enabled" : "disabled");
     }
 
     LongTransactionStatistics LongTransactionMonitor::getStatistics() const
@@ -281,6 +384,21 @@ namespace scratchbird::core
         // Get thresholds
         uint32_t warning_threshold = warning_threshold_seconds_.load(std::memory_order_acquire);
         uint32_t critical_threshold = critical_threshold_seconds_.load(std::memory_order_acquire);
+        uint64_t warning_xid_lag =
+            warning_xid_lag_threshold_.load(std::memory_order_acquire);
+        uint64_t critical_xid_lag =
+            critical_xid_lag_threshold_.load(std::memory_order_acquire);
+        const bool notice_enabled = client_notice_enabled_.load(std::memory_order_acquire);
+
+        uint64_t current_xid = 0;
+        uint64_t oldest_active_xid = 0;
+        uint64_t oldest_snapshot_xid = 0;
+        if (db_ != nullptr && db_->transaction_manager() != nullptr)
+        {
+            current_xid = db_->transaction_manager()->getCurrentXid();
+            oldest_active_xid = db_->transaction_manager()->getOldestActiveXid();
+            oldest_snapshot_xid = db_->transaction_manager()->getOldestSnapshot();
+        }
 
         // ProcArray may not be initialized yet (e.g., before first connection).
         if (!ProcArrayManager::getInstance()) {
@@ -311,28 +429,105 @@ namespace scratchbird::core
             std::chrono::microseconds backend_start_time(backend.xact_start_time);
             uint64_t age_microseconds = (now - backend_start_time).count();
             uint64_t age_seconds = age_microseconds / 1000000;
+            uint64_t xid_lag = current_xid > backend.xid ? (current_xid - backend.xid) : 0;
+            uint64_t snapshot_lag =
+                (backend.backend_xmin != 0 && current_xid > backend.backend_xmin)
+                    ? (current_xid - backend.backend_xmin)
+                    : 0;
 
-            // Check if transaction is long-running
+            const bool gc_pinned =
+                backend.xid != 0 &&
+                oldest_active_xid != 0 &&
+                backend.xid <= oldest_active_xid;
+            const bool snapshot_pinned =
+                backend.backend_xmin != 0 &&
+                oldest_snapshot_xid != 0 &&
+                backend.backend_xmin <= oldest_snapshot_xid;
+
+            LongTransactionReason reason_mask = LongTransactionReason::NONE;
             if (age_seconds >= warning_threshold)
             {
-                long_txn_count++;
+                reason_mask = reason_mask | LongTransactionReason::AGE_THRESHOLD;
+            }
+            if (warning_xid_lag != 0 && gc_pinned && xid_lag >= warning_xid_lag)
+            {
+                reason_mask = reason_mask | LongTransactionReason::GC_HORIZON_PIN;
+            }
+            if (warning_xid_lag != 0 && snapshot_pinned && snapshot_lag >= warning_xid_lag)
+            {
+                reason_mask = reason_mask | LongTransactionReason::SNAPSHOT_HORIZON_PIN;
+            }
 
-                // Take action if above critical threshold
-                if (age_seconds >= critical_threshold)
+            if (reason_mask != LongTransactionReason::NONE)
+            {
+                long_txn_count++;
+                const bool critical =
+                    age_seconds >= critical_threshold ||
+                    (critical_xid_lag != 0 && gc_pinned && xid_lag >= critical_xid_lag) ||
+                    (critical_xid_lag != 0 && snapshot_pinned && snapshot_lag >= critical_xid_lag);
+
+                const std::string governance_message = formatGovernanceMessage(
+                    critical ? policy_ : LongTransactionPolicy::LOG,
+                    backend.xid,
+                    age_seconds,
+                    xid_lag,
+                    snapshot_lag,
+                    reason_mask);
+
+                if (!critical)
                 {
-                    checkAndActOnTransaction(backend.proc_id, backend.xid, age_seconds,
-                                             backend.is_read_only, ctx);
-                }
-                else
-                {
-                    // Just log warning
-                    LOG_WARNING(TRANSACTION,
-                                "Long transaction detected: XID=%lu, ProcID=%u, Age=%lu seconds, "
-                                "ReadOnly=%d",
-                                backend.xid, backend.proc_id, age_seconds, backend.is_read_only);
+                    LOG_WARNING(TRANSACTION, "%s", governance_message.c_str());
+
+                    if (notice_enabled)
+                    {
+                        BackendGovernanceDirective directive;
+                        directive.action = BackendGovernanceAction::NOTICE;
+                        directive.reason_mask = toReasonMask(reason_mask);
+                        directive.notice_pending = true;
+                        directive.event_time = now.count();
+                        directive.age_seconds = age_seconds;
+                        directive.xid_lag = xid_lag;
+                        directive.snapshot_lag = snapshot_lag;
+                        directive.message = governance_message;
+                        Status directive_status =
+                            ProcArrayManager::requestBackendGovernanceDirective(
+                                backend.proc_id, directive, ctx);
+                        if (directive_status == Status::OK)
+                        {
+                            std::lock_guard<std::mutex> lock(stats_mutex_);
+                            stats_.notices_emitted++;
+                        }
+                    }
 
                     std::lock_guard<std::mutex> lock(stats_mutex_);
                     stats_.warnings_logged++;
+                    if (hasLongTransactionReason(reason_mask, LongTransactionReason::GC_HORIZON_PIN))
+                    {
+                        stats_.gc_horizon_flags++;
+                    }
+                    if (hasLongTransactionReason(reason_mask,
+                                                 LongTransactionReason::SNAPSHOT_HORIZON_PIN))
+                    {
+                        stats_.snapshot_horizon_flags++;
+                    }
+                    stats_.last_proc_id = backend.proc_id;
+                    stats_.last_xid = backend.xid;
+                    stats_.last_age_seconds = age_seconds;
+                    stats_.last_xid_lag = xid_lag;
+                    stats_.last_snapshot_lag = snapshot_lag;
+                    stats_.last_reason_mask = toReasonMask(reason_mask);
+                    stats_.last_policy_action = static_cast<uint8_t>(LongTransactionPolicy::LOG);
+                }
+                else
+                {
+                    checkAndActOnTransaction(backend.proc_id,
+                                             backend.xid,
+                                             age_seconds,
+                                             xid_lag,
+                                             snapshot_lag,
+                                             reason_mask,
+                                             backend.is_read_only,
+                                             ctx);
                 }
             }
         }
@@ -348,62 +543,101 @@ namespace scratchbird::core
     }
 
     void LongTransactionMonitor::checkAndActOnTransaction(uint32_t proc_id, uint64_t xid,
-                                                          uint64_t age_seconds, bool is_read_only,
+                                                          uint64_t age_seconds,
+                                                          uint64_t xid_lag,
+                                                          uint64_t snapshot_lag,
+                                                          LongTransactionReason reason_mask,
+                                                          bool is_read_only,
                                                           ErrorContext *ctx)
     {
         LongTransactionPolicy policy = policy_;
+        const std::string message = formatGovernanceMessage(policy,
+                                                            xid,
+                                                            age_seconds,
+                                                            xid_lag,
+                                                            snapshot_lag,
+                                                            reason_mask);
+        BackendGovernanceDirective directive;
+        directive.reason_mask = toReasonMask(reason_mask);
+        directive.notice_pending = client_notice_enabled_.load(std::memory_order_acquire);
+        directive.event_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                                   std::chrono::system_clock::now().time_since_epoch())
+                                   .count();
+        directive.age_seconds = age_seconds;
+        directive.xid_lag = xid_lag;
+        directive.snapshot_lag = snapshot_lag;
+        directive.message = message;
 
         LOG_ERROR(TRANSACTION,
-                  "CRITICAL: Long transaction exceeds threshold: XID=%lu, ProcID=%u, Age=%lu "
-                  "seconds, ReadOnly=%d",
-                  xid, proc_id, age_seconds, is_read_only);
+                  "CRITICAL: %s, ProcID=%u, ReadOnly=%d",
+                  message.c_str(), proc_id, is_read_only);
+
+        auto record_stats = [&](LongTransactionPolicy action_policy, bool notice_enqueued) {
+            std::lock_guard<std::mutex> lock(stats_mutex_);
+            if (notice_enqueued)
+            {
+                stats_.notices_emitted++;
+            }
+            if (hasLongTransactionReason(reason_mask, LongTransactionReason::GC_HORIZON_PIN))
+            {
+                stats_.gc_horizon_flags++;
+            }
+            if (hasLongTransactionReason(reason_mask, LongTransactionReason::SNAPSHOT_HORIZON_PIN))
+            {
+                stats_.snapshot_horizon_flags++;
+            }
+            stats_.last_proc_id = proc_id;
+            stats_.last_xid = xid;
+            stats_.last_age_seconds = age_seconds;
+            stats_.last_xid_lag = xid_lag;
+            stats_.last_snapshot_lag = snapshot_lag;
+            stats_.last_reason_mask = toReasonMask(reason_mask);
+            stats_.last_policy_action = static_cast<uint8_t>(action_policy);
+        };
 
         // Take action based on policy
         switch (policy)
         {
             case LongTransactionPolicy::LOG:
-                // Already logged above
+            {
+                bool notice_enqueued = false;
+                if (directive.notice_pending)
+                {
+                    directive.action = BackendGovernanceAction::NOTICE;
+                    Status notice_status =
+                        ProcArrayManager::requestBackendGovernanceDirective(proc_id, directive, ctx);
+                    notice_enqueued = notice_status == Status::OK;
+                }
+                record_stats(LongTransactionPolicy::LOG, notice_enqueued);
                 {
                     std::lock_guard<std::mutex> lock(stats_mutex_);
                     stats_.warnings_logged++;
                 }
                 break;
+            }
 
             case LongTransactionPolicy::ROLLBACK_READONLY:
                 if (is_read_only)
                 {
-                    LOG_WARNING(TRANSACTION,
-                                "Rolling back read-only long transaction: XID=%lu, ProcID=%u", xid,
-                                proc_id);
-
-                    // Rollback the transaction via TransactionManager
-                    if (db_ && db_->transaction_manager())
+                    directive.action = BackendGovernanceAction::ROLLBACK_TRANSACTION;
+                    directive.rollback_requested = true;
+                    Status rollback_status =
+                        ProcArrayManager::requestBackendGovernanceDirective(proc_id, directive, ctx);
+                    if (rollback_status == Status::OK)
                     {
-                        TransactionManager *txn_mgr = db_->transaction_manager();
-                        Status rollback_status = txn_mgr->rollbackTransaction(proc_id, xid, ctx);
-
-                        if (rollback_status == Status::OK)
-                        {
-                            LOG_INFO(TRANSACTION,
-                                     "Successfully rolled back long read-only transaction: XID=%lu",
-                                     xid);
-                            std::lock_guard<std::mutex> lock(stats_mutex_);
-                            stats_.readonly_rolled_back++;
-                        }
-                        else
-                        {
-                            LOG_ERROR(
-                                TRANSACTION,
-                                "Failed to rollback long read-only transaction: XID=%lu, Status=%d",
-                                xid, static_cast<int>(rollback_status));
-                            std::lock_guard<std::mutex> lock(stats_mutex_);
-                            stats_.warnings_logged++;
-                        }
+                        LOG_INFO(TRANSACTION,
+                                 "Requested backend-owned rollback for long read-only transaction: XID=%lu, ProcID=%u",
+                                 xid, proc_id);
+                        record_stats(LongTransactionPolicy::ROLLBACK_READONLY,
+                                     directive.notice_pending);
+                        std::lock_guard<std::mutex> lock(stats_mutex_);
+                        stats_.readonly_rolled_back++;
                     }
                     else
                     {
                         LOG_ERROR(TRANSACTION,
-                                  "Cannot rollback transaction - TransactionManager unavailable");
+                                  "Failed to request backend rollback for long read-only transaction: XID=%lu, ProcID=%u, Status=%d",
+                                  xid, proc_id, static_cast<int>(rollback_status));
                         std::lock_guard<std::mutex> lock(stats_mutex_);
                         stats_.warnings_logged++;
                     }
@@ -414,27 +648,25 @@ namespace scratchbird::core
                                 "Read-write transaction exceeds threshold but policy is "
                                 "ROLLBACK_READONLY: XID=%lu",
                                 xid);
+                    record_stats(LongTransactionPolicy::LOG, false);
                     std::lock_guard<std::mutex> lock(stats_mutex_);
                     stats_.warnings_logged++;
                 }
                 break;
 
             case LongTransactionPolicy::ROLLBACK_ALL:
-                LOG_WARNING(TRANSACTION,
-                            "Rolling back long transaction: XID=%lu, ProcID=%u, ReadOnly=%d", xid,
-                            proc_id, is_read_only);
-
-                // Rollback the transaction via TransactionManager (both read-only and read-write)
-                if (db_ && db_->transaction_manager())
+                directive.action = BackendGovernanceAction::ROLLBACK_TRANSACTION;
+                directive.rollback_requested = true;
                 {
-                    TransactionManager *txn_mgr = db_->transaction_manager();
-                    Status rollback_status = txn_mgr->rollbackTransaction(proc_id, xid, ctx);
-
+                    Status rollback_status =
+                        ProcArrayManager::requestBackendGovernanceDirective(proc_id, directive, ctx);
                     if (rollback_status == Status::OK)
                     {
                         LOG_INFO(TRANSACTION,
-                                 "Successfully rolled back long transaction: XID=%lu, ReadOnly=%d",
-                                 xid, is_read_only);
+                                 "Requested backend-owned rollback for long transaction: XID=%lu, ProcID=%u, ReadOnly=%d",
+                                 xid, proc_id, is_read_only);
+                        record_stats(LongTransactionPolicy::ROLLBACK_ALL,
+                                     directive.notice_pending);
                         std::lock_guard<std::mutex> lock(stats_mutex_);
                         if (is_read_only)
                         {
@@ -448,44 +680,34 @@ namespace scratchbird::core
                     else
                     {
                         LOG_ERROR(TRANSACTION,
-                                  "Failed to rollback long transaction: XID=%lu, Status=%d", xid,
-                                  static_cast<int>(rollback_status));
+                                  "Failed to request backend rollback for long transaction: XID=%lu, ProcID=%u, Status=%d",
+                                  xid, proc_id, static_cast<int>(rollback_status));
                         std::lock_guard<std::mutex> lock(stats_mutex_);
                         stats_.warnings_logged++;
                     }
                 }
-                else
-                {
-                    LOG_ERROR(TRANSACTION,
-                              "Cannot rollback transaction - TransactionManager unavailable");
-                    std::lock_guard<std::mutex> lock(stats_mutex_);
-                    stats_.warnings_logged++;
-                }
                 break;
 
             case LongTransactionPolicy::TERMINATE_CONNECTION:
-                LOG_WARNING(TRANSACTION,
-                            "Requesting termination for long transaction: XID=%lu, ProcID=%u", xid,
-                            proc_id);
-
-                // Request backend termination via ProcArray flag
-                // The backend will check this flag and terminate gracefully
+                directive.action = BackendGovernanceAction::TERMINATE_CONNECTION;
+                directive.termination_requested = true;
                 {
-                    Status term_status = ProcArrayManager::requestBackendTermination(proc_id, ctx);
+                    Status term_status =
+                        ProcArrayManager::requestBackendGovernanceDirective(proc_id, directive, ctx);
                     if (term_status == Status::OK)
                     {
                         LOG_INFO(TRANSACTION,
-                                 "Successfully requested termination for long transaction: XID=%lu, "
-                                 "ProcID=%u",
+                                 "Successfully requested termination for long transaction: XID=%lu, ProcID=%u",
                                  xid, proc_id);
+                        record_stats(LongTransactionPolicy::TERMINATE_CONNECTION,
+                                     directive.notice_pending);
                         std::lock_guard<std::mutex> lock(stats_mutex_);
                         stats_.connections_terminated++;
                     }
                     else
                     {
                         LOG_ERROR(TRANSACTION,
-                                  "Failed to request backend termination: XID=%lu, ProcID=%u, "
-                                  "Status=%d",
+                                  "Failed to request backend termination: XID=%lu, ProcID=%u, Status=%d",
                                   xid, proc_id, static_cast<int>(term_status));
                         std::lock_guard<std::mutex> lock(stats_mutex_);
                         stats_.warnings_logged++;

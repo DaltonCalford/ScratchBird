@@ -17,6 +17,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/clog.h"
+#include "scratchbird/core/config.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/heap_page.h"
@@ -60,6 +61,28 @@ std::string joinErrors(const std::vector<std::string>& errors) {
     }
     return oss.str();
 }
+
+class ScopedConfigValue {
+public:
+    ScopedConfigValue(const std::string& section,
+                      const std::string& key,
+                      const std::string& value,
+                      const std::string& fallback)
+        : section_(section),
+          key_(key),
+          old_value_(scratchbird::core::Config::getInstance().getString(section, key, fallback)) {
+        scratchbird::core::Config::getInstance().set(section, key, value);
+    }
+
+    ~ScopedConfigValue() {
+        scratchbird::core::Config::getInstance().set(section_, key_, old_value_);
+    }
+
+private:
+    std::string section_;
+    std::string key_;
+    std::string old_value_;
+};
 
 template <typename Enum>
 Enum strongerStartupState(Enum lhs, Enum rhs) {
@@ -1286,6 +1309,63 @@ TEST_F(ExecutorTransactionPayloadTest, SyncDiskFullPersistsWritebackFenceAndBloc
     ASSERT_EQ(failpoints->clear(&ctx), Status::OK) << ctx.message;
 }
 
+TEST_F(ExecutorTransactionPayloadTest,
+       SyncFailureOnRegisteredTablespaceOpensFilespaceScopedWritebackIncident) {
+    TestDatabaseFile tablespace_file("txn_payload_forced_write_tablespace", ".sbts");
+
+    ErrorContext ctx;
+    scratchbird::core::TablespaceConfig config;
+    config.autoextend_enabled = true;
+    config.autoextend_size_mb = 1;
+    config.max_size_mb = 4;
+    config.prealloc_pages = 2;
+    ASSERT_EQ(db_.page_manager()->createTablespace(1,
+                                                   "txn_payload_forced_write_ts",
+                                                   tablespace_file.path(),
+                                                   config,
+                                                   &ctx),
+              Status::OK)
+        << ctx.message;
+
+    scratchbird::core::GPID gpid = scratchbird::core::INVALID_GPID;
+    ASSERT_EQ(db_.page_manager()->allocatePageInTablespace(1, &gpid, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(scratchbird::core::getTablespaceID(gpid), 1u);
+
+    const int tablespace_fd = db_.getTablespaceFd(1);
+    ASSERT_GE(tablespace_fd, 0);
+    const int saved_fd = ::dup(tablespace_fd);
+    ASSERT_GE(saved_fd, 0) << std::strerror(errno);
+    ASSERT_EQ(::close(tablespace_fd), 0) << std::strerror(errno);
+
+    scratchbird::core::WritebackAttribution attribution{};
+    attribution.queue_kind = scratchbird::core::WritebackQueueKind::FOREGROUND_HELP;
+    attribution.policy_domain = scratchbird::core::WritebackPolicyDomain::TRANSACTION;
+
+    ErrorContext sync_ctx;
+    EXPECT_EQ(db_.sync(&sync_ctx, attribution), Status::IO_ERROR);
+    EXPECT_TRUE(db_.write_admission_fenced());
+    EXPECT_EQ(db_.write_admission_status(), Status::IO_ERROR);
+    EXPECT_NE(sync_ctx.message.find("tablespace 1"), std::string::npos) << sync_ctx.message;
+
+    const auto incident = decodeWritebackIncidentState(readSystemStatePageFromOpenDb());
+    EXPECT_TRUE(incident.incident_open);
+    EXPECT_EQ(incident.filespace_id, 1u);
+    EXPECT_EQ(incident.queue_kind,
+              scratchbird::core::WritebackQueueKind::FOREGROUND_HELP);
+    EXPECT_EQ(incident.policy_domain,
+              scratchbird::core::WritebackPolicyDomain::TRANSACTION);
+    EXPECT_EQ(incident.last_error_status, Status::IO_ERROR);
+
+    ASSERT_EQ(::dup2(saved_fd, tablespace_fd), tablespace_fd) << std::strerror(errno);
+    ASSERT_EQ(::close(saved_fd), 0) << std::strerror(errno);
+
+    ErrorContext clear_ctx;
+    ASSERT_EQ(db_.clearWritebackFailureState(&clear_ctx), Status::OK) << clear_ctx.message;
+    EXPECT_FALSE(db_.write_admission_fenced());
+    EXPECT_EQ(db_.write_admission_status(), Status::OK);
+}
+
 TEST_F(ExecutorTransactionPayloadTest, ReservePagesAreOnlyAvailableToTerminalMetadataPaths) {
     auto *failpoints = db_.mga_failpoint_manager();
     ASSERT_NE(failpoints, nullptr);
@@ -2339,4 +2419,103 @@ TEST_F(ExecutorTransactionPayloadTest, FirebirdIifExistsReturnsPass) {
     ASSERT_NE(result.resultSet(), nullptr);
     ASSERT_EQ(result.resultSet()->rowCount(), 1U);
     EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "PASS");
+}
+
+TEST_F(ExecutorTransactionPayloadTest, AlterSystemAppliesDormantPolicyAndRunsMaintenance) {
+    const ScopedConfigValue restart_policy("transactions",
+                                           "dormant_restart_reattach_policy",
+                                           "allow_replacement",
+                                           "allow_replacement");
+    const ScopedConfigValue cleanup_policy("transactions",
+                                           "dormant_cleanup_policy",
+                                           "keep",
+                                           "rollback_expired");
+
+    ErrorContext ctx;
+    ASSERT_EQ(db_.applyDormantTransactionPolicyConfig(&ctx), Status::OK) << ctx.message;
+
+    auto system_user_id = db_.catalog_manager()->getSystemUserId(&ctx);
+
+    std::unique_ptr<ConnectionContext> dormant_conn;
+    ASSERT_EQ(db_.connect(dormant_conn, &ctx), Status::OK) << ctx.message;
+    ASSERT_NE(dormant_conn, nullptr);
+    dormant_conn->setCurrentUser(system_user_id, true);
+    dormant_conn->setProtocolSessionId(scratchbird::core::generateUuidV7());
+    dormant_conn->setWaitForLocks(false);
+    dormant_conn->setLockTimeout(12);
+    ASSERT_EQ(dormant_conn->beginStatementTracking("UPDATE sys.jobs SET job_name = job_name",
+                                                   &ctx),
+              Status::OK)
+        << ctx.message;
+    dormant_conn->endStatementTrackingSuccess(5);
+
+    ID dormant_id{};
+    ID reattach_authkey_id{};
+    ASSERT_EQ(db_.detachToDormant(dormant_conn, dormant_id, &ctx, &reattach_authkey_id),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(dormant_conn, nullptr);
+
+    scratchbird::core::CatalogManager::DormantTransactionInfo dormant_info{};
+    ASSERT_EQ(db_.catalog_manager()->getDormantTransaction(dormant_id, dormant_info, &ctx),
+              Status::OK)
+        << ctx.message;
+    dormant_info.lease_expires_at = 1;
+    ASSERT_EQ(db_.catalog_manager()->updateDormantTransaction(dormant_info, &ctx), Status::OK)
+        << ctx.message;
+
+    auto set_policy = compile(
+        "ALTER SYSTEM SET transactions.dormant_cleanup_policy = 'rollback_expired'");
+    ASSERT_TRUE(set_policy.success()) << joinErrors(set_policy.errors());
+    auto result = executor_->execute(set_policy.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    EXPECT_EQ(db_.dormantTransactionPolicy().cleanup_policy,
+              Database::DormantCleanupPolicy::ROLLBACK_EXPIRED);
+
+    auto run_maintenance = compile(
+        "ALTER SYSTEM SET transactions.dormant_maintenance = 'run'");
+    ASSERT_TRUE(run_maintenance.success()) << joinErrors(run_maintenance.errors());
+    result = executor_->execute(run_maintenance.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    EXPECT_GE(result.affectedCount(), 1);
+
+    scratchbird::core::CatalogManager::DormantTransactionInfo refreshed{};
+    ASSERT_EQ(db_.catalog_manager()->getDormantTransaction(dormant_id, refreshed, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(refreshed.state,
+              scratchbird::core::CatalogManager::DormantTransactionState::ROLLED_BACK);
+
+    scratchbird::core::CatalogManager::AuthKeyInfo authkey{};
+    ASSERT_EQ(db_.catalog_manager()->getAuthKey(reattach_authkey_id, authkey, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(authkey.status, scratchbird::core::CatalogManager::AuthKeyStatus::REVOKED);
+
+    auto policy_view = compile(
+        "SELECT cleanup_policy, dormant_rows, expired_rows, terminal_rows "
+        "FROM sys.sb_mga_dormant_policy");
+    ASSERT_TRUE(policy_view.success()) << joinErrors(policy_view.errors());
+    result = executor_->execute(policy_view.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+    ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "rollback_expired");
+    EXPECT_EQ(result.resultSet()->getValue(0, 1).toInt64(), 0);
+    EXPECT_EQ(result.resultSet()->getValue(0, 2).toInt64(), 0);
+    EXPECT_GE(result.resultSet()->getValue(0, 3).toInt64(), 1);
+
+    auto dormant_view = compile(
+        "SELECT state, restart_stale, last_statement_text "
+        "FROM sys.sb_mga_dormant_transactions");
+    ASSERT_TRUE(dormant_view.success()) << joinErrors(dormant_view.errors());
+    result = executor_->execute(dormant_view.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+    ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "ROLLED_BACK");
+    EXPECT_FALSE(result.resultSet()->getValue(0, 1).getBool());
+    EXPECT_EQ(result.resultSet()->getValue(0, 2).toString(),
+              "UPDATE sys.jobs SET job_name = job_name");
 }

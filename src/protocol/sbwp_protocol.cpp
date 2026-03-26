@@ -6,6 +6,8 @@
 
 namespace scratchbird::protocol::sbwp {
 namespace {
+constexpr uint16_t kTxnFlagHasReadCommittedMode = 0x0100;
+
 void setError(core::ErrorContext* ctx, const char* msg) {
     if (ctx) {
         ctx->message = msg ? msg : "";
@@ -404,8 +406,10 @@ std::vector<uint8_t> buildTxnBeginPayload(uint16_t flags,
                                           uint8_t access_mode,
                                           uint8_t deferrable,
                                           uint8_t wait_mode,
-                                          uint32_t timeout_ms) {
-    std::vector<uint8_t> payload(2 + 1 + 1 + 1 + 1 + 1 + 1 + 4);
+                                          uint32_t timeout_ms,
+                                          uint8_t read_committed_mode) {
+    const bool has_read_committed_mode = (flags & kTxnFlagHasReadCommittedMode) != 0;
+    std::vector<uint8_t> payload(has_read_committed_mode ? 16 : 12);
     writeU16(payload, 0, flags);
     payload[2] = conflict_action;
     payload[3] = autocommit_mode;
@@ -414,6 +418,9 @@ std::vector<uint8_t> buildTxnBeginPayload(uint16_t flags,
     payload[6] = deferrable;
     payload[7] = wait_mode;
     writeU32(payload, 8, timeout_ms);
+    if (has_read_committed_mode) {
+        payload[12] = read_committed_mode;
+    }
     return payload;
 }
 
@@ -713,6 +720,43 @@ core::Status parseReady(const std::vector<uint8_t>& payload,
     status = payload[0];
     txn_id = readU64(payload.data() + 4);
     epoch = readU64(payload.data() + 12);
+    return core::Status::OK;
+}
+
+core::Status parseTxnBeginPayload(const std::vector<uint8_t>& payload,
+                                  uint16_t& flags,
+                                  uint8_t& conflict_action,
+                                  uint8_t& autocommit_mode,
+                                  uint8_t& isolation_level,
+                                  uint8_t& access_mode,
+                                  uint8_t& deferrable,
+                                  uint8_t& wait_mode,
+                                  uint32_t& timeout_ms,
+                                  uint8_t& read_committed_mode,
+                                  core::ErrorContext* ctx) {
+    if (payload.size() < 12) {
+        setError(ctx, "Txn begin payload truncated");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    flags = readU16(payload.data());
+    conflict_action = payload[2];
+    autocommit_mode = payload[3];
+    isolation_level = payload[4];
+    access_mode = payload[5];
+    deferrable = payload[6];
+    wait_mode = payload[7];
+    timeout_ms = readU32(payload.data() + 8);
+    read_committed_mode = 0;
+
+    if ((flags & kTxnFlagHasReadCommittedMode) != 0) {
+        if (payload.size() < 13) {
+            setError(ctx, "Txn begin payload missing read committed mode");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+        read_committed_mode = payload[12];
+    }
+
     return core::Status::OK;
 }
 

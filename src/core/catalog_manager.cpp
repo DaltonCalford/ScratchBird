@@ -1926,7 +1926,9 @@ bool isValidAuditExportDeliveryState(const std::string& delivery_state)
     return delivery_state == "LOCAL_COMMITTED" ||
            delivery_state == "LOCAL_FAILED" ||
            delivery_state == "REMOTE_PENDING" ||
-           delivery_state == "REMOTE_DELIVERED";
+           delivery_state == "REMOTE_DELIVERED" ||
+           delivery_state == "REMOTE_DATABASE_COMMITTED" ||
+           delivery_state == "KAFKA_STAGED";
 }
 
 bool isValidConnectionTransport(CatalogManager::ConnectionTransport transport)

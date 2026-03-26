@@ -1478,16 +1478,25 @@ public:
         if (config_.has_bound_db_uuid) {
             bound_db_uuid_ptr = config_.bound_db_uuid.data();
         }
+        const uint8_t* dormant_id_ptr = nullptr;
+        const uint8_t* dormant_reattach_authkey_ptr = nullptr;
         uint16_t connect_flags = config_.connect_client_flags;
         if (!config_.auto_commit) {
             connect_flags |= protocol::CONNECT_FLAG_AUTOCOMMIT_OFF;
+        }
+        if (config_.has_dormant_reattach) {
+            connect_flags |= protocol::CONNECT_FLAG_DORMANT_REATTACH;
+            dormant_id_ptr = config_.dormant_id.data();
+            dormant_reattach_authkey_ptr = config_.dormant_reattach_authkey.data();
         }
         auto connect_msg = protocol::ProtocolCodec::buildConnectRequest(
             config_.database_name,
             config_.client_name.empty() ? "scratchbird_client" : config_.client_name,
             getpid(),
             connect_flags,
-            bound_db_uuid_ptr
+            bound_db_uuid_ptr,
+            dormant_id_ptr,
+            dormant_reattach_authkey_ptr
         );
 
         status = protocol_session_->sendMessage(connect_msg, ctx);
@@ -3222,6 +3231,66 @@ core::Status Connection::rollback(core::ErrorContext* ctx) {
     }
 
     return impl_->doRollback(ctx);
+}
+
+core::Status Connection::detachToDormant(core::ID& dormant_id_out,
+                                         core::ID& reattach_authkey_out,
+                                         core::ErrorContext* ctx) {
+    dormant_id_out = core::ID{};
+    reattach_authkey_out = core::ID{};
+
+    if (!isConnected()) {
+        impl_->last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    auto msg = protocol::ProtocolCodec::buildDormantDetach();
+    auto status = impl_->protocol_session_->sendMessage(msg, ctx);
+    if (!isOk(status)) {
+        impl_->last_error_ = "Failed to send DORMANT_DETACH";
+        return status;
+    }
+
+    protocol::Message response;
+    status = impl_->protocol_session_->receiveMessage(response, ctx);
+    if (!isOk(status)) {
+        impl_->last_error_ = "Failed to receive DORMANT_DETACH_RESULT";
+        return status;
+    }
+
+    if (response.getType() == protocol::MessageType::QUERY_ERROR) {
+        std::string message;
+        std::string detail;
+        std::string hint;
+        uint32_t error_code = 0;
+        std::string sqlstate;
+        protocol::ProtocolCodec::parseQueryError(
+            response, error_code, sqlstate, message, detail, hint, ctx);
+        impl_->last_error_ = message.empty() ? "Dormant detach failed" : message;
+        return static_cast<core::Status>(error_code);
+    }
+
+    if (response.getType() != protocol::MessageType::DORMANT_DETACH_RESULT) {
+        impl_->last_error_ = describeUnexpectedResponse(response);
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    std::array<uint8_t, 16> dormant_id_bytes{};
+    std::array<uint8_t, 16> reattach_authkey_bytes{};
+    status = protocol::ProtocolCodec::parseDormantDetachResult(
+        response, dormant_id_bytes, reattach_authkey_bytes, ctx);
+    if (!isOk(status)) {
+        impl_->last_error_ = "Failed to parse DORMANT_DETACH_RESULT";
+        return status;
+    }
+
+    std::copy(dormant_id_bytes.begin(), dormant_id_bytes.end(), dormant_id_out.bytes.begin());
+    std::copy(reattach_authkey_bytes.begin(),
+              reattach_authkey_bytes.end(),
+              reattach_authkey_out.bytes.begin());
+    impl_->in_transaction_ = false;
+    impl_->state_ = ConnectionState::CONNECTED;
+    return core::Status::OK;
 }
 
 core::Status Connection::savepoint(const std::string& name,

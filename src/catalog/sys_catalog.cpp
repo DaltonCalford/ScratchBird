@@ -487,6 +487,8 @@ void SysCatalogHandler::initializeTableNames() {
         "prepared_statement",
         "sb_mga_runtime_metrics",
         "sb_mga_active_transactions",
+        "sb_mga_dormant_policy",
+        "sb_mga_dormant_transactions",
         "sb_mga_cleanup_debt",
         "sb_mga_failpoint_events",
         "sb_mga_snapshot_blockers",
@@ -989,6 +991,43 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"started_at_ms", DataType::INT64, false}
     };
 
+    static const ColumnDefs kMgaDormantPolicyColumns = {
+        {"db_uuid", DataType::UUID, false},
+        {"restart_reattach_policy", DataType::TEXT, false},
+        {"cleanup_policy", DataType::TEXT, false},
+        {"lease_seconds", DataType::INT64, false},
+        {"terminal_retention_seconds", DataType::INT64, false},
+        {"total_rows", DataType::INT64, false},
+        {"dormant_rows", DataType::INT64, false},
+        {"restart_stale_rows", DataType::INT64, false},
+        {"expired_rows", DataType::INT64, false},
+        {"terminal_rows", DataType::INT64, false},
+        {"observed_at_ms", DataType::INT64, false}
+    };
+
+    static const ColumnDefs kMgaDormantTransactionsColumns = {
+        {"db_uuid", DataType::UUID, false},
+        {"dormant_id", DataType::UUID, false},
+        {"attachment_id", DataType::UUID, false},
+        {"session_id", DataType::UUID, false},
+        {"user_id", DataType::UUID, false},
+        {"txid", DataType::INT64, false},
+        {"state", DataType::TEXT, false},
+        {"isolation_mode", DataType::TEXT, false},
+        {"read_only", DataType::BOOLEAN, false},
+        {"wait_mode", DataType::TEXT, false},
+        {"lock_timeout_seconds", DataType::INT64, false},
+        {"dormant_age_seconds", DataType::FLOAT64, false},
+        {"lease_expires_at_ms", DataType::INT64, true},
+        {"restart_stale", DataType::BOOLEAN, false},
+        {"last_statement_time_ms", DataType::INT64, true},
+        {"last_statement_hash", DataType::INT64, false},
+        {"last_rows_affected", DataType::INT64, false},
+        {"last_error_code", DataType::INT64, true},
+        {"last_sqlstate", DataType::TEXT, true},
+        {"last_statement_text", DataType::TEXT, true}
+    };
+
     static const ColumnDefs kMgaCleanupDebtColumns = {
         {"db_uuid", DataType::UUID, false},
         {"relation_name", DataType::TEXT, false},
@@ -1124,6 +1163,12 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
     }
     if (equalsCaseInsensitive(table_name, "sb_mga_active_transactions")) {
         return &kMgaActiveTransactionsColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_dormant_policy")) {
+        return &kMgaDormantPolicyColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_dormant_transactions")) {
+        return &kMgaDormantTransactionsColumns;
     }
     if (equalsCaseInsensitive(table_name, "sb_mga_cleanup_debt")) {
         return &kMgaCleanupDebtColumns;
@@ -1299,6 +1344,12 @@ Status SysCatalogHandler::queryTable(const std::string& schema_name,
     }
     if (equalsCaseInsensitive(table_name, "sb_mga_active_transactions")) {
         return queryMgaActiveTransactions(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_dormant_policy")) {
+        return queryMgaDormantPolicy(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_dormant_transactions")) {
+        return queryMgaDormantTransactions(results, ctx);
     }
     if (equalsCaseInsensitive(table_name, "sb_mga_cleanup_debt")) {
         return queryMgaCleanupDebt(results, ctx);
@@ -3612,6 +3663,112 @@ Status SysCatalogHandler::queryMgaActiveTransactions(VirtualResultSet& results, 
             {"age_seconds", core::TypedValue::makeFloat64(active_row.age_seconds)},
             {"retained_bytes", core::TypedValue::makeInt64(static_cast<int64_t>(active_row.retained_bytes))},
             {"started_at_ms", core::TypedValue::makeInt64(static_cast<int64_t>(active_row.started_at_ms))}
+        };
+        results.rows.push_back(std::move(row));
+    }
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryMgaDormantPolicy(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    const uint64_t now_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::vector<core::SqlDormantTransactionPolicyRow> rows;
+    Status status = core::SqlObservabilityViewBuilder::buildDormantTransactionPolicyRows(
+        *db, now_ms, rows);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    const core::TypedValue db_uuid = uuidValueOrNull(db->uuid());
+    for (const auto& policy_row : rows) {
+        VirtualRow row;
+        row.columns = {
+            {"db_uuid", db_uuid},
+            {"restart_reattach_policy", core::TypedValue::makeText(policy_row.restart_reattach_policy)},
+            {"cleanup_policy", core::TypedValue::makeText(policy_row.cleanup_policy)},
+            {"lease_seconds", core::TypedValue::makeInt64(static_cast<int64_t>(policy_row.lease_seconds))},
+            {"terminal_retention_seconds",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 policy_row.terminal_retention_seconds))},
+            {"total_rows", core::TypedValue::makeInt64(static_cast<int64_t>(policy_row.total_rows))},
+            {"dormant_rows", core::TypedValue::makeInt64(static_cast<int64_t>(policy_row.dormant_rows))},
+            {"restart_stale_rows",
+             core::TypedValue::makeInt64(static_cast<int64_t>(policy_row.restart_stale_rows))},
+            {"expired_rows", core::TypedValue::makeInt64(static_cast<int64_t>(policy_row.expired_rows))},
+            {"terminal_rows", core::TypedValue::makeInt64(static_cast<int64_t>(policy_row.terminal_rows))},
+            {"observed_at_ms", core::TypedValue::makeInt64(static_cast<int64_t>(policy_row.observed_at_ms))}
+        };
+        results.rows.push_back(std::move(row));
+    }
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryMgaDormantTransactions(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    const uint64_t now_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::vector<core::SqlDormantTransactionRow> rows;
+    Status status = core::SqlObservabilityViewBuilder::buildDormantTransactionRows(
+        *db, now_ms, rows);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    const core::TypedValue db_uuid = uuidValueOrNull(db->uuid());
+    for (const auto& dormant_row : rows) {
+        VirtualRow row;
+        row.columns = {
+            {"db_uuid", db_uuid},
+            {"dormant_id", uuidValueOrNull(dormant_row.dormant_id)},
+            {"attachment_id", uuidValueOrNull(dormant_row.attachment_id)},
+            {"session_id", uuidValueOrNull(dormant_row.session_id)},
+            {"user_id", uuidValueOrNull(dormant_row.user_id)},
+            {"txid", core::TypedValue::makeInt64(static_cast<int64_t>(dormant_row.txid))},
+            {"state", core::TypedValue::makeText(dormant_row.state)},
+            {"isolation_mode", core::TypedValue::makeText(dormant_row.isolation_mode)},
+            {"read_only", core::TypedValue::makeBoolean(dormant_row.read_only)},
+            {"wait_mode", core::TypedValue::makeText(dormant_row.wait_mode)},
+            {"lock_timeout_seconds",
+             core::TypedValue::makeInt64(static_cast<int64_t>(dormant_row.lock_timeout_seconds))},
+            {"dormant_age_seconds", core::TypedValue::makeFloat64(dormant_row.dormant_age_seconds)},
+            {"lease_expires_at_ms",
+             dormant_row.has_lease_expires_at_ms
+                 ? core::TypedValue::makeInt64(static_cast<int64_t>(dormant_row.lease_expires_at_ms))
+                 : core::TypedValue::makeNull(DataType::INT64)},
+            {"restart_stale", core::TypedValue::makeBoolean(dormant_row.restart_stale)},
+            {"last_statement_time_ms",
+             dormant_row.has_last_statement_time_ms
+                 ? core::TypedValue::makeInt64(static_cast<int64_t>(dormant_row.last_statement_time_ms))
+                 : core::TypedValue::makeNull(DataType::INT64)},
+            {"last_statement_hash",
+             core::TypedValue::makeInt64(static_cast<int64_t>(dormant_row.last_statement_hash))},
+            {"last_rows_affected",
+             core::TypedValue::makeInt64(static_cast<int64_t>(dormant_row.last_rows_affected))},
+            {"last_error_code",
+             dormant_row.has_last_error_code
+                 ? core::TypedValue::makeInt64(static_cast<int64_t>(dormant_row.last_error_code))
+                 : core::TypedValue::makeNull(DataType::INT64)},
+            {"last_sqlstate",
+             dormant_row.has_last_sqlstate
+                 ? core::TypedValue::makeText(dormant_row.last_sqlstate)
+                 : core::TypedValue::makeNull(DataType::TEXT)},
+            {"last_statement_text",
+             dormant_row.has_last_statement_text
+                 ? core::TypedValue::makeText(dormant_row.last_statement_text)
+                 : core::TypedValue::makeNull(DataType::TEXT)}
         };
         results.rows.push_back(std::move(row));
     }

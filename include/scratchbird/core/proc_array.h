@@ -53,6 +53,28 @@ inline auto pthread_mutex_unlock(pthread_mutex_t*) -> int { return 0; }
 
 namespace scratchbird::core
 {
+    enum class BackendGovernanceAction : uint8_t
+    {
+        NONE = 0,
+        NOTICE = 1,
+        ROLLBACK_TRANSACTION = 2,
+        TERMINATE_CONNECTION = 3,
+    };
+
+    struct BackendGovernanceDirective
+    {
+        BackendGovernanceAction action = BackendGovernanceAction::NONE;
+        uint8_t reason_mask = 0;
+        bool notice_pending = false;
+        bool rollback_requested = false;
+        bool termination_requested = false;
+        uint64_t event_time = 0;
+        uint64_t age_seconds = 0;
+        uint64_t xid_lag = 0;
+        uint64_t snapshot_lag = 0;
+        std::string message;
+    };
+
     // Forward declarations
     class Database;
     struct ErrorContext;
@@ -87,11 +109,21 @@ namespace scratchbird::core
         // Current query text (truncated, UTF-8 bytes)
         char query_text[256];
 
-        // Connection termination (for long transaction monitor)
-        bool termination_requested; // Backend should terminate connection
-
-        // Padding for cache line alignment (adjusted for new fields)
-        uint8_t padding[7];
+        // Long-transaction governance is attachment-owned. The monitor records
+        // a directive here, but the owning backend consumes it and performs
+        // the actual rollback/termination so MGA transaction state cannot
+        // drift behind the connection's back.
+        bool termination_requested;    // Backend should terminate connection
+        bool rollback_requested;       // Backend should rollback current transaction
+        bool governance_notice_pending; // Backend should surface notice text
+        uint8_t governance_action;     // BackendGovernanceAction
+        uint8_t governance_reason_mask; // Reason bits owned by monitor policy
+        uint8_t governance_reserved[3];
+        uint64_t governance_event_time; // Timestamp when directive was issued
+        uint64_t governance_age_seconds;
+        uint64_t governance_xid_lag;
+        uint64_t governance_snapshot_lag;
+        char governance_message[192];
     };
 
     // Process array (shared memory structure)
@@ -198,6 +230,24 @@ namespace scratchbird::core
         // Request backend termination (for long transaction monitor)
         static auto requestBackendTermination(uint32_t proc_id, ErrorContext *ctx = nullptr)
             -> Status;
+
+        // Request backend-side rollback/notice using the same attachment-owned
+        // governance path as termination. This keeps long-transaction policy
+        // visible to the client instead of silently mutating transaction state.
+        static auto requestBackendGovernanceDirective(
+            uint32_t proc_id,
+            const BackendGovernanceDirective& directive,
+            ErrorContext *ctx = nullptr) -> Status;
+
+        static auto getBackendGovernanceDirective(uint32_t proc_id,
+                                                  BackendGovernanceDirective *directive_out,
+                                                  ErrorContext *ctx = nullptr) -> Status;
+
+        static auto clearBackendGovernanceNotice(uint32_t proc_id,
+                                                 ErrorContext *ctx = nullptr) -> Status;
+
+        static auto clearBackendRollbackRequest(uint32_t proc_id,
+                                                ErrorContext *ctx = nullptr) -> Status;
 
         // Check if termination requested (for backend to poll)
         static auto isTerminationRequested(uint32_t proc_id, bool *requested_out,

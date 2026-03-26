@@ -1084,10 +1084,17 @@ namespace scratchbird::optimizer
                 std::max<uint64_t>(32, std::max<uint64_t>(1, base_rows) / 8);
             const bool moderate_candidate = estimated_rows >= moderate_row_threshold;
             const bool broad_candidate = estimated_rows >= broad_row_threshold;
+            const bool severe_rewrite_churn =
+                pressure.chain_depth_penalty >= 0.90 ||
+                pressure.chain_scatter_penalty >= 0.80 ||
+                std::max(pressure.cleanup_ratio, pressure.retained_ratio) >= 0.50 ||
+                pressure.index_backlog_ratio >= 0.35 ||
+                pressure.same_page_penalty >= 0.90;
 
             if (scan_kind == "INDEX_ONLY_SCAN" &&
                 !exact_key_lookup &&
-                moderate_candidate)
+                (moderate_candidate ||
+                 (severe_rewrite_churn && !ordered_output)))
             {
                 decision.reject_candidate = true;
                 decision.reason =

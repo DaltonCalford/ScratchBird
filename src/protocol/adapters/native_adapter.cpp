@@ -23,6 +23,7 @@
 #include "scratchbird/sblr/bytecode_validator.h"
 #include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/v3_container.h"
+#include "scratchbird/sblr/v3_opcodes.generated.h"
 #include "scratchbird/sblr/v3_opcode_identity.h"
 #include "scratchbird/sblr/v3_payloads.h"
 #include "scratchbird/server/ipc_server.h"
@@ -51,6 +52,14 @@ namespace protocol {
 
 namespace {
 
+constexpr uint16_t kTxnFlagHasIsolation = 0x0001;
+constexpr uint16_t kTxnFlagHasAccessMode = 0x0002;
+constexpr uint16_t kTxnFlagHasDeferrable = 0x0004;
+constexpr uint16_t kTxnFlagHasWaitMode = 0x0008;
+constexpr uint16_t kTxnFlagHasLockTimeout = 0x0010;
+constexpr uint16_t kTxnFlagHasAutocommit = 0x0020;
+constexpr uint16_t kTxnFlagHasReadCommittedMode = 0x0100;
+
 uint64_t estimateRowBytes(const std::vector<ProtocolCodec::ColumnValue>& values) {
     uint64_t total = 0;
     for (const auto& value : values) {
@@ -78,6 +87,136 @@ uint32_t getProcessId() {
 #else
     return static_cast<uint32_t>(::getpid());
 #endif
+}
+
+bool buildSingleInstructionContainer(const scratchbird::sblr::v3::Instruction& root,
+                                     std::vector<uint8_t>& out,
+                                     std::string& err_out) {
+    scratchbird::sblr::v3::Container container;
+    container.header.version_major = 3;
+    container.header.version_minor = 0;
+    container.header.version_patch = 0;
+    container.header.flags = 0;
+    container.metadata.module_name = "scratchbird";
+    container.metadata.module_version = "v3";
+    container.metadata.dialect_id = 1;
+    container.metadata.target_platform = 0;
+
+    scratchbird::sblr::v3::Buffer stream;
+    scratchbird::sblr::v3::DecodeError derr;
+
+    scratchbird::sblr::v3::Instruction version_inst;
+    version_inst.opcode = static_cast<uint16_t>(scratchbird::sblr::v3::Opcode::SBLR3_VERSION);
+    version_inst.flags = 0;
+    scratchbird::sblr::v3::Value::Bytes version_payload(6, 0);
+    version_payload[0] = 3;
+    version_inst.payload = scratchbird::sblr::v3::Value(std::move(version_payload));
+    if (!scratchbird::sblr::v3::encodeInstructionWithSchema(version_inst, stream, derr)) {
+        err_out = derr.message;
+        return false;
+    }
+
+    if (!scratchbird::sblr::v3::encodeInstructionWithSchema(root, stream, derr)) {
+        err_out = derr.message;
+        return false;
+    }
+
+    scratchbird::sblr::v3::Instruction end_inst;
+    end_inst.opcode = static_cast<uint16_t>(scratchbird::sblr::v3::Opcode::SBLR3_END);
+    end_inst.flags = 0;
+    end_inst.payload = scratchbird::sblr::v3::Value(scratchbird::sblr::v3::Value::Bytes{});
+    if (!scratchbird::sblr::v3::encodeInstructionWithSchema(end_inst, stream, derr)) {
+        err_out = derr.message;
+        return false;
+    }
+
+    container.bytecode_stream = std::move(stream);
+    return scratchbird::sblr::v3::encodeContainer(container, out, err_out);
+}
+
+bool mapTxnBeginWireIsolation(uint8_t wire_isolation,
+                              core::IsolationLevel& canonical_out,
+                              std::string& error_out) {
+    // The native front-door transaction payload intentionally preserves the
+    // compatibility alias surface used by drivers. The engine itself works on
+    // canonical MGA isolation enums, so the adapter must translate here.
+    switch (wire_isolation) {
+        case 0:
+        case 1:
+            canonical_out = core::IsolationLevel::READ_COMMITTED;
+            return true;
+        case 2:
+            canonical_out = core::IsolationLevel::SNAPSHOT;
+            return true;
+        case 3:
+            canonical_out = core::IsolationLevel::SNAPSHOT_TABLE_STABILITY;
+            return true;
+        default:
+            error_out = "Unknown transaction isolation level: " + std::to_string(wire_isolation);
+            return false;
+    }
+}
+
+bool buildTxnBeginBytecode(uint16_t flags,
+                           uint8_t conflict_action,
+                           uint8_t autocommit_mode,
+                           uint8_t isolation_level,
+                           uint8_t access_mode,
+                           uint8_t deferrable,
+                           uint8_t wait_mode,
+                           uint32_t timeout_ms,
+                           uint8_t read_committed_mode,
+                           std::vector<uint8_t>& out,
+                           std::string& error_out) {
+    scratchbird::sblr::v3::Instruction root;
+    root.opcode = static_cast<uint16_t>(scratchbird::sblr::v3::Opcode::SBLR3_START_TRANSACTION);
+    root.flags = 0;
+
+    scratchbird::sblr::v3::Value::Object payload;
+    payload["action"] = scratchbird::sblr::v3::Value(uint64_t(1));
+
+    if ((flags & kTxnFlagHasIsolation) != 0) {
+        core::IsolationLevel canonical = core::IsolationLevel::READ_COMMITTED;
+        if (!mapTxnBeginWireIsolation(isolation_level, canonical, error_out)) {
+            return false;
+        }
+        payload["isolation"] =
+            scratchbird::sblr::v3::Value(uint64_t(static_cast<uint8_t>(canonical)));
+    }
+
+    if ((flags & kTxnFlagHasReadCommittedMode) != 0) {
+        core::IsolationLevel canonical = core::IsolationLevel::READ_COMMITTED;
+        if ((flags & kTxnFlagHasIsolation) != 0 &&
+            !mapTxnBeginWireIsolation(isolation_level, canonical, error_out)) {
+            return false;
+        }
+        payload["isolation"] =
+            scratchbird::sblr::v3::Value(uint64_t(static_cast<uint8_t>(canonical)));
+        payload["read_committed_mode"] =
+            scratchbird::sblr::v3::Value(uint64_t(read_committed_mode));
+    }
+
+    if ((flags & kTxnFlagHasAccessMode) != 0) {
+        payload["access_mode"] = scratchbird::sblr::v3::Value(uint64_t(access_mode));
+    }
+    if ((flags & kTxnFlagHasDeferrable) != 0) {
+        payload["deferrable"] = scratchbird::sblr::v3::Value(deferrable != 0);
+    }
+    if ((flags & kTxnFlagHasWaitMode) != 0) {
+        payload["wait_mode"] = scratchbird::sblr::v3::Value(uint64_t(wait_mode));
+    }
+    if ((flags & kTxnFlagHasLockTimeout) != 0) {
+        payload["lock_timeout"] = scratchbird::sblr::v3::Value(uint64_t(timeout_ms));
+    }
+    if ((flags & kTxnFlagHasAutocommit) != 0) {
+        payload["autocommit_mode"] = scratchbird::sblr::v3::Value(uint64_t(autocommit_mode));
+    }
+    if (conflict_action != 0) {
+        payload["conflict_action"] = scratchbird::sblr::v3::Value(uint64_t(conflict_action));
+    }
+
+    root.payload = scratchbird::sblr::v3::Value(std::move(payload));
+    return buildSingleInstructionContainer(root, out, error_out);
 }
 
 void appendU16(std::vector<uint8_t>& out, uint16_t value) {
@@ -123,6 +262,35 @@ bool isZeroUuid(const core::ID& id) {
         if (byte != 0) {
             return false;
         }
+    }
+    return true;
+}
+
+bool parseUuidText(const std::string& text, core::ID& out) {
+    std::string hex;
+    hex.reserve(32);
+    for (char ch : text) {
+        if (ch == '-') {
+            continue;
+        }
+        if (!std::isxdigit(static_cast<unsigned char>(ch))) {
+            return false;
+        }
+        hex.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    if (hex.size() != 32) {
+        return false;
+    }
+    for (size_t i = 0; i < out.bytes.size(); ++i) {
+        const char hi = hex[i * 2];
+        const char lo = hex[i * 2 + 1];
+        auto decode = [](char value) -> uint8_t {
+            if (value >= '0' && value <= '9') {
+                return static_cast<uint8_t>(value - '0');
+            }
+            return static_cast<uint8_t>(10 + (value - 'a'));
+        };
+        out.bytes[i] = static_cast<uint8_t>((decode(hi) << 4) | decode(lo));
     }
     return true;
 }
@@ -1362,6 +1530,9 @@ void NativeAdapter::onConnectionClosed(network::Connection* conn,
     copy_out_paused_ = false;
     stream_window_bytes_ = 0;
     stream_paused_ = false;
+    has_pending_dormant_reattach_ = false;
+    pending_dormant_id_ = core::ID{};
+    pending_dormant_reattach_authkey_ = core::ID{};
     native_state_ = NativeProtocolState::INITIAL;
     ProtocolAdapter::onConnectionClosed(conn, reason);
 }
@@ -1381,6 +1552,15 @@ auto NativeAdapter::bindAuthenticatedSessionContext(core::ErrorContext* ctx) -> 
     const bool autocommit_enabled =
         !config_.engine_endpoint.empty() && client_ ? client_->getAutoCommit() : true;
     connection_ctx_->setAutocommitMode(autocommit_enabled);
+
+    if (has_pending_dormant_reattach_) {
+        connection_ctx_->set_dialect_tag("scratchbird");
+        if (executor_) {
+            executor_->setConnectionContext(connection_ctx_.get());
+        }
+        refreshTransactionStateFromContext();
+        return core::Status::OK;
+    }
 
     core::Database* db = engineDatabase();
     auto* catalog = db ? db->catalog_manager() : nullptr;
@@ -1463,6 +1643,8 @@ void NativeAdapter::refreshTransactionStateFromContext() {
         return;
     }
     if (!connection_ctx_) {
+        transaction_id_ = 0;
+        in_transaction_ = false;
         return;
     }
     transaction_id_ = connection_ctx_->getCurrentXid();
@@ -1570,6 +1752,9 @@ core::Status NativeAdapter::processMessage(network::Connection* conn) {
         case sbwp::MessageType::Ping:
             return handlePing(conn);
 
+        case sbwp::MessageType::AttachDetach:
+            return handleAttachDetach(conn);
+
         case sbwp::MessageType::Sync:
             sendReady(conn);
             return sendBuffer(conn);
@@ -1618,6 +1803,9 @@ core::Status NativeAdapter::sendAuthResult(network::Connection* conn,
                                            : ctx.message);
         return sendBuffer(conn);
     }
+    has_pending_dormant_reattach_ = false;
+    pending_dormant_id_ = core::ID{};
+    pending_dormant_reattach_authkey_ = core::ID{};
     sendAuthOk(conn, {});
     sendParameterStatus(conn, "attachment_id", formatUuid(session_id_, sizeof(session_id_)));
     sendParameterStatus(conn, "current_txn_id", std::to_string(transaction_id_));
@@ -1787,6 +1975,32 @@ core::Status NativeAdapter::handleConnectRequest(network::Connection* conn) {
     conn->setUsername(username_);
     conn->setDatabase(database_name_);
     remote_password_.clear();
+    has_pending_dormant_reattach_ = false;
+    pending_dormant_id_ = core::ID{};
+    pending_dormant_reattach_authkey_ = core::ID{};
+
+    const std::string dormant_id_text = trimAscii(get_param("dormant_id"));
+    const std::string dormant_token_text = trimAscii(get_param("dormant_reattach_token"));
+    if (!dormant_id_text.empty() || !dormant_token_text.empty()) {
+        if (dormant_id_text.empty() || dormant_token_text.empty()) {
+            sendQueryError(conn,
+                           static_cast<uint32_t>(core::Status::PROTOCOL_VIOLATION),
+                           "08000",
+                           "Dormant reattach requires both dormant_id and dormant_reattach_token");
+            return sendBuffer(conn);
+        }
+        if (!parseUuidText(dormant_id_text, pending_dormant_id_) ||
+            !parseUuidText(dormant_token_text, pending_dormant_reattach_authkey_)) {
+            pending_dormant_id_ = core::ID{};
+            pending_dormant_reattach_authkey_ = core::ID{};
+            sendQueryError(conn,
+                           static_cast<uint32_t>(core::Status::PROTOCOL_VIOLATION),
+                           "08000",
+                           "Dormant reattach identifiers must be UUID text");
+            return sendBuffer(conn);
+        }
+        has_pending_dormant_reattach_ = true;
+    }
 
     std::string app_name = get_param("application_name");
     if (!app_name.empty()) {
@@ -1837,12 +2051,104 @@ core::Status NativeAdapter::handleAuthRequest(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
+    core::ErrorContext ctx;
+
     if (config_.engine_endpoint.empty()) {
+        if (has_pending_dormant_reattach_) {
+            auto ensureLocalDatabaseOpened = [&](core::ErrorContext* local_ctx) -> core::Status {
+                if (shared_database_ != nullptr) {
+                    if (!executor_) {
+                        executor_ = std::make_unique<sblr::Executor>(shared_database_);
+                    }
+                    if (!compiler_v3_) {
+                        compiler_v3_ = std::make_unique<parser::v3::Compiler>();
+                    }
+                    return core::Status::OK;
+                }
+
+                if (!database_) {
+                    if (database_path_.empty()) {
+                        database_path_ = config_.database_path.empty()
+                            ? std::filesystem::path("build") / "database" / "protocol_default.sbdb"
+                            : std::filesystem::path(config_.database_path);
+                    }
+
+                    std::error_code ec;
+                    const std::filesystem::path parent_dir = database_path_.parent_path();
+                    if (!parent_dir.empty()) {
+                        std::filesystem::create_directories(parent_dir, ec);
+                    }
+                    if (ec) {
+                        SET_ERROR_CONTEXT(local_ctx,
+                                          core::Status::IO_ERROR,
+                                          "Failed to create database directory");
+                        return core::Status::IO_ERROR;
+                    }
+
+                    if (!std::filesystem::exists(database_path_)) {
+                        auto create_status =
+                            core::Database::create(database_path_.string(), 16384, local_ctx);
+                        if (create_status != core::Status::OK) {
+                            return create_status;
+                        }
+                    }
+
+                    database_ = std::make_unique<core::Database>();
+                    auto open_status = database_->open(database_path_.string(), local_ctx);
+                    if (open_status != core::Status::OK) {
+                        database_.reset();
+                        return open_status;
+                    }
+                }
+
+                if (!executor_) {
+                    executor_ = std::make_unique<sblr::Executor>(database_.get());
+                }
+                if (!compiler_v3_) {
+                    compiler_v3_ = std::make_unique<parser::v3::Compiler>();
+                }
+                return core::Status::OK;
+            };
+
+            auto status = ensureLocalDatabaseOpened(&ctx);
+            if (status != core::Status::OK) {
+                sendQueryError(conn,
+                               static_cast<uint32_t>(status),
+                               "58000",
+                               ctx.message.empty() ? "Failed to open database for dormant reattach"
+                                                   : ctx.message);
+                return sendBuffer(conn);
+            }
+
+            core::Database* db = engineDatabase();
+            if (!db) {
+                sendQueryError(conn,
+                               static_cast<uint32_t>(core::Status::INTERNAL_ERROR),
+                               "58000",
+                               "Dormant reattach requires an opened database");
+                return sendBuffer(conn);
+            }
+
+            status = db->reattachDormant(pending_dormant_id_,
+                                         connection_ctx_,
+                                         &ctx,
+                                         &pending_dormant_reattach_authkey_);
+            if (status != core::Status::OK || !connection_ctx_) {
+                sendQueryError(conn,
+                               static_cast<uint32_t>(status),
+                               "28000",
+                               ctx.message.empty() ? "Dormant reattach failed" : ctx.message);
+                return sendBuffer(conn);
+            }
+
+            connection_ctx_->set_dialect_tag("scratchbird");
+            if (executor_) {
+                executor_->setConnectionContext(connection_ctx_.get());
+            }
+        }
         auth_in_progress_ = false;
         return sendAuthResult(conn, true);
     }
-
-    core::ErrorContext ctx;
 
     if (auth_method_ == sbwp::AuthMethod::Password) {
         remote_password_ = decodeNativePasswordPayload(payload);
@@ -1869,6 +2175,9 @@ core::Status NativeAdapter::handleAuthRequest(network::Connection* conn) {
                                               : ctx.message);
             return sendBuffer(conn);
         }
+        has_pending_dormant_reattach_ = false;
+        pending_dormant_id_ = core::ID{};
+        pending_dormant_reattach_authkey_ = core::ID{};
         sendAuthOk(conn, {});
         sendParameterStatus(conn, "attachment_id", formatUuid(session_id_, sizeof(session_id_)));
         sendParameterStatus(conn, "current_txn_id", std::to_string(transaction_id_));
@@ -1920,6 +2229,9 @@ core::Status NativeAdapter::handleAuthRequest(network::Connection* conn) {
                                               : ctx.message);
             return sendBuffer(conn);
         }
+        has_pending_dormant_reattach_ = false;
+        pending_dormant_id_ = core::ID{};
+        pending_dormant_reattach_authkey_ = core::ID{};
         sendAuthOk(conn, auth_response.data);
         sendParameterStatus(conn, "attachment_id", formatUuid(session_id_, sizeof(session_id_)));
         sendParameterStatus(conn, "current_txn_id", std::to_string(transaction_id_));
@@ -2616,11 +2928,66 @@ core::Status NativeAdapter::handleDescribe(network::Connection* conn) {
 }
 
 core::Status NativeAdapter::handleBeginTransaction(network::Connection* conn) {
+    uint16_t flags = 0;
+    uint8_t conflict_action = 0;
+    uint8_t autocommit_mode = 0;
+    uint8_t isolation_level = 0;
+    uint8_t access_mode = 0;
+    uint8_t deferrable = 0;
+    uint8_t wait_mode = 0;
+    uint32_t timeout_ms = 0;
+    uint8_t read_committed_mode = 0;
+    core::ErrorContext parse_ctx;
+    auto status = sbwp::parseTxnBeginPayload(current_message_.body,
+                                             flags,
+                                             conflict_action,
+                                             autocommit_mode,
+                                             isolation_level,
+                                             access_mode,
+                                             deferrable,
+                                             wait_mode,
+                                             timeout_ms,
+                                             read_committed_mode,
+                                             &parse_ctx);
+    if (status != core::Status::OK) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(status),
+                       "08P01",
+                       parse_ctx.message.empty() ? "Invalid BEGIN payload"
+                                                 : parse_ctx.message);
+        sendReady(conn);
+        return sendBuffer(conn);
+    }
+
+    std::vector<uint8_t> begin_bytecode;
+    std::string begin_encode_error;
+    if (!buildTxnBeginBytecode(flags,
+                               conflict_action,
+                               autocommit_mode,
+                               isolation_level,
+                               access_mode,
+                               deferrable,
+                               wait_mode,
+                               timeout_ms,
+                               read_committed_mode,
+                               begin_bytecode,
+                               begin_encode_error)) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(core::Status::INVALID_ARGUMENT),
+                       "25000",
+                       begin_encode_error.empty()
+                           ? "Failed to encode BEGIN transaction bytecode"
+                           : begin_encode_error);
+        sendReady(conn);
+        return sendBuffer(conn);
+    }
+
     if (!config_.engine_endpoint.empty()) {
         core::ErrorContext ctx;
-        auto status = ensureRemoteClient(&ctx);
+        status = ensureRemoteClient(&ctx);
         if (status == core::Status::OK) {
-            status = client_->beginTransaction(&ctx);
+            client::ResultSet rs;
+            status = client_->executeBytecode(begin_bytecode, "START TRANSACTION", &rs, &ctx);
         }
         if (status != core::Status::OK) {
             sendQueryError(conn,
@@ -2631,17 +2998,33 @@ core::Status NativeAdapter::handleBeginTransaction(network::Connection* conn) {
             return sendBuffer(conn);
         }
         in_transaction_ = client_->inTransaction();
+        if (!in_transaction_) {
+            in_transaction_ = true;
+        }
         transaction_id_ = 0;
-        sendTransactionStatus(conn, in_transaction_);
+        sendTransactionStatus(conn, true);
         sendReady(conn);
         return sendBuffer(conn);
     }
     refreshTransactionStateFromContext();
-    auto status = beginTransaction();
+    ResultContext result;
+    core::ErrorContext exec_ctx;
+    status = executeBytecode("START TRANSACTION", begin_bytecode, result, &exec_ctx);
     if (status != core::Status::OK) {
-        sendQueryError(conn, static_cast<uint32_t>(status), "25000",
-                      "Failed to begin transaction");
+        sendQueryError(conn,
+                       static_cast<uint32_t>(status),
+                       "25000",
+                       exec_ctx.message.empty() ? "Failed to begin transaction"
+                                                : exec_ctx.message);
+    } else if (result.has_error) {
+        sendQueryError(conn,
+                       result.error_code,
+                       result.sqlstate.empty() ? "25000" : result.sqlstate,
+                       result.error_message.empty() ? "Failed to begin transaction"
+                                                    : result.error_message);
     } else {
+        refreshTransactionStateFromContext();
+        in_transaction_ = true;
         sendTransactionStatus(conn, true);
     }
     sendReady(conn);
@@ -2861,6 +3244,83 @@ core::Status NativeAdapter::handlePing(network::Connection* conn) {
     }
     (void)client_time;
     sendPong(conn, nowMicros(), current_sequence_);
+    return sendBuffer(conn);
+}
+
+core::Status NativeAdapter::handleAttachDetach(network::Connection* conn) {
+    if (native_state_ == NativeProtocolState::INITIAL ||
+        native_state_ == NativeProtocolState::AUTHENTICATING) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(core::Status::INVALID_TRANSACTION_STATE),
+                       "55000",
+                       "ATTACH DETACH requires an authenticated session");
+        return sendBuffer(conn);
+    }
+
+    core::ID dormant_id{};
+    core::ID reattach_authkey{};
+    core::ErrorContext ctx;
+
+    if (!config_.engine_endpoint.empty()) {
+        if (!client_ || !client_->isConnected()) {
+            sendQueryError(conn,
+                           static_cast<uint32_t>(core::Status::CONNECTION_FAILURE),
+                           "08006",
+                           "ATTACH DETACH requires a live engine session");
+            return sendBuffer(conn);
+        }
+
+        const auto status = client_->detachToDormant(dormant_id, reattach_authkey, &ctx);
+        if (status != core::Status::OK) {
+            sendQueryError(conn,
+                           static_cast<uint32_t>(status),
+                           "55000",
+                           ctx.message.empty() ? "Dormant detach failed" : ctx.message);
+            return sendBuffer(conn);
+        }
+
+        client_->disconnect();
+        client_.reset();
+    } else {
+        core::Database* db = engineDatabase();
+        if (!db || !connection_ctx_) {
+            sendQueryError(conn,
+                           static_cast<uint32_t>(core::Status::INVALID_TRANSACTION_STATE),
+                           "55000",
+                           "ATTACH DETACH requires an active transaction boundary");
+            return sendBuffer(conn);
+        }
+
+        const auto status =
+            db->detachToDormant(connection_ctx_, dormant_id, &ctx, &reattach_authkey);
+        if (status != core::Status::OK) {
+            sendQueryError(conn,
+                           static_cast<uint32_t>(status),
+                           "55000",
+                           ctx.message.empty() ? "Dormant detach failed" : ctx.message);
+            return sendBuffer(conn);
+        }
+
+        if (executor_) {
+            executor_->setConnectionContext(nullptr);
+        }
+        connection_ctx_.reset();
+    }
+
+    native_prepared_statements_.clear();
+    prepared_statement_param_types_.clear();
+    prepared_statements_.clear();
+    portals_.clear();
+    subscribed_channels_.clear();
+    has_pending_dormant_reattach_ = false;
+    pending_dormant_id_ = core::ID{};
+    pending_dormant_reattach_authkey_ = core::ID{};
+
+    sendParameterStatus(conn, "dormant_id", dormant_id.toString());
+    sendParameterStatus(conn, "dormant_reattach_token", reattach_authkey.toString());
+    sendCommandComplete(conn, "ATTACH DETACH", 0);
+    sendReady(conn);
+    native_state_ = NativeProtocolState::READY;
     return sendBuffer(conn);
 }
 
@@ -3389,6 +3849,9 @@ core::Status NativeAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
                               protocol::CONNECT_FLAG_NO_DORMANT_DETACH);
     client_config_.has_bound_db_uuid = config_.has_bound_db_uuid;
     client_config_.bound_db_uuid = config_.bound_db_uuid;
+    client_config_.has_dormant_reattach = has_pending_dormant_reattach_;
+    client_config_.dormant_id = pending_dormant_id_.bytes;
+    client_config_.dormant_reattach_authkey = pending_dormant_reattach_authkey_.bytes;
     client_config_.manual_auth = !username_.empty() && remote_password_.empty();
     auto setPreferredAuthMethods = [&](protocol::AuthMethod primary) {
         client_config_.preferred_auth_methods.clear();

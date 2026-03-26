@@ -117,7 +117,7 @@ run_pass_case() {
     -b \
     -f "${sql_file}" \
     -o "${out_file}" \
-    -q > /dev/null 2> "${err_file}"
+    -q < /dev/null > /dev/null 2> "${err_file}"
   local rc=$?
   set -e
 
@@ -138,7 +138,7 @@ run_pass_case() {
   if [[ -f "${checks_file}" ]]; then
     local check_line
     local check_idx=0
-    while IFS= read -r check_line || [[ -n "${check_line}" ]]; do
+    while IFS= read -r -u 9 check_line || [[ -n "${check_line}" ]]; do
       [[ -z "${check_line}" || "${check_line}" == \#* ]] && continue
 
       if [[ "${check_line}" != *"|||"* ]]; then
@@ -168,7 +168,7 @@ run_pass_case() {
         -P "${DBPASS}" \
         -c "${check_sql}" \
         -o "${check_out}" \
-        -q > /dev/null 2> "${check_err}"
+        -q < /dev/null > /dev/null 2> "${check_err}"
       local check_rc=$?
       set -e
 
@@ -180,7 +180,7 @@ run_pass_case() {
         echo "Post-check pattern not found for ${case_name}: ${check_pattern}" >&2
         return 1
       fi
-    done < "${checks_file}"
+    done 9< "${checks_file}"
   fi
 
   printf 'CASE|%s|PASS\n' "${case_name}" >> "${RESULTS_DIR}/case_status.txt"
@@ -213,7 +213,7 @@ run_fail_case() {
     -b \
     -f "${sql_file}" \
     -o "${out_file}" \
-    -q > /dev/null 2> "${err_file}"
+    -q < /dev/null > /dev/null 2> "${err_file}"
   set -e
 
   if ! rg -q "Error:" "${err_file}"; then
@@ -280,7 +280,7 @@ if [[ ${precheck_rc} -ne 0 ]] || rg -q "Error:" "${PRECHECK_ERR}"; then
 fi
 
 failures=0
-while IFS='|' read -r mode sql_rel expected_rel || [[ -n "${mode}${sql_rel}${expected_rel}" ]]; do
+while IFS='|' read -r -u 8 mode sql_rel expected_rel || [[ -n "${mode}${sql_rel}${expected_rel}" ]]; do
   [[ -z "${mode}" || "${mode}" == \#* ]] && continue
 
   case "${mode}" in
@@ -299,7 +299,7 @@ while IFS='|' read -r mode sql_rel expected_rel || [[ -n "${mode}${sql_rel}${exp
       failures=$((failures + 1))
       ;;
   esac
-done < "${LIST_FILE}"
+done 8< "${LIST_FILE}"
 
 if [[ ${failures} -ne 0 ]]; then
   write_run_manifest "failed" "${failures}"

@@ -126,6 +126,24 @@ namespace
         return out.str();
     }
 
+    auto formatTraceEntries(
+        const std::vector<scratchbird::optimizer::RuntimePlanTraceEntry>& entries)
+        -> std::string
+    {
+        std::ostringstream out;
+        for (size_t i = 0; i < entries.size(); ++i)
+        {
+            if (i > 0)
+            {
+                out << " | ";
+            }
+            out << entries[i].phase << ':' << entries[i].subject << ':'
+                << entries[i].candidate << ':' << entries[i].verdict << ':'
+                << entries[i].reason;
+        }
+        return out.str();
+    }
+
     auto writeDelimitedLines(const std::filesystem::path& path,
                              const std::vector<std::string>& lines) -> bool
     {
@@ -2783,7 +2801,11 @@ TEST_F(QueryPlannerIntegrationTest,
                    entry.subject == "relation:users" &&
                    entry.candidate == "INDEX_ONLY_SCAN[idx_users_id_name]";
         });
-    ASSERT_NE(trace_it, plan.rejected_paths.end());
+    ASSERT_NE(trace_it, plan.rejected_paths.end())
+        << "scan_kind=" << relation.scan_kind
+        << ", candidates=" << joinStrings(relation.candidate_scan_families, ",")
+        << ", rejected_paths=" << formatTraceEntries(plan.rejected_paths)
+        << ", considered_paths=" << formatTraceEntries(plan.considered_paths);
     EXPECT_NE(trace_it->reason.find("rewrite-equivalent MGA churn"),
               std::string::npos);
 }

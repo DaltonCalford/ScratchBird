@@ -130,6 +130,9 @@ namespace scratchbird::core
         uint64_t stream_seq = 0;
         uint64_t commit_time = 0;
         uint64_t created_time = 0;
+        std::string sink_type;
+        std::string delivery_state;
+        std::string destination_hint;
         std::string shipping_mode;
         std::string statement_hashes_csv;
         std::string segment_path;

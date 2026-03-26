@@ -1,4 +1,4 @@
-Last updated: 2026-03-24
+Last updated: 2026-03-26
 
 # Live Capture Availability Summary
 

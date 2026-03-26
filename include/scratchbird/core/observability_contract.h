@@ -287,6 +287,50 @@ namespace scratchbird::core
         uint64_t observed_at_ms = 0;
     };
 
+    struct SqlDormantTransactionPolicyRow
+    {
+        std::string db_uuid;
+        std::string restart_reattach_policy;
+        std::string cleanup_policy;
+        uint64_t lease_seconds = 0;
+        uint64_t terminal_retention_seconds = 0;
+        uint64_t total_rows = 0;
+        uint64_t dormant_rows = 0;
+        uint64_t restart_stale_rows = 0;
+        uint64_t expired_rows = 0;
+        uint64_t terminal_rows = 0;
+        uint64_t observed_at_ms = 0;
+    };
+
+    struct SqlDormantTransactionRow
+    {
+        std::string db_uuid;
+        ID dormant_id{};
+        ID attachment_id{};
+        ID session_id{};
+        ID user_id{};
+        uint64_t txid = 0;
+        std::string state;
+        std::string isolation_mode;
+        bool read_only = false;
+        std::string wait_mode;
+        uint64_t lock_timeout_seconds = 0;
+        double dormant_age_seconds = 0.0;
+        bool has_lease_expires_at_ms = false;
+        uint64_t lease_expires_at_ms = 0;
+        bool restart_stale = false;
+        bool has_last_statement_time_ms = false;
+        uint64_t last_statement_time_ms = 0;
+        uint64_t last_statement_hash = 0;
+        int64_t last_rows_affected = 0;
+        bool has_last_error_code = false;
+        uint32_t last_error_code = 0;
+        bool has_last_sqlstate = false;
+        std::string last_sqlstate;
+        bool has_last_statement_text = false;
+        std::string last_statement_text;
+    };
+
     struct ClusterShardObservabilityInput
     {
         std::string db_uuid;
@@ -471,6 +515,16 @@ namespace scratchbird::core
 
         static auto buildMgaWaitHistoryRows(const Database& db,
                                             std::vector<SqlMgaWaitHistoryRow>& rows_out) -> Status;
+
+        static auto buildDormantTransactionPolicyRows(
+            const Database& db,
+            uint64_t observed_at_ms,
+            std::vector<SqlDormantTransactionPolicyRow>& rows_out) -> Status;
+
+        static auto buildDormantTransactionRows(
+            const Database& db,
+            uint64_t observed_at_ms,
+            std::vector<SqlDormantTransactionRow>& rows_out) -> Status;
 
         static auto buildClusterShardRows(
             const std::vector<ClusterShardObservabilityInput>& shards,

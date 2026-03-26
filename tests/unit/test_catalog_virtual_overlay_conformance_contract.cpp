@@ -583,6 +583,12 @@ TEST_F(CatalogVirtualOverlayConformanceContractTest, SysMgaObservabilityViewsAre
     ASSERT_FALSE(result.empty());
 
     result = {};
+    ASSERT_EQ(executeVirtualQuery(ProtocolType::SCRATCHBIRD, "sys", "sb_mga_dormant_policy", "", result, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_FALSE(result.empty());
+
+    result = {};
     ASSERT_EQ(executeVirtualQuery(ProtocolType::SCRATCHBIRD, "sys", "sb_mga_cleanup_debt", "", result, &ctx),
               Status::OK)
         << ctx.message;

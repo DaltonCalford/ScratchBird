@@ -170,6 +170,8 @@ enum class MessageType : uint8_t {
     MCP_DB_LIST         = 0x68,
     MCP_DB_CONNECT      = 0x69,
     MCP_DB_INFO         = 0x6A,
+    DORMANT_DETACH      = 0x6B,
+    DORMANT_DETACH_RESULT = 0x6C,
 
     // Streaming/COPY (0x70-0x7F)
     COPY_DATA           = 0x70,
@@ -231,6 +233,7 @@ constexpr uint16_t CONNECT_FLAG_BOUND_DB_UUID    = 0x0080;
 constexpr uint16_t CONNECT_FLAG_AUTH_PLUGIN_REGISTRY = 0x0100;
 constexpr uint16_t CONNECT_FLAG_AUTOCOMMIT_OFF   = 0x0200;
 constexpr uint16_t CONNECT_FLAG_NO_DORMANT_DETACH = 0x0400;
+constexpr uint16_t CONNECT_FLAG_DORMANT_REATTACH = 0x0800;
 constexpr uint16_t FEATURE_AUTH_PLUGIN_REGISTRY = CONNECT_FLAG_AUTH_PLUGIN_REGISTRY;
 
 constexpr uint16_t CONNECT_FLAG_BASE_CAPABILITIES =
@@ -731,7 +734,9 @@ public:
                                        const std::string& client_name,
                                        uint32_t client_pid,
                                        uint16_t client_flags = 0,
-                                       const uint8_t* bound_db_uuid = nullptr);
+                                       const uint8_t* bound_db_uuid = nullptr,
+                                       const uint8_t* dormant_id = nullptr,
+                                       const uint8_t* dormant_reattach_authkey = nullptr);
 
     static core::Status parseConnectRequest(const Message& msg,
                                             std::string& database,
@@ -740,7 +745,11 @@ public:
                                             uint16_t* client_flags_out = nullptr,
                                             core::ErrorContext* ctx = nullptr,
                                             std::array<uint8_t, 16>* bound_db_uuid_out = nullptr,
-                                            bool* has_bound_db_uuid_out = nullptr);
+                                            bool* has_bound_db_uuid_out = nullptr,
+                                            std::array<uint8_t, 16>* dormant_id_out = nullptr,
+                                            bool* has_dormant_id_out = nullptr,
+                                            std::array<uint8_t, 16>* dormant_reattach_authkey_out = nullptr,
+                                            bool* has_dormant_reattach_authkey_out = nullptr);
 
     static Message buildConnectResponse(bool success,
                                         const uint8_t session_id[16],
@@ -1074,6 +1083,15 @@ public:
                                   uint64_t& timestamp,
                                   uint32_t& sequence,
                                   core::ErrorContext* ctx = nullptr);
+
+    static Message buildDormantDetach();
+    static Message buildDormantDetachResult(const uint8_t dormant_id[16],
+                                            const uint8_t reattach_authkey_id[16]);
+    static core::Status parseDormantDetachResult(
+        const Message& msg,
+        std::array<uint8_t, 16>& dormant_id_out,
+        std::array<uint8_t, 16>& reattach_authkey_id_out,
+        core::ErrorContext* ctx = nullptr);
     // ========================================
     // Status Messages
     // ========================================

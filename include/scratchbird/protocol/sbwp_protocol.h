@@ -318,7 +318,8 @@ std::vector<uint8_t> buildTxnBeginPayload(uint16_t flags,
                                           uint8_t access_mode,
                                           uint8_t deferrable,
                                           uint8_t wait_mode,
-                                          uint32_t timeout_ms);
+                                          uint32_t timeout_ms,
+                                          uint8_t read_committed_mode = 0);
 std::vector<uint8_t> buildTxnCommitPayload(uint8_t flags);
 std::vector<uint8_t> buildTxnRollbackPayload(uint8_t flags);
 std::vector<uint8_t> buildTxnSavepointPayload(const std::string& name);
@@ -385,6 +386,17 @@ core::Status parseReady(const std::vector<uint8_t>& payload,
                         uint64_t& txn_id,
                         uint64_t& epoch,
                         core::ErrorContext* ctx = nullptr);
+core::Status parseTxnBeginPayload(const std::vector<uint8_t>& payload,
+                                  uint16_t& flags,
+                                  uint8_t& conflict_action,
+                                  uint8_t& autocommit_mode,
+                                  uint8_t& isolation_level,
+                                  uint8_t& access_mode,
+                                  uint8_t& deferrable,
+                                  uint8_t& wait_mode,
+                                  uint32_t& timeout_ms,
+                                  uint8_t& read_committed_mode,
+                                  core::ErrorContext* ctx = nullptr);
 core::Status parseParameterStatus(const std::vector<uint8_t>& payload,
                                   std::string& name,
                                   std::string& value,

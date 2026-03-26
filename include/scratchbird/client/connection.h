@@ -45,6 +45,7 @@
 
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/types.h"
 #include "scratchbird/protocol/wire_protocol.h"
 
 namespace scratchbird {
@@ -97,6 +98,9 @@ struct ConnectionConfig {
     uint16_t connect_client_flags = protocol::FEATURE_AUTH_PLUGIN_REGISTRY; // CONNECT_REQUEST client capability flags
     bool has_bound_db_uuid = false;         // Include bound DB UUID extension on CONNECT
     std::array<uint8_t, 16> bound_db_uuid{};// Bound DB UUID extension payload
+    bool has_dormant_reattach = false;      // Include dormant reattach extension on CONNECT
+    std::array<uint8_t, 16> dormant_id{};   // Dormant transaction UUID
+    std::array<uint8_t, 16> dormant_reattach_authkey{}; // Single-use dormant reattach AuthKey UUID
 
     // Default constructor
     ConnectionConfig() = default;
@@ -708,6 +712,16 @@ public:
      * @return Status::OK on success
      */
     core::Status rollback(core::ErrorContext* ctx = nullptr);
+
+    /**
+     * Detach the current transaction into dormant state and return the issued reattach identifiers.
+     *
+     * The returned AuthKey UUID is a single-use reattach capability. The caller must reconnect
+     * explicitly with dormant reattach enabled; disconnect/reconnect alone never resumes dormant work.
+     */
+    core::Status detachToDormant(core::ID& dormant_id_out,
+                                 core::ID& reattach_authkey_out,
+                                 core::ErrorContext* ctx = nullptr);
 
     /**
      * Create a savepoint

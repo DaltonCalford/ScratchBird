@@ -212,6 +212,7 @@ namespace scratchbird
 
             // Apply runtime scheduler configuration from Config
             Status applySchedulerConfig(ErrorContext *ctx = nullptr);
+            Status applyDormantTransactionPolicyConfig(ErrorContext *ctx = nullptr);
 
             // Create a new connection context
             // This registers a backend in ProcArray and creates a ConnectionContext
@@ -334,8 +335,96 @@ namespace scratchbird
                 uint32_t unrecoverable_chain_pages = 0;
             };
 
+            enum class DormantRestartReattachPolicy : uint8_t
+            {
+                // Permit reattach after restart by opening a replacement
+                // transaction from persisted session state. The original
+                // transaction is never replayed or resurrected.
+                ALLOW_REPLACEMENT = 0,
+
+                // Deny restart-time reattach. Older dormant rows remain
+                // operator-visible for inspection and cleanup, but the token
+                // cannot reopen work after a server restart.
+                DENY_AFTER_RESTART = 1,
+            };
+
+            enum class DormantCleanupPolicy : uint8_t
+            {
+                // Leave dormant rows untouched until explicit operator action.
+                KEEP = 0,
+
+                // Expire stale rows without actively ending a live dormant
+                // attachment that is still being held in memory.
+                EXPIRE_ONLY = 1,
+
+                // Roll back live expired dormant attachments and retain an
+                // audit-visible catalog row.
+                ROLLBACK_EXPIRED = 2,
+
+                // Roll back live expired dormant attachments and purge
+                // terminal rows once the retention window elapses.
+                ROLLBACK_EXPIRED_AND_PURGE = 3,
+            };
+
+            struct DormantTransactionPolicySnapshot
+            {
+                DormantRestartReattachPolicy restart_reattach_policy =
+                    DormantRestartReattachPolicy::ALLOW_REPLACEMENT;
+                DormantCleanupPolicy cleanup_policy =
+                    DormantCleanupPolicy::ROLLBACK_EXPIRED;
+                uint64_t lease_seconds = config::DEFAULT_DORMANT_TXN_LEASE_SECONDS;
+                uint64_t terminal_retention_seconds = 86400;
+            };
+
+            struct DormantTransactionSnapshot
+            {
+                ID dormant_id{};
+                ID attachment_id{};
+                ID session_id{};
+                ID user_id{};
+                ID session_user_id{};
+                ID role_id{};
+                ID current_schema_id{};
+                ID server_instance_id{};
+                uint32_t proc_id = 0;
+                uint64_t txn_id = 0;
+                uint8_t isolation_level = 0;
+                bool read_only = false;
+                bool autocommit_mode = false;
+                bool wait_for_locks = true;
+                uint32_t lock_timeout_seconds = 0;
+                uint8_t state = 0; // Aligns with CatalogManager::DormantTransactionState.
+                uint64_t start_time = 0;
+                uint64_t last_activity_time = 0;
+                uint64_t dormant_since = 0;
+                uint64_t lease_expires_at = 0;
+                uint64_t last_statement_time = 0;
+                uint64_t last_statement_hash = 0;
+                int64_t last_rows_affected = 0;
+                uint32_t last_error_code = 0;
+                std::string last_sqlstate;
+                std::string last_statement_text;
+                std::string session_settings;
+            };
+
+            struct ShadowFilespaceSnapshot
+            {
+                ID shadow_id{};
+                uint16_t source_tablespace_id = PRIMARY_TABLESPACE_ID;
+                std::string source_path;
+                std::string shadow_path;
+                uint64_t created_time = 0;
+                uint64_t last_sync_time = 0;
+                uint64_t copied_pages = 0;
+                uint64_t mirrored_writes = 0;
+                bool active = false;
+                bool promoted = false;
+            };
+
             // Dormant transaction handling (reattach support).
-            // The ConnectionContext is retained to preserve locks and ProcArray visibility.
+            // The ConnectionContext is retained to preserve locks and ProcArray
+            // visibility while dormant. Restart recovery is governed by MGA
+            // replacement-reattach policy, not WAL replay.
             Status detachToDormant(std::unique_ptr<class ConnectionContext> &connection,
                                    ID &dormant_id_out,
                                    ErrorContext *ctx = nullptr,
@@ -345,6 +434,14 @@ namespace scratchbird
                                    std::unique_ptr<class ConnectionContext> &connection_out,
                                    ErrorContext *ctx = nullptr,
                                    const ID *reattach_authkey = nullptr);
+
+            DormantTransactionPolicySnapshot dormantTransactionPolicy() const;
+
+            Status snapshotDormantTransactions(
+                std::vector<DormantTransactionSnapshot>& dormants_out,
+                ErrorContext* ctx = nullptr) const;
+            Status maintainDormantTransactions(uint32_t* normalized_out = nullptr,
+                                               ErrorContext* ctx = nullptr);
 
             std::vector<ConnectionSecuritySnapshot> snapshotConnectionSecurityStacks() const;
 
@@ -725,7 +822,8 @@ namespace scratchbird
                 return fd_;
             }
 
-            // Sync database file to disk
+            // Sync the primary database file and every registered durable tablespace.
+            // Transaction commit/publication paths rely on this forced-write fence.
             Status sync(ErrorContext *ctx = nullptr,
                         WritebackAttribution attribution = {}) const;
             Status clearWritebackFailureState(ErrorContext *ctx = nullptr);
@@ -802,6 +900,21 @@ namespace scratchbird
              */
             int getTablespaceFd(uint16_t tablespace_id) const;
 
+            // Physical filespace shadowing is derivative durability hardening.
+            // It mirrors already-produced MGA page truth into a page-for-page
+            // copy for failover/inspection. It is not recovery authority.
+            Status createShadowFilespace(uint16_t source_tablespace_id,
+                                         const std::string& shadow_path,
+                                         ID* shadow_id_out = nullptr,
+                                         ErrorContext* ctx = nullptr);
+            Status dropShadowFilespace(const ID& shadow_id,
+                                       bool keep_file,
+                                       ErrorContext* ctx = nullptr);
+            Status promoteShadowFilespace(const ID& shadow_id,
+                                          ErrorContext* ctx = nullptr);
+            Status listShadowFilespaces(std::vector<ShadowFilespaceSnapshot>& shadows_out,
+                                        ErrorContext* ctx = nullptr) const;
+
         private:
             int fd_ = -1;                                    // File descriptor (primary database)
             std::string path_;                               // Database file path
@@ -869,6 +982,13 @@ namespace scratchbird
                 uint64_t lease_expires_at = 0;
                 std::unique_ptr<ConnectionContext> connection;
             };
+
+            struct ShadowFilespaceEntry
+            {
+                ShadowFilespaceSnapshot snapshot{};
+                int fd = -1;
+            };
+            DormantTransactionPolicySnapshot dormant_transaction_policy_{};
             std::unordered_map<ID, DormantContextEntry, IDHash> dormant_contexts_;
             std::mutex dormant_mutex_;
 
@@ -878,6 +998,9 @@ namespace scratchbird
             // === Tablespace File Descriptors (Phase 1, Task 1.3.4) ===
             std::unordered_map<uint16_t, int> tablespace_fds_; // Map: tablespace_id -> file descriptor
             mutable std::mutex tablespace_mutex_;              // Protects tablespace_fds_ access
+            std::unordered_map<ID, ShadowFilespaceEntry, IDHash> shadow_filespaces_;
+            std::unordered_multimap<uint16_t, ID> shadow_filespace_by_source_;
+            mutable std::mutex shadow_filespace_mutex_;
 
             // Validate database header
             Status validate_header(ErrorContext *ctx);
@@ -907,6 +1030,20 @@ namespace scratchbird
             Status persistStartupReconciliationState(const StartupReconciliationState &state,
                                                      ErrorContext *ctx);
             Status runStartupReconciliation(ErrorContext *ctx);
+            void refreshDormantTransactionPolicyFromConfig();
+            Status resolveFilespaceRoute(uint16_t source_tablespace_id,
+                                         int* fd_out,
+                                         std::string* path_out,
+                                         ErrorContext* ctx) const;
+            Status backfillShadowFilespace(ShadowFilespaceEntry& entry,
+                                           ErrorContext* ctx);
+            Status mirrorShadowFilespaceWrite(uint16_t source_tablespace_id,
+                                             uint64_t offset,
+                                             const void* buffer,
+                                             size_t size,
+                                             ErrorContext* ctx) const;
+            Status syncShadowFilespacesForSource(uint16_t source_tablespace_id,
+                                                ErrorContext* ctx) const;
             Status validate_bootstrap_page_map(ErrorContext *ctx) const;
             static Status validate_db_path(const std::string &path, std::string &canonical_path,
                                            ErrorContext *ctx);

@@ -219,6 +219,11 @@ private:
     core::Status handlePing(const protocol::Message& msg, core::ErrorContext* ctx);
 
     /**
+     * Handle explicit dormant detach for public/front-door recovery.
+     */
+    core::Status handleDormantDetach(const protocol::Message& msg, core::ErrorContext* ctx);
+
+    /**
      * Handle QUERY_CANCEL
      */
     core::Status handleCancel(const protocol::Message& msg, core::ErrorContext* ctx);
@@ -300,6 +305,12 @@ private:
     std::string client_name_;                       // CONNECT_REQUEST client identifier
     uint16_t client_connect_flags_ = 0;            // CONNECT_REQUEST capability flags
     std::string auth_database_context_;             // CONNECT database for auth tuple scoping
+    struct PendingDormantReattachState {
+        bool active = false;
+        core::ID dormant_id{};
+        core::ID reattach_authkey{};
+    };
+    PendingDormantReattachState pending_dormant_reattach_;
     PeerCredentials peer_credentials_{};            // Peer identity for local IPC
     bool peer_credentials_available_ = false;
     core::ID session_id_uuid_{};                    // Catalog session UUID

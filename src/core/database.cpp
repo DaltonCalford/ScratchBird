@@ -88,6 +88,265 @@ namespace scratchbird::core
             return value;
         }
 
+        auto isZeroUuidLocal(const ID& id) -> bool
+        {
+            for (uint8_t byte : id.bytes)
+            {
+                if (byte != 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        void parseDormantSessionSettings(const std::string& payload,
+                                         std::vector<std::string>& search_path_out,
+                                         std::string& dialect_tag_out,
+                                         uint8_t& sql_dialect_out,
+                                         std::string& charset_out,
+                                         uint32_t& statement_timeout_out)
+        {
+            if (payload.empty())
+            {
+                return;
+            }
+
+            try
+            {
+                const nlohmann::json doc = nlohmann::json::parse(payload);
+                if (doc.contains("search_path") && doc["search_path"].is_array())
+                {
+                    search_path_out.clear();
+                    for (const auto& entry : doc["search_path"])
+                    {
+                        if (entry.is_string())
+                        {
+                            search_path_out.push_back(entry.get<std::string>());
+                        }
+                    }
+                }
+
+                if (doc.contains("dialect_tag") && doc["dialect_tag"].is_string())
+                {
+                    dialect_tag_out = doc["dialect_tag"].get<std::string>();
+                }
+
+                if (doc.contains("sql_dialect") && doc["sql_dialect"].is_number_unsigned())
+                {
+                    sql_dialect_out = static_cast<uint8_t>(doc["sql_dialect"].get<uint32_t>());
+                }
+
+                if (doc.contains("charset") && doc["charset"].is_string())
+                {
+                    charset_out = doc["charset"].get<std::string>();
+                }
+
+                if (doc.contains("statement_timeout") &&
+                    doc["statement_timeout"].is_number_unsigned())
+                {
+                    statement_timeout_out = doc["statement_timeout"].get<uint32_t>();
+                }
+            }
+            catch (const std::exception&)
+            {
+                // Dormant session settings are advisory for replacement transaction
+                // recovery. Invalid JSON must not block restart recovery.
+            }
+        }
+
+        auto parseDormantRestartReattachPolicy(const std::string& value)
+            -> Database::DormantRestartReattachPolicy
+        {
+            const std::string normalized = toLowerAscii(trimAscii(value));
+            if (normalized == "deny" ||
+                normalized == "deny_after_restart" ||
+                normalized == "deny-after-restart" ||
+                normalized == "no_restart_reattach")
+            {
+                return Database::DormantRestartReattachPolicy::DENY_AFTER_RESTART;
+            }
+            return Database::DormantRestartReattachPolicy::ALLOW_REPLACEMENT;
+        }
+
+        auto parseDormantCleanupPolicy(const std::string& value)
+            -> Database::DormantCleanupPolicy
+        {
+            const std::string normalized = toLowerAscii(trimAscii(value));
+            if (normalized == "keep")
+            {
+                return Database::DormantCleanupPolicy::KEEP;
+            }
+            if (normalized == "expire_only" || normalized == "expire-only")
+            {
+                return Database::DormantCleanupPolicy::EXPIRE_ONLY;
+            }
+            if (normalized == "rollback_expired_and_purge" ||
+                normalized == "rollback-expired-and-purge")
+            {
+                return Database::DormantCleanupPolicy::ROLLBACK_EXPIRED_AND_PURGE;
+            }
+            return Database::DormantCleanupPolicy::ROLLBACK_EXPIRED;
+        }
+
+        auto isDormantTerminalState(CatalogManager::DormantTransactionState state) -> bool
+        {
+            using DTS = CatalogManager::DormantTransactionState;
+            return state == DTS::REATTACHED ||
+                   state == DTS::ROLLED_BACK ||
+                   state == DTS::EXPIRED;
+        }
+
+        auto recoverDormantAfterRestart(Database *db,
+                                        const CatalogManager::DormantTransactionInfo& info,
+                                        const ID& reattach_authkey,
+                                        std::unique_ptr<ConnectionContext>& connection_out,
+                                        ErrorContext *ctx) -> Status
+        {
+            if (db == nullptr || db->catalog_manager() == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Catalog manager not available for dormant recovery");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            std::unique_ptr<ConnectionContext> recovered;
+            Status status = db->connect(recovered, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status,
+                                  "Failed to create replacement connection for dormant recovery");
+                return status;
+            }
+
+            recovered->setAttachmentId(info.attachment_id);
+            recovered->setProtocolSessionId(info.session_id);
+
+            std::vector<std::string> search_path;
+            std::string dialect_tag = "native";
+            uint8_t sql_dialect = recovered->sql_dialect();
+            std::string charset = recovered->charset();
+            uint32_t statement_timeout = recovered->statement_timeout();
+            parseDormantSessionSettings(info.session_settings,
+                                        search_path,
+                                        dialect_tag,
+                                        sql_dialect,
+                                        charset,
+                                        statement_timeout);
+
+            recovered->setSessionContext(info.session_id,
+                                         reattach_authkey,
+                                         dialect_tag.empty() ? "native" : dialect_tag,
+                                         0,
+                                         0);
+            if (!dialect_tag.empty())
+            {
+                recovered->set_dialect_tag(dialect_tag);
+            }
+            recovered->set_sql_dialect(sql_dialect);
+            recovered->set_charset(charset);
+            recovered->set_statement_timeout(statement_timeout);
+            if (!search_path.empty())
+            {
+                recovered->set_search_path(search_path);
+            }
+
+            const bool wait_for_locks = info.wait_mode == CatalogManager::DormantWaitMode::WAIT;
+            recovered->setAutocommitMode(info.autocommit_mode);
+            recovered->setWaitForLocks(wait_for_locks);
+            recovered->setLockTimeout(info.lock_timeout_seconds);
+
+            CatalogManager *catalog = db->catalog_manager();
+            if (!isZeroUuidLocal(info.session_user_id))
+            {
+                CatalogManager::UserInfo session_user{};
+                status = catalog->getUser(info.session_user_id, session_user, ctx);
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status,
+                                      "Failed to restore dormant session user during restart recovery");
+                    return status;
+                }
+                recovered->setCurrentUser(info.session_user_id, session_user.is_superuser);
+            }
+
+            if (!isZeroUuidLocal(info.user_id) && info.user_id != info.session_user_id)
+            {
+                CatalogManager::UserInfo effective_user{};
+                status = catalog->getUser(info.user_id, effective_user, ctx);
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status,
+                                      "Failed to restore dormant effective user during restart recovery");
+                    return status;
+                }
+                recovered->setCurrentUser(info.user_id, effective_user.is_superuser);
+            }
+            else if (!isZeroUuidLocal(info.user_id) && isZeroUuidLocal(info.session_user_id))
+            {
+                CatalogManager::UserInfo effective_user{};
+                status = catalog->getUser(info.user_id, effective_user, ctx);
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status,
+                                      "Failed to restore dormant user during restart recovery");
+                    return status;
+                }
+                recovered->setCurrentUser(info.user_id, effective_user.is_superuser);
+            }
+
+            if (!isZeroUuidLocal(info.role_id))
+            {
+                recovered->setActiveRole(info.role_id);
+            }
+
+            if (!isZeroUuidLocal(info.current_schema_id))
+            {
+                recovered->setCurrentSchemaId(info.current_schema_id);
+                CatalogManager::SchemaInfo schema{};
+                if (catalog->getSchema(info.current_schema_id, schema, nullptr) == Status::OK)
+                {
+                    recovered->set_current_schema(schema.full_path.empty()
+                                                      ? schema.schema_name
+                                                      : schema.full_path);
+                }
+            }
+
+            IsolationLevel recovered_isolation =
+                static_cast<IsolationLevel>(info.isolation_level);
+            ReadCommittedMode recovered_rc_mode = ReadCommittedMode::DEFAULT;
+            if (recovered_isolation == IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
+            {
+                recovered_rc_mode = ReadCommittedMode::READ_CONSISTENCY;
+            }
+            recovered->setReadCommittedMode(recovered_rc_mode);
+            recovered->stageTransactionSettings(
+                recovered_isolation,
+                info.access_mode == CatalogManager::DormantAccessMode::READ_ONLY,
+                wait_for_locks,
+                info.lock_timeout_seconds,
+                recovered_rc_mode);
+
+            ErrorContext restart_ctx;
+            status = recovered->rollback(&restart_ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  status,
+                                  restart_ctx.message.empty()
+                                      ? "Failed to open replacement transaction during dormant restart recovery"
+                                      : restart_ctx.message.c_str());
+                return status;
+            }
+
+            recovered->pushNotice(
+                "Dormant transaction recovered after server restart; prior active transaction "
+                "was closed and a replacement transaction was opened.");
+
+            connection_out = std::move(recovered);
+            return Status::OK;
+        }
+
         bool preadFully(int fd, void *buffer, size_t size, off_t offset,
                         size_t *bytes_read_out = nullptr);
         bool pwriteFully(int fd, const void *buffer, size_t size, off_t offset,
@@ -2127,25 +2386,9 @@ namespace scratchbird::core
 
         {
             std::lock_guard<std::mutex> lock(dormant_mutex_);
-            // Tear down dormant contexts while lock/txn managers are still available.
-            for (const auto& [dormant_id, entry] : dormant_contexts_)
-            {
-                if (catalog_manager_ && !isZeroId(entry.reattach_authkey_id))
-                {
-                    ErrorContext revoke_ctx;
-                    const Status revoke_status =
-                        catalog_manager_->revokeAuthKey(entry.reattach_authkey_id, &revoke_ctx);
-                    logReattachAuditEvent(audit_logger_.get(),
-                                          AuditEventType::REATTACH_TOKEN_REVOKED,
-                                          entry.connection ? entry.connection->getCurrentUserId() : ID{},
-                                          entry.connection ? entry.connection->protocolSessionId() : ID{},
-                                          entry.reattach_authkey_id,
-                                          dormant_id,
-                                          revoke_status == Status::OK ||
-                                              revoke_status == Status::INVALID_AUTHORIZATION,
-                                          "database_close");
-                }
-            }
+            // Preserve dormant catalog records and their reattach AuthKeys across
+            // close/open so restart can reconstruct a replacement transaction
+            // instead of silently discarding the engine-owned recovery token.
             dormant_contexts_.clear();
         }
         {
@@ -2262,6 +2505,20 @@ namespace scratchbird::core
         {
             ::close(fd_);
             fd_ = -1;
+        }
+        {
+            std::lock_guard<std::mutex> lock(shadow_filespace_mutex_);
+            for (auto& [shadow_id, entry] : shadow_filespaces_)
+            {
+                (void) shadow_id;
+                if (entry.fd >= 0)
+                {
+                    ::close(entry.fd);
+                    entry.fd = -1;
+                }
+            }
+            shadow_filespaces_.clear();
+            shadow_filespace_by_source_.clear();
         }
 
         startup_state_loaded_ = false;
@@ -2398,6 +2655,12 @@ namespace scratchbird::core
             job_scheduler_->updateConfig(sched_config);
         }
 
+        return Status::OK;
+    }
+
+    Status Database::applyDormantTransactionPolicyConfig(ErrorContext* /*ctx*/)
+    {
+        refreshDormantTransactionPolicyFromConfig();
         return Status::OK;
     }
 
@@ -2558,11 +2821,253 @@ namespace scratchbird::core
         return out;
     }
 
+    void Database::refreshDormantTransactionPolicyFromConfig()
+    {
+        Config& cfg = Config::getInstance();
+        dormant_transaction_policy_.restart_reattach_policy =
+            parseDormantRestartReattachPolicy(
+                cfg.getString("transactions",
+                              "dormant_restart_reattach_policy",
+                              "allow_replacement"));
+        dormant_transaction_policy_.cleanup_policy =
+            parseDormantCleanupPolicy(
+                cfg.getString("transactions",
+                              "dormant_cleanup_policy",
+                              "rollback_expired"));
+        dormant_transaction_policy_.lease_seconds =
+            cfg.getUInt("transactions",
+                        "dormant_lease_seconds",
+                        config::DEFAULT_DORMANT_TXN_LEASE_SECONDS);
+        dormant_transaction_policy_.terminal_retention_seconds =
+            cfg.getUInt("transactions",
+                        "dormant_terminal_retention_seconds",
+                        86400);
+    }
+
+    auto Database::dormantTransactionPolicy() const -> DormantTransactionPolicySnapshot
+    {
+        DormantTransactionPolicySnapshot snapshot = dormant_transaction_policy_;
+        Config& cfg = Config::getInstance();
+        snapshot.restart_reattach_policy =
+            parseDormantRestartReattachPolicy(
+                cfg.getString("transactions",
+                              "dormant_restart_reattach_policy",
+                              "allow_replacement"));
+        snapshot.cleanup_policy =
+            parseDormantCleanupPolicy(
+                cfg.getString("transactions",
+                              "dormant_cleanup_policy",
+                              "rollback_expired"));
+        snapshot.lease_seconds =
+            cfg.getUInt("transactions",
+                        "dormant_lease_seconds",
+                        config::DEFAULT_DORMANT_TXN_LEASE_SECONDS);
+        snapshot.terminal_retention_seconds =
+            cfg.getUInt("transactions",
+                        "dormant_terminal_retention_seconds",
+                        86400);
+        return snapshot;
+    }
+
+    auto Database::snapshotDormantTransactions(
+        std::vector<DormantTransactionSnapshot>& dormants_out,
+        ErrorContext* ctx) const -> Status
+    {
+        dormants_out.clear();
+        if (catalog_manager_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        std::vector<CatalogManager::DormantTransactionInfo> rows;
+        Status status = catalog_manager_->listDormantTransactions(rows, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        dormants_out.reserve(rows.size());
+        for (const CatalogManager::DormantTransactionInfo& info : rows)
+        {
+            DormantTransactionSnapshot row{};
+            row.dormant_id = info.dormant_id;
+            row.attachment_id = info.attachment_id;
+            row.session_id = info.session_id;
+            row.user_id = info.user_id;
+            row.session_user_id = info.session_user_id;
+            row.role_id = info.role_id;
+            row.current_schema_id = info.current_schema_id;
+            row.server_instance_id = info.server_instance_id;
+            row.proc_id = info.proc_id;
+            row.txn_id = info.txn_id;
+            row.isolation_level = info.isolation_level;
+            row.read_only = info.access_mode == CatalogManager::DormantAccessMode::READ_ONLY;
+            row.autocommit_mode = info.autocommit_mode;
+            row.wait_for_locks = info.wait_mode == CatalogManager::DormantWaitMode::WAIT;
+            row.lock_timeout_seconds = info.lock_timeout_seconds;
+            row.state = static_cast<uint8_t>(info.state);
+            row.start_time = info.start_time;
+            row.last_activity_time = info.last_activity_time;
+            row.dormant_since = info.dormant_since;
+            row.lease_expires_at = info.lease_expires_at;
+            row.last_statement_time = info.last_statement_time;
+            row.last_statement_hash = info.last_statement_hash;
+            row.last_rows_affected = info.last_rows_affected;
+            row.last_error_code = info.last_error_code;
+            row.last_sqlstate = info.last_sqlstate;
+            row.last_statement_text = info.last_statement_text;
+            row.session_settings = info.session_settings;
+            dormants_out.push_back(std::move(row));
+        }
+
+        return Status::OK;
+    }
+
+    auto Database::maintainDormantTransactions(uint32_t* normalized_out,
+                                               ErrorContext* ctx) -> Status
+    {
+        if (normalized_out != nullptr)
+        {
+            *normalized_out = 0;
+        }
+        if (catalog_manager_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        refreshDormantTransactionPolicyFromConfig();
+
+        std::vector<CatalogManager::DormantTransactionInfo> rows;
+        Status status = catalog_manager_->listDormantTransactions(rows, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        const uint64_t now_micros = std::chrono::duration_cast<std::chrono::microseconds>(
+                                        std::chrono::system_clock::now().time_since_epoch())
+                                        .count();
+        const bool rollback_expired =
+            dormant_transaction_policy_.cleanup_policy ==
+                DormantCleanupPolicy::ROLLBACK_EXPIRED ||
+            dormant_transaction_policy_.cleanup_policy ==
+                DormantCleanupPolicy::ROLLBACK_EXPIRED_AND_PURGE;
+        const bool purge_terminal =
+            dormant_transaction_policy_.cleanup_policy ==
+            DormantCleanupPolicy::ROLLBACK_EXPIRED_AND_PURGE;
+
+        uint32_t normalized = 0;
+        for (CatalogManager::DormantTransactionInfo& info : rows)
+        {
+            const bool lease_expired =
+                info.lease_expires_at != 0 && now_micros > info.lease_expires_at;
+            const bool restart_stale =
+                !isZeroId(info.server_instance_id) &&
+                info.server_instance_id != server_instance_id_;
+
+            std::unique_ptr<ConnectionContext> released_connection;
+            ID live_authkey{};
+
+            if (info.state == CatalogManager::DormantTransactionState::DORMANT &&
+                lease_expired &&
+                rollback_expired)
+            {
+                std::lock_guard<std::mutex> lock(dormant_mutex_);
+                auto it = dormant_contexts_.find(info.dormant_id);
+                if (it != dormant_contexts_.end())
+                {
+                    live_authkey = it->second.reattach_authkey_id;
+                    released_connection = std::move(it->second.connection);
+                    dormant_contexts_.erase(it);
+                }
+            }
+
+            bool updated = false;
+            if (info.state == CatalogManager::DormantTransactionState::DORMANT)
+            {
+                if (lease_expired &&
+                    dormant_transaction_policy_.cleanup_policy != DormantCleanupPolicy::KEEP)
+                {
+                    info.state = released_connection
+                        ? CatalogManager::DormantTransactionState::ROLLED_BACK
+                        : CatalogManager::DormantTransactionState::EXPIRED;
+                    info.last_activity_time = now_micros;
+                    updated = true;
+                }
+                else if (restart_stale &&
+                         dormant_transaction_policy_.restart_reattach_policy ==
+                             DormantRestartReattachPolicy::DENY_AFTER_RESTART)
+                {
+                    info.state = CatalogManager::DormantTransactionState::EXPIRED;
+                    info.last_activity_time = now_micros;
+                    updated = true;
+                }
+            }
+
+            if (released_connection)
+            {
+                released_connection.reset();
+                if (!isZeroId(live_authkey))
+                {
+                    ErrorContext revoke_ctx;
+                    catalog_manager_->revokeAuthKey(live_authkey, &revoke_ctx);
+                    logReattachAuditEvent(audit_logger_.get(),
+                                          AuditEventType::REATTACH_TOKEN_REVOKED,
+                                          info.user_id,
+                                          info.session_id,
+                                          live_authkey,
+                                          info.dormant_id,
+                                          true,
+                                          "dormant_cleanup_rollback");
+                }
+            }
+
+            if (updated)
+            {
+                status = catalog_manager_->updateDormantTransaction(info, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                ++normalized;
+            }
+
+            const uint64_t reference_time = info.last_activity_time != 0
+                ? info.last_activity_time
+                : info.dormant_since;
+            if (purge_terminal &&
+                isDormantTerminalState(info.state) &&
+                dormant_transaction_policy_.terminal_retention_seconds != 0 &&
+                reference_time != 0 &&
+                now_micros >=
+                    reference_time +
+                        (dormant_transaction_policy_.terminal_retention_seconds * 1000000ULL))
+            {
+                status = catalog_manager_->deleteDormantTransaction(info.dormant_id, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                ++normalized;
+            }
+        }
+
+        if (normalized_out != nullptr)
+        {
+            *normalized_out = normalized;
+        }
+        return Status::OK;
+    }
+
     Status Database::detachToDormant(std::unique_ptr<ConnectionContext> &connection,
                                      ID &dormant_id_out,
                                      ErrorContext *ctx,
                                      ID *reattach_authkey_out)
     {
+        refreshDormantTransactionPolicyFromConfig();
+
         if (reattach_authkey_out)
         {
             *reattach_authkey_out = ID{};
@@ -2619,9 +3124,7 @@ namespace scratchbird::core
         }
         info.dormant_since = now_micros;
 
-        uint64_t lease_seconds = Config::getInstance().getUInt(
-            "transactions", "dormant_lease_seconds",
-            config::DEFAULT_DORMANT_TXN_LEASE_SECONDS);
+        uint64_t lease_seconds = dormant_transaction_policy_.lease_seconds;
         if (lease_seconds == 0)
         {
             info.lease_expires_at = 0;
@@ -2711,29 +3214,25 @@ namespace scratchbird::core
                                      ErrorContext *ctx,
                                      const ID *reattach_authkey)
     {
-        std::lock_guard<std::mutex> lock(dormant_mutex_);
-
-        auto it = dormant_contexts_.find(dormant_id);
-        if (it == dormant_contexts_.end())
+        refreshDormantTransactionPolicyFromConfig();
+        ErrorContext maintenance_ctx;
+        Status maintenance_status = maintainDormantTransactions(nullptr, &maintenance_ctx);
+        if (maintenance_status != Status::OK)
         {
-            logReattachAuditEvent(audit_logger_.get(),
-                                  AuditEventType::REATTACH_FAILURE,
-                                  ID{},
-                                  ID{},
-                                  reattach_authkey ? *reattach_authkey : ID{},
-                                  dormant_id,
-                                  false,
-                                  "dormant_not_found");
-            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Dormant transaction not found");
-            return Status::NOT_FOUND;
+            SET_ERROR_CONTEXT(ctx,
+                              maintenance_status,
+                              maintenance_ctx.message.empty()
+                                  ? "Failed to apply dormant transaction maintenance"
+                                  : maintenance_ctx.message.c_str());
+            return maintenance_status;
         }
 
         if (!reattach_authkey || isZeroId(*reattach_authkey))
         {
             logReattachAuditEvent(audit_logger_.get(),
                                   AuditEventType::REATTACH_FAILURE,
-                                  it->second.connection ? it->second.connection->getCurrentUserId() : ID{},
-                                  it->second.connection ? it->second.connection->protocolSessionId() : ID{},
+                                  ID{},
+                                  ID{},
                                   ID{},
                                   dormant_id,
                                   false,
@@ -2742,94 +3241,180 @@ namespace scratchbird::core
             return Status::INVALID_AUTHORIZATION;
         }
 
-        if (*reattach_authkey != it->second.reattach_authkey_id)
+        if (!catalog_manager_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        CatalogManager::DormantTransactionInfo info;
+        Status info_status = catalog_manager_->getDormantTransaction(dormant_id, info, ctx);
+        if (info_status != Status::OK)
         {
             logReattachAuditEvent(audit_logger_.get(),
                                   AuditEventType::REATTACH_FAILURE,
-                                  it->second.connection ? it->second.connection->getCurrentUserId() : ID{},
-                                  it->second.connection ? it->second.connection->protocolSessionId() : ID{},
+                                  ID{},
+                                  ID{},
                                   *reattach_authkey,
                                   dormant_id,
                                   false,
-                                  "reattach_authkey_mismatch");
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_AUTHORIZATION, "Reattach AuthKey mismatch");
+                                  "dormant_not_found");
+            return info_status;
+        }
+
+        if (info.state != CatalogManager::DormantTransactionState::DORMANT)
+        {
+            logReattachAuditEvent(audit_logger_.get(),
+                                  AuditEventType::REATTACH_FAILURE,
+                                  info.user_id,
+                                  info.session_id,
+                                  *reattach_authkey,
+                                  dormant_id,
+                                  false,
+                                  "dormant_not_reattachable");
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_AUTHORIZATION,
+                              "Dormant transaction is not in a reattachable state");
             return Status::INVALID_AUTHORIZATION;
         }
 
-        if (catalog_manager_)
+        if (info.lease_expires_at != 0)
         {
-            CatalogManager::AuthKeyInfo authkey_info;
-            Status authkey_status = catalog_manager_->getAuthKey(*reattach_authkey,
-                                                                 authkey_info,
-                                                                 ctx);
-            if (authkey_status != Status::OK ||
-                authkey_info.status != CatalogManager::AuthKeyStatus::ACTIVE ||
-                authkey_info.scope != CatalogManager::AuthKeyScope::REATTACH)
+            const uint64_t now_micros = std::chrono::duration_cast<std::chrono::microseconds>(
+                                            std::chrono::system_clock::now().time_since_epoch())
+                                            .count();
+            if (now_micros > info.lease_expires_at)
             {
+                info.state = CatalogManager::DormantTransactionState::EXPIRED;
+                info.last_activity_time = now_micros;
+                catalog_manager_->updateDormantTransaction(info, nullptr);
                 logReattachAuditEvent(audit_logger_.get(),
                                       AuditEventType::REATTACH_FAILURE,
-                                      it->second.connection ? it->second.connection->getCurrentUserId() : ID{},
-                                      it->second.connection ? it->second.connection->protocolSessionId() : ID{},
+                                      info.user_id,
+                                      info.session_id,
                                       *reattach_authkey,
                                       dormant_id,
                                       false,
-                                      "reattach_authkey_invalid");
+                                      "dormant_lease_expired");
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_AUTHORIZATION,
-                                  "Reattach AuthKey is invalid or not active");
+                                  "Dormant reattach token has expired");
                 return Status::INVALID_AUTHORIZATION;
-            }
-
-            Status consume_status = catalog_manager_->consumeAuthKey(*reattach_authkey, 1, ctx);
-            if (consume_status != Status::OK)
-            {
-                logReattachAuditEvent(audit_logger_.get(),
-                                      AuditEventType::REATTACH_FAILURE,
-                                      it->second.connection ? it->second.connection->getCurrentUserId() : ID{},
-                                      it->second.connection ? it->second.connection->protocolSessionId() : ID{},
-                                      *reattach_authkey,
-                                      dormant_id,
-                                      false,
-                                      "reattach_authkey_consume_failed");
-                return consume_status;
-            }
-
-            CatalogManager::DormantTransactionInfo info;
-            Status status = catalog_manager_->getDormantTransaction(dormant_id, info, ctx);
-            if (status == Status::OK)
-            {
-                if (info.server_instance_id != server_instance_id_)
-                {
-                    logReattachAuditEvent(audit_logger_.get(),
-                                          AuditEventType::REATTACH_FAILURE,
-                                          it->second.connection ? it->second.connection->getCurrentUserId() : ID{},
-                                          it->second.connection ? it->second.connection->protocolSessionId() : ID{},
-                                          *reattach_authkey,
-                                          dormant_id,
-                                          false,
-                                          "reattach_wrong_server_instance");
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                      "Dormant transaction belongs to a different server instance");
-                    return Status::INVALID_ARGUMENT;
-                }
-
-                info.state = CatalogManager::DormantTransactionState::REATTACHED;
-                info.last_activity_time = std::chrono::duration_cast<std::chrono::microseconds>(
-                                              std::chrono::system_clock::now().time_since_epoch())
-                                              .count();
-                catalog_manager_->updateDormantTransaction(info, ctx);
             }
         }
 
-        connection_out = std::move(it->second.connection);
+        CatalogManager::AuthKeyInfo authkey_info;
+        Status authkey_status = catalog_manager_->getAuthKey(*reattach_authkey, authkey_info, ctx);
+        if (authkey_status != Status::OK ||
+            authkey_info.status != CatalogManager::AuthKeyStatus::ACTIVE ||
+            authkey_info.scope != CatalogManager::AuthKeyScope::REATTACH)
+        {
+            logReattachAuditEvent(audit_logger_.get(),
+                                  AuditEventType::REATTACH_FAILURE,
+                                  info.user_id,
+                                  info.session_id,
+                                  *reattach_authkey,
+                                  dormant_id,
+                                  false,
+                                  "reattach_authkey_invalid");
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_AUTHORIZATION,
+                              "Reattach AuthKey is invalid or not active");
+            return Status::INVALID_AUTHORIZATION;
+        }
+
+        Status consume_status = catalog_manager_->consumeAuthKey(*reattach_authkey, 1, ctx);
+        if (consume_status != Status::OK)
+        {
+            logReattachAuditEvent(audit_logger_.get(),
+                                  AuditEventType::REATTACH_FAILURE,
+                                  info.user_id,
+                                  info.session_id,
+                                  *reattach_authkey,
+                                  dormant_id,
+                                  false,
+                                  "reattach_authkey_consume_failed");
+            return consume_status;
+        }
+
+        bool recovered_after_restart = false;
+        {
+            std::lock_guard<std::mutex> lock(dormant_mutex_);
+            auto it = dormant_contexts_.find(dormant_id);
+            if (it != dormant_contexts_.end())
+            {
+                if (*reattach_authkey != it->second.reattach_authkey_id)
+                {
+                    logReattachAuditEvent(audit_logger_.get(),
+                                          AuditEventType::REATTACH_FAILURE,
+                                          info.user_id,
+                                          info.session_id,
+                                          *reattach_authkey,
+                                          dormant_id,
+                                          false,
+                                          "reattach_authkey_mismatch");
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_AUTHORIZATION,
+                                      "Reattach AuthKey mismatch");
+                    return Status::INVALID_AUTHORIZATION;
+                }
+                connection_out = std::move(it->second.connection);
+                dormant_contexts_.erase(it);
+            }
+        }
+
+        if (!connection_out)
+        {
+            if (info.server_instance_id != server_instance_id_ &&
+                dormant_transaction_policy_.restart_reattach_policy ==
+                    DormantRestartReattachPolicy::DENY_AFTER_RESTART)
+            {
+                info.state = CatalogManager::DormantTransactionState::EXPIRED;
+                info.last_activity_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                                              std::chrono::system_clock::now().time_since_epoch())
+                                              .count();
+                catalog_manager_->updateDormantTransaction(info, nullptr);
+                logReattachAuditEvent(audit_logger_.get(),
+                                      AuditEventType::REATTACH_FAILURE,
+                                      info.user_id,
+                                      info.session_id,
+                                      *reattach_authkey,
+                                      dormant_id,
+                                      false,
+                                      "restart_policy_denied");
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_AUTHORIZATION,
+                                  "Restart-time dormant reattach is disabled by policy");
+                return Status::INVALID_AUTHORIZATION;
+            }
+
+            Status recover_status =
+                recoverDormantAfterRestart(this, info, *reattach_authkey, connection_out, ctx);
+            if (recover_status != Status::OK)
+            {
+                logReattachAuditEvent(audit_logger_.get(),
+                                      AuditEventType::REATTACH_FAILURE,
+                                      info.user_id,
+                                      info.session_id,
+                                      *reattach_authkey,
+                                      dormant_id,
+                                      false,
+                                      "restart_recovery_failed");
+                return recover_status;
+            }
+            recovered_after_restart = true;
+        }
+
+        info.state = CatalogManager::DormantTransactionState::REATTACHED;
+        info.last_activity_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                                      std::chrono::system_clock::now().time_since_epoch())
+                                      .count();
+        info.server_instance_id = server_instance_id_;
+        catalog_manager_->updateDormantTransaction(info, nullptr);
+
         logReattachAuditEvent(audit_logger_.get(),
                               AuditEventType::REATTACH_SUCCESS,
-                              connection_out ? connection_out->getCurrentUserId() : ID{},
-                              connection_out ? connection_out->protocolSessionId() : ID{},
+                              info.user_id,
+                              info.session_id,
                               *reattach_authkey,
                               dormant_id,
                               true,
-                              "reattached");
-        dormant_contexts_.erase(it);
+                              recovered_after_restart ? "recovered_after_restart" : "reattached");
         return Status::OK;
     }
 
@@ -3574,6 +4159,7 @@ namespace scratchbird::core
         // Per-process instance identifier (used to invalidate stale dormant records on restart).
         server_instance_id_ = generateUuidV7();
         path_ = canonical_path;
+        refreshDormantTransactionPolicyFromConfig();
 
         // Initialize logger
         Logger::getInstance().initialize();
@@ -3647,20 +4233,9 @@ namespace scratchbird::core
         }
         if (status == Status::OK)
         {
-            // On restart we cannot reattach previous in-memory contexts, so purge stale records.
-            std::vector<CatalogManager::DormantTransactionInfo> dormants;
-            Status list_status = catalog_manager_->listDormantTransactions(dormants, ctx);
-            if (list_status == Status::OK)
-            {
-                for (const auto &entry : dormants)
-                {
-                    if (entry.server_instance_id != server_instance_id_)
-                    {
-                        catalog_manager_->deleteDormantTransaction(entry.dormant_id, ctx);
-                    }
-                }
-            }
-
+            // Dormant records survive restart. Reattach will reconstruct a
+            // replacement transaction from persisted session state instead of
+            // replaying prior work or purging the token on open.
             status = catalog_manager_->purgeStaleSessionTemporaryTables(ctx);
             if (status != Status::OK)
             {
@@ -3680,6 +4255,15 @@ namespace scratchbird::core
             close();
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate AuditLogger");
             return Status::OOM;
+        }
+
+        if (catalog_manager_ != nullptr)
+        {
+            status = maintainDormantTransactions(nullptr, ctx);
+            if (status != Status::OK)
+            {
+                return close_with_stage_error(status, "database.maintainDormantTransactions");
+            }
         }
 
         // Initialize storage engine
@@ -4879,6 +5463,17 @@ namespace scratchbird::core
             return failure_status;
         }
 
+        Status mirror_status =
+            mirrorShadowFilespaceWrite(PRIMARY_TABLESPACE_ID,
+                                       static_cast<uint64_t>(offset),
+                                       buffer,
+                                       page_size_,
+                                       ctx);
+        if (mirror_status != Status::OK)
+        {
+            return mirror_status;
+        }
+
         return Status::OK;
     }
 
@@ -4909,26 +5504,109 @@ namespace scratchbird::core
             }
         }
 
-        if (platform::syncFd(fd_) != 0)
+        auto sync_target = [&](int fd,
+                               uint16_t filespace_id,
+                               const char *target_name) -> Status
         {
+            errno = 0;
+            if (platform::syncFd(fd) == 0)
+            {
+                return Status::OK;
+            }
+
             const int sync_errno = errno;
             const Status failure_status =
                 (sync_errno == ENOSPC) ? Status::DISK_FULL : Status::IO_ERROR;
             if (sync_errno == ENOSPC)
             {
-                SET_ERROR_CONTEXT(ctx, failure_status, "Failed to sync database file: disk full");
+                if (filespace_id == PRIMARY_TABLESPACE_ID)
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      failure_status,
+                                      "Failed to sync database file: disk full");
+                }
+                else
+                {
+                    char msg[256];
+                    snprintf(msg,
+                             sizeof(msg),
+                             "Failed to sync %s %u: disk full",
+                             target_name,
+                             filespace_id);
+                    SET_ERROR_CONTEXT(ctx, failure_status, msg);
+                }
             }
             else
             {
-                SET_ERROR_CONTEXT(ctx, failure_status, "Failed to sync database file");
+                if (filespace_id == PRIMARY_TABLESPACE_ID)
+                {
+                    SET_ERROR_CONTEXT(ctx, failure_status, "Failed to sync database file");
+                }
+                else
+                {
+                    char msg[256];
+                    snprintf(msg,
+                             sizeof(msg),
+                             "Failed to sync %s %u",
+                             target_name,
+                             filespace_id);
+                    SET_ERROR_CONTEXT(ctx, failure_status, msg);
+                }
             }
+
+            WritebackAttribution failure_attribution = attribution;
+            failure_attribution.filespace_id = filespace_id;
             const_cast<Database *>(this)->noteWritebackFailure(
                 failure_status,
                 classifyWritebackFailure(failure_status, sync_errno, true),
-                attribution,
+                failure_attribution,
                 true,
                 ctx);
             return failure_status;
+        };
+
+        if (Status status = sync_target(fd_, PRIMARY_TABLESPACE_ID, "database file");
+            status != Status::OK)
+        {
+            return status;
+        }
+        if (Status status = syncShadowFilespacesForSource(PRIMARY_TABLESPACE_ID, ctx);
+            status != Status::OK)
+        {
+            return status;
+        }
+
+        // Firebird-style forced-write durability requires the durable fence to
+        // reach every registered filespace, not only the primary database file.
+        // Until touched-filespace tracking is wired into the foreground commit
+        // path, Alpha uses the conservative fence and syncs every registered
+        // tablespace descriptor here.
+        std::vector<std::pair<uint16_t, int>> registered_tablespaces;
+        {
+            std::lock_guard<std::mutex> lock(tablespace_mutex_);
+            registered_tablespaces.reserve(tablespace_fds_.size());
+            for (const auto& [tablespace_id, tablespace_fd] : tablespace_fds_)
+            {
+                registered_tablespaces.emplace_back(tablespace_id, tablespace_fd);
+            }
+        }
+        for (const auto &[tablespace_id, tablespace_fd] : registered_tablespaces)
+        {
+            if (tablespace_fd < 0)
+            {
+                continue;
+            }
+
+            if (Status status = sync_target(tablespace_fd, tablespace_id, "tablespace");
+                status != Status::OK)
+            {
+                return status;
+            }
+            if (Status status = syncShadowFilespacesForSource(tablespace_id, ctx);
+                status != Status::OK)
+            {
+                return status;
+            }
         }
 
         return Status::OK;
@@ -5152,6 +5830,17 @@ namespace scratchbird::core
                                  false,
                                  ctx);
             return failure_status;
+        }
+
+        Status mirror_status =
+            mirrorShadowFilespaceWrite(tablespace_id,
+                                       static_cast<uint64_t>(offset),
+                                       buffer,
+                                       page_size_,
+                                       ctx);
+        if (mirror_status != Status::OK)
+        {
+            return mirror_status;
         }
 
         return Status::OK;
@@ -5534,6 +6223,562 @@ namespace scratchbird::core
         }
 
         return it->second;
+    }
+
+    Status Database::resolveFilespaceRoute(uint16_t source_tablespace_id,
+                                           int* fd_out,
+                                           std::string* path_out,
+                                           ErrorContext* ctx) const
+    {
+        if (source_tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            if (fd_ < 0 || path_.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Primary database filespace is not open");
+                return Status::INVALID_ARGUMENT;
+            }
+            if (fd_out != nullptr)
+            {
+                *fd_out = fd_;
+            }
+            if (path_out != nullptr)
+            {
+                *path_out = path_;
+            }
+            return Status::OK;
+        }
+
+        int tablespace_fd = -1;
+        {
+            std::lock_guard<std::mutex> lock(tablespace_mutex_);
+            auto it = tablespace_fds_.find(source_tablespace_id);
+            if (it == tablespace_fds_.end() || it->second < 0)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::NOT_FOUND,
+                                  ("Tablespace " + std::to_string(source_tablespace_id) +
+                                   " is not registered").c_str());
+                return Status::NOT_FOUND;
+            }
+            tablespace_fd = it->second;
+        }
+
+        if (fd_out != nullptr)
+        {
+            *fd_out = tablespace_fd;
+        }
+
+        if (path_out != nullptr)
+        {
+            {
+                std::lock_guard<std::mutex> shadow_lock(shadow_filespace_mutex_);
+                const auto shadow_range =
+                    shadow_filespace_by_source_.equal_range(source_tablespace_id);
+                for (auto shadow_it = shadow_range.first;
+                     shadow_it != shadow_range.second;
+                     ++shadow_it)
+                {
+                    const auto entry_it = shadow_filespaces_.find(shadow_it->second);
+                    if (entry_it == shadow_filespaces_.end())
+                    {
+                        continue;
+                    }
+                    const auto& entry = entry_it->second;
+                    if (entry.snapshot.promoted && !entry.snapshot.shadow_path.empty())
+                    {
+                        *path_out = entry.snapshot.shadow_path;
+                        return Status::OK;
+                    }
+                }
+            }
+
+            if (catalog_manager_ == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::INVALID_ARGUMENT,
+                                  "Catalog manager unavailable for tablespace route lookup");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            TablespaceInfo info{};
+            Status status = catalog_manager_->getTablespace(source_tablespace_id, info, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            if (info.file_paths.empty())
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::NOT_FOUND,
+                                  "Tablespace route is missing file_paths");
+                return Status::NOT_FOUND;
+            }
+            *path_out = info.file_paths.front();
+        }
+
+        return Status::OK;
+    }
+
+    Status Database::backfillShadowFilespace(ShadowFilespaceEntry& entry,
+                                             ErrorContext* ctx)
+    {
+        int source_fd = -1;
+        std::string source_path;
+        Status status = resolveFilespaceRoute(entry.snapshot.source_tablespace_id,
+                                              &source_fd,
+                                              &source_path,
+                                              ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::error_code ec;
+        const auto source_size = std::filesystem::file_size(source_path, ec);
+        if (ec)
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::IO_ERROR,
+                              "Failed to inspect source filespace before shadow backfill");
+            return Status::IO_ERROR;
+        }
+
+        entry.snapshot.source_path = source_path;
+        entry.snapshot.copied_pages = 0;
+        entry.snapshot.last_sync_time = 0;
+
+        if (source_size == 0)
+        {
+            if (platform::syncFd(entry.fd) != 0)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::IO_ERROR,
+                                  "Failed to sync empty shadow filespace after create");
+                return Status::IO_ERROR;
+            }
+            entry.snapshot.last_sync_time = defaultTimeSource().nowMicros();
+            return Status::OK;
+        }
+
+        std::vector<uint8_t> copy_buffer(page_size_);
+        uint64_t copied_pages = 0;
+        for (uint64_t offset = 0; offset < source_size; offset += page_size_)
+        {
+            const size_t chunk_size = static_cast<size_t>(
+                std::min<uint64_t>(page_size_, source_size - offset));
+            size_t bytes_read = 0;
+            errno = 0;
+            if (!preadFully(source_fd, copy_buffer.data(), chunk_size,
+                            static_cast<off_t>(offset), &bytes_read) ||
+                bytes_read != chunk_size)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::IO_ERROR,
+                                  "Failed to read source filespace during shadow backfill");
+                return Status::IO_ERROR;
+            }
+
+            size_t bytes_written = 0;
+            errno = 0;
+            if (!pwriteFully(entry.fd, copy_buffer.data(), chunk_size,
+                             static_cast<off_t>(offset), &bytes_written) ||
+                bytes_written != chunk_size)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::IO_ERROR,
+                                  "Failed to write shadow filespace during backfill");
+                return Status::IO_ERROR;
+            }
+            ++copied_pages;
+        }
+
+        if (platform::syncFd(entry.fd) != 0)
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::IO_ERROR,
+                              "Failed to sync shadow filespace after backfill");
+            return Status::IO_ERROR;
+        }
+
+        entry.snapshot.copied_pages = copied_pages;
+        entry.snapshot.last_sync_time = defaultTimeSource().nowMicros();
+        return Status::OK;
+    }
+
+    Status Database::mirrorShadowFilespaceWrite(uint16_t source_tablespace_id,
+                                                uint64_t offset,
+                                                const void* buffer,
+                                                size_t size,
+                                                ErrorContext* ctx) const
+    {
+        if (buffer == nullptr || size == 0)
+        {
+            return Status::OK;
+        }
+
+        auto* self = const_cast<Database*>(this);
+        std::lock_guard<std::mutex> lock(self->shadow_filespace_mutex_);
+        const auto range = self->shadow_filespace_by_source_.equal_range(source_tablespace_id);
+        for (auto it = range.first; it != range.second; ++it)
+        {
+            auto entry_it = self->shadow_filespaces_.find(it->second);
+            if (entry_it == self->shadow_filespaces_.end())
+            {
+                continue;
+            }
+
+            auto& entry = entry_it->second;
+            if (!entry.snapshot.active || entry.snapshot.promoted || entry.fd < 0)
+            {
+                continue;
+            }
+
+            size_t bytes_written = 0;
+            errno = 0;
+            if (!pwriteFully(entry.fd, buffer, size, static_cast<off_t>(offset), &bytes_written) ||
+                bytes_written != size)
+            {
+                const Status failure_status =
+                    (errno == ENOSPC) ? Status::DISK_FULL : Status::IO_ERROR;
+                SET_ERROR_CONTEXT(ctx,
+                                  failure_status,
+                                  "Failed to mirror write into shadow filespace");
+                return failure_status;
+            }
+
+            entry.snapshot.mirrored_writes += 1;
+            entry.snapshot.last_sync_time = defaultTimeSource().nowMicros();
+        }
+
+        return Status::OK;
+    }
+
+    Status Database::syncShadowFilespacesForSource(uint16_t source_tablespace_id,
+                                                   ErrorContext* ctx) const
+    {
+        auto* self = const_cast<Database*>(this);
+        std::lock_guard<std::mutex> lock(self->shadow_filespace_mutex_);
+        const auto range = self->shadow_filespace_by_source_.equal_range(source_tablespace_id);
+        for (auto it = range.first; it != range.second; ++it)
+        {
+            auto entry_it = self->shadow_filespaces_.find(it->second);
+            if (entry_it == self->shadow_filespaces_.end())
+            {
+                continue;
+            }
+
+            auto& entry = entry_it->second;
+            if (!entry.snapshot.active || entry.snapshot.promoted || entry.fd < 0)
+            {
+                continue;
+            }
+
+            errno = 0;
+            if (platform::syncFd(entry.fd) != 0)
+            {
+                const Status failure_status =
+                    (errno == ENOSPC) ? Status::DISK_FULL : Status::IO_ERROR;
+                SET_ERROR_CONTEXT(ctx,
+                                  failure_status,
+                                  "Failed to sync shadow filespace");
+                return failure_status;
+            }
+            entry.snapshot.last_sync_time = defaultTimeSource().nowMicros();
+        }
+
+        return Status::OK;
+    }
+
+    Status Database::createShadowFilespace(uint16_t source_tablespace_id,
+                                           const std::string& shadow_path,
+                                           ID* shadow_id_out,
+                                           ErrorContext* ctx)
+    {
+        if (shadow_path.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Shadow filespace path is required");
+            return Status::INVALID_ARGUMENT;
+        }
+        if (page_size_ == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database is not open");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        std::string source_path;
+        Status status = resolveFilespaceRoute(source_tablespace_id, nullptr, &source_path, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::error_code ec;
+        const std::filesystem::path normalized_shadow =
+            std::filesystem::absolute(std::filesystem::path(shadow_path), ec);
+        if (ec)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid shadow filespace path");
+            return Status::INVALID_ARGUMENT;
+        }
+        if (normalized_shadow.string() == source_path)
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::INVALID_ARGUMENT,
+                              "Shadow filespace path must differ from the source filespace");
+            return Status::INVALID_ARGUMENT;
+        }
+        if (normalized_shadow.has_parent_path())
+        {
+            std::filesystem::create_directories(normalized_shadow.parent_path(), ec);
+            if (ec)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::IO_ERROR,
+                                  "Failed to create shadow filespace directory");
+                return Status::IO_ERROR;
+            }
+        }
+
+        int shadow_fd = platform::openFd(normalized_shadow.string().c_str(),
+                                         O_RDWR | O_CREAT | O_EXCL,
+                                         0644);
+        if (shadow_fd < 0)
+        {
+            const Status failure_status =
+                (errno == EEXIST) ? Status::FILE_EXISTS : Status::IO_ERROR;
+            SET_ERROR_CONTEXT(ctx, failure_status, "Failed to create shadow filespace");
+            return failure_status;
+        }
+
+        ShadowFilespaceEntry entry{};
+        entry.snapshot.shadow_id = generateUuidV7();
+        entry.snapshot.source_tablespace_id = source_tablespace_id;
+        entry.snapshot.source_path = source_path;
+        entry.snapshot.shadow_path = normalized_shadow.string();
+        entry.snapshot.created_time = defaultTimeSource().nowMicros();
+        entry.snapshot.active = true;
+        entry.snapshot.promoted = false;
+        entry.fd = shadow_fd;
+        const ID created_shadow_id = entry.snapshot.shadow_id;
+
+        {
+            std::lock_guard<std::mutex> lock(shadow_filespace_mutex_);
+            for (const auto& [existing_id, existing] : shadow_filespaces_)
+            {
+                (void) existing_id;
+                if (existing.snapshot.shadow_path == entry.snapshot.shadow_path)
+                {
+                    ::close(shadow_fd);
+                    std::filesystem::remove(normalized_shadow, ec);
+                    SET_ERROR_CONTEXT(ctx,
+                                      Status::FILE_EXISTS,
+                                      "Shadow filespace path is already registered");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+        }
+
+        status = backfillShadowFilespace(entry, ctx);
+        if (status != Status::OK)
+        {
+            ::close(shadow_fd);
+            std::filesystem::remove(normalized_shadow, ec);
+            return status;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(shadow_filespace_mutex_);
+            for (const auto& [existing_id, existing] : shadow_filespaces_)
+            {
+                (void) existing_id;
+                if (existing.snapshot.shadow_path == entry.snapshot.shadow_path)
+                {
+                    ::close(shadow_fd);
+                    std::filesystem::remove(normalized_shadow, ec);
+                    SET_ERROR_CONTEXT(ctx,
+                                      Status::FILE_EXISTS,
+                                      "Shadow filespace path is already registered");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            shadow_filespace_by_source_.emplace(source_tablespace_id, entry.snapshot.shadow_id);
+            shadow_filespaces_.emplace(entry.snapshot.shadow_id, std::move(entry));
+        }
+
+        if (shadow_id_out != nullptr)
+        {
+            *shadow_id_out = created_shadow_id;
+        }
+        return Status::OK;
+    }
+
+    Status Database::dropShadowFilespace(const ID& shadow_id,
+                                         bool keep_file,
+                                         ErrorContext* ctx)
+    {
+        ShadowFilespaceEntry removed{};
+        {
+            std::lock_guard<std::mutex> lock(shadow_filespace_mutex_);
+            auto it = shadow_filespaces_.find(shadow_id);
+            if (it == shadow_filespaces_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Shadow filespace not found");
+                return Status::NOT_FOUND;
+            }
+            if (it->second.snapshot.promoted)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::CONSTRAINT_VIOLATION,
+                                  "Cannot drop a promoted shadow filespace while it is the live route");
+                return Status::CONSTRAINT_VIOLATION;
+            }
+
+            removed = it->second;
+            auto range = shadow_filespace_by_source_.equal_range(
+                removed.snapshot.source_tablespace_id);
+            for (auto src_it = range.first; src_it != range.second; )
+            {
+                if (src_it->second == shadow_id)
+                {
+                    src_it = shadow_filespace_by_source_.erase(src_it);
+                }
+                else
+                {
+                    ++src_it;
+                }
+            }
+            shadow_filespaces_.erase(it);
+        }
+
+        if (removed.fd >= 0)
+        {
+            ::close(removed.fd);
+        }
+        if (!keep_file)
+        {
+            std::error_code ec;
+            std::filesystem::remove(removed.snapshot.shadow_path, ec);
+            if (ec)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to remove shadow filespace");
+                return Status::IO_ERROR;
+            }
+        }
+        return Status::OK;
+    }
+
+    Status Database::promoteShadowFilespace(const ID& shadow_id,
+                                            ErrorContext* ctx)
+    {
+        ShadowFilespaceSnapshot snapshot{};
+        {
+            std::lock_guard<std::mutex> lock(shadow_filespace_mutex_);
+            auto it = shadow_filespaces_.find(shadow_id);
+            if (it == shadow_filespaces_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Shadow filespace not found");
+                return Status::NOT_FOUND;
+            }
+            if (it->second.snapshot.promoted)
+            {
+                return Status::OK;
+            }
+            it->second.snapshot.active = false;
+            snapshot = it->second.snapshot;
+        }
+
+        int replacement_fd = platform::openFd(snapshot.shadow_path.c_str(), O_RDWR);
+        if (replacement_fd < 0)
+        {
+            std::lock_guard<std::mutex> relock(shadow_filespace_mutex_);
+            auto it = shadow_filespaces_.find(shadow_id);
+            if (it != shadow_filespaces_.end())
+            {
+                it->second.snapshot.active = true;
+            }
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to reopen shadow filespace for promotion");
+            return Status::IO_ERROR;
+        }
+
+        if (snapshot.source_tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            if (fd_ >= 0)
+            {
+                ::close(fd_);
+            }
+            fd_ = replacement_fd;
+            path_ = snapshot.shadow_path;
+        }
+        else
+        {
+            std::lock_guard<std::mutex> lock(tablespace_mutex_);
+            auto it = tablespace_fds_.find(snapshot.source_tablespace_id);
+            if (it == tablespace_fds_.end())
+            {
+                ::close(replacement_fd);
+                std::lock_guard<std::mutex> relock(shadow_filespace_mutex_);
+                auto shadow_it = shadow_filespaces_.find(shadow_id);
+                if (shadow_it != shadow_filespaces_.end())
+                {
+                    shadow_it->second.snapshot.active = true;
+                }
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::NOT_FOUND,
+                                  "Source tablespace route not found during shadow promotion");
+                return Status::NOT_FOUND;
+            }
+
+            if (it->second >= 0)
+            {
+                ::close(it->second);
+            }
+            it->second = replacement_fd;
+        }
+
+        std::lock_guard<std::mutex> relock(shadow_filespace_mutex_);
+        auto it = shadow_filespaces_.find(shadow_id);
+        if (it == shadow_filespaces_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Shadow filespace disappeared during promotion");
+            return Status::NOT_FOUND;
+        }
+        if (it->second.fd >= 0)
+        {
+            ::close(it->second.fd);
+            it->second.fd = -1;
+        }
+        it->second.snapshot.promoted = true;
+        it->second.snapshot.active = false;
+        it->second.snapshot.last_sync_time = defaultTimeSource().nowMicros();
+        return Status::OK;
+    }
+
+    Status Database::listShadowFilespaces(std::vector<ShadowFilespaceSnapshot>& shadows_out,
+                                          ErrorContext* ctx) const
+    {
+        (void) ctx;
+        shadows_out.clear();
+        std::lock_guard<std::mutex> lock(shadow_filespace_mutex_);
+        shadows_out.reserve(shadow_filespaces_.size());
+        for (const auto& [shadow_id, entry] : shadow_filespaces_)
+        {
+            (void) shadow_id;
+            shadows_out.push_back(entry.snapshot);
+        }
+        std::sort(shadows_out.begin(),
+                  shadows_out.end(),
+                  [](const ShadowFilespaceSnapshot& left,
+                     const ShadowFilespaceSnapshot& right) {
+                      if (left.source_tablespace_id != right.source_tablespace_id)
+                      {
+                          return left.source_tablespace_id < right.source_tablespace_id;
+                      }
+                      return left.created_time < right.created_time;
+                  });
+        return Status::OK;
     }
 
 } // namespace scratchbird::core

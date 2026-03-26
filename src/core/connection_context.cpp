@@ -2778,16 +2778,19 @@ namespace scratchbird::core
         LOG_DEBUG(TRANSACTION, "Committing transaction: proc_id=%u, xid=%lu", proc_id_,
                   current_xid_);
 
-        // 1. Check if termination has been requested (before commit)
-        Status s = checkTerminationRequested(ctx);
+        // 1. Check if long-transaction governance has issued rollback or
+        // termination for this attachment before we ACK anything else.
+        GovernanceIntervention intervention = GovernanceIntervention::NONE;
+        Status s = pollLongTransactionGovernance(&intervention, ctx);
         if (s != Status::OK)
         {
-            // Termination requested - rollback instead of commit and return error
-            LOG_WARNING(TRANSACTION,
-                        "Termination requested, rolling back instead of committing: proc_id=%u, "
-                        "xid=%lu",
-                        proc_id_, current_xid_);
-            rollback(nullptr); // Best effort rollback
+            if (intervention == GovernanceIntervention::TERMINATED)
+            {
+                LOG_WARNING(TRANSACTION,
+                            "Termination requested, aborting current transaction without replacement begin: proc_id=%u, xid=%lu",
+                            proc_id_, current_xid_);
+                endCurrentTransaction(false, nullptr); // Best effort abort without reopening
+            }
             return s;
         }
 
@@ -2846,9 +2849,24 @@ namespace scratchbird::core
         LOG_DEBUG(TRANSACTION, "Rolling back transaction: proc_id=%u, xid=%lu", proc_id_,
                   current_xid_);
 
-        // 1. Check if termination has been requested (before rollback)
-        Status s = checkTerminationRequested(ctx);
-        bool termination_requested = (s != Status::OK);
+        // 1. Check if long-transaction governance already consumed this
+        // transaction. A forced rollback returns QUERY_CANCELED with a fresh
+        // transaction already opened, while termination still prevents reuse.
+        GovernanceIntervention intervention = GovernanceIntervention::NONE;
+        Status s = pollLongTransactionGovernance(&intervention, ctx);
+        bool termination_requested = intervention == GovernanceIntervention::TERMINATED;
+        if (s != Status::OK)
+        {
+            if (termination_requested)
+            {
+                // Continue with best-effort local rollback below to preserve the
+                // prior contract for terminated attachments.
+            }
+            else
+            {
+                return s;
+            }
+        }
 
         // 2. Rollback current transaction (always succeeds)
         s = endCurrentTransaction(false, ctx);
@@ -2908,14 +2926,17 @@ namespace scratchbird::core
         LOG_DEBUG(TRANSACTION, "Preparing transaction: proc_id=%u, xid=%lu, gid=%s",
                   proc_id_, current_xid_, gid.c_str());
 
-        Status s = checkTerminationRequested(ctx);
+        GovernanceIntervention intervention = GovernanceIntervention::NONE;
+        Status s = pollLongTransactionGovernance(&intervention, ctx);
         if (s != Status::OK)
         {
-            LOG_WARNING(TRANSACTION,
-                        "Termination requested, rolling back instead of preparing: proc_id=%u, "
-                        "xid=%lu",
-                        proc_id_, current_xid_);
-            rollback(nullptr);
+            if (intervention == GovernanceIntervention::TERMINATED)
+            {
+                LOG_WARNING(TRANSACTION,
+                            "Termination requested, aborting current transaction instead of preparing: proc_id=%u, xid=%lu",
+                            proc_id_, current_xid_);
+                endCurrentTransaction(false, nullptr);
+            }
             return s;
         }
 
@@ -3089,6 +3110,13 @@ namespace scratchbird::core
 
     Status ConnectionContext::beginStatementTracking(const std::string& sql, ErrorContext *ctx)
     {
+        GovernanceIntervention intervention = GovernanceIntervention::NONE;
+        Status governance_status = pollLongTransactionGovernance(&intervention, ctx);
+        if (governance_status != Status::OK)
+        {
+            return governance_status;
+        }
+
         clearStatementRestartState();
         // Record the SQL text so dormant reattach can show what was running.
         last_statement_text_ = sql;
@@ -4303,6 +4331,107 @@ namespace scratchbird::core
         return Status::SERIALIZATION_FAILURE;
     }
 
+    Status ConnectionContext::pollLongTransactionGovernance(GovernanceIntervention *intervention_out,
+                                                            ErrorContext *ctx)
+    {
+        if (intervention_out != nullptr)
+        {
+            *intervention_out = GovernanceIntervention::NONE;
+        }
+
+        BackendGovernanceDirective directive;
+        Status directive_status =
+            ProcArrayManager::getBackendGovernanceDirective(proc_id_, &directive, ctx);
+        if (directive_status == Status::OK && directive.notice_pending &&
+            !directive.message.empty())
+        {
+            pushNotice(directive.message);
+            Status clear_notice_status =
+                ProcArrayManager::clearBackendGovernanceNotice(proc_id_, nullptr);
+            if (clear_notice_status != Status::OK)
+            {
+                LOG_WARNING(TRANSACTION,
+                            "Failed to clear governance notice for proc_id %u: status=%d",
+                            proc_id_, static_cast<int>(clear_notice_status));
+            }
+            if (intervention_out != nullptr)
+            {
+                *intervention_out = GovernanceIntervention::NOTICE_ONLY;
+            }
+        }
+
+        if (directive_status == Status::OK && directive.rollback_requested)
+        {
+            LOG_WARNING(TRANSACTION,
+                        "Attachment-owned rollback requested by long transaction policy: proc_id=%u, xid=%lu, age=%lu, xid_lag=%lu, snapshot_lag=%lu, reasons=0x%02x",
+                        proc_id_,
+                        current_xid_,
+                        static_cast<unsigned long>(directive.age_seconds),
+                        static_cast<unsigned long>(directive.xid_lag),
+                        static_cast<unsigned long>(directive.snapshot_lag),
+                        static_cast<unsigned int>(directive.reason_mask));
+
+            Status clear_rollback_status =
+                ProcArrayManager::clearBackendRollbackRequest(proc_id_, nullptr);
+            if (clear_rollback_status != Status::OK)
+            {
+                LOG_WARNING(TRANSACTION,
+                            "Failed to clear governance rollback request for proc_id %u: status=%d",
+                            proc_id_, static_cast<int>(clear_rollback_status));
+            }
+
+            ErrorContext local_ctx;
+            Status rollback_status = Status::OK;
+            if (current_xid_ != 0)
+            {
+                rollback_status = endCurrentTransaction(false, &local_ctx);
+            }
+
+            if (rollback_status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  rollback_status,
+                                  local_ctx.message.empty()
+                                      ? "Long-running transaction governance rollback failed"
+                                      : local_ctx.message.c_str());
+                return rollback_status;
+            }
+
+            applyStagedSettings();
+            Status restart_status = beginNewTransaction(&local_ctx);
+            if (restart_status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  restart_status,
+                                  local_ctx.message.empty()
+                                      ? "Long-running transaction governance failed to open replacement transaction"
+                                      : local_ctx.message.c_str());
+                return restart_status;
+            }
+
+            if (intervention_out != nullptr)
+            {
+                *intervention_out = GovernanceIntervention::ROLLED_BACK;
+            }
+
+            const std::string message = directive.message.empty()
+                ? "Transaction rolled back due to long-running transaction policy"
+                : directive.message;
+            SET_ERROR_CONTEXT(ctx, Status::QUERY_CANCELED, message.c_str());
+            return Status::QUERY_CANCELED;
+        }
+
+        Status termination_status = checkTerminationRequested(ctx);
+        if (termination_status != Status::OK &&
+            intervention_out != nullptr &&
+            termination_status == Status::IO_ERROR)
+        {
+            *intervention_out = GovernanceIntervention::TERMINATED;
+        }
+
+        return termination_status;
+    }
+
     Status ConnectionContext::checkTerminationRequested(ErrorContext *ctx)
     {
         // Check if long transaction monitor has requested termination
@@ -4321,6 +4450,9 @@ namespace scratchbird::core
 
         if (termination_requested)
         {
+            BackendGovernanceDirective directive;
+            (void) ProcArrayManager::getBackendGovernanceDirective(proc_id_, &directive, nullptr);
+
             LOG_ERROR(TRANSACTION,
                       "Connection termination requested by long transaction monitor: proc_id=%u, "
                       "xid=%lu",
@@ -4336,8 +4468,10 @@ namespace scratchbird::core
             }
 
             // Set error context to inform caller
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
-                              "Connection terminated due to long-running transaction");
+            const std::string message = directive.message.empty()
+                ? "Connection terminated due to long-running transaction policy"
+                : directive.message;
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, message.c_str());
 
             return Status::IO_ERROR;
         }

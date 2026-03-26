@@ -32,6 +32,8 @@
 #include <thread>
 #include <algorithm>
 #include <cstring>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace scratchbird::core
 {
@@ -52,6 +54,21 @@ namespace scratchbird::core
             CheckpointLifecycleState checkpoint_state = CheckpointLifecycleState::IDLE;
             bool queue_rebuild_required = false;
             Status checkpoint_failure_reason = Status::OK;
+        };
+
+        struct WalAfterDeliveryProfile
+        {
+            CatalogManager::AuditSinkProfileCatalogInfo profile{};
+            std::string queue_root;
+            std::string database_path;
+            std::string topic = "wal_after";
+            std::string shipping_mode = "DEBUG";
+        };
+
+        struct WalAfterStreamState
+        {
+            uint64_t next_stream_seq = 1;
+            std::array<uint8_t, 32> prior_segment_hash{};
         };
 
 #pragma pack(push, 1)
@@ -497,6 +514,304 @@ namespace scratchbird::core
             root += ".forensics";
             root /= "wal_after_log";
             return root;
+        }
+
+        std::string makeWalAfterDeliveryKey(const ID& source_work_item_id,
+                                            const ID& sink_profile_id)
+        {
+            return source_work_item_id.toString() + ":" + sink_profile_id.toString();
+        }
+
+        auto ensureWalAfterDirectory(const std::filesystem::path& root,
+                                     ErrorContext* ctx) -> Status
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(root, ec);
+            if (ec)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::IO_ERROR,
+                                  "WAL_AFTER_EXPORT_PERSIST_FAILED: failed to create wal_after destination directory");
+                return Status::IO_ERROR;
+            }
+            return Status::OK;
+        }
+
+        bool extractManifestField(const std::string& manifest,
+                                  const std::string& key,
+                                  std::string& value_out);
+
+        auto loadWalAfterDeliveryProfile(const CatalogManager::AuditSinkProfileCatalogInfo& profile,
+                                         const Database* db,
+                                         WalAfterDeliveryProfile& profile_out,
+                                         bool& selected_out,
+                                         ErrorContext* ctx) -> Status
+        {
+            selected_out = false;
+            profile_out = WalAfterDeliveryProfile{};
+            if (!profile.is_enabled)
+            {
+                return Status::OK;
+            }
+
+            nlohmann::json doc = nlohmann::json::object();
+            if (!profile.config_json.empty())
+            {
+                doc = nlohmann::json::parse(profile.config_json, nullptr, false);
+                if (doc.is_discarded())
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      Status::DATA_CORRUPTED,
+                                      "wal_after_log sink profile config_json is not valid JSON");
+                    return Status::DATA_CORRUPTED;
+                }
+                if (!doc.is_object())
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      Status::DATA_CORRUPTED,
+                                      "wal_after_log sink profile config_json must be a JSON object");
+                    return Status::DATA_CORRUPTED;
+                }
+            }
+
+            std::string profile_kind;
+            if (doc.contains("profile_kind") && doc["profile_kind"].is_string())
+            {
+                profile_kind = doc["profile_kind"].get<std::string>();
+            }
+            else if (profile.profile_name == kWalAfterLogProfileName)
+            {
+                profile_kind = "SWEEP_WAL_AFTER_LOG";
+            }
+
+            if (profile_kind != "SWEEP_WAL_AFTER_LOG")
+            {
+                return Status::OK;
+            }
+
+            profile_out.profile = profile;
+            if (doc.contains("queue_root") && doc["queue_root"].is_string())
+            {
+                profile_out.queue_root = doc["queue_root"].get<std::string>();
+            }
+            if (doc.contains("database_path") && doc["database_path"].is_string())
+            {
+                profile_out.database_path = doc["database_path"].get<std::string>();
+            }
+            if (doc.contains("topic") && doc["topic"].is_string())
+            {
+                profile_out.topic = doc["topic"].get<std::string>();
+            }
+            if (doc.contains("shipping_mode") && doc["shipping_mode"].is_string())
+            {
+                profile_out.shipping_mode = doc["shipping_mode"].get<std::string>();
+            }
+            if (profile_out.shipping_mode.empty())
+            {
+                profile_out.shipping_mode = "DEBUG";
+            }
+
+            if (profile_out.profile.sink_type.empty())
+            {
+                profile_out.profile.sink_type = "LOCAL_APPEND_ONLY";
+            }
+
+            if (profile_out.profile.sink_type == "LOCAL_APPEND_ONLY")
+            {
+                if (profile_out.queue_root.empty())
+                {
+                    profile_out.queue_root = buildWalAfterLogRoot(db).string();
+                }
+            }
+            else if (profile_out.profile.sink_type == "KAFKA_CHANNEL")
+            {
+                if (profile_out.queue_root.empty())
+                {
+                    profile_out.queue_root = (buildWalAfterLogRoot(db) / "kafka_stage").string();
+                }
+                if (profile_out.topic.empty())
+                {
+                    profile_out.topic = "wal_after";
+                }
+            }
+            else if (profile_out.profile.sink_type == "REMOTE_DATABASE")
+            {
+                if (profile_out.database_path.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      Status::INVALID_ARGUMENT,
+                                      "wal_after_log REMOTE_DATABASE sink requires database_path");
+                    return Status::INVALID_ARGUMENT;
+                }
+            }
+
+            selected_out = true;
+            return Status::OK;
+        }
+
+        auto walAfterSegmentExistsInRemoteDatabase(Database& target_db,
+                                                   const ID& sink_profile_id,
+                                                   const ID& source_work_item_id,
+                                                   bool& exists_out,
+                                                   ErrorContext* ctx) -> Status
+        {
+            exists_out = false;
+            std::vector<CatalogManager::AuditExportSegmentCatalogInfo> segments;
+            Status status = target_db.catalog_manager()->listAuditExportSegmentCatalogEntries(
+                sink_profile_id, segments, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            for (const auto& segment : segments)
+            {
+                if (segment.payload_manifest.rfind(kWalAfterLogManifestMagic, 0) != 0)
+                {
+                    continue;
+                }
+
+                std::string source_work_item_uuid;
+                ID parsed_source_work_item{};
+                if (!extractManifestField(segment.payload_manifest,
+                                          "source_work_item_uuid",
+                                          source_work_item_uuid) ||
+                    !parseUuidFromString(source_work_item_uuid, parsed_source_work_item))
+                {
+                    continue;
+                }
+
+                if (parsed_source_work_item == source_work_item_id)
+                {
+                    exists_out = true;
+                    return Status::OK;
+                }
+            }
+
+            return Status::OK;
+        }
+
+        void propagateChildError(const ErrorContext& child,
+                                 ErrorContext* parent)
+        {
+            if (parent == nullptr || child.code == Status::OK)
+            {
+                return;
+            }
+
+            SET_ERROR_CONTEXT(parent, child.code, child.message.c_str());
+            if (!child.vnext_code.empty())
+            {
+                parent->setVNextCode(child.vnext_code.c_str());
+            }
+            if (!child.sqlstate_text.empty())
+            {
+                parent->setSQLState(child.sqlstate_text.c_str());
+            }
+        }
+
+        auto deliverWalAfterToRemoteDatabase(const Database* source_db,
+                                             const WalAfterDeliveryProfile& delivery_profile,
+                                             const CatalogManager::AuditExportSegmentCatalogInfo& segment,
+                                             const ID& source_work_item_id,
+                                             ErrorContext* ctx) -> Status
+        {
+            if (source_db == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::INVALID_ARGUMENT,
+                                  "wal_after_log remote delivery requires an open source database");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            const std::filesystem::path target_path(delivery_profile.database_path);
+            if (target_path.empty())
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::INVALID_ARGUMENT,
+                                  "wal_after_log remote delivery requires database_path");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            std::error_code ec;
+            if (target_path.has_parent_path())
+            {
+                std::filesystem::create_directories(target_path.parent_path(), ec);
+                if (ec)
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      Status::IO_ERROR,
+                                      "wal_after_log remote delivery failed to create database directory");
+                    return Status::IO_ERROR;
+                }
+            }
+
+            ErrorContext target_ctx;
+            if (!std::filesystem::exists(target_path))
+            {
+                Status create_status =
+                    Database::create(target_path.string(), source_db->page_size(), &target_ctx);
+                if (create_status != Status::OK)
+                {
+                    propagateChildError(target_ctx, ctx);
+                    return create_status;
+                }
+            }
+
+            Database target_db;
+            Status status = target_db.open(target_path.string(), &target_ctx);
+            if (status != Status::OK)
+            {
+                propagateChildError(target_ctx, ctx);
+                return status;
+            }
+
+            CatalogManager::AuditSinkProfileCatalogInfo target_profile =
+                delivery_profile.profile;
+            target_profile.is_enabled = false;
+            status = target_db.catalog_manager()->upsertAuditSinkProfileCatalogEntry(
+                target_profile, &target_ctx);
+            if (status != Status::OK)
+            {
+                target_db.close();
+                propagateChildError(target_ctx, ctx);
+                return status;
+            }
+
+            bool remote_exists = false;
+            status = walAfterSegmentExistsInRemoteDatabase(target_db,
+                                                           target_profile.audit_sink_profile_id,
+                                                           source_work_item_id,
+                                                           remote_exists,
+                                                           &target_ctx);
+            if (status != Status::OK)
+            {
+                target_db.close();
+                propagateChildError(target_ctx, ctx);
+                return status;
+            }
+            if (remote_exists)
+            {
+                target_db.close();
+                return Status::OK;
+            }
+
+            status = target_db.catalog_manager()->appendAuditExportSegmentCatalogEntry(
+                segment, &target_ctx);
+            if (status != Status::OK)
+            {
+                target_db.close();
+                propagateChildError(target_ctx, ctx);
+                return status;
+            }
+
+            status = target_db.sync(&target_ctx);
+            target_db.close();
+            if (status != Status::OK)
+            {
+                propagateChildError(target_ctx, ctx);
+            }
+            return status;
         }
 
         std::filesystem::path buildShadowCaptureRoot(const Database* db)
@@ -1062,6 +1377,10 @@ namespace scratchbird::core
         std::string buildWalAfterLogManifest(const Database* db,
                                              const WalAfterLogSourceItem& source,
                                              const WalAfterLogPayload& payload,
+                                             const std::string& sink_type,
+                                             const std::string& delivery_state,
+                                             const std::string& destination_hint,
+                                             const std::string& shipping_mode,
                                              const ID& sink_profile_id,
                                              const ID& segment_id,
                                              uint64_t stream_seq,
@@ -1078,7 +1397,10 @@ namespace scratchbird::core
             out << "source_segment_seq=" << source.source_segment_seq << "\n";
             out << "stream_partition=" << (db ? db->uuid().toString() : ID{}.toString()) << "\n";
             out << "stream_seq=" << stream_seq << "\n";
-            out << "shipping_mode=DEBUG\n";
+            out << "sink_type=" << sink_type << "\n";
+            out << "delivery_state=" << delivery_state << "\n";
+            out << "destination_hint=" << destination_hint << "\n";
+            out << "shipping_mode=" << shipping_mode << "\n";
             out << "tx_uuid=" << source.tx_uuid.toString() << "\n";
             out << "txid=" << source.txid << "\n";
             out << "commit_time=" << payload.commit_time << "\n";
@@ -2039,6 +2361,26 @@ namespace scratchbird::core
                 {
                     item.shipping_mode = std::move(text);
                 }
+                if (extractManifestField(segment.payload_manifest, "sink_type", text))
+                {
+                    item.sink_type = std::move(text);
+                }
+                else
+                {
+                    item.sink_type = profile.sink_type;
+                }
+                if (extractManifestField(segment.payload_manifest, "delivery_state", text))
+                {
+                    item.delivery_state = std::move(text);
+                }
+                else
+                {
+                    item.delivery_state = segment.delivery_state;
+                }
+                if (extractManifestField(segment.payload_manifest, "destination_hint", text))
+                {
+                    item.destination_hint = std::move(text);
+                }
                 if (extractManifestField(segment.payload_manifest, "statement_hashes", text))
                 {
                     item.statement_hashes_csv = std::move(text);
@@ -2046,6 +2388,10 @@ namespace scratchbird::core
                 if (extractManifestField(segment.payload_manifest, "wal_segment_path", text))
                 {
                     item.segment_path = std::move(text);
+                }
+                if (item.destination_hint.empty())
+                {
+                    item.destination_hint = item.segment_path;
                 }
 
                 rows_out.push_back(std::move(item));
@@ -3593,8 +3939,6 @@ namespace scratchbird::core
 
         Status status = Status::OK;
 
-        std::filesystem::path wal_root = buildWalAfterLogRoot(db_);
-
         std::vector<CatalogManager::AuditSinkProfileCatalogInfo> profiles;
         status = db_->catalog_manager()->listAuditSinkProfileCatalogEntries(profiles, ctx);
         if (status != Status::OK)
@@ -3602,33 +3946,63 @@ namespace scratchbird::core
             return status;
         }
 
-        ID wal_sink_profile_id{};
-        auto existing_profile = std::find_if(
-            profiles.begin(), profiles.end(), [](const auto& profile) {
-                return profile.profile_name == kWalAfterLogProfileName;
-            });
-        CatalogManager::AuditSinkProfileCatalogInfo wal_profile{};
-        if (existing_profile != profiles.end())
+        std::vector<WalAfterDeliveryProfile> delivery_profiles;
+        delivery_profiles.reserve(profiles.size());
+        for (const auto& profile : profiles)
         {
-            wal_profile = *existing_profile;
+            WalAfterDeliveryProfile delivery_profile{};
+            bool selected = false;
+            status = loadWalAfterDeliveryProfile(profile, db_, delivery_profile, selected, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            if (selected)
+            {
+                delivery_profiles.push_back(std::move(delivery_profile));
+            }
         }
-        else
+
+        if (delivery_profiles.empty())
         {
+            const std::filesystem::path wal_root = buildWalAfterLogRoot(db_);
+            CatalogManager::AuditSinkProfileCatalogInfo wal_profile{};
             wal_profile.audit_sink_profile_id = generateUuidV7();
             wal_profile.profile_name = kWalAfterLogProfileName;
             wal_profile.sink_type = "LOCAL_APPEND_ONLY";
+            wal_profile.failure_policy = "BEST_EFFORT";
+            wal_profile.is_enabled = true;
+            wal_profile.config_json =
+                "{\"profile_kind\":\"SWEEP_WAL_AFTER_LOG\",\"queue_root\":\"" +
+                wal_root.string() + "\",\"shipping_mode\":\"DEBUG\"}";
+
+            status = db_->catalog_manager()->upsertAuditSinkProfileCatalogEntry(wal_profile, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            WalAfterDeliveryProfile delivery_profile{};
+            bool selected = false;
+            status = loadWalAfterDeliveryProfile(wal_profile,
+                                                 db_,
+                                                 delivery_profile,
+                                                 selected,
+                                                 ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            if (selected)
+            {
+                delivery_profiles.push_back(std::move(delivery_profile));
+            }
         }
-        wal_profile.failure_policy = "BEST_EFFORT";
-        wal_profile.is_enabled = true;
-        wal_profile.config_json =
-            "{\"profile_kind\":\"SWEEP_WAL_AFTER_LOG\",\"queue_root\":\"" +
-            wal_root.string() + "\",\"shipping_mode\":\"DEBUG\"}";
-        status = db_->catalog_manager()->upsertAuditSinkProfileCatalogEntry(wal_profile, ctx);
-        if (status != Status::OK)
+
+        if (delivery_profiles.empty())
         {
-            return status;
+            return Status::OK;
         }
-        wal_sink_profile_id = wal_profile.audit_sink_profile_id;
 
         std::vector<SweepEvidenceWorkItem> evidence_items;
         status = listEvidenceWorkItems(evidence_items, ctx);
@@ -3644,26 +4018,32 @@ namespace scratchbird::core
             return status;
         }
 
-        std::vector<std::string> exported_source_ids;
-        exported_source_ids.reserve(existing_wal_segments.size());
+        std::unordered_set<std::string> delivered_keys;
+        delivered_keys.reserve(existing_wal_segments.size());
         for (const auto& segment : existing_wal_segments)
         {
-            exported_source_ids.push_back(segment.source_work_item_id.toString());
+            delivered_keys.insert(
+                makeWalAfterDeliveryKey(segment.source_work_item_id, segment.sink_profile_id));
         }
 
-        uint64_t next_stream_seq = 1;
-        std::array<uint8_t, 32> prior_segment_hash{};
-        std::vector<CatalogManager::AuditExportSegmentCatalogInfo> prior_segments;
-        status = db_->catalog_manager()->listAuditExportSegmentCatalogEntries(
-            wal_sink_profile_id, prior_segments, ctx);
-        if (status != Status::OK)
+        std::unordered_map<std::string, WalAfterStreamState> stream_states;
+        for (const auto& delivery_profile : delivery_profiles)
         {
-            return status;
-        }
-        if (!prior_segments.empty())
-        {
-            next_stream_seq = prior_segments.back().segment_seq + 1;
-            prior_segment_hash = prior_segments.back().hash_curr;
+            std::vector<CatalogManager::AuditExportSegmentCatalogInfo> prior_segments;
+            status = db_->catalog_manager()->listAuditExportSegmentCatalogEntries(
+                delivery_profile.profile.audit_sink_profile_id, prior_segments, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            WalAfterStreamState state{};
+            if (!prior_segments.empty())
+            {
+                state.next_stream_seq = prior_segments.back().segment_seq + 1;
+                state.prior_segment_hash = prior_segments.back().hash_curr;
+            }
+            stream_states.emplace(delivery_profile.profile.audit_sink_profile_id.toString(), state);
         }
 
         uint64_t pending_count = 0;
@@ -3680,23 +4060,23 @@ namespace scratchbird::core
             {
                 continue;
             }
-            if (std::find(exported_source_ids.begin(),
-                          exported_source_ids.end(),
-                          item.work_item_id.toString()) == exported_source_ids.end())
+
+            for (const auto& delivery_profile : delivery_profiles)
             {
-                ++pending_count;
+                if (delivered_keys.find(
+                        makeWalAfterDeliveryKey(item.work_item_id,
+                                                delivery_profile.profile.audit_sink_profile_id)) ==
+                    delivered_keys.end())
+                {
+                    ++pending_count;
+                }
             }
         }
 
-        status = ensureWalAfterLogRoot(db_, wal_root, ctx);
-        if (status != Status::OK)
-        {
-            if (backlog_depth)
-            {
-                *backlog_depth = pending_count;
-            }
-            return status;
-        }
+        Status first_failure = Status::OK;
+        std::string first_failure_message;
+        std::string first_failure_vnext;
+        std::string first_failure_sqlstate;
 
         for (const auto& item : evidence_items)
         {
@@ -3711,9 +4091,20 @@ namespace scratchbird::core
             {
                 continue;
             }
-            if (std::find(exported_source_ids.begin(),
-                          exported_source_ids.end(),
-                          item.work_item_id.toString()) != exported_source_ids.end())
+
+            std::vector<const WalAfterDeliveryProfile*> pending_profiles;
+            pending_profiles.reserve(delivery_profiles.size());
+            for (const auto& delivery_profile : delivery_profiles)
+            {
+                if (delivered_keys.find(
+                        makeWalAfterDeliveryKey(item.work_item_id,
+                                                delivery_profile.profile.audit_sink_profile_id)) ==
+                    delivered_keys.end())
+                {
+                    pending_profiles.push_back(&delivery_profile);
+                }
+            }
+            if (pending_profiles.empty())
             {
                 continue;
             }
@@ -3732,7 +4123,7 @@ namespace scratchbird::core
                 db_->catalog_manager(), item.tx_uuid, item.txid, payload, &payload_ctx);
             if (status == Status::NOT_FOUND)
             {
-                --pending_count;
+                pending_count -= pending_profiles.size();
                 continue;
             }
             if (status != Status::OK)
@@ -3761,67 +4152,185 @@ namespace scratchbird::core
             source.source_created_time = item.created_time;
             source.spool_path = item.spool_path;
             source.source_manifest = source_segment.payload_manifest;
-            source.lanes = std::move(lanes);
+            source.lanes = lanes;
 
-            const ID segment_id = generateUuidV7();
-            const uint64_t created_time = currentSystemMicros();
-            const std::filesystem::path segment_path =
-                wal_root /
-                (std::to_string(next_stream_seq) + "-" + std::to_string(item.txid) + "-" +
-                 item.tx_uuid.toString() + ".sbwal");
-            const std::string manifest = buildWalAfterLogManifest(
-                db_,
-                source,
-                payload,
-                wal_sink_profile_id,
-                segment_id,
-                next_stream_seq,
-                segment_path,
-                created_time);
-
-            status = writeDurableTextFile(segment_path, manifest, ctx);
-            if (status != Status::OK)
+            for (const auto* delivery_profile : pending_profiles)
             {
-                if (backlog_depth)
+                const std::string state_key =
+                    delivery_profile->profile.audit_sink_profile_id.toString();
+                auto stream_state_it = stream_states.find(state_key);
+                if (stream_state_it == stream_states.end())
                 {
-                    *backlog_depth = pending_count;
+                    SET_ERROR_CONTEXT(ctx,
+                                      Status::DATA_CORRUPTED,
+                                      "wal_after_log stream state is missing for a configured sink");
+                    return Status::DATA_CORRUPTED;
                 }
-                return status;
-            }
 
-            CatalogManager::AuditExportSegmentCatalogInfo segment{};
-            segment.audit_export_segment_id = segment_id;
-            segment.audit_sink_profile_id = wal_sink_profile_id;
-            segment.evidence_class = "WAL_AFTER_LOG";
-            segment.segment_seq = next_stream_seq;
-            segment.range_start_time = payload.commit_time;
-            segment.range_end_time = payload.commit_time;
-            segment.payload_manifest = manifest;
-            segment.hash_prev = prior_segment_hash;
-            segment.hash_curr =
-                AuditLogger::computeExportSegmentHash(segment.payload_manifest, segment.hash_prev);
-            segment.delivery_state = "LOCAL_COMMITTED";
-            segment.is_valid = true;
-            segment.created_time = created_time;
-            status = db_->catalog_manager()->appendAuditExportSegmentCatalogEntry(segment, ctx);
-            if (status != Status::OK)
-            {
-                return status;
-            }
+                auto& stream_state = stream_state_it->second;
+                const ID segment_id = generateUuidV7();
+                const uint64_t created_time = currentSystemMicros();
+                std::filesystem::path segment_path;
+                std::string delivery_state;
+                std::string destination_hint;
 
-            prior_segment_hash = segment.hash_curr;
-            exported_source_ids.push_back(item.work_item_id.toString());
-            ++next_stream_seq;
-            --pending_count;
-            if (segments_emitted)
-            {
-                ++(*segments_emitted);
+                if (delivery_profile->profile.sink_type == "LOCAL_APPEND_ONLY")
+                {
+                    const std::filesystem::path local_root(delivery_profile->queue_root);
+                    segment_path =
+                        local_root /
+                        (std::to_string(stream_state.next_stream_seq) + "-" +
+                         std::to_string(item.txid) + "-" + item.tx_uuid.toString() + ".sbwal");
+                    delivery_state = "LOCAL_COMMITTED";
+                    destination_hint = local_root.string();
+                }
+                else if (delivery_profile->profile.sink_type == "KAFKA_CHANNEL")
+                {
+                    const std::filesystem::path kafka_root =
+                        std::filesystem::path(delivery_profile->queue_root) /
+                        delivery_profile->topic;
+                    segment_path =
+                        kafka_root /
+                        (std::to_string(stream_state.next_stream_seq) + "-" +
+                         std::to_string(item.txid) + "-" + item.tx_uuid.toString() +
+                         ".sbkafka");
+                    delivery_state = "KAFKA_STAGED";
+                    destination_hint = kafka_root.string();
+                }
+                else if (delivery_profile->profile.sink_type == "REMOTE_DATABASE")
+                {
+                    segment_path = delivery_profile->database_path;
+                    delivery_state = "REMOTE_DATABASE_COMMITTED";
+                    destination_hint = delivery_profile->database_path;
+                }
+                else
+                {
+                    ErrorContext delivery_ctx;
+                    SET_ERROR_CONTEXT(&delivery_ctx,
+                                      Status::NOT_SUPPORTED,
+                                      "wal_after_log sink type is not supported by the derivative exporter");
+                    if (first_failure == Status::OK)
+                    {
+                        first_failure = delivery_ctx.code;
+                        first_failure_message = delivery_ctx.message;
+                        first_failure_vnext = delivery_ctx.vnext_code;
+                        first_failure_sqlstate = delivery_ctx.sqlstate_text;
+                    }
+                    continue;
+                }
+
+                const std::string manifest = buildWalAfterLogManifest(
+                    db_,
+                    source,
+                    payload,
+                    delivery_profile->profile.sink_type,
+                    delivery_state,
+                    destination_hint,
+                    delivery_profile->shipping_mode,
+                    delivery_profile->profile.audit_sink_profile_id,
+                    segment_id,
+                    stream_state.next_stream_seq,
+                    segment_path,
+                    created_time);
+
+                CatalogManager::AuditExportSegmentCatalogInfo segment{};
+                segment.audit_export_segment_id = segment_id;
+                segment.audit_sink_profile_id =
+                    delivery_profile->profile.audit_sink_profile_id;
+                segment.evidence_class = "WAL_AFTER_LOG";
+                segment.segment_seq = stream_state.next_stream_seq;
+                segment.range_start_time = payload.commit_time;
+                segment.range_end_time = payload.commit_time;
+                segment.payload_manifest = manifest;
+                segment.hash_prev = stream_state.prior_segment_hash;
+                segment.hash_curr = AuditLogger::computeExportSegmentHash(
+                    segment.payload_manifest, segment.hash_prev);
+                segment.delivery_state = delivery_state;
+                segment.is_valid = true;
+                segment.created_time = created_time;
+
+                ErrorContext delivery_ctx;
+                if (delivery_profile->profile.sink_type == "LOCAL_APPEND_ONLY")
+                {
+                    status = ensureWalAfterDirectory(
+                        std::filesystem::path(delivery_profile->queue_root),
+                        &delivery_ctx);
+                    if (status == Status::OK)
+                    {
+                        status = writeDurableTextFile(segment_path, manifest, &delivery_ctx);
+                    }
+                }
+                else if (delivery_profile->profile.sink_type == "KAFKA_CHANNEL")
+                {
+                    status = ensureWalAfterDirectory(
+                        std::filesystem::path(delivery_profile->queue_root) /
+                            delivery_profile->topic,
+                        &delivery_ctx);
+                    if (status == Status::OK)
+                    {
+                        status = writeDurableTextFile(segment_path, manifest, &delivery_ctx);
+                    }
+                }
+                else
+                {
+                    status = deliverWalAfterToRemoteDatabase(db_,
+                                                             *delivery_profile,
+                                                             segment,
+                                                             item.work_item_id,
+                                                             &delivery_ctx);
+                }
+
+                if (status != Status::OK)
+                {
+                    if (first_failure == Status::OK)
+                    {
+                        first_failure = status;
+                        first_failure_message = delivery_ctx.message;
+                        first_failure_vnext = delivery_ctx.vnext_code;
+                        first_failure_sqlstate = delivery_ctx.sqlstate_text;
+                    }
+                    continue;
+                }
+
+                status = db_->catalog_manager()->appendAuditExportSegmentCatalogEntry(segment, ctx);
+                if (status != Status::OK)
+                {
+                    if (backlog_depth)
+                    {
+                        *backlog_depth = pending_count;
+                    }
+                    return status;
+                }
+
+                delivered_keys.insert(
+                    makeWalAfterDeliveryKey(item.work_item_id,
+                                            delivery_profile->profile.audit_sink_profile_id));
+                stream_state.prior_segment_hash = segment.hash_curr;
+                ++stream_state.next_stream_seq;
+                --pending_count;
+                if (segments_emitted)
+                {
+                    ++(*segments_emitted);
+                }
             }
         }
 
         if (backlog_depth)
         {
             *backlog_depth = pending_count;
+        }
+        if (first_failure != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, first_failure, first_failure_message.c_str());
+            if (!first_failure_vnext.empty() && ctx)
+            {
+                ctx->setVNextCode(first_failure_vnext.c_str());
+            }
+            if (!first_failure_sqlstate.empty() && ctx)
+            {
+                ctx->setSQLState(first_failure_sqlstate.c_str());
+            }
+            return first_failure;
         }
         return Status::OK;
     }

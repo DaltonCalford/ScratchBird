@@ -88609,6 +88609,46 @@ namespace scratchbird
 	                                return ExecutionResult("V3 ALTER SYSTEM expects section.key");
 	                            }
 
+                                if (section == "transactions" &&
+                                    setting == "dormant_maintenance")
+                                {
+                                    const std::string action = trimAsciiCopy(to_lower(v.toString()));
+                                    if (action != "run" && action != "now" &&
+                                        action != "normalize")
+                                    {
+                                        return ExecutionResult(
+                                            "transactions.dormant_maintenance expects RUN, NOW, or NORMALIZE");
+                                    }
+
+                                    core::ErrorContext err_ctx;
+                                    core::Status status =
+                                        db_->applyDormantTransactionPolicyConfig(&err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult(
+                                            "Failed to apply dormant transaction policy config: " +
+                                            err_ctx.message);
+                                    }
+
+                                    uint32_t normalized = 0;
+                                    status = db_->maintainDormantTransactions(
+                                        &normalized, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult(
+                                            "Failed to run dormant transaction maintenance: " +
+                                            err_ctx.message);
+                                    }
+
+                                    ExecutionResult result;
+                                    result.setAffectedCount(
+                                        static_cast<int>(std::min<uint32_t>(
+                                            normalized,
+                                            static_cast<uint32_t>(
+                                                std::numeric_limits<int>::max()))));
+                                    return result;
+                                }
+
 	                            core::Config::getInstance().set(section, setting, v.toString());
 	                            if (section == "scheduler")
 	                            {
@@ -88620,6 +88660,23 @@ namespace scratchbird
 	                                        "Failed to apply scheduler config: " + err_ctx.message);
 	                                }
 	                            }
+                                else if (
+                                    section == "transactions" &&
+                                    (setting == "dormant_restart_reattach_policy" ||
+                                     setting == "dormant_cleanup_policy" ||
+                                     setting == "dormant_lease_seconds" ||
+                                     setting == "dormant_terminal_retention_seconds"))
+                                {
+                                    core::ErrorContext err_ctx;
+                                    core::Status status =
+                                        db_->applyDormantTransactionPolicyConfig(&err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult(
+                                            "Failed to apply dormant transaction policy config: " +
+                                            err_ctx.message);
+                                    }
+                                }
 	                            return ExecutionResult();
 	                        }
 	                        default:
