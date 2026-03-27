@@ -49,7 +49,10 @@ protected:
         db_file_ = std::make_unique<TestDatabaseFile>("test_cache_buffer_benchmark");
 
         ErrorContext ctx;
-        ASSERT_EQ(Database::create(db_file_->path(), 8192, &ctx), Status::OK)
+        // Use the canonical bootstrap page size so the scan-resistance
+        // benchmark exercises the same open-time catalog and key bootstrap
+        // path that the required public-beta gate certifies.
+        ASSERT_EQ(Database::create(db_file_->path(), 16384, &ctx), Status::OK)
             << "Failed to create database: " << ctx.message;
 
         db_ = std::make_unique<Database>();

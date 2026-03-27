@@ -720,6 +720,9 @@ namespace scratchbird::core
             }
 
             const bool has_tx_findings = startupStateHasTxnNormalizationWork(*state);
+            const bool has_checkpoint_queue_rebuild =
+                state->checkpoint_queue_rebuild_required ||
+                state->checkpoint_queue_rebuild_pages > 0;
             const bool has_repairable_page_damage =
                 state->has_page_scan_findings ||
                 state->has_corrupt_pages ||
@@ -752,7 +755,8 @@ namespace scratchbird::core
                     Database::StartupRecoveryClassification::REPAIRABLE_PAGE_DAMAGE;
                 state->service_state = Database::StartupServiceState::DEGRADED_READ_WRITE;
             }
-            else if (!state->clean_shutdown_marker || has_tx_findings)
+            else if (!state->clean_shutdown_marker || has_tx_findings ||
+                     has_checkpoint_queue_rebuild)
             {
                 state->classification =
                     Database::StartupRecoveryClassification::
@@ -1067,7 +1071,12 @@ namespace scratchbird::core
                 << ",relinkable=" << state.relinkable_chain_pages
                 << ",cleanup_blocked=" << state.cleanup_blocked_chain_pages
                 << ",quarantinable=" << state.quarantinable_chain_pages
-                << ",unrecoverable=" << state.unrecoverable_chain_pages << "]";
+                << ",unrecoverable=" << state.unrecoverable_chain_pages
+                << ",checkpoint_queue_rebuild=" << state.checkpoint_queue_rebuild_required
+                << ",checkpoint_queue_pages=" << state.checkpoint_queue_rebuild_pages
+                << ",checkpoint_dirty_low=" << state.checkpoint_dirty_generation_low_watermark
+                << ",checkpoint_dirty_high=" << state.checkpoint_dirty_generation_high_watermark
+                << "]";
             return oss.str();
         }
 
@@ -1088,6 +1097,36 @@ namespace scratchbird::core
             try
             {
                 const auto parsed = std::stoull(trimmed, &consumed, 10);
+                if (consumed != trimmed.size())
+                {
+                    return false;
+                }
+                *out_value = parsed;
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        bool parseDoubleStrict(const std::string &value, double *out_value)
+        {
+            if (out_value == nullptr)
+            {
+                return false;
+            }
+
+            const std::string trimmed = trimAscii(value);
+            if (trimmed.empty())
+            {
+                return false;
+            }
+
+            size_t consumed = 0;
+            try
+            {
+                const auto parsed = std::stod(trimmed, &consumed);
                 if (consumed != trimmed.size())
                 {
                     return false;
@@ -1247,10 +1286,42 @@ namespace scratchbird::core
             return true;
         }
 
+        struct ConfigLookupKey
+        {
+            const char *section = nullptr;
+            const char *key = nullptr;
+        };
+
+        auto lookupConfigString(Config &settings,
+                                std::initializer_list<ConfigLookupKey> lookup_keys)
+            -> std::optional<std::string>
+        {
+            for (const auto &lookup_key : lookup_keys)
+            {
+                if (lookup_key.section == nullptr || lookup_key.key == nullptr)
+                {
+                    continue;
+                }
+                if (settings.hasKey(lookup_key.section, lookup_key.key))
+                {
+                    return settings.getString(lookup_key.section, lookup_key.key, "");
+                }
+            }
+            return std::nullopt;
+        }
+
         BufferPool::PoolLayout parseBufferPoolLayout(const std::string &value, bool *recognized)
         {
             std::string normalized = toLowerAscii(value);
-            if (normalized.empty() || normalized == "single" || normalized == "default")
+            if (normalized.empty() || normalized == "default" || normalized == "segmented")
+            {
+                if (recognized)
+                {
+                    *recognized = true;
+                }
+                return BufferPool::PoolLayout::Segmented;
+            }
+            if (normalized == "single")
             {
                 if (recognized)
                 {
@@ -1281,6 +1352,56 @@ namespace scratchbird::core
             return BufferPool::PoolLayout::Single;
         }
 
+        BufferPool::BufferProfile parseBufferProfile(const std::string &value, bool *recognized)
+        {
+            const std::string normalized = toLowerAscii(value);
+            if (normalized.empty() || normalized == "mixed" || normalized == "default")
+            {
+                if (recognized)
+                {
+                    *recognized = true;
+                }
+                return BufferPool::BufferProfile::Mixed;
+            }
+            if (normalized == "dev")
+            {
+                if (recognized)
+                {
+                    *recognized = true;
+                }
+                return BufferPool::BufferProfile::Dev;
+            }
+            if (normalized == "oltp")
+            {
+                if (recognized)
+                {
+                    *recognized = true;
+                }
+                return BufferPool::BufferProfile::Oltp;
+            }
+            if (normalized == "analytics")
+            {
+                if (recognized)
+                {
+                    *recognized = true;
+                }
+                return BufferPool::BufferProfile::Analytics;
+            }
+            if (normalized == "maintenance_recovery" || normalized == "maintenance-recovery")
+            {
+                if (recognized)
+                {
+                    *recognized = true;
+                }
+                return BufferPool::BufferProfile::MaintenanceRecovery;
+            }
+            if (recognized)
+            {
+                *recognized = false;
+            }
+            return BufferPool::BufferProfile::Mixed;
+        }
+
         Status loadBufferPoolConfig(uint32_t database_page_size,
                                     BufferPool::Config *config_out,
                                     ErrorContext *ctx)
@@ -1295,22 +1416,68 @@ namespace scratchbird::core
             BufferPool::Config config;
             Config &settings = Config::getInstance();
 
-            const std::string pool_size_value =
-                settings.getString("memory", "buffer_pool_size", std::to_string(config.pool_size));
-            uint64_t pool_pages = 0;
-            if (!parseUnsignedIntegerStrict(pool_size_value, &pool_pages))
+            // AUDIT CONTRACT (MMW-002):
+            // - Canonical `storage.buffer.*` keys are loaded here; legacy `memory.buffer_pool_*`
+            //   keys remain compatibility aliases only.
+            // - `segmented` means logical policy domains and budget accounting over the current
+            //   shared frame array. It does not yet claim segmented eviction behavior.
+            // - This loader validates domain budget legality now so later residency tickets can
+            //   build on one canonical foundation instead of retrofitting config meaning.
+
+            if (const auto profile_value =
+                    lookupConfigString(settings, {{"storage.buffer", "profile"}});
+                profile_value.has_value())
             {
-                uint64_t pool_bytes = 0;
-                if (!parseBinarySizeBytes(pool_size_value, &pool_bytes))
+                bool recognized = false;
+                const auto parsed_profile =
+                    parseBufferProfile(profile_value.value(), &recognized);
+                if (!recognized)
                 {
                     const std::string message =
-                        "Invalid buffer_pool_size '" + pool_size_value +
-                        "': use a page count or a size suffix such as 128MB";
+                        "Unknown storage.buffer.profile '" + profile_value.value() + "'";
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, message.c_str());
                     return Status::INVALID_ARGUMENT;
                 }
+                config.applyProfileDefaults(parsed_profile);
+            }
+
+            uint64_t pool_pages = 0;
+            if (const auto pool_size_mb_value =
+                    lookupConfigString(settings, {{"storage.buffer", "pool_size_mb"}});
+                pool_size_mb_value.has_value())
+            {
+                uint64_t pool_size_mb = 0;
+                if (!parseUnsignedIntegerStrict(pool_size_mb_value.value(), &pool_size_mb) ||
+                    pool_size_mb == 0)
+                {
+                    const std::string message =
+                        "Invalid storage.buffer.pool_size_mb '" + pool_size_mb_value.value() +
+                        "': use a positive integer megabyte count";
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, message.c_str());
+                    return Status::INVALID_ARGUMENT;
+                }
+                const uint64_t pool_bytes = pool_size_mb * 1024ULL * 1024ULL;
                 pool_pages =
                     std::max<uint64_t>(1, (pool_bytes + database_page_size - 1) / database_page_size);
+            }
+            else
+            {
+                const std::string pool_size_value = settings.getString(
+                    "memory", "buffer_pool_size", std::to_string(config.pool_size));
+                if (!parseUnsignedIntegerStrict(pool_size_value, &pool_pages))
+                {
+                    uint64_t pool_bytes = 0;
+                    if (!parseBinarySizeBytes(pool_size_value, &pool_bytes))
+                    {
+                        const std::string message =
+                            "Invalid buffer_pool_size '" + pool_size_value +
+                            "': use a page count or a size suffix such as 128MB";
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, message.c_str());
+                        return Status::INVALID_ARGUMENT;
+                    }
+                    pool_pages = std::max<uint64_t>(
+                        1, (pool_bytes + database_page_size - 1) / database_page_size);
+                }
             }
             if (pool_pages == 0 || pool_pages > std::numeric_limits<uint32_t>::max())
             {
@@ -1322,6 +1489,7 @@ namespace scratchbird::core
 
             config.pool_size = static_cast<uint32_t>(pool_pages);
             config.page_size = database_page_size;
+            config.recomputeDomainFrames();
 
             if (settings.hasKey("memory", "buffer_pool_page_size"))
             {
@@ -1346,8 +1514,11 @@ namespace scratchbird::core
                 }
             }
 
-            const std::string layout_value =
-                settings.getString("memory", "buffer_pool_layout", "single");
+            const std::string layout_value = lookupConfigString(
+                                                 settings,
+                                                 {{"storage.buffer", "layout"},
+                                                  {"memory", "buffer_pool_layout"}})
+                                                 .value_or("segmented");
             bool layout_recognized = false;
             config.layout = parseBufferPoolLayout(layout_value, &layout_recognized);
             if (!layout_recognized)
@@ -1357,22 +1528,39 @@ namespace scratchbird::core
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, message.c_str());
                 return Status::INVALID_ARGUMENT;
             }
-            if (config.layout != BufferPool::PoolLayout::Single)
+            if (config.layout == BufferPool::PoolLayout::HotCold ||
+                config.layout == BufferPool::PoolLayout::Tablespace)
             {
                 const std::string message =
                     "buffer_pool_layout '" + layout_value +
-                    "' is not supported; only 'single' is implemented";
+                    "' is not supported; canonical 'segmented' and legacy 'single' are implemented";
                 SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, message.c_str());
                 return Status::NOT_IMPLEMENTED;
             }
 
-            config.enable_background_writer = settings.getBool(
-                "memory", "buffer_pool_bgwriter_enabled", config.enable_background_writer);
+            if (settings.hasKey("storage.buffer.writeback", "enabled"))
+            {
+                config.enable_background_writer = settings.getBool(
+                    "storage.buffer.writeback", "enabled", config.enable_background_writer);
+            }
+            else
+            {
+                config.enable_background_writer = settings.getBool(
+                    "memory", "buffer_pool_bgwriter_enabled", config.enable_background_writer);
+            }
 
             const uint64_t bgwriter_delay_ms = settings.getUInt(
                 "memory", "buffer_pool_bgwriter_delay_ms", config.bgwriter_delay_ms);
-            const uint64_t bgwriter_max_pages = settings.getUInt(
-                "memory", "buffer_pool_bgwriter_max_pages", config.bgwriter_max_pages);
+            const uint64_t bgwriter_max_pages =
+                lookupConfigString(settings,
+                                   {{"storage.buffer.writeback", "batch_pages"},
+                                    {"memory", "buffer_pool_bgwriter_max_pages"}})
+                    .has_value()
+                ? settings.getUInt("storage.buffer.writeback", "batch_pages",
+                                   settings.getUInt("memory",
+                                                    "buffer_pool_bgwriter_max_pages",
+                                                    config.bgwriter_max_pages))
+                : config.bgwriter_max_pages;
             if (bgwriter_delay_ms > std::numeric_limits<uint32_t>::max() ||
                 bgwriter_max_pages > std::numeric_limits<uint32_t>::max())
             {
@@ -1383,12 +1571,378 @@ namespace scratchbird::core
             config.bgwriter_delay_ms = static_cast<uint32_t>(bgwriter_delay_ms);
             config.bgwriter_max_pages = static_cast<uint32_t>(bgwriter_max_pages);
 
-            config.dirty_ratio_low = settings.getDouble(
-                "memory", "buffer_pool_dirty_ratio_low", config.dirty_ratio_low);
-            config.dirty_ratio_high = settings.getDouble(
-                "memory", "buffer_pool_dirty_ratio_high", config.dirty_ratio_high);
-            config.dirty_ratio_checkpoint = settings.getDouble(
-                "memory", "buffer_pool_dirty_ratio_checkpoint", config.dirty_ratio_checkpoint);
+            if (const auto low_pct = lookupConfigString(
+                    settings,
+                    {{"storage.buffer.writeback", "low_dirty_pct"},
+                     {"memory", "buffer_pool_dirty_ratio_low"}});
+                low_pct.has_value())
+            {
+                if (settings.hasKey("storage.buffer.writeback", "low_dirty_pct"))
+                {
+                    double canonical_pct = 0.0;
+                    if (!parseDoubleStrict(low_pct.value(), &canonical_pct) ||
+                        canonical_pct < 0.0 || canonical_pct > 100.0)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "storage.buffer.writeback.low_dirty_pct must be between 0 and 100");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                    config.dirty_ratio_low = canonical_pct / 100.0;
+                }
+                else
+                {
+                    config.dirty_ratio_low = settings.getDouble(
+                        "memory", "buffer_pool_dirty_ratio_low", config.dirty_ratio_low);
+                }
+            }
+            if (const auto high_pct = lookupConfigString(
+                    settings,
+                    {{"storage.buffer.writeback", "high_dirty_pct"},
+                     {"memory", "buffer_pool_dirty_ratio_high"}});
+                high_pct.has_value())
+            {
+                if (settings.hasKey("storage.buffer.writeback", "high_dirty_pct"))
+                {
+                    double canonical_pct = 0.0;
+                    if (!parseDoubleStrict(high_pct.value(), &canonical_pct) ||
+                        canonical_pct < 0.0 || canonical_pct > 100.0)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "storage.buffer.writeback.high_dirty_pct must be between 0 and 100");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                    config.dirty_ratio_high = canonical_pct / 100.0;
+                }
+                else
+                {
+                    config.dirty_ratio_high = settings.getDouble(
+                        "memory", "buffer_pool_dirty_ratio_high", config.dirty_ratio_high);
+                }
+            }
+            if (const auto checkpoint_pct = lookupConfigString(
+                    settings,
+                    {{"storage.buffer.writeback", "checkpoint_target_pct"},
+                     {"memory", "buffer_pool_dirty_ratio_checkpoint"}});
+                checkpoint_pct.has_value())
+            {
+                if (settings.hasKey("storage.buffer.writeback", "checkpoint_target_pct"))
+                {
+                    double canonical_pct = 0.0;
+                    if (!parseDoubleStrict(checkpoint_pct.value(), &canonical_pct) ||
+                        canonical_pct < 0.0 || canonical_pct > 100.0)
+                    {
+                        SET_ERROR_CONTEXT(
+                            ctx,
+                            Status::INVALID_ARGUMENT,
+                            "storage.buffer.writeback.checkpoint_target_pct must be between 0 and 100");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                    config.dirty_ratio_checkpoint = canonical_pct / 100.0;
+                }
+                else
+                {
+                    config.dirty_ratio_checkpoint = settings.getDouble(
+                        "memory", "buffer_pool_dirty_ratio_checkpoint",
+                        config.dirty_ratio_checkpoint);
+                }
+            }
+
+            auto apply_domain_override = [&](BufferPool::PolicyDomain domain,
+                                             const char *domain_name,
+                                             const char *key_name,
+                                             double BufferPool::DomainBudgetConfig::*member)
+                -> Status
+            {
+                const std::string section =
+                    std::string("storage.buffer.domain.") + domain_name;
+                const auto configured_value =
+                    lookupConfigString(settings, {{section.c_str(), key_name}});
+                if (!configured_value.has_value())
+                {
+                    return Status::OK;
+                }
+
+                double pct = 0.0;
+                if (!parseDoubleStrict(configured_value.value(), &pct) ||
+                    pct < 0.0 || pct > 100.0)
+                {
+                    const std::string message =
+                        "storage.buffer.domain." + std::string(domain_name) + "." + key_name +
+                        " must be between 0 and 100";
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, message.c_str());
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                config.domainBudget(domain).*member = pct;
+                return Status::OK;
+            };
+
+            Status status = Status::OK;
+            status = apply_domain_override(BufferPool::PolicyDomain::CriticalSystem,
+                                           "critical_system",
+                                           "min_pct",
+                                           &BufferPool::DomainBudgetConfig::min_pct);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            status = apply_domain_override(BufferPool::PolicyDomain::HotOltp,
+                                           "hot_oltp",
+                                           "target_pct",
+                                           &BufferPool::DomainBudgetConfig::target_pct);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            status = apply_domain_override(BufferPool::PolicyDomain::ReadMostly,
+                                           "read_mostly",
+                                           "target_pct",
+                                           &BufferPool::DomainBudgetConfig::target_pct);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            status = apply_domain_override(BufferPool::PolicyDomain::ScanBulkRing,
+                                           "scan_bulk_ring",
+                                           "max_pct",
+                                           &BufferPool::DomainBudgetConfig::max_pct);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            status = apply_domain_override(BufferPool::PolicyDomain::VersionUndo,
+                                           "version_undo",
+                                           "min_pct",
+                                           &BufferPool::DomainBudgetConfig::min_pct);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            status = apply_domain_override(BufferPool::PolicyDomain::TemporaryWork,
+                                           "temporary_work",
+                                           "max_pct",
+                                           &BufferPool::DomainBudgetConfig::max_pct);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            if (const auto protected_pct =
+                    lookupConfigString(settings, {{"storage.buffer.replacement", "protected_pct"}});
+                protected_pct.has_value())
+            {
+                uint64_t parsed = 0;
+                if (!parseUnsignedIntegerStrict(protected_pct.value(), &parsed) || parsed > 100)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "storage.buffer.replacement.protected_pct must be between 0 and 100");
+                    return Status::INVALID_ARGUMENT;
+                }
+                config.replacement_protected_pct = static_cast<uint32_t>(parsed);
+            }
+
+            if (const auto ghost_pct = lookupConfigString(
+                    settings, {{"storage.buffer.replacement", "ghost_history_pct"}});
+                ghost_pct.has_value())
+            {
+                uint64_t parsed = 0;
+                if (!parseUnsignedIntegerStrict(ghost_pct.value(), &parsed) || parsed > 100)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "storage.buffer.replacement.ghost_history_pct must be between 0 and 100");
+                    return Status::INVALID_ARGUMENT;
+                }
+                config.replacement_ghost_history_pct = static_cast<uint32_t>(parsed);
+            }
+
+            if (const auto second_touch = lookupConfigString(
+                    settings, {{"storage.buffer.admission", "second_touch_generations"}});
+                second_touch.has_value())
+            {
+                uint64_t parsed = 0;
+                if (!parseUnsignedIntegerStrict(second_touch.value(), &parsed) || parsed == 0 ||
+                    parsed > std::numeric_limits<uint32_t>::max())
+                {
+                    SET_ERROR_CONTEXT(
+                        ctx,
+                        Status::INVALID_ARGUMENT,
+                        "storage.buffer.admission.second_touch_generations must be a positive integer");
+                    return Status::INVALID_ARGUMENT;
+                }
+                config.admission_second_touch_generations = static_cast<uint32_t>(parsed);
+            }
+
+            if (settings.hasKey("storage.buffer.admission", "direct_protect_roots"))
+            {
+                config.admission_direct_protect_roots = settings.getBool(
+                    "storage.buffer.admission",
+                    "direct_protect_roots",
+                    config.admission_direct_protect_roots);
+            }
+
+            if (settings.hasKey("storage.buffer.prefetch", "enabled"))
+            {
+                config.prefetch_enabled = settings.getBool("storage.buffer.prefetch",
+                                                           "enabled",
+                                                           config.prefetch_enabled);
+            }
+
+            auto apply_prefetch_uint = [&](const char *key_name,
+                                           uint32_t *target,
+                                           bool require_positive,
+                                           const char *message_suffix) -> Status
+            {
+                const auto configured_value =
+                    lookupConfigString(settings, {{"storage.buffer.prefetch", key_name}});
+                if (!configured_value.has_value())
+                {
+                    return Status::OK;
+                }
+
+                uint64_t parsed = 0;
+                if (!parseUnsignedIntegerStrict(configured_value.value(), &parsed) ||
+                    parsed > std::numeric_limits<uint32_t>::max() ||
+                    (require_positive && parsed == 0))
+                {
+                    std::string message = "storage.buffer.prefetch.";
+                    message += key_name;
+                    message += message_suffix;
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, message.c_str());
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                *target = static_cast<uint32_t>(parsed);
+                return Status::OK;
+            };
+
+            status = apply_prefetch_uint("workers",
+                                         &config.prefetch_workers,
+                                         false,
+                                         " must be a non-negative integer");
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            status = apply_prefetch_uint("scan_window_pages",
+                                         &config.prefetch_scan_window_pages,
+                                         true,
+                                         " must be a positive integer");
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            status = apply_prefetch_uint("index_window_pages",
+                                         &config.prefetch_index_window_pages,
+                                         true,
+                                         " must be a positive integer");
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            status = apply_prefetch_uint("chain_window_pages",
+                                         &config.prefetch_chain_window_pages,
+                                         true,
+                                         " must be a positive integer");
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            status = apply_prefetch_uint("max_debt_pages",
+                                         &config.prefetch_max_debt_pages,
+                                         false,
+                                         " must be a non-negative integer");
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto apply_prefetch_pct = [&](const char *section,
+                                          const char *key_name,
+                                          uint32_t *target) -> Status
+            {
+                const auto configured_value =
+                    lookupConfigString(settings, {{section, key_name}});
+                if (!configured_value.has_value())
+                {
+                    return Status::OK;
+                }
+
+                uint64_t parsed = 0;
+                const std::string full_name = std::string(section) + "." + key_name;
+                if (!parseUnsignedIntegerStrict(configured_value.value(), &parsed) ||
+                    parsed > 100)
+                {
+                    const std::string message = full_name + " must be between 0 and 100";
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, message.c_str());
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                *target = static_cast<uint32_t>(parsed);
+                return Status::OK;
+            };
+
+            status = apply_prefetch_pct("storage.buffer.prefetch",
+                                        "usefulness_floor_pct",
+                                        &config.prefetch_usefulness_floor_pct);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            status = apply_prefetch_pct("storage.buffer.thrash",
+                                        "session_budget_pct",
+                                        &config.thrash_session_budget_pct);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            status = apply_prefetch_pct("storage.buffer.thrash",
+                                        "object_budget_pct",
+                                        &config.thrash_object_budget_pct);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            status = apply_prefetch_pct("storage.buffer.thrash",
+                                        "prefetch_pressure_pct",
+                                        &config.thrash_prefetch_pressure_pct);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            if (config.prefetch_enabled)
+            {
+                if (config.prefetch_workers == 0)
+                {
+                    SET_ERROR_CONTEXT(
+                        ctx,
+                        Status::INVALID_ARGUMENT,
+                        "storage.buffer.prefetch.workers must be positive when prefetch is enabled");
+                    return Status::INVALID_ARGUMENT;
+                }
+                if (config.prefetch_max_debt_pages == 0)
+                {
+                    SET_ERROR_CONTEXT(
+                        ctx,
+                        Status::INVALID_ARGUMENT,
+                        "storage.buffer.prefetch.max_debt_pages must be positive when prefetch is enabled");
+                    return Status::INVALID_ARGUMENT;
+                }
+            }
+
+            config.recomputeDomainFrames();
+            const auto &critical_budget =
+                config.domainBudget(BufferPool::PolicyDomain::CriticalSystem);
+            const auto &version_budget =
+                config.domainBudget(BufferPool::PolicyDomain::VersionUndo);
+            if (critical_budget.min_frames + version_budget.min_frames >= config.pool_size)
+            {
+                SET_ERROR_CONTEXT(
+                    ctx,
+                    Status::INVALID_ARGUMENT,
+                    "storage.buffer domain minimums leave no shared probationary capacity");
+                return Status::INVALID_ARGUMENT;
+            }
 
             const bool low_valid =
                 (config.dirty_ratio_low >= 0.0 && config.dirty_ratio_low <= 1.0);
@@ -2460,6 +3014,15 @@ namespace scratchbird::core
         {
             ErrorContext ctx;
             page_manager_->flush(&ctx);
+        }
+
+        if (buffer_pool_ != nullptr && clean_shutdown_eligible_)
+        {
+            ErrorContext ctx;
+            const uint64_t shutdown_dirty_boundary =
+                buffer_pool_->currentDirtyGeneration();
+            (void)buffer_pool_->flushDirtyCheckpointBoundary(shutdown_dirty_boundary, &ctx);
+            (void)sync(&ctx);
         }
 
         // Sync header_buffer_ with latest header page before buffer pool shutdown
@@ -4720,6 +5283,53 @@ namespace scratchbird::core
         StartupReconciliationState state{};
         startup_quarantine_active_ = false;
         state.clean_shutdown_marker = last_shutdown_was_clean_;
+        auto load_current_checkpoint_state =
+            [this, ctx](CheckpointControlState *checkpoint_out) -> Status {
+                if (buffer_pool_ == nullptr || checkpoint_out == nullptr)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Checkpoint control read requires initialized buffer pool");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                void *page_buffer = nullptr;
+                Status local_status = buffer_pool_->pinPage(
+                    BOOTSTRAP_PAGE_SYSTEM_STATE, &page_buffer, ctx);
+                if (local_status != Status::OK)
+                {
+                    return local_status;
+                }
+
+                auto *state_page = static_cast<BootstrapSystemStatePage *>(page_buffer);
+                if (state_page->page_header.page_type != PAGE_TYPE_SYSTEM_STATE)
+                {
+                    buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+                    SET_ERROR_CONTEXT(
+                        ctx,
+                        Status::PAGE_CORRUPT,
+                        "Invalid system state bootstrap page during startup reconciliation");
+                    return Status::PAGE_CORRUPT;
+                }
+                if (!validatePageChecksum(reinterpret_cast<uint8_t *>(state_page), page_size_))
+                {
+                    buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+                    SET_ERROR_CONTEXT(
+                        ctx,
+                        Status::CHECKSUM_MISMATCH,
+                        "System state page checksum validation failed during startup reconciliation");
+                    return Status::CHECKSUM_MISMATCH;
+                }
+
+                loadCheckpointControlState(*state_page, checkpoint_out);
+                buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+                return Status::OK;
+            };
+        CheckpointControlState checkpoint{};
+        Status status = load_current_checkpoint_state(&checkpoint);
+        if (status != Status::OK)
+        {
+            return status;
+        }
         bool writeback_incident_open = false;
         WritebackDegradedState writeback_degraded_state = WritebackDegradedState::NORMAL;
         {
@@ -4729,11 +5339,18 @@ namespace scratchbird::core
         }
 
         PageManager::ReconstructionSummary page_summary{};
-        Status status = page_manager_->reconstructFromPages(&page_summary, ctx);
+        status = page_manager_->reconstructFromPages(&page_summary, ctx);
         state.relinkable_chain_pages = page_summary.relinkable_chain_pages;
         state.cleanup_blocked_chain_pages = page_summary.cleanup_blocked_chain_pages;
         state.quarantinable_chain_pages = page_summary.quarantinable_chain_pages;
         state.unrecoverable_chain_pages = page_summary.unrecoverable_chain_pages;
+        state.checkpoint_queue_rebuild_required =
+            checkpoint.queue_rebuild_required || page_summary.checkpoint_queue_rebuild_pages > 0;
+        state.checkpoint_queue_rebuild_pages = page_summary.checkpoint_queue_rebuild_pages;
+        state.checkpoint_dirty_generation_low_watermark =
+            checkpoint.dirty_generation_low_watermark;
+        state.checkpoint_dirty_generation_high_watermark =
+            checkpoint.dirty_generation_high_watermark;
         state.has_corrupt_pages = page_summary.corrupt_pages > 0;
         state.has_page_scan_findings =
             state.has_corrupt_pages ||
@@ -4756,6 +5373,14 @@ namespace scratchbird::core
                             static_cast<int>(persist_status));
             }
             return status;
+        }
+
+        if (state.checkpoint_queue_rebuild_required ||
+            !page_summary.checkpoint_queue_candidates.empty())
+        {
+            buffer_pool_->restoreCheckpointQueueState(
+                page_summary.checkpoint_queue_candidates,
+                checkpoint.dirty_generation_high_watermark);
         }
 
         StartupReconciliationSummary txn_summary{};
@@ -4784,11 +5409,16 @@ namespace scratchbird::core
         }
 
         const bool has_tx_findings = startupStateHasTxnNormalizationWork(state);
-        if (!state.clean_shutdown_marker && !state.has_page_scan_findings && !has_tx_findings)
+        const bool has_checkpoint_queue_rebuild =
+            state.checkpoint_queue_rebuild_required ||
+            state.checkpoint_queue_rebuild_pages > 0;
+        if (!state.clean_shutdown_marker && !state.has_page_scan_findings &&
+            !has_tx_findings && !has_checkpoint_queue_rebuild)
         {
             state.outcome = StartupReconciliationOutcome::RECOVERY_WITH_FINDINGS;
         }
-        else if (!state.clean_shutdown_marker || state.has_page_scan_findings || has_tx_findings)
+        else if (!state.clean_shutdown_marker || state.has_page_scan_findings ||
+                 has_tx_findings || has_checkpoint_queue_rebuild)
         {
             state.outcome = state.clean_shutdown_marker
                 ? StartupReconciliationOutcome::CLEAN_WITH_FINDINGS
@@ -4942,16 +5572,28 @@ namespace scratchbird::core
         checkpoint.shutdown_intent = CheckpointShutdownIntent::CLEAN;
         checkpoint.checkpoint_failure_reason = Status::OK;
         checkpoint.queue_rebuild_required = false;
+        const auto pre_checkpoint_stats = buffer_pool_->getStats();
         const uint64_t dirty_generation_boundary =
             buffer_pool_->currentDirtyGeneration();
+        checkpoint.dirty_generation_low_watermark =
+            pre_checkpoint_stats.dirty_generation_low_watermark == 0
+            ? dirty_generation_boundary
+            : pre_checkpoint_stats.dirty_generation_low_watermark;
+        checkpoint.dirty_generation_high_watermark =
+            std::max<uint64_t>(dirty_generation_boundary,
+                               pre_checkpoint_stats.dirty_generation_high_watermark);
+        checkpoint.captured_flush_debt_pages =
+            std::max<uint64_t>(buffer_pool_->checkpointDebtCandidateCount(),
+                               buffer_pool_->currentDirtyPageCount());
         const uint64_t checkpoint_flushes_before =
             buffer_pool_->getStats().checkpoint_flushes;
         CatalogManager::CheckpointRunCatalogInfo checkpoint_run{};
         checkpoint_run.checkpoint_generation = checkpoint.checkpoint_generation;
         checkpoint_run.checkpoint_state = CheckpointLifecycleState::CAPTURING_HORIZONS;
         checkpoint_run.start_time = checkpoint.checkpoint_start_time;
-        checkpoint_run.dirty_generation_low_watermark = dirty_generation_boundary;
-        checkpoint_run.pages_target = buffer_pool_->currentDirtyPageCount();
+        checkpoint_run.dirty_generation_low_watermark =
+            checkpoint.dirty_generation_low_watermark;
+        checkpoint_run.pages_target = checkpoint.captured_flush_debt_pages;
         checkpoint_run.pages_flushed = 0;
         checkpoint_run.is_valid = true;
         auto persist_checkpoint_history =
@@ -4986,7 +5628,10 @@ namespace scratchbird::core
             checkpoint.checkpoint_state = phase;
             checkpoint.checkpoint_failure_reason = failure_reason;
             checkpoint.queue_rebuild_required =
-                (phase == CheckpointLifecycleState::FAILED);
+                (phase == CheckpointLifecycleState::FAILED) ||
+                ((phase == CheckpointLifecycleState::CAPTURING_HORIZONS ||
+                  phase == CheckpointLifecycleState::DRAINING_DIRTY_SET) &&
+                 checkpoint.captured_flush_debt_pages > 0);
 
             return mutateAndFlushSystemStatePage(
                 this,
@@ -5619,6 +6264,14 @@ namespace scratchbird::core
             {
                 return status;
             }
+        }
+
+        // Resident frames are only clean after the engine-wide forced-write fence
+        // completes. The page image was written earlier; this clears the
+        // MGA-local `DirtyFlushedPendingFsync` staging state after fsync.
+        if (buffer_pool_ != nullptr)
+        {
+            buffer_pool_->completeFsyncFence();
         }
 
         return Status::OK;

@@ -381,6 +381,7 @@ namespace scratchbird::core
         hints.prune_safe_horizon_hint = horizon;
         hints.dead_version_bytes = reclaimable_bytes;
         hints.chain_depth_hint = chain_depth_hint;
+        hints.workload_class = BufferPool::WorkloadClass::SweepGc;
         (void)db_->buffer_pool()->publishMgaFrameHintsGlobal(convertPageIDtoGPID(page_id),
                                                              hints,
                                                              nullptr);
@@ -577,6 +578,7 @@ namespace scratchbird::core
             hints.prune_safe_horizon_hint = horizon;
             hints.dead_version_bytes = reclaimable_bytes;
             hints.chain_depth_hint = chain_depth_hint;
+            hints.workload_class = BufferPool::WorkloadClass::SweepGc;
             (void)db_->buffer_pool()->publishMgaFrameHintsGlobal(convertPageIDtoGPID(page_id),
                                                                  hints,
                                                                  nullptr);
@@ -656,6 +658,7 @@ namespace scratchbird::core
                                                    : BufferPool::MgaPageClass::VERSION_ROOT;
         hints.prune_safe_horizon_hint = horizon;
         hints.chain_depth_hint = chain_depth_hint;
+        hints.workload_class = BufferPool::WorkloadClass::SweepGc;
         (void)db_->buffer_pool()->publishMgaFrameHintsGlobal(convertPageIDtoGPID(page_id),
                                                              hints,
                                                              nullptr);

@@ -764,6 +764,7 @@ namespace scratchbird::core
         page_hints.prune_safe_horizon_hint = reclaim_horizon;
         page_hints.dead_version_bytes = maturity_scan.reclaimable_bytes;
         page_hints.chain_depth_hint = chain_depth_hint;
+        page_hints.workload_class = BufferPool::WorkloadClass::SweepGc;
         (void)db_->buffer_pool()->publishMgaFrameHintsGlobal(convertPageIDtoGPID(page_id),
                                                              page_hints,
                                                              nullptr);

@@ -41,6 +41,67 @@ namespace scratchbird::core
             return (PageManager::kEmergencyReservePages + 1u) - free_pages;
         }
 
+        auto isAllZeroPage(const uint8_t *buffer, uint32_t page_size) -> bool
+        {
+            if (buffer == nullptr)
+            {
+                return false;
+            }
+            for (uint32_t i = 0; i < page_size; ++i)
+            {
+                if (buffer[i] != 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        auto writeFullyAtOffset(int fd,
+                                const void *buffer,
+                                size_t size,
+                                off_t offset,
+                                size_t *written_out) -> bool
+        {
+            const auto *src = static_cast<const uint8_t *>(buffer);
+            size_t written = 0;
+            while (written < size)
+            {
+                errno = 0;
+                ssize_t rc = platform::writeAt(fd,
+                                               src + written,
+                                               size - written,
+                                               offset + static_cast<off_t>(written));
+                if (rc < 0)
+                {
+                    if (errno == EINTR)
+                    {
+                        continue;
+                    }
+                    if (written_out != nullptr)
+                    {
+                        *written_out = written;
+                    }
+                    return false;
+                }
+                if (rc == 0)
+                {
+                    errno = EIO;
+                    if (written_out != nullptr)
+                    {
+                        *written_out = written;
+                    }
+                    return false;
+                }
+                written += static_cast<size_t>(rc);
+            }
+            if (written_out != nullptr)
+            {
+                *written_out = written;
+            }
+            return true;
+        }
+
         Status decodeTablespaceHeader(const uint8_t *buffer,
                                       TablespaceHeader *header_out,
                                       uint16_t *version_out,
@@ -456,37 +517,58 @@ namespace scratchbird::core
             return Status::OOM;
         }
 
-        // Write empty pages to extend file
+        // Write empty free pages to extend file.
+        // AUDIT CONTRACT:
+        // Free capacity must be persisted as raw zero images, not through the
+        // canonical page writer. The canonical page writer stamps page-id,
+        // generation, and checksum fields, which would make an unused free page
+        // look like damaged allocated state during restart reconstruction.
         for (uint32_t i = 0; i < num_pages; i++)
         {
-            // ISSUE 3.5 FIX: Only zero the data portion, not the header
-            // Initialize page header first (will be overwritten anyway)
-            auto *header = reinterpret_cast<PageHeader *>(buffer.get());
-            header->magic = K_MAGIC_SBRD;
-            header->version = 1;
-            header->page_type = PAGE_TYPE_HEAP; // Default to heap page
-            header->page_size = page_size_;
-            header->page_id = total_pages_ + i;
-            header->generation = 1;
-            header->checksum = 0;
-            header->flags = 0;
-            header->lsn = 0;
-            setDatabaseUuid(*header, db_->uuid());
-            setObjectUuid(*header, ID{});
-            header->item_count = 0;
-            pageSetLower(*header, sizeof(PageHeader));
-            pageSetUpper(*header, page_size_);
-            pageSetSpecial(*header, page_size_);
+            memset(buffer.get(), 0, page_size_);
 
-            // Zero only the data portion after the header
-            // This avoids wasting CPU cycles zeroing bytes that are immediately overwritten
-            memset(buffer.get() + sizeof(PageHeader), 0, page_size_ - sizeof(PageHeader));
-
-            // Write page
-            Status status = db_->write_page(total_pages_ + i, buffer.get(), ctx);
-            if (status != Status::OK)
+            const off_t offset =
+                static_cast<off_t>(total_pages_ + i) * static_cast<off_t>(page_size_);
+            size_t bytes_written = 0;
+            errno = 0;
+            if (!writeFullyAtOffset(db_->fd(),
+                                    buffer.get(),
+                                    page_size_,
+                                    offset,
+                                    &bytes_written))
             {
-                return status;
+                if (errno != 0)
+                {
+                    char msg[256];
+                    snprintf(msg,
+                             sizeof(msg),
+                             "Failed to extend free page %u after %zu/%u bytes: %s",
+                             total_pages_ + i,
+                             bytes_written,
+                             page_size_,
+                             std::strerror(errno));
+                    SET_ERROR_CONTEXT(ctx,
+                                      errno == ENOSPC ? Status::DISK_FULL : Status::IO_ERROR,
+                                      msg);
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      Status::IO_ERROR,
+                                      "Short write extending free page image");
+                }
+                return errno == ENOSPC ? Status::DISK_FULL : Status::IO_ERROR;
+            }
+
+            Status shadow_status = db_->mirrorShadowFilespaceWrite(
+                PRIMARY_TABLESPACE_ID,
+                static_cast<uint64_t>(offset),
+                buffer.get(),
+                page_size_,
+                ctx);
+            if (shadow_status != Status::OK)
+            {
+                return shadow_status;
             }
         }
 
@@ -682,6 +764,10 @@ namespace scratchbird::core
         uint32_t chain_blocked_pages = 0;
         uint32_t chain_quarantinable_pages = 0;
         uint32_t chain_unrecoverable_pages = 0;
+        uint32_t checkpoint_queue_rebuild_pages = 0;
+        uint64_t checkpoint_generation_low_watermark = 0;
+        uint64_t checkpoint_generation_high_watermark = 0;
+        std::vector<GPID> checkpoint_queue_candidates;
 
         for (uint32_t page_id = BOOTSTRAP_FIXED_PAGE_COUNT; page_id < total_pages_; page_id++)
         {
@@ -691,6 +777,18 @@ namespace scratchbird::core
             {
                 // Page doesn't exist yet (file not extended to this point)
                 // Mark as free
+                setBit(page_id, false);
+                free_pages_++;
+                empty_pages++;
+                continue;
+            }
+
+            if (status == Status::PAGE_CORRUPT &&
+                isAllZeroPage(buffer.get(), page_size_))
+            {
+                // Fresh free pages are persisted as all-zero images until they
+                // are claimed and initialized by an allocator caller.
+                // Reconstruction must treat those images as free capacity.
                 setBit(page_id, false);
                 free_pages_++;
                 empty_pages++;
@@ -768,6 +866,22 @@ namespace scratchbird::core
                                     audit.summary.c_str());
                     }
                 }
+
+                if (!pageIsTemporaryWork(*header) &&
+                    header->flush_generation > header->checkpoint_generation)
+                {
+                    ++checkpoint_queue_rebuild_pages;
+                    checkpoint_queue_candidates.push_back(convertPageIDtoGPID(page_id));
+                    if (checkpoint_generation_low_watermark == 0 ||
+                        header->flush_generation < checkpoint_generation_low_watermark)
+                    {
+                        checkpoint_generation_low_watermark = header->flush_generation;
+                    }
+                    if (header->flush_generation > checkpoint_generation_high_watermark)
+                    {
+                        checkpoint_generation_high_watermark = header->flush_generation;
+                    }
+                }
             }
             else
             {
@@ -783,6 +897,12 @@ namespace scratchbird::core
                  "FSM reconstruction complete: %u allocated, %u free, %u empty, %u corrupt, %u relinkable-chain pages, %u cleanup-blocked-chain pages",
                  allocated_count, free_pages_, empty_pages, corrupt_pages, chain_relinkable_pages,
                  chain_blocked_pages);
+        if (checkpoint_queue_rebuild_pages > 0)
+        {
+            LOG_WARNING(STORAGE,
+                        "FSM reconstruction discovered %u pages with checkpoint-marker debt (flush_generation > checkpoint_generation)",
+                        checkpoint_queue_rebuild_pages);
+        }
 
         if (summary_out != nullptr)
         {
@@ -794,6 +914,12 @@ namespace scratchbird::core
             summary_out->cleanup_blocked_chain_pages = chain_blocked_pages;
             summary_out->quarantinable_chain_pages = chain_quarantinable_pages;
             summary_out->unrecoverable_chain_pages = chain_unrecoverable_pages;
+            summary_out->checkpoint_queue_rebuild_pages = checkpoint_queue_rebuild_pages;
+            summary_out->checkpoint_generation_low_watermark =
+                checkpoint_generation_low_watermark;
+            summary_out->checkpoint_generation_high_watermark =
+                checkpoint_generation_high_watermark;
+            summary_out->checkpoint_queue_candidates = std::move(checkpoint_queue_candidates);
         }
 
         // Mark FSM as dirty so it gets flushed with the corrected state

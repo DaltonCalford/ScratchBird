@@ -98,6 +98,9 @@ struct DecodedCheckpointControlState {
     uint64_t captured_oit = 0;
     uint64_t captured_oat = 0;
     uint64_t captured_ost = 0;
+    uint64_t dirty_generation_low_watermark = 0;
+    uint64_t dirty_generation_high_watermark = 0;
+    uint64_t captured_flush_debt_pages = 0;
     bool queue_rebuild_required = false;
     scratchbird::core::CheckpointShutdownIntent shutdown_intent =
         scratchbird::core::CheckpointShutdownIntent::NONE;
@@ -131,6 +134,12 @@ DecodedCheckpointControlState decodeCheckpointControlState(
         state_page.reserved[scratchbird::core::SYSTEM_STATE_CHECKPOINT_CAPTURED_OAT_SLOT];
     control.captured_ost =
         state_page.reserved[scratchbird::core::SYSTEM_STATE_CHECKPOINT_CAPTURED_OST_SLOT];
+    control.dirty_generation_low_watermark =
+        state_page.reserved[scratchbird::core::SYSTEM_STATE_CHECKPOINT_DIRTY_LOW_SLOT];
+    control.dirty_generation_high_watermark =
+        state_page.reserved[scratchbird::core::SYSTEM_STATE_CHECKPOINT_DIRTY_HIGH_SLOT];
+    control.captured_flush_debt_pages =
+        state_page.reserved[scratchbird::core::SYSTEM_STATE_CHECKPOINT_FLUSH_DEBT_SLOT];
     control.queue_rebuild_required =
         state_page.reserved[scratchbird::core::SYSTEM_STATE_CHECKPOINT_QUEUE_REBUILD_SLOT] != 0;
     control.shutdown_intent = static_cast<scratchbird::core::CheckpointShutdownIntent>(
@@ -216,6 +225,12 @@ void encodeCheckpointControlState(
         control.captured_oat;
     state_page->reserved[scratchbird::core::SYSTEM_STATE_CHECKPOINT_CAPTURED_OST_SLOT] =
         control.captured_ost;
+    state_page->reserved[scratchbird::core::SYSTEM_STATE_CHECKPOINT_DIRTY_LOW_SLOT] =
+        control.dirty_generation_low_watermark;
+    state_page->reserved[scratchbird::core::SYSTEM_STATE_CHECKPOINT_DIRTY_HIGH_SLOT] =
+        control.dirty_generation_high_watermark;
+    state_page->reserved[scratchbird::core::SYSTEM_STATE_CHECKPOINT_FLUSH_DEBT_SLOT] =
+        control.captured_flush_debt_pages;
     state_page->reserved[scratchbird::core::SYSTEM_STATE_CHECKPOINT_QUEUE_REBUILD_SLOT] =
         control.queue_rebuild_required ? 1 : 0;
     state_page->reserved[scratchbird::core::SYSTEM_STATE_CHECKPOINT_SHUTDOWN_INTENT_SLOT] =
@@ -364,6 +379,38 @@ protected:
         }
         ::close(fd);
         return header;
+    }
+
+    std::vector<uint8_t> readPageBufferFromFile(uint32_t page_id) {
+        std::vector<uint8_t> buffer(db_.page_size());
+        const int fd = ::open(db_file_->path().c_str(), O_RDWR);
+        EXPECT_GE(fd, 0) << std::strerror(errno);
+        if (fd < 0) {
+            return {};
+        }
+        const off_t offset = static_cast<off_t>(page_id) *
+                             static_cast<off_t>(db_.page_size());
+        const ssize_t bytes = ::pread(fd, buffer.data(), buffer.size(), offset);
+        EXPECT_EQ(bytes, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+        ::close(fd);
+        if (bytes != static_cast<ssize_t>(buffer.size())) {
+            return {};
+        }
+        return buffer;
+    }
+
+    void writePageBufferToFile(uint32_t page_id, std::vector<uint8_t> buffer) {
+        ASSERT_EQ(buffer.size(), static_cast<size_t>(db_.page_size()));
+        scratchbird::core::preparePageForWrite(buffer.data(), db_.page_size(), page_id);
+
+        const int fd = ::open(db_file_->path().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0) << std::strerror(errno);
+        const off_t offset = static_cast<off_t>(page_id) *
+                             static_cast<off_t>(db_.page_size());
+        const ssize_t bytes = ::pwrite(fd, buffer.data(), buffer.size(), offset);
+        ASSERT_EQ(bytes, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+        ASSERT_EQ(::fsync(fd), 0) << std::strerror(errno);
+        ::close(fd);
     }
 
     void writeSystemStatePageToFile(
@@ -1187,7 +1234,7 @@ TEST_F(ExecutorTransactionPayloadTest, CheckpointBoundarySkipsPagesDirtiedAfterC
     EXPECT_TRUE(snapshot.is_dirty);
     EXPECT_GT(snapshot.dirty_generation, captured_boundary);
     EXPECT_EQ(snapshot.writeback_queue_state,
-              scratchbird::core::BufferPool::WritebackQueueState::BACKGROUND);
+              scratchbird::core::BufferPool::WritebackQueueState::BACKGROUND_AGE);
 
     ASSERT_EQ(db_.buffer_pool()->flushDirtyCheckpointBoundary(captured_boundary, &ctx),
               Status::OK)
@@ -1202,7 +1249,7 @@ TEST_F(ExecutorTransactionPayloadTest, CheckpointBoundarySkipsPagesDirtiedAfterC
     EXPECT_TRUE(snapshot.is_dirty);
     EXPECT_GT(snapshot.dirty_generation, captured_boundary);
     EXPECT_EQ(snapshot.writeback_queue_state,
-              scratchbird::core::BufferPool::WritebackQueueState::BACKGROUND);
+              scratchbird::core::BufferPool::WritebackQueueState::BACKGROUND_AGE);
 
     const auto persisted_header = readPageHeaderFromFile(page_id);
     EXPECT_EQ(persisted_header.generation, 1u);
@@ -1271,6 +1318,101 @@ TEST_F(ExecutorTransactionPayloadTest, CleanShutdownCheckpointDrainPublishesChec
     EXPECT_GT(persisted_header.checkpoint_generation, 0u);
     EXPECT_EQ(persisted_header.checkpoint_generation, persisted_header.flush_generation);
     EXPECT_LE(persisted_header.flush_generation, persisted_header.generation);
+}
+
+TEST_F(ExecutorTransactionPayloadTest,
+       CleanShutdownCheckpointControlCapturesDirtyGenerationBoundariesAndDebt) {
+    ErrorContext ctx;
+    void *page_buffer = nullptr;
+    uint32_t page_id = 0;
+    ASSERT_EQ(db_.buffer_pool()->allocatePage(&page_id, &page_buffer, &ctx), Status::OK)
+        << ctx.message;
+
+    auto *header = static_cast<scratchbird::core::PageHeader *>(page_buffer);
+    header->page_type = scratchbird::core::PAGE_TYPE_HEAP;
+    header->page_id = page_id;
+    header->generation = 13;
+    header->flush_generation = 0;
+    header->checkpoint_generation = 0;
+    ASSERT_EQ(db_.buffer_pool()->unpinPage(page_id, true, &ctx), Status::OK) << ctx.message;
+
+    const uint64_t captured_boundary = db_.buffer_pool()->currentDirtyGeneration();
+    ASSERT_GT(captured_boundary, 0u);
+
+    closeDatabase();
+
+    const auto state_page = readSystemStatePageFromFile();
+    const auto checkpoint = decodeCheckpointControlState(state_page);
+    EXPECT_EQ(state_page.clean_shutdown, 1u);
+    EXPECT_EQ(checkpoint.checkpoint_state,
+              scratchbird::core::CheckpointLifecycleState::IDLE);
+    EXPECT_FALSE(checkpoint.queue_rebuild_required);
+    EXPECT_GE(checkpoint.dirty_generation_low_watermark, 1u);
+    EXPECT_GE(checkpoint.dirty_generation_high_watermark,
+              checkpoint.dirty_generation_low_watermark);
+    EXPECT_GE(checkpoint.dirty_generation_high_watermark, captured_boundary);
+    EXPECT_GE(checkpoint.captured_flush_debt_pages, 1u);
+}
+
+TEST_F(ExecutorTransactionPayloadTest,
+       RestartQueueRebuildSeedsDirtyGenerationFloorAndRepublishesCheckpointDebt) {
+    ErrorContext ctx;
+    void *page_buffer = nullptr;
+    uint32_t page_id = 0;
+    ASSERT_EQ(db_.buffer_pool()->allocatePage(&page_id, &page_buffer, &ctx), Status::OK)
+        << ctx.message;
+
+    auto *header = static_cast<scratchbird::core::PageHeader *>(page_buffer);
+    header->page_type = scratchbird::core::PAGE_TYPE_HEAP;
+    header->page_id = page_id;
+    header->generation = 21;
+    header->flush_generation = 0;
+    header->checkpoint_generation = 0;
+    ASSERT_EQ(db_.buffer_pool()->unpinPage(page_id, true, &ctx), Status::OK) << ctx.message;
+
+    closeDatabase();
+
+    auto page_buffer_bytes = readPageBufferFromFile(page_id);
+    ASSERT_FALSE(page_buffer_bytes.empty());
+    auto *persisted_header =
+        reinterpret_cast<scratchbird::core::PageHeader *>(page_buffer_bytes.data());
+    persisted_header->generation = std::max<uint64_t>(persisted_header->generation, 22u);
+    persisted_header->flush_generation = persisted_header->generation;
+    persisted_header->checkpoint_generation = persisted_header->generation - 1;
+    writePageBufferToFile(page_id, std::move(page_buffer_bytes));
+
+    auto state_page = readSystemStatePageFromFile();
+    auto checkpoint = decodeCheckpointControlState(state_page);
+    state_page.clean_shutdown = 0;
+    checkpoint.checkpoint_state =
+        scratchbird::core::CheckpointLifecycleState::DRAINING_DIRTY_SET;
+    checkpoint.queue_rebuild_required = true;
+    checkpoint.shutdown_intent = scratchbird::core::CheckpointShutdownIntent::NONE;
+    checkpoint.checkpoint_failure_reason = Status::OK;
+    checkpoint.dirty_generation_low_watermark = 5;
+    checkpoint.dirty_generation_high_watermark = 9;
+    checkpoint.captured_flush_debt_pages = 1;
+    encodeCheckpointControlState(&state_page, checkpoint);
+    writeSystemStatePageToFile(state_page);
+
+    reopenDatabase(false);
+
+    EXPECT_FALSE(db_.last_shutdown_was_clean());
+    EXPECT_GE(db_.buffer_pool()->currentDirtyGeneration(), 9u);
+    const auto &startup = db_.last_startup_reconciliation();
+    EXPECT_TRUE(startup.checkpoint_queue_rebuild_required);
+    EXPECT_GE(startup.checkpoint_queue_rebuild_pages, 1u);
+    EXPECT_EQ(startup.checkpoint_dirty_generation_low_watermark, 5u);
+    EXPECT_EQ(startup.checkpoint_dirty_generation_high_watermark, 9u);
+
+    closeDatabase();
+
+    const auto rebuilt_header = readPageHeaderFromFile(page_id);
+    EXPECT_EQ(rebuilt_header.checkpoint_generation, rebuilt_header.flush_generation);
+    EXPECT_GT(rebuilt_header.checkpoint_generation, 0u);
+
+    reopenDatabase(false);
+    EXPECT_TRUE(db_.last_shutdown_was_clean());
 }
 
 TEST_F(ExecutorTransactionPayloadTest, SyncDiskFullPersistsWritebackFenceAndBlocksGrowth) {
@@ -2057,6 +2199,35 @@ TEST_F(ExecutorTransactionPayloadTest, StartupCorruptionPolicyQuarantinesChecksu
     EXPECT_NE(persisted.repair_plan_mask &
                   Database::STARTUP_REPAIR_PLAN_REBUILD_FSM,
               0u);
+}
+
+TEST_F(ExecutorTransactionPayloadTest,
+       StartupReconciliationTreatsExtendedUninitializedTailPagesAsFreeCapacity) {
+    auto *page_manager = db_.page_manager();
+    ASSERT_NE(page_manager, nullptr);
+
+    ErrorContext ctx;
+    uint32_t page_id = 0;
+    ASSERT_EQ(page_manager->allocatePage(page_id, &ctx), Status::OK) << ctx.message;
+    EXPECT_GT(page_id, scratchbird::core::BOOTSTRAP_FIXED_PAGE_COUNT);
+
+    const uint32_t total_after_allocate = page_manager->totalPages();
+    const uint32_t free_after_allocate = page_manager->freePages();
+
+    closeDatabase();
+    reopenDatabase(false);
+
+    const auto &startup_state = db_.last_startup_reconciliation();
+    EXPECT_NE(startup_state.classification,
+              Database::StartupRecoveryClassification::REPAIRABLE_PAGE_DAMAGE);
+    EXPECT_FALSE(startup_state.has_corrupt_pages);
+    EXPECT_FALSE(startup_state.has_page_scan_findings);
+    EXPECT_FALSE(startup_state.quarantine_active);
+    EXPECT_FALSE(db_.startup_quarantine_active());
+
+    ASSERT_NE(db_.page_manager(), nullptr);
+    EXPECT_GE(db_.page_manager()->totalPages(), total_after_allocate);
+    EXPECT_GE(db_.page_manager()->freePages(), free_after_allocate + 1u);
 }
 
 TEST_F(ExecutorTransactionPayloadTest, CommittedRowRemainsVisibleAcrossRestart) {

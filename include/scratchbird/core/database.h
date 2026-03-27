@@ -193,6 +193,8 @@ namespace scratchbird
         // Database class for managing database files
         class Database
         {
+            friend class PageManager;
+
         public:
             Database();
             ~Database(); // Defined in cpp file due to unique_ptr of forward declared types
@@ -338,6 +340,10 @@ namespace scratchbird
                 uint32_t cleanup_blocked_chain_pages = 0;
                 uint32_t quarantinable_chain_pages = 0;
                 uint32_t unrecoverable_chain_pages = 0;
+                bool checkpoint_queue_rebuild_required = false;
+                uint32_t checkpoint_queue_rebuild_pages = 0;
+                uint64_t checkpoint_dirty_generation_low_watermark = 0;
+                uint64_t checkpoint_dirty_generation_high_watermark = 0;
             };
 
             enum class DormantRestartReattachPolicy : uint8_t

@@ -13847,7 +13847,7 @@ public:
         template <typename RecordType> struct FindResult
         {
             Status status;
-            uint32_t slot_index; // Index in the catalog page
+            uint32_t slot_index; // Physical slot index across the full overflow chain
             RecordType record;
         };
 
@@ -13859,6 +13859,7 @@ public:
         {
             BufferPool *bp = db_->buffer_pool();
             uint32_t current_page_id = page_id;
+            uint32_t chain_slot_base = 0;
 
             while (current_page_id != 0)
             {
@@ -13882,7 +13883,7 @@ public:
                     {
                         RecordType found = *record;
                         bp->unpinPage(current_page_id, false, ctx);
-                        return {Status::OK, i, found};
+                        return {Status::OK, chain_slot_base + i, found};
                     }
 
                     offset += sizeof(RecordType);
@@ -13890,6 +13891,7 @@ public:
 
                 // Move to next page in chain
                 uint32_t next_page = heap->next_page;
+                chain_slot_base += heap->record_count;
                 bp->unpinPage(current_page_id, false, ctx);
                 current_page_id = next_page;
             }
@@ -13997,31 +13999,38 @@ public:
                                     const RecordType &updated_record, ErrorContext *ctx) -> Status
         {
             BufferPool *bp = db_->buffer_pool();
-            void *page_buffer;
+            uint32_t current_page_id = page_id;
+            uint32_t remaining_slot_index = slot_index;
 
-            Status status = bp->pinPage(page_id, &page_buffer, ctx);
-            if (status != Status::OK)
+            while (current_page_id != 0)
             {
-                SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
-                return status;
+                void *page_buffer = nullptr;
+                Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
+                    return status;
+                }
+
+                auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+                if (remaining_slot_index < heap->record_count)
+                {
+                    uint32_t offset =
+                        sizeof(CatalogHeapPage) + (remaining_slot_index * sizeof(RecordType));
+                    auto *record = reinterpret_cast<RecordType *>(
+                        reinterpret_cast<uint8_t *>(page_buffer) + offset);
+                    *record = updated_record;
+                    return bp->unpinPage(current_page_id, true, ctx); // Mark as dirty
+                }
+
+                remaining_slot_index -= heap->record_count;
+                uint32_t next_page = heap->next_page;
+                bp->unpinPage(current_page_id, false, ctx);
+                current_page_id = next_page;
             }
 
-            auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
-
-            if (slot_index >= heap->record_count)
-            {
-                bp->unpinPage(page_id, false, ctx);
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid slot index");
-                return Status::INVALID_ARGUMENT;
-            }
-
-            uint32_t offset = sizeof(CatalogHeapPage) + (slot_index * sizeof(RecordType));
-            auto *record =
-                reinterpret_cast<RecordType *>(reinterpret_cast<uint8_t *>(page_buffer) + offset);
-
-            *record = updated_record;
-
-            return bp->unpinPage(page_id, true, ctx); // Mark as dirty
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid slot index");
+            return Status::INVALID_ARGUMENT;
         }
 
         // Helper to read records from a catalog heap page
@@ -14102,6 +14111,29 @@ public:
         auto writeCommentRecord(const CommentInfo &comment, ErrorContext *ctx) -> Status;
         auto deleteCommentRecord(const ID &object_id, ErrorContext *ctx) -> Status;
         auto readCommentRecords(ErrorContext *ctx) -> Status;
+
+        auto schemaCatalogPageForTesting() const -> uint32_t
+        {
+            return schemas_table_page_;
+        }
+        auto recoveryRunCatalogPageForTesting() const -> uint32_t
+        {
+            return recovery_run_table_page_;
+        }
+        auto rawSchemaRecordExistsForTesting(const ID& schema_id, bool& exists,
+                                             ErrorContext* ctx) -> Status;
+        auto rawSchemaRecordByNameForTesting(const std::string& schema_name,
+                                             bool& found,
+                                             ID& schema_id_out,
+                                             uint32_t& is_valid_out,
+                                             uint32_t& page_id_out,
+                                             uint32_t& slot_index_out,
+                                             ErrorContext* ctx) -> Status;
+        auto rawSchemaHeapLayoutForTesting(std::string& summary, ErrorContext* ctx) -> Status;
+        auto lastRawSchemaRecordForTesting(ID& schema_id_out,
+                                           std::string& schema_name_out,
+                                           uint32_t& is_valid_out,
+                                           ErrorContext* ctx) -> Status;
 
         // Object definition persistence (DDL source + bytecode)
         auto writeObjectDefinitionRecord(const ObjectDefinitionInfo &definition,
@@ -14191,6 +14223,12 @@ public:
         auto readStatisticRecords(ErrorContext *ctx) -> Status;
         auto getStatisticCacheKey(const ID &table_id, const ID &column_id) const -> uint64_t;
 
+        auto catalogPageIsOverflowTarget(uint32_t target_page_id,
+                                         bool& is_overflow_target,
+                                         ErrorContext* ctx) -> Status;
+        auto ensureStandaloneCatalogRuntimePage(uint32_t& page_id,
+                                                bool& page_changed,
+                                                ErrorContext* ctx) -> Status;
         // Helper to allocate catalog pages
         auto allocateCatalogPage(uint32_t &page_id, ErrorContext *ctx) -> Status;
     };

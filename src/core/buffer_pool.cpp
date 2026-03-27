@@ -22,6 +22,7 @@
 #include <chrono>
 #include <functional>
 #include <cstdlib>
+#include <unordered_set>
 #ifndef _WIN32
     #include "scratchbird/core/posix_compat.h"
 #endif
@@ -31,6 +32,15 @@ namespace scratchbird::core
     namespace
     {
         constexpr uint32_t RING_DIVISOR = 8;
+        constexpr uint64_t ANONYMOUS_PREFETCH_SESSION_KEY = 1;
+
+        void eraseOwnedFrameIndex(std::vector<uint32_t> &owned_frames, uint32_t frame_index)
+        {
+            owned_frames.erase(std::remove(owned_frames.begin(),
+                                           owned_frames.end(),
+                                           frame_index),
+                               owned_frames.end());
+        }
 
         const char* poolLayoutToString(BufferPool::PoolLayout layout)
         {
@@ -38,6 +48,8 @@ namespace scratchbird::core
             {
                 case BufferPool::PoolLayout::Single:
                     return "single";
+                case BufferPool::PoolLayout::Segmented:
+                    return "segmented";
                 case BufferPool::PoolLayout::HotCold:
                     return "hot_cold";
                 case BufferPool::PoolLayout::Tablespace:
@@ -54,6 +66,10 @@ namespace scratchbird::core
                     return "GENERIC";
                 case BufferPool::MgaPageClass::TX_STATE:
                     return "TX_STATE";
+                case BufferPool::MgaPageClass::SYSTEM_META:
+                    return "SYSTEM_META";
+                case BufferPool::MgaPageClass::INDEX_ROOT_INTERNAL:
+                    return "INDEX_ROOT_INTERNAL";
                 case BufferPool::MgaPageClass::VERSION_ROOT:
                     return "VERSION_ROOT";
                 case BufferPool::MgaPageClass::CHAIN_HEAVY:
@@ -64,8 +80,32 @@ namespace scratchbird::core
                     return "SCAN_PROBATION";
                 case BufferPool::MgaPageClass::INDEX_CHURN:
                     return "INDEX_CHURN";
+                case BufferPool::MgaPageClass::TEMP_WORK:
+                    return "TEMP_WORK";
             }
             return "GENERIC";
+        }
+
+        const char* writebackQueueStateToString(BufferPool::WritebackQueueState queue_state)
+        {
+            switch (queue_state)
+            {
+                case BufferPool::WritebackQueueState::NONE:
+                    return "NONE";
+                case BufferPool::WritebackQueueState::FOREGROUND_HELP:
+                    return "FOREGROUND_HELP";
+                case BufferPool::WritebackQueueState::BACKGROUND_AGE:
+                    return "BACKGROUND_AGE";
+                case BufferPool::WritebackQueueState::CHECKPOINT:
+                    return "CHECKPOINT";
+                case BufferPool::WritebackQueueState::METADATA_PRIORITY:
+                    return "METADATA_PRIORITY";
+                case BufferPool::WritebackQueueState::WRITE_COMBINE:
+                    return "WRITE_COMBINE";
+                case BufferPool::WritebackQueueState::REPAIR_RETRY:
+                    return "REPAIR_RETRY";
+            }
+            return "NONE";
         }
 
         auto isTemporaryWorkPageBuffer(const uint8_t *buffer, uint32_t page_size) -> bool
@@ -82,10 +122,31 @@ namespace scratchbird::core
             }
             return pageIsTemporaryWork(*header);
         }
+
+        auto deriveCurrentPrefetchSessionKey() -> uint64_t
+        {
+            auto *ctx = ConnectionContext::getCurrent();
+            if (ctx == nullptr)
+            {
+                return ANONYMOUS_PREFETCH_SESSION_KEY;
+            }
+
+            const auto session_id = ctx->effectiveSessionId();
+            if (session_id != ConnectionContext::ID{})
+            {
+                const uint64_t hashed = static_cast<uint64_t>(
+                    std::hash<ConnectionContext::ID>{}(session_id));
+                return hashed == 0 ? ANONYMOUS_PREFETCH_SESSION_KEY : hashed;
+            }
+
+            const uint64_t proc_key = static_cast<uint64_t>(ctx->getProcId()) + 2;
+            return proc_key == 0 ? ANONYMOUS_PREFETCH_SESSION_KEY : proc_key;
+        }
     }
 
     BufferPool::BufferPool(Database *db, const Config &config) : db_(db), config_(config)
     {
+        config_.recomputeDomainFrames();
         frames_.resize(config.pool_size);
     }
 
@@ -98,9 +159,9 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        if (config_.layout != PoolLayout::Single)
+        if (config_.layout == PoolLayout::HotCold || config_.layout == PoolLayout::Tablespace)
         {
-            LOG_WARNING(GENERAL, "Buffer pool layout '%s' requested; using single pool",
+            LOG_WARNING(GENERAL, "Buffer pool layout '%s' requested; using segmented logical foundation",
                         poolLayoutToString(config_.layout));
         }
 
@@ -110,6 +171,7 @@ namespace scratchbird::core
             frames_.resize(config_.pool_size);
         }
         lru_list_.clear();
+        clearOwnershipPartitionsLocked();
 
         // Ensure page table partitions have buckets to avoid modulo-by-zero in hashing.
         const size_t per_partition = std::max<size_t>(1, config_.pool_size / NUM_PAGE_TABLE_PARTITIONS);
@@ -138,24 +200,19 @@ namespace scratchbird::core
             frames_[i].pin_count.store(0, std::memory_order_relaxed);
             frames_[i].is_dirty.store(false, std::memory_order_relaxed);
             frames_[i].usage_count.store(0, std::memory_order_relaxed);
-            frames_[i].mga_page_class.store(static_cast<uint8_t>(MgaPageClass::Generic),
-                                            std::memory_order_relaxed);
-            frames_[i].oldest_interesting_txid.store(0, std::memory_order_relaxed);
-            frames_[i].prune_safe_horizon_hint.store(0, std::memory_order_relaxed);
-            frames_[i].dead_version_bytes.store(0, std::memory_order_relaxed);
-            frames_[i].chain_depth_hint.store(0, std::memory_order_relaxed);
-            frames_[i].last_gc_touch_generation.store(0, std::memory_order_relaxed);
-            frames_[i].scan_probation_generation.store(0, std::memory_order_relaxed);
-            frames_[i].dirty_generation.store(0, std::memory_order_relaxed);
-            frames_[i].writeback_queue_state.store(
-                static_cast<uint8_t>(WritebackQueueState::NONE),
+            frames_[i].owner_partition.store(
+                static_cast<uint16_t>(getOwnershipHomePartition(i)),
                 std::memory_order_relaxed);
-            frames_[i].commit_fence_member.store(false, std::memory_order_relaxed);
+            frames_[i].home_partition.store(
+                static_cast<uint16_t>(getOwnershipHomePartition(i)),
+                std::memory_order_relaxed);
+            resetFrameScaffolding(frames_[i]);
 
             // Add to LRU list (all frames start as free)
             lru_list_.push_back(i);
         }
 
+        initializeOwnershipPartitionsLocked();
         initializeRingBuffers();
 
         metrics_ = &ScratchBirdMetrics::getInstance();
@@ -190,6 +247,7 @@ namespace scratchbird::core
             // Memory is freed automatically by unique_ptr
             // Clear data structures
             lru_list_.clear();
+            clearOwnershipPartitionsLocked();
         }
 
         // Clear page table partitions without nesting partition locks under mutex_.
@@ -280,27 +338,119 @@ namespace scratchbird::core
         return page_type >= PAGE_TYPE_BTREE_META && page_type < PAGE_TYPE_COLUMNSTORE_META;
     }
 
-    auto BufferPool::isVersionRootPageType(uint16_t page_type) -> bool
+    auto BufferPool::isSystemMetaPageType(uint16_t page_type) -> bool
     {
-        return page_type == PAGE_TYPE_HEAP || page_type == PAGE_TYPE_TEMP_HEAP ||
-               page_type == PAGE_TYPE_DOC_HEAP;
+        switch (page_type)
+        {
+            case PAGE_TYPE_CATALOG_ROOT:
+            case PAGE_TYPE_CATALOG_PAGE:
+            case PAGE_TYPE_FSM_ROOT:
+            case PAGE_TYPE_FSM_PAGE:
+            case PAGE_TYPE_TOAST_META:
+            case PAGE_TYPE_LOB_META:
+            case PAGE_TYPE_NAME_REGISTRY:
+            case PAGE_TYPE_BOOTSTRAP_RESERVED:
+            case PAGE_TYPE_FILESPACE_HEADER:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    auto BufferPool::isIndexRootInternalPageType(uint16_t page_type) -> bool
+    {
+        switch (page_type)
+        {
+            case PAGE_TYPE_BTREE_META:
+            case PAGE_TYPE_BTREE_INTERNAL:
+            case PAGE_TYPE_HASH_META:
+            case PAGE_TYPE_GIN_META:
+            case PAGE_TYPE_GIST_INTERNAL:
+            case PAGE_TYPE_SPGIST_META:
+            case PAGE_TYPE_SPGIST_INNER:
+            case PAGE_TYPE_BRIN_META:
+            case PAGE_TYPE_BRIN_REVMAP:
+            case PAGE_TYPE_BITMAP_META:
+            case PAGE_TYPE_BITMAP_DICT:
+            case PAGE_TYPE_INVERTED_META:
+            case PAGE_TYPE_INVERTED_DICT:
+            case PAGE_TYPE_SPARSE_META:
+            case PAGE_TYPE_SPARSE_DICT:
+            case PAGE_TYPE_FTS_META:
+            case PAGE_TYPE_FTS_DICT:
+            case PAGE_TYPE_TRIE_META:
+            case PAGE_TYPE_SPATIAL_META:
+            case PAGE_TYPE_MINHASH_META:
+            case PAGE_TYPE_BLOOM_META:
+            case PAGE_TYPE_SAI_META:
+            case PAGE_TYPE_SAI_TERM_DICT:
+            case PAGE_TYPE_SASI_META:
+            case PAGE_TYPE_SASI_TERM_DICT:
+            case PAGE_TYPE_COLUMNSTORE_META:
+            case PAGE_TYPE_LSM_META:
+            case PAGE_TYPE_DOC_PATH_DICTIONARY:
+            case PAGE_TYPE_TS_MEASUREMENT_ROOT:
+            case PAGE_TYPE_TS_SERIES_INDEX:
+            case PAGE_TYPE_COL_SEGMENT_HEADER:
+            case PAGE_TYPE_COL_DICTIONARY:
+            case PAGE_TYPE_SEARCH_TERM_DICT:
+            case PAGE_TYPE_VECTOR_QUANTIZER:
+            case PAGE_TYPE_LSM_RUN_MANIFEST:
+            case PAGE_TYPE_RETENTION_MANIFEST:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    auto BufferPool::defaultWorkloadClass(AccessStrategy strategy,
+                                          bool prefetch_request) -> WorkloadClass
+    {
+        if (prefetch_request)
+        {
+            return WorkloadClass::PrefetchSpeculative;
+        }
+
+        switch (strategy)
+        {
+            case AccessStrategy::Sequential:
+                return WorkloadClass::SequentialScan;
+            case AccessStrategy::Vacuum:
+                return WorkloadClass::SweepGc;
+            case AccessStrategy::BulkWrite:
+                return WorkloadClass::BulkWrite;
+            case AccessStrategy::Normal:
+            default:
+                return WorkloadClass::PointLookup;
+        }
     }
 
     auto BufferPool::classifyPageType(const uint8_t *buffer,
                                       uint32_t page_size,
-                                      AccessStrategy strategy) -> MgaPageClass
+                                      WorkloadClass workload_class) -> MgaPageClass
     {
-        if (strategy == AccessStrategy::Sequential || strategy == AccessStrategy::Vacuum)
-        {
-            return MgaPageClass::SCAN_PROBATION;
-        }
+        const bool scan_overlay =
+            workload_class == WorkloadClass::SequentialScan ||
+            workload_class == WorkloadClass::SweepGc ||
+            workload_class == WorkloadClass::BulkWrite ||
+            workload_class == WorkloadClass::PrefetchSpeculative;
 
         if (buffer == nullptr || page_size < sizeof(PageHeader))
         {
-            return MgaPageClass::Generic;
+            return scan_overlay ? MgaPageClass::SCAN_PROBATION : MgaPageClass::Generic;
         }
 
         const auto *header = reinterpret_cast<const PageHeader *>(buffer);
+        if (header->magic != K_MAGIC_SBRD)
+        {
+            return scan_overlay ? MgaPageClass::SCAN_PROBATION : MgaPageClass::Generic;
+        }
+
+        if (pageIsTemporaryWork(*header))
+        {
+            return MgaPageClass::TEMP_WORK;
+        }
+
         switch (header->page_type)
         {
             case PAGE_TYPE_DATABASE_HEADER:
@@ -311,9 +461,17 @@ namespace scratchbird::core
                 break;
         }
 
-        if (isVersionRootPageType(header->page_type))
+        if (isSystemMetaPageType(header->page_type))
         {
-            return MgaPageClass::VERSION_ROOT;
+            return MgaPageClass::SYSTEM_META;
+        }
+        if (isIndexRootInternalPageType(header->page_type))
+        {
+            return MgaPageClass::INDEX_ROOT_INTERNAL;
+        }
+        if (scan_overlay && !isIndexLikePageType(header->page_type))
+        {
+            return MgaPageClass::SCAN_PROBATION;
         }
         if (isIndexLikePageType(header->page_type))
         {
@@ -322,34 +480,955 @@ namespace scratchbird::core
         return MgaPageClass::Generic;
     }
 
-    auto BufferPool::evictionRankForClass(MgaPageClass page_class) -> uint32_t
+    auto BufferPool::classifyPolicyDomain(const uint8_t *buffer,
+                                          uint32_t page_size,
+                                          MgaPageClass page_class,
+                                          WorkloadClass workload_class) -> PolicyDomain
     {
+        // Page role outranks workload hint for temp and version-support pages.
+        // A non-temp durable page may not be moved into the temporary domain
+        // merely because the caller supplied a TemporaryWork hint.
+        if (page_class == MgaPageClass::TEMP_WORK || isTemporaryWorkPageBuffer(buffer, page_size))
+        {
+            return PolicyDomain::TemporaryWork;
+        }
+
         switch (page_class)
         {
-            case MgaPageClass::SCAN_PROBATION:
-                return 0;
-            case MgaPageClass::Generic:
-                return 1;
-            case MgaPageClass::GC_CANDIDATE:
-                return 2;
-            case MgaPageClass::VERSION_ROOT:
-                return 3;
-            case MgaPageClass::INDEX_CHURN:
-                return 4;
-            case MgaPageClass::CHAIN_HEAVY:
-                return 5;
             case MgaPageClass::TX_STATE:
-                return 6;
+            case MgaPageClass::SYSTEM_META:
+                return PolicyDomain::CriticalSystem;
+            case MgaPageClass::INDEX_ROOT_INTERNAL:
+                return PolicyDomain::HotOltp;
+            case MgaPageClass::VERSION_ROOT:
+            case MgaPageClass::CHAIN_HEAVY:
+            case MgaPageClass::GC_CANDIDATE:
+                return PolicyDomain::VersionUndo;
+            case MgaPageClass::SCAN_PROBATION:
+                return PolicyDomain::ScanBulkRing;
+            case MgaPageClass::INDEX_CHURN:
+            case MgaPageClass::Generic:
+            case MgaPageClass::TEMP_WORK:
+                break;
         }
-        return 6;
+
+        switch (workload_class)
+        {
+            case WorkloadClass::RangeScan:
+                return PolicyDomain::ReadMostly;
+            case WorkloadClass::SequentialScan:
+            case WorkloadClass::SweepGc:
+            case WorkloadClass::BulkWrite:
+            case WorkloadClass::PrefetchSpeculative:
+                return PolicyDomain::ScanBulkRing;
+            case WorkloadClass::PointLookup:
+            case WorkloadClass::IndexProbe:
+            case WorkloadClass::NestedLoopReread:
+                return PolicyDomain::HotOltp;
+            case WorkloadClass::CheckpointCleaner:
+            case WorkloadClass::RecoveryReplay:
+            case WorkloadClass::TemporaryWork:
+            case WorkloadClass::Unspecified:
+                break;
+        }
+
+        return PolicyDomain::HotOltp;
     }
 
-    auto BufferPool::isHardProtectedClass(MgaPageClass page_class) -> bool
+    auto BufferPool::classifyResidencyTier(WorkloadClass workload_class,
+                                           MgaPageClass page_class) -> ResidencyTier
     {
-        return page_class == MgaPageClass::TX_STATE;
+        if (page_class == MgaPageClass::TX_STATE)
+        {
+            return ResidencyTier::PinBiased;
+        }
+        if (isVersionUndoClass(page_class))
+        {
+            return ResidencyTier::Protected;
+        }
+        if (page_class == MgaPageClass::SCAN_PROBATION ||
+            workload_class == WorkloadClass::SequentialScan ||
+            workload_class == WorkloadClass::SweepGc ||
+            workload_class == WorkloadClass::BulkWrite ||
+            workload_class == WorkloadClass::PrefetchSpeculative)
+        {
+            return ResidencyTier::RingOnly;
+        }
+
+        return ResidencyTier::LegacyShared;
     }
 
-    void BufferPool::applyAutomaticMgaClassification(uint32_t frame_index, AccessStrategy strategy)
+    auto BufferPool::evictionRankForTier(ResidencyTier tier) -> uint32_t
+    {
+        switch (tier)
+        {
+            case ResidencyTier::RingOnly:
+                return 0;
+            case ResidencyTier::Probationary:
+                return 1;
+            case ResidencyTier::LegacyShared:
+                return 2;
+            case ResidencyTier::Protected:
+                return 3;
+            case ResidencyTier::PinBiased:
+                return 4;
+        }
+        return 4;
+    }
+
+    auto BufferPool::isVersionUndoClass(MgaPageClass page_class) -> bool
+    {
+        return page_class == MgaPageClass::VERSION_ROOT ||
+               page_class == MgaPageClass::CHAIN_HEAVY ||
+               page_class == MgaPageClass::GC_CANDIDATE;
+    }
+
+    auto BufferPool::isDirectProtectClass(MgaPageClass page_class) -> bool
+    {
+        return page_class == MgaPageClass::INDEX_ROOT_INTERNAL;
+    }
+
+    auto BufferPool::isDirectProtectSystemMetaPageType(uint16_t page_type) -> bool
+    {
+        switch (page_type)
+        {
+            case PAGE_TYPE_CATALOG_ROOT:
+            case PAGE_TYPE_FSM_ROOT:
+            case PAGE_TYPE_NAME_REGISTRY:
+            case PAGE_TYPE_BOOTSTRAP_RESERVED:
+            case PAGE_TYPE_FILESPACE_HEADER:
+            case PAGE_TYPE_TOAST_META:
+            case PAGE_TYPE_LOB_META:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    auto BufferPool::isHardReservedDomain(PolicyDomain domain) -> bool
+    {
+        return domain == PolicyDomain::CriticalSystem ||
+               domain == PolicyDomain::VersionUndo;
+    }
+
+    auto BufferPool::protectedFrameBudget() const -> uint32_t
+    {
+        if (config_.pool_size == 0)
+        {
+            return 0;
+        }
+        return std::min(config_.pool_size,
+                        std::max(1u, Config::pctToFrames(config_.replacement_protected_pct,
+                                                         config_.pool_size)));
+    }
+
+    auto BufferPool::objectIdForBuffer(const uint8_t *buffer, uint32_t page_size) -> uint32_t
+    {
+        if (buffer == nullptr || page_size < sizeof(PageHeader))
+        {
+            return 0;
+        }
+
+        const auto *header = reinterpret_cast<const PageHeader *>(buffer);
+        if (header->magic != K_MAGIC_SBRD)
+        {
+            return 0;
+        }
+
+        bool all_zero = true;
+        uint32_t hash = 2166136261u;
+        for (uint8_t byte : header->object_uuid)
+        {
+            if (byte != 0)
+            {
+                all_zero = false;
+            }
+            hash ^= static_cast<uint32_t>(byte);
+            hash *= 16777619u;
+        }
+
+        if (all_zero)
+        {
+            return 0;
+        }
+        return hash == 0 ? 1u : hash;
+    }
+
+    auto BufferPool::objectProtectionBudget() const -> uint32_t
+    {
+        if (config_.pool_size == 0)
+        {
+            return 0;
+        }
+        return std::min(config_.pool_size,
+                        std::max(1u, Config::pctToFrames(config_.thrash_object_budget_pct,
+                                                         config_.pool_size)));
+    }
+
+    auto BufferPool::sessionPrefetchBudget() const -> uint32_t
+    {
+        if (config_.pool_size == 0)
+        {
+            return 0;
+        }
+        return std::min(config_.pool_size,
+                        std::max(1u, Config::pctToFrames(config_.thrash_session_budget_pct,
+                                                         config_.pool_size)));
+    }
+
+    auto BufferPool::prefetchPressureBudget() const -> uint32_t
+    {
+        if (config_.pool_size == 0)
+        {
+            return 0;
+        }
+        return std::min(config_.pool_size,
+                        std::max(1u, Config::pctToFrames(config_.thrash_prefetch_pressure_pct,
+                                                         config_.pool_size)));
+    }
+
+    auto BufferPool::currentProtectedFrameCount() const -> uint32_t
+    {
+        uint32_t count = 0;
+        for (const auto &frame : frames_)
+        {
+            const auto lifecycle = static_cast<LifecycleState>(
+                frame.lifecycle_state.load(std::memory_order_relaxed));
+            if (lifecycle == LifecycleState::Free)
+            {
+                continue;
+            }
+
+            const auto tier = static_cast<ResidencyTier>(
+                frame.residency_tier.load(std::memory_order_relaxed));
+            // Pin-biased frames are a separate hard reservation and must not
+            // consume the soft protected budget used for probationary
+            // promotion/demotion decisions.
+            if (tier == ResidencyTier::Protected)
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    auto BufferPool::currentProtectedFrameCountForObject(uint32_t object_id,
+                                                         uint32_t excluding_frame) const
+        -> uint32_t
+    {
+        if (object_id == 0)
+        {
+            return 0;
+        }
+
+        uint32_t count = 0;
+        for (uint32_t frame_index = 0; frame_index < frames_.size(); ++frame_index)
+        {
+            if (frame_index == excluding_frame)
+            {
+                continue;
+            }
+
+            const auto &frame = frames_[frame_index];
+            const auto lifecycle = static_cast<LifecycleState>(
+                frame.lifecycle_state.load(std::memory_order_relaxed));
+            if (lifecycle == LifecycleState::Free || frame.gpid == INVALID_GPID)
+            {
+                continue;
+            }
+
+            const auto tier = static_cast<ResidencyTier>(
+                frame.residency_tier.load(std::memory_order_relaxed));
+            if (tier != ResidencyTier::Protected)
+            {
+                continue;
+            }
+
+            if (frame.object_id.load(std::memory_order_relaxed) == object_id)
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    auto BufferPool::collectDomainResidentCountsLocked() const -> DomainCounterArray
+    {
+        DomainCounterArray counts{};
+        for (const auto &frame : frames_)
+        {
+            const auto lifecycle = static_cast<LifecycleState>(
+                frame.lifecycle_state.load(std::memory_order_relaxed));
+            if (lifecycle == LifecycleState::Free)
+            {
+                continue;
+            }
+
+            const auto domain = static_cast<PolicyDomain>(
+                frame.policy_domain.load(std::memory_order_relaxed));
+            counts[static_cast<size_t>(domain)]++;
+        }
+        return counts;
+    }
+
+    auto BufferPool::domainBorrowedPagesLocked(PolicyDomain domain,
+                                               const DomainCounterArray &resident_counts) const
+        -> uint32_t
+    {
+        const auto &budget = config_.domainBudget(domain);
+        const uint32_t resident = resident_counts[static_cast<size_t>(domain)];
+
+        if (budget.max_frames > 0 && resident > budget.max_frames)
+        {
+            return resident - budget.max_frames;
+        }
+        if (budget.target_frames > 0 && resident > budget.target_frames)
+        {
+            return resident - budget.target_frames;
+        }
+        return 0;
+    }
+
+    auto BufferPool::canEvictFromDomainLocked(PolicyDomain domain,
+                                              const DomainCounterArray &resident_counts) const
+        -> bool
+    {
+        if (!isHardReservedDomain(domain))
+        {
+            return true;
+        }
+
+        const auto &budget = config_.domainBudget(domain);
+        const uint32_t resident = resident_counts[static_cast<size_t>(domain)];
+        if (budget.min_frames == 0)
+        {
+            return true;
+        }
+        return resident > budget.min_frames;
+    }
+
+    auto BufferPool::domainEvictionPriorityLocked(PolicyDomain domain,
+                                                  const DomainCounterArray &resident_counts) const
+        -> uint32_t
+    {
+        const auto &budget = config_.domainBudget(domain);
+        const uint32_t resident = resident_counts[static_cast<size_t>(domain)];
+
+        const bool above_max = budget.max_frames > 0 && resident > budget.max_frames;
+        const bool above_target = budget.target_frames > 0 && resident > budget.target_frames;
+        const bool above_min = budget.min_frames == 0 || resident > budget.min_frames;
+
+        switch (domain)
+        {
+            case PolicyDomain::ScanBulkRing:
+                return above_max ? 0u : 2u;
+            case PolicyDomain::TemporaryWork:
+                return above_max ? 1u : 3u;
+            case PolicyDomain::ReadMostly:
+                return above_target ? 4u : 6u;
+            case PolicyDomain::HotOltp:
+                return above_target ? 5u : 6u;
+            case PolicyDomain::VersionUndo:
+                return above_min ? 7u : 9u;
+            case PolicyDomain::CriticalSystem:
+                return above_min ? 8u : 10u;
+            case PolicyDomain::Count:
+                break;
+        }
+        return 10u;
+    }
+
+    auto BufferPool::consumeGhostHistory(GPID gpid) -> bool
+    {
+        for (auto it = ghost_history_.begin(); it != ghost_history_.end(); ++it)
+        {
+            if (it->gpid != gpid)
+            {
+                continue;
+            }
+
+            ghost_history_.erase(it);
+            stats_.mga_ghost_history_hits.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        return false;
+    }
+
+    void BufferPool::recordGhostHistory(GPID gpid,
+                                        PolicyDomain domain,
+                                        MgaPageClass page_class,
+                                        ResidencyTier residency_tier,
+                                        uint64_t eviction_generation,
+                                        GhostEvictionReason reason)
+    {
+        const uint32_t pct_cap =
+            Config::pctToFrames(config_.replacement_ghost_history_pct, config_.pool_size);
+        // Keep more than a single pool-turn of ghost lineage so small pools can
+        // still observe re-reference of a recently displaced probationary page.
+        const uint32_t cap =
+            std::max<uint32_t>(pct_cap, std::max<uint32_t>(8u, config_.pool_size * 8));
+        if (cap == 0 || gpid == INVALID_GPID)
+        {
+            return;
+        }
+
+        for (auto it = ghost_history_.begin(); it != ghost_history_.end();)
+        {
+            if (it->gpid == gpid)
+            {
+                it = ghost_history_.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+
+        ghost_history_.push_back(
+            GhostEntry{gpid, domain, page_class, residency_tier, eviction_generation, reason});
+        while (ghost_history_.size() > cap)
+        {
+            ghost_history_.pop_front();
+        }
+    }
+
+    void BufferPool::resetFrameScaffolding(Frame &frame)
+    {
+        frame.object_id.store(0, std::memory_order_relaxed);
+        frame.mga_page_class.store(static_cast<uint8_t>(MgaPageClass::Generic),
+                                   std::memory_order_relaxed);
+        frame.policy_domain.store(static_cast<uint8_t>(PolicyDomain::HotOltp),
+                                  std::memory_order_relaxed);
+        frame.workload_class.store(static_cast<uint8_t>(WorkloadClass::Unspecified),
+                                   std::memory_order_relaxed);
+        frame.residency_tier.store(static_cast<uint8_t>(ResidencyTier::LegacyShared),
+                                   std::memory_order_relaxed);
+        frame.lifecycle_state.store(static_cast<uint8_t>(LifecycleState::Free),
+                                    std::memory_order_relaxed);
+        frame.dirty_state.store(static_cast<uint8_t>(DirtyState::Clean),
+                                std::memory_order_relaxed);
+        frame.oldest_interesting_txid.store(0, std::memory_order_relaxed);
+        frame.prune_safe_horizon_hint.store(0, std::memory_order_relaxed);
+        frame.dead_version_bytes.store(0, std::memory_order_relaxed);
+        frame.chain_depth_hint.store(0, std::memory_order_relaxed);
+        frame.prefetch_session_key.store(0, std::memory_order_relaxed);
+        frame.last_gc_touch_generation.store(0, std::memory_order_relaxed);
+        frame.scan_probation_generation.store(0, std::memory_order_relaxed);
+        frame.state_generation.store(0, std::memory_order_relaxed);
+        frame.io_generation.store(0, std::memory_order_relaxed);
+        frame.dirty_generation.store(0, std::memory_order_relaxed);
+        frame.last_flush_generation.store(0, std::memory_order_relaxed);
+        frame.checkpoint_target_generation.store(0, std::memory_order_relaxed);
+        frame.admission_generation.store(0, std::memory_order_relaxed);
+        frame.last_touch_generation.store(0, std::memory_order_relaxed);
+        frame.temperature_generation.store(0, std::memory_order_relaxed);
+        frame.writeback_queue_state.store(static_cast<uint8_t>(WritebackQueueState::NONE),
+                                          std::memory_order_relaxed);
+        frame.speculative_prefetch.store(false, std::memory_order_relaxed);
+        frame.prefetch_consumed.store(false, std::memory_order_relaxed);
+        frame.commit_fence_member.store(false, std::memory_order_relaxed);
+    }
+
+    void BufferPool::clearOwnershipPartitionsLocked()
+    {
+        for (auto &partition : ownership_partitions_)
+        {
+            partition.owned_frames.clear();
+            partition.free_frames.clear();
+            partition.victim_cursor = 0;
+        }
+    }
+
+    void BufferPool::initializeOwnershipPartitionsLocked()
+    {
+        clearOwnershipPartitionsLocked();
+        for (uint32_t frame_index = 0; frame_index < config_.pool_size; ++frame_index)
+        {
+            const size_t owner_partition = getOwnershipHomePartition(frame_index);
+            Frame &frame = frames_[frame_index];
+            frame.owner_partition.store(static_cast<uint16_t>(owner_partition),
+                                        std::memory_order_relaxed);
+            frame.home_partition.store(static_cast<uint16_t>(owner_partition),
+                                       std::memory_order_relaxed);
+            ownership_partitions_[owner_partition].owned_frames.push_back(frame_index);
+            ownership_partitions_[owner_partition].free_frames.push_back(frame_index);
+        }
+    }
+
+    void BufferPool::resetFrameIdentity(Frame &frame,
+                                        size_t owner_partition,
+                                        bool keep_home_partition)
+    {
+        frame.gpid = INVALID_GPID;
+        frame.pin_count.store(0, std::memory_order_relaxed);
+        frame.is_dirty.store(false, std::memory_order_relaxed);
+        frame.usage_count.store(0, std::memory_order_relaxed);
+        frame.owner_partition.store(static_cast<uint16_t>(owner_partition),
+                                    std::memory_order_relaxed);
+        if (!keep_home_partition)
+        {
+            frame.home_partition.store(static_cast<uint16_t>(owner_partition),
+                                       std::memory_order_relaxed);
+        }
+        resetFrameScaffolding(frame);
+    }
+
+    void BufferPool::stageFrameForOwnership(Frame &frame,
+                                            size_t owner_partition,
+                                            LifecycleState lifecycle_state)
+    {
+        frame.owner_partition.store(static_cast<uint16_t>(owner_partition),
+                                    std::memory_order_relaxed);
+        frame.lifecycle_state.store(static_cast<uint8_t>(lifecycle_state),
+                                    std::memory_order_relaxed);
+        frame.state_generation.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void BufferPool::releaseFrameToOwnershipFreeListLocked(uint32_t frame_index,
+                                                           size_t owner_partition)
+    {
+        OwnershipPartition &partition = ownership_partitions_[owner_partition];
+        if (std::find(partition.free_frames.begin(),
+                      partition.free_frames.end(),
+                      frame_index) == partition.free_frames.end())
+        {
+            partition.free_frames.push_back(frame_index);
+        }
+    }
+
+    void BufferPool::transferFrameOwnershipLocked(uint32_t frame_index,
+                                                  size_t from_partition,
+                                                  size_t to_partition)
+    {
+        if (from_partition == to_partition)
+        {
+            frames_[frame_index].owner_partition.store(static_cast<uint16_t>(to_partition),
+                                                       std::memory_order_relaxed);
+            return;
+        }
+
+        eraseOwnedFrameIndex(ownership_partitions_[from_partition].owned_frames, frame_index);
+        auto &donor_free = ownership_partitions_[from_partition].free_frames;
+        donor_free.erase(std::remove(donor_free.begin(),
+                                     donor_free.end(),
+                                     frame_index),
+                         donor_free.end());
+        ownership_partitions_[to_partition].owned_frames.push_back(frame_index);
+        frames_[frame_index].owner_partition.store(static_cast<uint16_t>(to_partition),
+                                                   std::memory_order_relaxed);
+        frames_[frame_index].state_generation.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    auto BufferPool::tryClaimFreeFrameLocked(size_t owner_partition,
+                                             uint32_t &frame_index) -> bool
+    {
+        OwnershipPartition &partition = ownership_partitions_[owner_partition];
+        while (!partition.free_frames.empty())
+        {
+            frame_index = partition.free_frames.front();
+            partition.free_frames.pop_front();
+
+            Frame &frame = frames_[frame_index];
+            if (frame.gpid != INVALID_GPID ||
+                frame.pin_count.load(std::memory_order_relaxed) != 0)
+            {
+                continue;
+            }
+
+            const auto lifecycle = static_cast<LifecycleState>(
+                frame.lifecycle_state.load(std::memory_order_relaxed));
+            if (lifecycle != LifecycleState::Free && lifecycle != LifecycleState::Error)
+            {
+                continue;
+            }
+
+            resetFrameIdentity(frame, owner_partition, true);
+            stageFrameForOwnership(frame, owner_partition, LifecycleState::Loading);
+            return true;
+        }
+
+        return false;
+    }
+
+    auto BufferPool::tryStealFreeFrameLocked(size_t owner_partition,
+                                             uint32_t &frame_index) -> bool
+    {
+        for (size_t offset = 1; offset < NUM_PAGE_TABLE_PARTITIONS; ++offset)
+        {
+            const size_t donor_partition =
+                (owner_partition + offset) % NUM_PAGE_TABLE_PARTITIONS;
+            if (donor_partition == owner_partition)
+            {
+                continue;
+            }
+
+            std::unique_lock<std::mutex> donor_lock(
+                ownership_partitions_[donor_partition].mutex,
+                std::try_to_lock);
+            if (!donor_lock.owns_lock())
+            {
+                continue;
+            }
+
+            auto &donor = ownership_partitions_[donor_partition];
+            while (!donor.free_frames.empty())
+            {
+                frame_index = donor.free_frames.front();
+                donor.free_frames.pop_front();
+
+                Frame &frame = frames_[frame_index];
+                if (frame.gpid != INVALID_GPID ||
+                    frame.pin_count.load(std::memory_order_relaxed) != 0)
+                {
+                    continue;
+                }
+
+                const auto lifecycle = static_cast<LifecycleState>(
+                    frame.lifecycle_state.load(std::memory_order_relaxed));
+                if (lifecycle != LifecycleState::Free &&
+                    lifecycle != LifecycleState::Error)
+                {
+                    continue;
+                }
+
+                transferFrameOwnershipLocked(frame_index,
+                                             donor_partition,
+                                             owner_partition);
+                resetFrameIdentity(frame, owner_partition, true);
+                stageFrameForOwnership(frame, owner_partition, LifecycleState::Loading);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    auto BufferPool::selectOwnedVictimFrameLocked(size_t owner_partition,
+                                                  uint32_t &candidate_frame) -> bool
+    {
+        OwnershipPartition &partition = ownership_partitions_[owner_partition];
+        if (partition.owned_frames.empty())
+        {
+            return false;
+        }
+
+        constexpr uint32_t MAX_PASSES = 2;
+        candidate_frame = UINT32_MAX;
+        uint32_t candidate_rank = UINT32_MAX;
+        bool candidate_dirty = true;
+        uint32_t protected_candidate_frame = UINT32_MAX;
+        const uint64_t current_generation =
+            residency_generation_clock_.load(std::memory_order_relaxed);
+        uint32_t protected_frames = currentProtectedFrameCount();
+        const uint32_t protected_budget = protectedFrameBudget();
+        const DomainCounterArray resident_counts = collectDomainResidentCountsLocked();
+        std::array<bool, static_cast<size_t>(PolicyDomain::Count)>
+            reservation_skip_recorded{};
+
+        for (uint32_t pass = 0; pass < MAX_PASSES; ++pass)
+        {
+            if (partition.owned_frames.empty())
+            {
+                break;
+            }
+
+            const size_t owned_count = partition.owned_frames.size();
+            for (size_t scanned = 0; scanned < owned_count; ++scanned)
+            {
+                if (partition.victim_cursor >= partition.owned_frames.size())
+                {
+                    partition.victim_cursor = 0;
+                }
+
+                const uint32_t frame_index =
+                    partition.owned_frames[partition.victim_cursor++];
+                Frame &frame = frames_[frame_index];
+                const auto lifecycle = static_cast<LifecycleState>(
+                    frame.lifecycle_state.load(std::memory_order_relaxed));
+                if (lifecycle != LifecycleState::Valid &&
+                    lifecycle != LifecycleState::Error)
+                {
+                    continue;
+                }
+                if (frame.pin_count.load(std::memory_order_relaxed) != 0 ||
+                    frame.gpid == INVALID_GPID)
+                {
+                    continue;
+                }
+
+                const MgaPageClass page_class = static_cast<MgaPageClass>(
+                    frame.mga_page_class.load(std::memory_order_relaxed));
+                ResidencyTier residency_tier = static_cast<ResidencyTier>(
+                    frame.residency_tier.load(std::memory_order_relaxed));
+                const PolicyDomain domain = static_cast<PolicyDomain>(
+                    frame.policy_domain.load(std::memory_order_relaxed));
+                const bool commit_fence_member =
+                    frame.commit_fence_member.load(std::memory_order_relaxed);
+
+                if (commit_fence_member || isHardProtectedClass(page_class) ||
+                    residency_tier == ResidencyTier::PinBiased)
+                {
+                    continue;
+                }
+
+                if (!canEvictFromDomainLocked(domain, resident_counts))
+                {
+                    const size_t domain_index = static_cast<size_t>(domain);
+                    if (!reservation_skip_recorded[domain_index])
+                    {
+                        domain_reservation_breach_counts_[domain_index].fetch_add(
+                            1, std::memory_order_relaxed);
+                        reservation_skip_recorded[domain_index] = true;
+                    }
+                    continue;
+                }
+
+                const uint32_t usage_count =
+                    frame.usage_count.load(std::memory_order_relaxed);
+                if (usage_count != 0)
+                {
+                    frame.usage_count.fetch_sub(1, std::memory_order_relaxed);
+                    continue;
+                }
+
+                if (residency_tier == ResidencyTier::Protected)
+                {
+                    const uint64_t last_touch_generation =
+                        frame.last_touch_generation.load(std::memory_order_relaxed);
+                    const uint64_t age = (current_generation > last_touch_generation)
+                                             ? (current_generation - last_touch_generation)
+                                             : 0;
+                    const uint64_t max_protected_age = std::max<uint64_t>(
+                        4, static_cast<uint64_t>(
+                               config_.admission_second_touch_generations) * 2);
+                    if (protected_frames > protected_budget || age > max_protected_age)
+                    {
+                        frame.residency_tier.store(
+                            static_cast<uint8_t>(ResidencyTier::Probationary),
+                            std::memory_order_relaxed);
+                        stats_.mga_residency_demotions.fetch_add(
+                            1, std::memory_order_relaxed);
+                        residency_tier = ResidencyTier::Probationary;
+                        if (protected_frames > 0)
+                        {
+                            --protected_frames;
+                        }
+                    }
+                    else
+                    {
+                        if (protected_candidate_frame == UINT32_MAX)
+                        {
+                            protected_candidate_frame = frame_index;
+                        }
+                        continue;
+                    }
+                }
+
+                const bool dirty = frame.is_dirty.load(std::memory_order_relaxed);
+                const uint32_t rank =
+                    (domainEvictionPriorityLocked(domain, resident_counts) << 8) |
+                    (evictionRankForTier(residency_tier) << 4) |
+                    evictionRankForClass(page_class);
+                if (candidate_frame == UINT32_MAX || rank < candidate_rank ||
+                    (rank == candidate_rank && candidate_dirty && !dirty))
+                {
+                    candidate_frame = frame_index;
+                    candidate_rank = rank;
+                    candidate_dirty = dirty;
+                }
+            }
+
+            if (candidate_frame != UINT32_MAX)
+            {
+                return true;
+            }
+        }
+
+        if (protected_candidate_frame != UINT32_MAX &&
+            commit_fence_depth_.load(std::memory_order_acquire) == 0)
+        {
+            candidate_frame = protected_candidate_frame;
+            stats_.mga_protected_set_collapse_events.fetch_add(
+                1, std::memory_order_relaxed);
+            return true;
+        }
+
+        return false;
+    }
+
+    auto BufferPool::tryClaimOwnedVictimFrameLocked(size_t owner_partition,
+                                                    uint32_t &frame_index,
+                                                    ErrorContext *ctx) -> Status
+    {
+        for (size_t attempt = 0;
+             attempt < ownership_partitions_[owner_partition].owned_frames.size() + 1;
+             ++attempt)
+        {
+            if (!selectOwnedVictimFrameLocked(owner_partition, frame_index))
+            {
+                return Status::INVALID_ARGUMENT;
+            }
+
+            const Status status = evictSpecificFrame(frame_index, ctx);
+            if (status == Status::OK)
+            {
+                resetFrameIdentity(frames_[frame_index], owner_partition, true);
+                stageFrameForOwnership(frames_[frame_index],
+                                       owner_partition,
+                                       LifecycleState::Loading);
+                return Status::OK;
+            }
+            if (status != Status::INVALID_ARGUMENT)
+            {
+                return status;
+            }
+        }
+
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto BufferPool::tryStealOwnedVictimFrameLocked(size_t owner_partition,
+                                                    uint32_t &frame_index,
+                                                    ErrorContext *ctx) -> Status
+    {
+        for (size_t offset = 1; offset < NUM_PAGE_TABLE_PARTITIONS; ++offset)
+        {
+            const size_t donor_partition =
+                (owner_partition + offset) % NUM_PAGE_TABLE_PARTITIONS;
+            if (donor_partition == owner_partition)
+            {
+                continue;
+            }
+
+            std::unique_lock<std::mutex> donor_lock(
+                ownership_partitions_[donor_partition].mutex,
+                std::try_to_lock);
+            if (!donor_lock.owns_lock())
+            {
+                continue;
+            }
+
+            uint32_t donor_candidate = UINT32_MAX;
+            for (size_t attempt = 0;
+                 attempt < ownership_partitions_[donor_partition].owned_frames.size() + 1;
+                 ++attempt)
+            {
+                if (!selectOwnedVictimFrameLocked(donor_partition, donor_candidate))
+                {
+                    break;
+                }
+
+                const Status status = evictSpecificFrame(donor_candidate, ctx);
+                if (status == Status::OK)
+                {
+                    transferFrameOwnershipLocked(donor_candidate,
+                                                 donor_partition,
+                                                 owner_partition);
+                    resetFrameIdentity(frames_[donor_candidate],
+                                       owner_partition,
+                                       true);
+                    stageFrameForOwnership(frames_[donor_candidate],
+                                           owner_partition,
+                                           LifecycleState::Loading);
+                    frame_index = donor_candidate;
+                    return Status::OK;
+                }
+                if (status != Status::INVALID_ARGUMENT)
+                {
+                    return status;
+                }
+            }
+        }
+
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto BufferPool::claimFrameForSegmentedMiss(size_t owner_partition,
+                                                uint32_t &frame_index,
+                                                ErrorContext *ctx) -> Status
+    {
+        if (tryClaimFreeFrameLocked(owner_partition, frame_index))
+        {
+            return Status::OK;
+        }
+        if (tryStealFreeFrameLocked(owner_partition, frame_index))
+        {
+            return Status::OK;
+        }
+
+        const Status local_status =
+            tryClaimOwnedVictimFrameLocked(owner_partition, frame_index, ctx);
+        if (local_status == Status::OK)
+        {
+            return Status::OK;
+        }
+        if (local_status != Status::INVALID_ARGUMENT)
+        {
+            return local_status;
+        }
+
+        const Status donor_status =
+            tryStealOwnedVictimFrameLocked(owner_partition, frame_index, ctx);
+        if (donor_status != Status::INVALID_ARGUMENT)
+        {
+            return donor_status;
+        }
+
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "Buffer pool partition has no evictable or transferrable frame");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto BufferPool::classifyWritebackQueueState(const Frame &frame) -> WritebackQueueState
+    {
+        const DirtyState dirty_state = static_cast<DirtyState>(
+            frame.dirty_state.load(std::memory_order_relaxed));
+        if (dirty_state == DirtyState::DirtyFailed)
+        {
+            return WritebackQueueState::REPAIR_RETRY;
+        }
+        if (frame.checkpoint_target_generation.load(std::memory_order_relaxed) != 0)
+        {
+            return WritebackQueueState::CHECKPOINT;
+        }
+        if (frame.commit_fence_member.load(std::memory_order_relaxed))
+        {
+            return WritebackQueueState::FOREGROUND_HELP;
+        }
+
+        const MgaPageClass page_class = static_cast<MgaPageClass>(
+            frame.mga_page_class.load(std::memory_order_relaxed));
+        switch (page_class)
+        {
+            case MgaPageClass::TX_STATE:
+            case MgaPageClass::SYSTEM_META:
+            case MgaPageClass::INDEX_ROOT_INTERNAL:
+            case MgaPageClass::VERSION_ROOT:
+                return WritebackQueueState::METADATA_PRIORITY;
+            case MgaPageClass::CHAIN_HEAVY:
+            case MgaPageClass::GC_CANDIDATE:
+            case MgaPageClass::INDEX_CHURN:
+                return WritebackQueueState::WRITE_COMBINE;
+            case MgaPageClass::Generic:
+            case MgaPageClass::SCAN_PROBATION:
+            case MgaPageClass::TEMP_WORK:
+            default:
+                return WritebackQueueState::BACKGROUND_AGE;
+        }
+    }
+
+    void BufferPool::refreshFrameObjectId(uint32_t frame_index)
+    {
+        if (frame_index >= frames_.size())
+        {
+            return;
+        }
+        frames_[frame_index].object_id.store(
+            objectIdForBuffer(frames_[frame_index].data.get(), config_.page_size),
+            std::memory_order_relaxed);
+    }
+
+    void BufferPool::markFramePrefetched(uint32_t frame_index, uint64_t session_key)
     {
         if (frame_index >= frames_.size())
         {
@@ -357,26 +1436,501 @@ namespace scratchbird::core
         }
 
         Frame &frame = frames_[frame_index];
+        const bool already_prefetched =
+            frame.speculative_prefetch.exchange(true, std::memory_order_relaxed);
+        frame.prefetch_session_key.store(session_key, std::memory_order_relaxed);
+        frame.prefetch_consumed.store(false, std::memory_order_relaxed);
+        if (!already_prefetched)
+        {
+            stats_.prefetch_pages_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    void BufferPool::consumePrefetchDebt(uint32_t frame_index, WorkloadClass workload_class)
+    {
+        if (frame_index >= frames_.size() ||
+            workload_class == WorkloadClass::PrefetchSpeculative)
+        {
+            return;
+        }
+
+        Frame &frame = frames_[frame_index];
+        if (!frame.speculative_prefetch.exchange(false, std::memory_order_relaxed))
+        {
+            return;
+        }
+
+        frame.prefetch_consumed.store(true, std::memory_order_relaxed);
+        frame.prefetch_session_key.store(0, std::memory_order_relaxed);
+        stats_.prefetch_pages_useful.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void BufferPool::recordUnusedPrefetchEviction(const Frame &frame)
+    {
+        if (!frame.speculative_prefetch.load(std::memory_order_relaxed) ||
+            frame.prefetch_consumed.load(std::memory_order_relaxed))
+        {
+            return;
+        }
+
+        stats_.prefetch_pages_unused_evicted.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    auto BufferPool::currentOutstandingPrefetchDebtPages(uint64_t session_key) const -> uint32_t
+    {
+        uint32_t count = 0;
+        for (const auto &frame : frames_)
+        {
+            if (frame.gpid == INVALID_GPID ||
+                !frame.speculative_prefetch.load(std::memory_order_relaxed))
+            {
+                continue;
+            }
+
+            if (session_key != 0 &&
+                frame.prefetch_session_key.load(std::memory_order_relaxed) != session_key)
+            {
+                continue;
+            }
+            ++count;
+        }
+        return count;
+    }
+
+    auto BufferPool::currentOutstandingPrefetchDebtPages(PolicyDomain domain) const -> uint32_t
+    {
+        uint32_t count = 0;
+        for (const auto &frame : frames_)
+        {
+            if (frame.gpid == INVALID_GPID ||
+                !frame.speculative_prefetch.load(std::memory_order_relaxed))
+            {
+                continue;
+            }
+
+            if (static_cast<PolicyDomain>(frame.policy_domain.load(std::memory_order_relaxed)) !=
+                domain)
+            {
+                continue;
+            }
+            ++count;
+        }
+        return count;
+    }
+
+    auto BufferPool::evaluateThrashState(uint64_t session_key) const -> ThrashDetectorState
+    {
+        const uint32_t global_debt = currentOutstandingPrefetchDebtPages();
+        if (config_.prefetch_max_debt_pages != 0 &&
+            global_debt >= config_.prefetch_max_debt_pages)
+        {
+            return ThrashDetectorState::GlobalDebtCap;
+        }
+
+        if (session_key != 0 && currentOutstandingPrefetchDebtPages(session_key) >=
+                                   sessionPrefetchBudget())
+        {
+            return ThrashDetectorState::SessionBudgetCap;
+        }
+
+        const auto scan_domain = currentOutstandingPrefetchDebtPages(PolicyDomain::ScanBulkRing);
+        if (scan_domain >= prefetchPressureBudget())
+        {
+            return ThrashDetectorState::ScanPressure;
+        }
+
+        const uint64_t useful = stats_.prefetch_pages_useful.load(std::memory_order_relaxed);
+        const uint64_t unused =
+            stats_.prefetch_pages_unused_evicted.load(std::memory_order_relaxed);
+        const uint64_t denominator = useful + unused;
+        if (denominator >= 4)
+        {
+            const double usefulness_pct =
+                (static_cast<double>(useful) * 100.0) / static_cast<double>(denominator);
+            if (usefulness_pct < static_cast<double>(config_.prefetch_usefulness_floor_pct))
+            {
+                return ThrashDetectorState::UsefulnessCollapse;
+            }
+        }
+
+        return ThrashDetectorState::None;
+    }
+
+    void BufferPool::publishThrashState(ThrashDetectorState state)
+    {
+        const uint8_t encoded = static_cast<uint8_t>(state);
+        const uint8_t prior = thrash_detector_state_.exchange(encoded, std::memory_order_relaxed);
+        if (prior != encoded && state != ThrashDetectorState::None)
+        {
+            stats_.thrash_policy_shift_count.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    auto BufferPool::canPromoteFrameToProtected(uint32_t frame_index) const -> bool
+    {
+        if (frame_index >= frames_.size())
+        {
+            return false;
+        }
+
+        const Frame &frame = frames_[frame_index];
+        const MgaPageClass page_class = static_cast<MgaPageClass>(
+            frame.mga_page_class.load(std::memory_order_relaxed));
+        if (isHardProtectedClass(page_class) || isVersionUndoClass(page_class) ||
+            page_class == MgaPageClass::SYSTEM_META ||
+            page_class == MgaPageClass::INDEX_ROOT_INTERNAL)
+        {
+            return true;
+        }
+
+        const uint32_t object_id = frame.object_id.load(std::memory_order_relaxed);
+        if (object_id == 0)
+        {
+            return true;
+        }
+
+        return currentProtectedFrameCountForObject(object_id, frame_index) <
+               objectProtectionBudget();
+    }
+
+    void BufferPool::noteFrameAccess(uint32_t frame_index,
+                                     WorkloadClass workload_class,
+                                     bool ghost_hit)
+    {
+        Frame &frame = frames_[frame_index];
+        const MgaPageClass page_class = static_cast<MgaPageClass>(
+            frame.mga_page_class.load(std::memory_order_relaxed));
+        const uint64_t generation =
+            residency_generation_clock_.fetch_add(1, std::memory_order_relaxed) + 1;
+
+        frame.last_touch_generation.store(generation, std::memory_order_relaxed);
+        frame.temperature_generation.store(generation, std::memory_order_relaxed);
+        frame.lifecycle_state.store(static_cast<uint8_t>(LifecycleState::Valid),
+                                    std::memory_order_relaxed);
+        consumePrefetchDebt(frame_index, workload_class);
+        if (!frame.is_dirty.load(std::memory_order_relaxed))
+        {
+            frame.dirty_state.store(static_cast<uint8_t>(DirtyState::Clean),
+                                    std::memory_order_relaxed);
+        }
+
+        const bool ring_only = page_class == MgaPageClass::SCAN_PROBATION ||
+                               (!isVersionUndoClass(page_class) &&
+                                (workload_class == WorkloadClass::SequentialScan ||
+                                 workload_class == WorkloadClass::SweepGc ||
+                                 workload_class == WorkloadClass::BulkWrite ||
+                                 workload_class == WorkloadClass::PrefetchSpeculative));
+        if (config_.layout != PoolLayout::Segmented)
+        {
+            if (frame.admission_generation.load(std::memory_order_relaxed) == 0)
+            {
+                frame.admission_generation.store(generation, std::memory_order_relaxed);
+            }
+
+            if (page_class == MgaPageClass::TX_STATE)
+            {
+                frame.usage_count.store(Frame::MAX_USAGE_COUNT, std::memory_order_relaxed);
+                frame.residency_tier.store(static_cast<uint8_t>(ResidencyTier::PinBiased),
+                                           std::memory_order_relaxed);
+                return;
+            }
+
+            if (ring_only)
+            {
+                frame.usage_count.store(1, std::memory_order_relaxed);
+                frame.residency_tier.store(static_cast<uint8_t>(ResidencyTier::RingOnly),
+                                           std::memory_order_relaxed);
+                return;
+            }
+
+            // The legacy `single` layout must remain a simple shared cache.
+            // MMW-004's probationary/protected tiers are only authoritative for
+            // the canonical segmented layout.
+            frame.residency_tier.store(static_cast<uint8_t>(ResidencyTier::LegacyShared),
+                                       std::memory_order_relaxed);
+            return;
+        }
+
+        if (page_class == MgaPageClass::TX_STATE)
+        {
+            if (frame.admission_generation.load(std::memory_order_relaxed) == 0)
+            {
+                frame.admission_generation.store(generation, std::memory_order_relaxed);
+            }
+            frame.usage_count.store(Frame::MAX_USAGE_COUNT, std::memory_order_relaxed);
+            frame.residency_tier.store(static_cast<uint8_t>(ResidencyTier::PinBiased),
+                                       std::memory_order_relaxed);
+            return;
+        }
+
+        bool direct_protect_system_meta = false;
+        if (page_class == MgaPageClass::SYSTEM_META && frame.data != nullptr)
+        {
+            const auto *header = reinterpret_cast<const PageHeader *>(frame.data.get());
+            if (header->magic == K_MAGIC_SBRD &&
+                isDirectProtectSystemMetaPageType(header->page_type))
+            {
+                direct_protect_system_meta = true;
+            }
+        }
+
+        if (config_.admission_direct_protect_roots &&
+            (isDirectProtectClass(page_class) || direct_protect_system_meta))
+        {
+            if (frame.admission_generation.load(std::memory_order_relaxed) == 0)
+            {
+                frame.admission_generation.store(generation, std::memory_order_relaxed);
+            }
+            frame.usage_count.store(Frame::MAX_USAGE_COUNT, std::memory_order_relaxed);
+            frame.residency_tier.store(static_cast<uint8_t>(ResidencyTier::Protected),
+                                       std::memory_order_relaxed);
+            return;
+        }
+
+        if (ring_only)
+        {
+            if (frame.admission_generation.load(std::memory_order_relaxed) == 0)
+            {
+                frame.admission_generation.store(generation, std::memory_order_relaxed);
+            }
+            frame.usage_count.store(1, std::memory_order_relaxed);
+            frame.residency_tier.store(static_cast<uint8_t>(ResidencyTier::RingOnly),
+                                       std::memory_order_relaxed);
+            return;
+        }
+
+        if (page_class == MgaPageClass::SYSTEM_META)
+        {
+            if (frame.admission_generation.load(std::memory_order_relaxed) == 0)
+            {
+                frame.admission_generation.store(generation, std::memory_order_relaxed);
+            }
+            const uint32_t current_usage =
+                frame.usage_count.load(std::memory_order_relaxed);
+            frame.usage_count.store(std::max<uint32_t>(1u, std::min<uint32_t>(2u,
+                                                                              current_usage + 1u)),
+                                   std::memory_order_relaxed);
+            // Critical catalog/FSM lineage stays in the CriticalSystem domain,
+            // but only explicit root metadata pages consume the protected set.
+            // Ordinary system pages must not promote on second touch during
+            // bootstrap or policy reload churn.
+            frame.residency_tier.store(static_cast<uint8_t>(ResidencyTier::Probationary),
+                                       std::memory_order_relaxed);
+            return;
+        }
+
+        if (isVersionUndoClass(page_class))
+        {
+            if (frame.admission_generation.load(std::memory_order_relaxed) == 0)
+            {
+                frame.admission_generation.store(generation, std::memory_order_relaxed);
+            }
+            const uint32_t current_usage =
+                frame.usage_count.load(std::memory_order_relaxed);
+            frame.usage_count.store(
+                std::max<uint32_t>(2u, std::min<uint32_t>(Frame::MAX_USAGE_COUNT,
+                                                          current_usage + 1u)),
+                std::memory_order_relaxed);
+            // Sweep/GC may touch version-support pages with scan-like workload
+            // hints, but those pages still belong to the VersionUndo
+            // reservation and must not collapse into the scan ring.
+            frame.residency_tier.store(static_cast<uint8_t>(ResidencyTier::Protected),
+                                       std::memory_order_relaxed);
+            return;
+        }
+
+        const ResidencyTier current_tier = static_cast<ResidencyTier>(
+            frame.residency_tier.load(std::memory_order_relaxed));
+        uint64_t admission_generation =
+            frame.admission_generation.load(std::memory_order_relaxed);
+        const bool first_touch = (admission_generation == 0);
+
+        if (first_touch)
+        {
+            admission_generation = generation;
+            frame.admission_generation.store(generation, std::memory_order_relaxed);
+        }
+
+        if (ghost_hit)
+        {
+            frame.usage_count.store(Frame::MAX_USAGE_COUNT, std::memory_order_relaxed);
+            if (canPromoteFrameToProtected(frame_index))
+            {
+                frame.residency_tier.store(static_cast<uint8_t>(ResidencyTier::Protected),
+                                           std::memory_order_relaxed);
+                stats_.mga_admission_promotions.fetch_add(1, std::memory_order_relaxed);
+            }
+            else
+            {
+                frame.residency_tier.store(static_cast<uint8_t>(ResidencyTier::Probationary),
+                                           std::memory_order_relaxed);
+                stats_.fairness_object_budget_breaches.fetch_add(1,
+                                                                 std::memory_order_relaxed);
+            }
+            return;
+        }
+
+        if (current_tier == ResidencyTier::Protected)
+        {
+            return;
+        }
+
+        const uint64_t admission_delta =
+            (generation > admission_generation) ? (generation - admission_generation) : 0;
+        if (!first_touch &&
+            (current_tier == ResidencyTier::Probationary ||
+             current_tier == ResidencyTier::LegacyShared) &&
+            admission_delta <= std::max<uint32_t>(1, config_.admission_second_touch_generations))
+        {
+            frame.usage_count.store(Frame::MAX_USAGE_COUNT, std::memory_order_relaxed);
+            if (canPromoteFrameToProtected(frame_index))
+            {
+                frame.residency_tier.store(static_cast<uint8_t>(ResidencyTier::Protected),
+                                           std::memory_order_relaxed);
+                stats_.mga_admission_promotions.fetch_add(1, std::memory_order_relaxed);
+            }
+            else
+            {
+                frame.residency_tier.store(static_cast<uint8_t>(ResidencyTier::Probationary),
+                                           std::memory_order_relaxed);
+                stats_.fairness_object_budget_breaches.fetch_add(1,
+                                                                 std::memory_order_relaxed);
+            }
+            return;
+        }
+
+        frame.admission_generation.store(generation, std::memory_order_relaxed);
+        frame.usage_count.store(1, std::memory_order_relaxed);
+        frame.residency_tier.store(static_cast<uint8_t>(ResidencyTier::Probationary),
+                                   std::memory_order_relaxed);
+    }
+
+    void BufferPool::beginFrameWriteback(uint32_t frame_index,
+                                         WritebackQueueState queue_state,
+                                         uint64_t checkpoint_target_generation)
+    {
+        frames_[frame_index].lifecycle_state.store(static_cast<uint8_t>(LifecycleState::Flushing),
+                                                   std::memory_order_relaxed);
+        frames_[frame_index].dirty_state.store(static_cast<uint8_t>(DirtyState::DirtyInFlight),
+                                               std::memory_order_relaxed);
+        frames_[frame_index].checkpoint_target_generation.store(checkpoint_target_generation,
+                                                                std::memory_order_relaxed);
+        frames_[frame_index].writeback_queue_state.store(static_cast<uint8_t>(queue_state),
+                                                         std::memory_order_relaxed);
+    }
+
+    void BufferPool::markFrameWritebackFailure(uint32_t frame_index,
+                                               WritebackQueueState queue_state)
+    {
+        frames_[frame_index].lifecycle_state.store(static_cast<uint8_t>(LifecycleState::Error),
+                                                   std::memory_order_relaxed);
+        frames_[frame_index].dirty_state.store(static_cast<uint8_t>(DirtyState::DirtyFailed),
+                                               std::memory_order_relaxed);
+        (void)queue_state;
+        frames_[frame_index].writeback_queue_state.store(
+                                                         static_cast<uint8_t>(WritebackQueueState::REPAIR_RETRY),
+                                                         std::memory_order_relaxed);
+    }
+
+    auto BufferPool::evictionRankForClass(MgaPageClass page_class) -> uint32_t
+    {
+        switch (page_class)
+        {
+            case MgaPageClass::SCAN_PROBATION:
+                return 0;
+            case MgaPageClass::TEMP_WORK:
+                return 1;
+            case MgaPageClass::Generic:
+                return 2;
+            case MgaPageClass::GC_CANDIDATE:
+                return 3;
+            case MgaPageClass::INDEX_CHURN:
+                return 4;
+            case MgaPageClass::VERSION_ROOT:
+                return 5;
+            case MgaPageClass::CHAIN_HEAVY:
+                return 6;
+            case MgaPageClass::INDEX_ROOT_INTERNAL:
+                return 7;
+            case MgaPageClass::SYSTEM_META:
+                return 8;
+            case MgaPageClass::TX_STATE:
+                return 9;
+        }
+        return 9;
+    }
+
+    auto BufferPool::isHardProtectedClass(MgaPageClass page_class) -> bool
+    {
+        return page_class == MgaPageClass::TX_STATE;
+    }
+
+    void BufferPool::applyAutomaticMgaClassification(uint32_t frame_index,
+                                                     WorkloadClass workload_class)
+    {
+        if (frame_index >= frames_.size())
+        {
+            return;
+        }
+
+        Frame &frame = frames_[frame_index];
+        refreshFrameObjectId(frame_index);
         const MgaPageClass current_class =
             static_cast<MgaPageClass>(frame.mga_page_class.load(std::memory_order_relaxed));
-        const MgaPageClass detected_class =
-            classifyPageType(frame.data.get(), config_.page_size, strategy);
-
-        if (detected_class == MgaPageClass::SCAN_PROBATION)
+        const bool temporary_page =
+            current_class == MgaPageClass::TEMP_WORK ||
+            isTemporaryWorkPageBuffer(frame.data.get(), config_.page_size);
+        WorkloadClass effective_workload = workload_class;
+        if (temporary_page)
         {
+            effective_workload = WorkloadClass::TemporaryWork;
+        }
+        else if (effective_workload == WorkloadClass::TemporaryWork)
+        {
+            effective_workload = WorkloadClass::Unspecified;
+        }
+        const MgaPageClass detected_class =
+            classifyPageType(frame.data.get(), config_.page_size, effective_workload);
+        frame.workload_class.store(static_cast<uint8_t>(effective_workload),
+                                   std::memory_order_relaxed);
+
+        if (detected_class == MgaPageClass::SCAN_PROBATION && !isVersionUndoClass(current_class))
+        {
+            // Audit contract: sweep/GC traffic may discover generic scan pages, but it must not
+            // overwrite an existing VersionUndo classification. VERSION_ROOT / CHAIN_HEAVY /
+            // GC_CANDIDATE frames stay in the protected version-support domain even when later
+            // accesses arrive through AccessStrategy::Vacuum or other scan-like workload hints.
             frame.mga_page_class.store(static_cast<uint8_t>(MgaPageClass::SCAN_PROBATION),
                                        std::memory_order_relaxed);
+            frame.policy_domain.store(
+                static_cast<uint8_t>(classifyPolicyDomain(frame.data.get(),
+                                                          config_.page_size,
+                                                          MgaPageClass::SCAN_PROBATION,
+                                                          effective_workload)),
+                std::memory_order_relaxed);
             frame.scan_probation_generation.store(
                 mga_scan_generation_.fetch_add(1, std::memory_order_relaxed) + 1,
                 std::memory_order_relaxed);
             return;
         }
 
+        const bool detected_structural_class =
+            detected_class == MgaPageClass::TX_STATE ||
+            detected_class == MgaPageClass::SYSTEM_META ||
+            detected_class == MgaPageClass::INDEX_ROOT_INTERNAL ||
+            detected_class == MgaPageClass::INDEX_CHURN ||
+            detected_class == MgaPageClass::TEMP_WORK;
         if (current_class == MgaPageClass::SCAN_PROBATION || current_class == MgaPageClass::Generic ||
-            detected_class == MgaPageClass::TX_STATE)
+            detected_structural_class)
         {
             frame.mga_page_class.store(static_cast<uint8_t>(detected_class),
                                        std::memory_order_relaxed);
+            frame.policy_domain.store(
+                static_cast<uint8_t>(classifyPolicyDomain(frame.data.get(),
+                                                          config_.page_size,
+                                                          detected_class,
+                                                          effective_workload)),
+                std::memory_order_relaxed);
             if (detected_class != MgaPageClass::SCAN_PROBATION)
             {
                 frame.scan_probation_generation.store(0, std::memory_order_relaxed);
@@ -390,6 +1944,12 @@ namespace scratchbird::core
         {
             case MgaPageClass::TX_STATE:
                 stats_.mga_evictions_tx_state.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case MgaPageClass::SYSTEM_META:
+                stats_.mga_evictions_system_meta.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case MgaPageClass::INDEX_ROOT_INTERNAL:
+                stats_.mga_evictions_index_root_internal.fetch_add(1, std::memory_order_relaxed);
                 break;
             case MgaPageClass::VERSION_ROOT:
                 stats_.mga_evictions_version_root.fetch_add(1, std::memory_order_relaxed);
@@ -405,6 +1965,9 @@ namespace scratchbird::core
                 break;
             case MgaPageClass::INDEX_CHURN:
                 stats_.mga_evictions_index_churn.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case MgaPageClass::TEMP_WORK:
+                stats_.mga_evictions_temp_work.fetch_add(1, std::memory_order_relaxed);
                 break;
             case MgaPageClass::Generic:
             default:
@@ -448,7 +2011,40 @@ namespace scratchbird::core
         }
 
         Frame &frame = frames_[it->second];
+        WorkloadClass effective_workload = hints.workload_class;
+        if (effective_workload == WorkloadClass::Unspecified)
+        {
+            effective_workload = static_cast<WorkloadClass>(
+                frame.workload_class.load(std::memory_order_relaxed));
+        }
+        if (effective_workload == WorkloadClass::Unspecified)
+        {
+            effective_workload = defaultWorkloadClass(AccessStrategy::Normal);
+        }
+        const bool temporary_page =
+            hints.page_class == MgaPageClass::TEMP_WORK ||
+            isTemporaryWorkPageBuffer(frame.data.get(), config_.page_size);
+        if (temporary_page)
+        {
+            effective_workload = WorkloadClass::TemporaryWork;
+        }
+        else if (effective_workload == WorkloadClass::TemporaryWork)
+        {
+            const WorkloadClass current_workload = static_cast<WorkloadClass>(
+                frame.workload_class.load(std::memory_order_relaxed));
+            effective_workload = current_workload == WorkloadClass::TemporaryWork
+                                     ? defaultWorkloadClass(AccessStrategy::Normal)
+                                     : current_workload;
+        }
+
         frame.mga_page_class.store(static_cast<uint8_t>(hints.page_class),
+                                   std::memory_order_relaxed);
+        frame.policy_domain.store(
+            static_cast<uint8_t>(
+                classifyPolicyDomain(frame.data.get(), config_.page_size, hints.page_class,
+                                     effective_workload)),
+            std::memory_order_relaxed);
+        frame.workload_class.store(static_cast<uint8_t>(effective_workload),
                                    std::memory_order_relaxed);
         frame.oldest_interesting_txid.store(hints.oldest_interesting_txid,
                                             std::memory_order_relaxed);
@@ -467,6 +2063,15 @@ namespace scratchbird::core
         frame.scan_probation_generation.store(hints.scan_probation_generation,
                                               std::memory_order_relaxed);
         frame.commit_fence_member.store(hints.commit_fence_member, std::memory_order_relaxed);
+        frame.residency_tier.store(
+            static_cast<uint8_t>(classifyResidencyTier(effective_workload, hints.page_class)),
+            std::memory_order_relaxed);
+        if (frame.is_dirty.load(std::memory_order_relaxed))
+        {
+            frame.writeback_queue_state.store(
+                static_cast<uint8_t>(classifyWritebackQueueState(frame)),
+                std::memory_order_relaxed);
+        }
         if (hints.page_class == MgaPageClass::GC_CANDIDATE)
         {
             offerGcCandidate(it->second);
@@ -498,14 +2103,43 @@ namespace scratchbird::core
 
         const Frame &frame = frames_[it->second];
         snapshot_out->resident = true;
+        snapshot_out->owner_partition =
+            frame.owner_partition.load(std::memory_order_relaxed);
+        snapshot_out->home_partition =
+            frame.home_partition.load(std::memory_order_relaxed);
         snapshot_out->pin_count = frame.pin_count.load(std::memory_order_relaxed);
         snapshot_out->is_dirty = frame.is_dirty.load(std::memory_order_relaxed);
+        snapshot_out->object_id = frame.object_id.load(std::memory_order_relaxed);
+        snapshot_out->state_generation =
+            frame.state_generation.load(std::memory_order_relaxed);
+        snapshot_out->io_generation =
+            frame.io_generation.load(std::memory_order_relaxed);
         snapshot_out->dirty_generation =
             frame.dirty_generation.load(std::memory_order_relaxed);
         snapshot_out->page_class = static_cast<MgaPageClass>(
             frame.mga_page_class.load(std::memory_order_relaxed));
+        snapshot_out->policy_domain = static_cast<PolicyDomain>(
+            frame.policy_domain.load(std::memory_order_relaxed));
+        snapshot_out->workload_class = static_cast<WorkloadClass>(
+            frame.workload_class.load(std::memory_order_relaxed));
+        snapshot_out->residency_tier = static_cast<ResidencyTier>(
+            frame.residency_tier.load(std::memory_order_relaxed));
+        snapshot_out->lifecycle_state = static_cast<LifecycleState>(
+            frame.lifecycle_state.load(std::memory_order_relaxed));
+        snapshot_out->dirty_state = static_cast<DirtyState>(
+            frame.dirty_state.load(std::memory_order_relaxed));
         snapshot_out->writeback_queue_state = static_cast<WritebackQueueState>(
             frame.writeback_queue_state.load(std::memory_order_relaxed));
+        snapshot_out->last_flush_generation =
+            frame.last_flush_generation.load(std::memory_order_relaxed);
+        snapshot_out->checkpoint_target_generation =
+            frame.checkpoint_target_generation.load(std::memory_order_relaxed);
+        snapshot_out->admission_generation =
+            frame.admission_generation.load(std::memory_order_relaxed);
+        snapshot_out->last_touch_generation =
+            frame.last_touch_generation.load(std::memory_order_relaxed);
+        snapshot_out->temperature_generation =
+            frame.temperature_generation.load(std::memory_order_relaxed);
         snapshot_out->oldest_interesting_txid =
             frame.oldest_interesting_txid.load(std::memory_order_relaxed);
         snapshot_out->prune_safe_horizon_hint =
@@ -514,13 +2148,97 @@ namespace scratchbird::core
             frame.dead_version_bytes.load(std::memory_order_relaxed);
         snapshot_out->chain_depth_hint =
             frame.chain_depth_hint.load(std::memory_order_relaxed);
+        snapshot_out->prefetch_session_key =
+            frame.prefetch_session_key.load(std::memory_order_relaxed);
         snapshot_out->last_gc_touch_generation =
             frame.last_gc_touch_generation.load(std::memory_order_relaxed);
         snapshot_out->scan_probation_generation =
             frame.scan_probation_generation.load(std::memory_order_relaxed);
         snapshot_out->commit_fence_member =
             frame.commit_fence_member.load(std::memory_order_relaxed);
+        snapshot_out->speculative_prefetch =
+            frame.speculative_prefetch.load(std::memory_order_relaxed);
+        snapshot_out->prefetch_consumed =
+            frame.prefetch_consumed.load(std::memory_order_relaxed);
         return Status::OK;
+    }
+
+    void BufferPool::restoreCheckpointQueueState(const std::vector<GPID> &checkpoint_marker_gpids,
+                                                 uint64_t dirty_generation_floor)
+    {
+        uint64_t seeded_floor = dirty_generation_floor;
+        if (seeded_floor == 0 && !checkpoint_marker_gpids.empty())
+        {
+            seeded_floor = 1;
+        }
+
+        uint64_t observed_generation = dirty_generation_clock_.load(std::memory_order_relaxed);
+        while (observed_generation < seeded_floor &&
+               !dirty_generation_clock_.compare_exchange_weak(
+                   observed_generation,
+                   seeded_floor,
+                   std::memory_order_relaxed,
+                   std::memory_order_relaxed))
+        {
+        }
+
+        if (checkpoint_marker_gpids.empty())
+        {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(dirty_tracking_mutex_);
+        checkpoint_marker_candidates_.insert(checkpoint_marker_gpids.begin(),
+                                            checkpoint_marker_gpids.end());
+    }
+
+    auto BufferPool::checkpointDebtCandidateCount() -> uint64_t
+    {
+        std::lock_guard<std::mutex> lock(dirty_tracking_mutex_);
+        std::unordered_set<GPID> unioned_candidates;
+        unioned_candidates.reserve(dirty_checkpoint_candidates_.size() +
+                                   checkpoint_marker_candidates_.size());
+        for (const auto &entry : dirty_checkpoint_candidates_)
+        {
+            unioned_candidates.insert(entry.first);
+        }
+        for (const GPID gpid : checkpoint_marker_candidates_)
+        {
+            unioned_candidates.insert(gpid);
+        }
+        return static_cast<uint64_t>(unioned_candidates.size());
+    }
+
+    void BufferPool::restoreCheckpointDebtForFrame(uint32_t frame_index)
+    {
+        if (frame_index >= frames_.size() || frames_[frame_index].gpid == INVALID_GPID ||
+            frames_[frame_index].data == nullptr)
+        {
+            return;
+        }
+
+        const auto *header = reinterpret_cast<const PageHeader *>(frames_[frame_index].data.get());
+        if (header->magic != K_MAGIC_SBRD || pageIsTemporaryWork(*header) ||
+            header->flush_generation <= header->checkpoint_generation)
+        {
+            return;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(dirty_tracking_mutex_);
+            checkpoint_marker_candidates_.insert(frames_[frame_index].gpid);
+        }
+
+        const uint64_t generation_floor = std::max<uint64_t>(
+            1,
+            dirty_generation_clock_.load(std::memory_order_relaxed));
+        frames_[frame_index].last_flush_generation.store(header->flush_generation,
+                                                         std::memory_order_relaxed);
+        frames_[frame_index].checkpoint_target_generation.store(generation_floor,
+                                                                std::memory_order_relaxed);
+        frames_[frame_index].writeback_queue_state.store(
+            static_cast<uint8_t>(WritebackQueueState::CHECKPOINT),
+            std::memory_order_relaxed);
     }
 
     void BufferPool::beginCommitFence()
@@ -548,6 +2266,12 @@ namespace scratchbird::core
             if (member)
             {
                 ++backlog;
+                if (frame.is_dirty.load(std::memory_order_relaxed))
+                {
+                    frame.writeback_queue_state.store(
+                        static_cast<uint8_t>(classifyWritebackQueueState(frame)),
+                        std::memory_order_relaxed);
+                }
             }
         }
         commit_fence_backlog_.store(backlog, std::memory_order_release);
@@ -570,22 +2294,76 @@ namespace scratchbird::core
         for (Frame &frame : frames_)
         {
             frame.commit_fence_member.store(false, std::memory_order_relaxed);
+            if (frame.is_dirty.load(std::memory_order_relaxed))
+            {
+                frame.writeback_queue_state.store(
+                    static_cast<uint8_t>(classifyWritebackQueueState(frame)),
+                    std::memory_order_relaxed);
+            }
         }
         commit_fence_backlog_.store(0, std::memory_order_release);
     }
 
+    void BufferPool::completeFsyncFence()
+    {
+        for (uint32_t frame_index = 0; frame_index < config_.pool_size; ++frame_index)
+        {
+            const DirtyState dirty_state = static_cast<DirtyState>(
+                frames_[frame_index].dirty_state.load(std::memory_order_acquire));
+            if (dirty_state != DirtyState::DirtyFlushedPendingFsync)
+            {
+                continue;
+            }
+
+            const uint64_t dirty_generation =
+                frames_[frame_index].dirty_generation.load(std::memory_order_acquire);
+            const uint64_t flushed_generation =
+                frames_[frame_index].last_flush_generation.load(std::memory_order_relaxed);
+            if (dirty_generation == 0 || dirty_generation != flushed_generation)
+            {
+                continue;
+            }
+
+            if (!tryClearFrameDirty(frame_index))
+            {
+                continue;
+            }
+
+            frames_[frame_index].writeback_queue_state.store(
+                static_cast<uint8_t>(WritebackQueueState::NONE),
+                std::memory_order_relaxed);
+            frames_[frame_index].checkpoint_target_generation.store(0,
+                                                                    std::memory_order_relaxed);
+
+            const GPID gpid = frames_[frame_index].gpid;
+            if (gpid == INVALID_GPID)
+            {
+                continue;
+            }
+
+            std::lock_guard<std::mutex> lock(dirty_tracking_mutex_);
+            auto it = dirty_checkpoint_candidates_.find(gpid);
+            if (it != dirty_checkpoint_candidates_.end() && it->second <= flushed_generation)
+            {
+                dirty_checkpoint_candidates_.erase(it);
+            }
+        }
+    }
+
     // PHASE 1, TASK 1.2.3: LEGACY API - Convert page_id to GPID and call pinPageGlobal
     auto BufferPool::pinPage(uint32_t page_id, void **buffer, ErrorContext *ctx,
-                             AccessStrategy strategy) -> Status
+                             AccessStrategy strategy,
+                             WorkloadClass workload_class) -> Status
     {
         GPID gpid = convertPageIDtoGPID(page_id);
-        return pinPageGlobal(gpid, buffer, ctx, strategy);
+        return pinPageGlobal(gpid, buffer, ctx, strategy, workload_class);
     }
 
     // PHASE 1, TASK 1.2.3: NEW GPID-based implementation
     // P2-1: Updated to use partitioned page table locks
     auto BufferPool::pinPageGlobal(GPID gpid, void **buffer, ErrorContext *ctx,
-                                   AccessStrategy strategy) -> Status
+                                   AccessStrategy strategy,
+                                   WorkloadClass workload_class) -> Status
     {
         if (buffer == nullptr)
         {
@@ -604,6 +2382,11 @@ namespace scratchbird::core
                 }
             }
         }
+        WorkloadClass effective_workload = workload_class;
+        if (effective_workload == WorkloadClass::Unspecified)
+        {
+            effective_workload = defaultWorkloadClass(effective_strategy);
+        }
 
         if (frames_.size() != config_.pool_size)
         {
@@ -613,6 +2396,7 @@ namespace scratchbird::core
                 frames_.clear();
                 frames_.resize(config_.pool_size);
                 lru_list_.clear();
+                clearOwnershipPartitionsLocked();
                 for (uint32_t i = 0; i < config_.pool_size; i++)
                 {
                     try
@@ -629,23 +2413,17 @@ namespace scratchbird::core
                     frames_[i].pin_count.store(0, std::memory_order_relaxed);
                     frames_[i].is_dirty.store(false, std::memory_order_relaxed);
                     frames_[i].usage_count.store(0, std::memory_order_relaxed);
-                    frames_[i].mga_page_class.store(
-                        static_cast<uint8_t>(MgaPageClass::Generic),
+                    frames_[i].owner_partition.store(
+                        static_cast<uint16_t>(getOwnershipHomePartition(i)),
                         std::memory_order_relaxed);
-                    frames_[i].oldest_interesting_txid.store(0, std::memory_order_relaxed);
-                    frames_[i].prune_safe_horizon_hint.store(0, std::memory_order_relaxed);
-                    frames_[i].dead_version_bytes.store(0, std::memory_order_relaxed);
-                    frames_[i].chain_depth_hint.store(0, std::memory_order_relaxed);
-                    frames_[i].last_gc_touch_generation.store(0, std::memory_order_relaxed);
-                    frames_[i].scan_probation_generation.store(0, std::memory_order_relaxed);
-                    frames_[i].dirty_generation.store(0, std::memory_order_relaxed);
-                    frames_[i].writeback_queue_state.store(
-                        static_cast<uint8_t>(WritebackQueueState::NONE),
+                    frames_[i].home_partition.store(
+                        static_cast<uint16_t>(getOwnershipHomePartition(i)),
                         std::memory_order_relaxed);
-                    frames_[i].commit_fence_member.store(false, std::memory_order_relaxed);
+                    resetFrameScaffolding(frames_[i]);
                     lru_list_.push_back(i);
                 }
 
+                initializeOwnershipPartitionsLocked();
                 initializeRingBuffers();
             }
         }
@@ -685,7 +2463,11 @@ namespace scratchbird::core
                 {
                     frames_[frame_index].usage_count.fetch_add(1, std::memory_order_relaxed);
                 }
-                applyAutomaticMgaClassification(frame_index, effective_strategy);
+                applyAutomaticMgaClassification(frame_index, effective_workload);
+                noteFrameAccess(frame_index,
+                                static_cast<WorkloadClass>(
+                                    frames_[frame_index].workload_class.load(
+                                        std::memory_order_relaxed)));
                 if (static_cast<MgaPageClass>(
                         frames_[frame_index].mga_page_class.load(std::memory_order_relaxed)) ==
                     MgaPageClass::CHAIN_HEAVY)
@@ -713,9 +2495,6 @@ namespace scratchbird::core
         }
         // Partition lock released here
 
-        // Cache miss - need global lock for frame allocation/eviction
-        std::lock_guard<std::mutex> global_lock(mutex_);
-
         // MEDIUM-1 FIX: Use relaxed atomic increment for stats
         stats_.misses.fetch_add(1, std::memory_order_relaxed);
         logStatsEvent("MISS", gpid);
@@ -725,6 +2504,140 @@ namespace scratchbird::core
         }
         VNextMetricsEventModel::recordStorageEvent(
             "buffer_pool_pin", "miss", "NONE");
+
+        if (config_.layout == PoolLayout::Segmented)
+        {
+            auto &owner_partition = ownership_partitions_[partition_idx];
+            std::unique_lock<std::mutex> owner_lock(owner_partition.mutex);
+
+            // Re-check after joining the owner partition. This prevents duplicate
+            // loads for the same GPID from competing across one global miss lock.
+            {
+                std::lock_guard<std::mutex> partition_lock(partition.mutex);
+                auto it = partition.table.find(gpid);
+                if (it != partition.table.end())
+                {
+                    uint32_t frame_index = it->second;
+                    if (frames_[frame_index].pin_count.load(std::memory_order_relaxed) ==
+                        UINT32_MAX)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Pin count overflow - page pinned too many times");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                    frames_[frame_index].pin_count.fetch_add(1, std::memory_order_relaxed);
+
+                    const uint32_t current_usage =
+                        frames_[frame_index].usage_count.load(std::memory_order_relaxed);
+                    if (current_usage < Frame::MAX_USAGE_COUNT)
+                    {
+                        frames_[frame_index].usage_count.fetch_add(1,
+                                                                   std::memory_order_relaxed);
+                    }
+                    applyAutomaticMgaClassification(frame_index, effective_workload);
+                    noteFrameAccess(frame_index,
+                                    static_cast<WorkloadClass>(
+                                        frames_[frame_index].workload_class.load(
+                                            std::memory_order_relaxed)));
+                    if (static_cast<MgaPageClass>(
+                            frames_[frame_index].mga_page_class.load(
+                                std::memory_order_relaxed)) ==
+                        MgaPageClass::CHAIN_HEAVY)
+                    {
+                        stats_.mga_chain_heavy_hits.fetch_add(1,
+                                                              std::memory_order_relaxed);
+                    }
+
+                    *buffer = frames_[frame_index].data.get();
+                    stats_.hits.fetch_add(1, std::memory_order_relaxed);
+                    logStatsEvent("HIT", gpid);
+                    if (metrics_ && metrics_->buffer_pool_hits_total)
+                    {
+                        metrics_->buffer_pool_hits_total->inc();
+                    }
+                    VNextMetricsEventModel::recordStorageEvent(
+                        "buffer_pool_pin", "hit", "NONE");
+                    if (auto *conn_ctx = ConnectionContext::getCurrent())
+                    {
+                        conn_ctx->recordPageFetch();
+                    }
+                    return Status::OK;
+                }
+            }
+
+            uint32_t frame_index = UINT32_MAX;
+            Status status = claimFrameForSegmentedMiss(partition_idx, frame_index, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            frames_[frame_index].io_generation.fetch_add(1, std::memory_order_relaxed);
+            status = readPageFromDisk(gpid, frames_[frame_index].data.get(), ctx);
+            if (status != Status::OK)
+            {
+                resetFrameIdentity(frames_[frame_index], partition_idx, true);
+                releaseFrameToOwnershipFreeListLocked(frame_index, partition_idx);
+                return status;
+            }
+            if (auto *conn_ctx = ConnectionContext::getCurrent())
+            {
+                conn_ctx->recordPageRead();
+            }
+
+            frames_[frame_index].gpid = gpid;
+            frames_[frame_index].pin_count.store(1, std::memory_order_relaxed);
+            frames_[frame_index].is_dirty.store(false, std::memory_order_relaxed);
+            frames_[frame_index].usage_count.store(1, std::memory_order_relaxed);
+            resetFrameScaffolding(frames_[frame_index]);
+            frames_[frame_index].owner_partition.store(
+                static_cast<uint16_t>(partition_idx),
+                std::memory_order_relaxed);
+            applyAutomaticMgaClassification(frame_index, effective_workload);
+            const bool ghost_hit = consumeGhostHistory(gpid);
+            noteFrameAccess(frame_index,
+                            static_cast<WorkloadClass>(
+                                frames_[frame_index].workload_class.load(
+                                    std::memory_order_relaxed)),
+                            ghost_hit);
+            restoreCheckpointDebtForFrame(frame_index);
+
+            {
+                std::lock_guard<std::mutex> partition_lock(partition.mutex);
+                auto it = partition.table.find(gpid);
+                if (it != partition.table.end())
+                {
+                    uint32_t existing_frame = it->second;
+                    frames_[existing_frame].pin_count.fetch_add(1,
+                                                                std::memory_order_relaxed);
+                    resetFrameIdentity(frames_[frame_index], partition_idx, true);
+                    releaseFrameToOwnershipFreeListLocked(frame_index, partition_idx);
+                    *buffer = frames_[existing_frame].data.get();
+                    stats_.hits.fetch_add(1, std::memory_order_relaxed);
+                    logStatsEvent("HIT", gpid);
+                    if (metrics_ && metrics_->buffer_pool_hits_total)
+                    {
+                        metrics_->buffer_pool_hits_total->inc();
+                    }
+                    VNextMetricsEventModel::recordStorageEvent(
+                        "buffer_pool_pin", "hit", "NONE");
+                    if (auto *conn_ctx = ConnectionContext::getCurrent())
+                    {
+                        conn_ctx->recordPageFetch();
+                    }
+                    return Status::OK;
+                }
+                partition.table[gpid] = frame_index;
+            }
+
+            *buffer = frames_[frame_index].data.get();
+            return Status::OK;
+        }
+
+        // Legacy layouts still route misses through the shared allocator and
+        // eviction path. The segmented memory-model program overrides that path
+        // above with partition-local ownership.
+        std::lock_guard<std::mutex> global_lock(mutex_);
 
         // Re-check partition in case another thread loaded the page while we waited
         {
@@ -741,7 +2654,11 @@ namespace scratchbird::core
                 {
                     frames_[frame_index].usage_count.fetch_add(1, std::memory_order_relaxed);
                 }
-                applyAutomaticMgaClassification(frame_index, effective_strategy);
+                applyAutomaticMgaClassification(frame_index, effective_workload);
+                noteFrameAccess(frame_index,
+                                static_cast<WorkloadClass>(
+                                    frames_[frame_index].workload_class.load(
+                                        std::memory_order_relaxed)));
                 if (static_cast<MgaPageClass>(
                         frames_[frame_index].mga_page_class.load(std::memory_order_relaxed)) ==
                     MgaPageClass::CHAIN_HEAVY)
@@ -822,10 +2739,16 @@ namespace scratchbird::core
             ring_slot = nextRingSlot(*ring);
         }
 
+        frames_[frame_index].lifecycle_state.store(static_cast<uint8_t>(LifecycleState::Loading),
+                                                   std::memory_order_relaxed);
+        frames_[frame_index].io_generation.fetch_add(1, std::memory_order_relaxed);
+
         // Read page from disk
         Status status = readPageFromDisk(gpid, frames_[frame_index].data.get(), ctx);
         if (status != Status::OK)
         {
+            frames_[frame_index].lifecycle_state.store(static_cast<uint8_t>(LifecycleState::Error),
+                                                       std::memory_order_relaxed);
             return status;
         }
         if (auto* conn_ctx = ConnectionContext::getCurrent())
@@ -838,24 +2761,19 @@ namespace scratchbird::core
         frames_[frame_index].pin_count.store(1, std::memory_order_relaxed);
         frames_[frame_index].is_dirty.store(false, std::memory_order_relaxed);
 
-        // Demand-loaded pages on the normal path should enter the clock sweep as hot enough
-        // to survive the initial warmup cycle. Ring-buffer strategies intentionally keep the
-        // lower insertion count so sequential/bulk traffic does not pollute the main cache.
-        const uint32_t initial_usage =
-            (effective_strategy == AccessStrategy::Normal) ? Frame::MAX_USAGE_COUNT : 1;
-        frames_[frame_index].usage_count.store(initial_usage, std::memory_order_relaxed);
-        frames_[frame_index].oldest_interesting_txid.store(0, std::memory_order_relaxed);
-        frames_[frame_index].prune_safe_horizon_hint.store(0, std::memory_order_relaxed);
-        frames_[frame_index].dead_version_bytes.store(0, std::memory_order_relaxed);
-        frames_[frame_index].chain_depth_hint.store(0, std::memory_order_relaxed);
-        frames_[frame_index].last_gc_touch_generation.store(0, std::memory_order_relaxed);
-        frames_[frame_index].scan_probation_generation.store(0, std::memory_order_relaxed);
-        frames_[frame_index].dirty_generation.store(0, std::memory_order_relaxed);
-        frames_[frame_index].writeback_queue_state.store(
-            static_cast<uint8_t>(WritebackQueueState::NONE),
-            std::memory_order_relaxed);
-        frames_[frame_index].commit_fence_member.store(false, std::memory_order_relaxed);
-        applyAutomaticMgaClassification(frame_index, effective_strategy);
+        // First touch now enters the auditable admission path with minimal protection.
+        // `noteFrameAccess()` upgrades the frame to `Protected` or `PinBiased` only for
+        // direct-protect classes, ghost hits, or qualifying second touches.
+        frames_[frame_index].usage_count.store(1, std::memory_order_relaxed);
+        resetFrameScaffolding(frames_[frame_index]);
+        applyAutomaticMgaClassification(frame_index, effective_workload);
+        const bool ghost_hit = consumeGhostHistory(gpid);
+        noteFrameAccess(frame_index,
+                        static_cast<WorkloadClass>(
+                            frames_[frame_index].workload_class.load(
+                                std::memory_order_relaxed)),
+                        ghost_hit);
+        restoreCheckpointDebtForFrame(frame_index);
 
         // P2-1: Insert into partitioned page table
         {
@@ -925,6 +2843,9 @@ namespace scratchbird::core
                     conn_ctx->recordPageMark();
                 }
             }
+            frames_[frame_index].lifecycle_state.store(
+                static_cast<uint8_t>(LifecycleState::Valid),
+                std::memory_order_relaxed);
         }
 
         // Decrement pin count
@@ -973,6 +2894,12 @@ namespace scratchbird::core
             // Not dirty, nothing to flush
             return Status::OK;
         }
+        if (static_cast<DirtyState>(
+                frames_[frame_index].dirty_state.load(std::memory_order_relaxed)) ==
+            DirtyState::DirtyFlushedPendingFsync)
+        {
+            return Status::OK;
+        }
 
         // Avoid flushing a page that is currently pinned (may be actively modified)
         if (frames_[frame_index].pin_count.load(std::memory_order_relaxed) > 0)
@@ -998,14 +2925,20 @@ namespace scratchbird::core
         // Write to disk
         const uint64_t flushed_generation =
             frames_[frame_index].dirty_generation.load(std::memory_order_acquire);
-        Status status = writePageToDisk(gpid, frames_[frame_index].data.get(), ctx);
+        const WritebackQueueState queue_state = classifyWritebackQueueState(frames_[frame_index]);
+        beginFrameWriteback(frame_index, queue_state);
+        Status status = writePageToDisk(frame_index, ctx, queue_state);
         if (status == Status::OK)
         {
             finishFrameWriteback(frame_index,
                                  flushed_generation,
-                                 WritebackQueueState::BACKGROUND);
+                                 queue_state);
             // MEDIUM-1 FIX: Use relaxed atomic increment for stats
             stats_.flushes.fetch_add(1, std::memory_order_relaxed);
+        }
+        else
+        {
+            markFrameWritebackFailure(frame_index, queue_state);
         }
 
         return status;
@@ -1024,7 +2957,9 @@ namespace scratchbird::core
 
             // PHASE 1, TASK 1.2.3: Changed page_id to gpid
             if (frames_[i].gpid == INVALID_GPID ||
-                !frames_[i].is_dirty.load(std::memory_order_acquire))
+                !frames_[i].is_dirty.load(std::memory_order_acquire) ||
+                static_cast<DirtyState>(frames_[i].dirty_state.load(std::memory_order_relaxed)) ==
+                    DirtyState::DirtyFlushedPendingFsync)
             {
                 continue;
             }
@@ -1039,14 +2974,17 @@ namespace scratchbird::core
 
             const uint64_t flushed_generation =
                 frames_[i].dirty_generation.load(std::memory_order_acquire);
-            Status status = writePageToDisk(frames_[i].gpid, frames_[i].data.get(), ctx);
+            const WritebackQueueState queue_state = classifyWritebackQueueState(frames_[i]);
+            beginFrameWriteback(i, queue_state);
+            Status status = writePageToDisk(i, ctx, queue_state);
             if (status != Status::OK)
             {
+                markFrameWritebackFailure(i, queue_state);
                 return status;
             }
             finishFrameWriteback(i,
                                  flushed_generation,
-                                 WritebackQueueState::BACKGROUND);
+                                 queue_state);
             // MEDIUM-1 FIX: Use relaxed atomic increment for stats
             stats_.flushes.fetch_add(1, std::memory_order_relaxed);
         }
@@ -1056,7 +2994,8 @@ namespace scratchbird::core
 
     // P2-3: TOAST Chunk Prefetching - LEGACY API
     auto BufferPool::prefetchPages(const std::vector<uint32_t> &page_ids, ErrorContext *ctx,
-                                   AccessStrategy strategy) -> Status
+                                   AccessStrategy strategy,
+                                   WorkloadClass workload_class) -> Status
     {
         // Convert to GPIDs and call GPID version
         std::vector<GPID> gpids;
@@ -1065,15 +3004,28 @@ namespace scratchbird::core
         {
             gpids.push_back(convertPageIDtoGPID(page_id));
         }
-        return prefetchPagesGlobal(gpids, ctx, strategy);
+        return prefetchPagesGlobal(gpids, ctx, strategy, workload_class);
     }
 
     // P2-3: TOAST Chunk Prefetching - Batch read pages into buffer pool
     auto BufferPool::prefetchPagesGlobal(const std::vector<GPID> &gpids, ErrorContext *ctx,
-                                         AccessStrategy strategy) -> Status
+                                         AccessStrategy strategy,
+                                         WorkloadClass workload_class) -> Status
     {
         if (gpids.empty())
         {
+            return Status::OK;
+        }
+
+        WorkloadClass effective_workload = workload_class;
+        if (effective_workload == WorkloadClass::Unspecified)
+        {
+            effective_workload = defaultWorkloadClass(strategy, true);
+        }
+
+        if (!config_.prefetch_enabled)
+        {
+            publishThrashState(ThrashDetectorState::None);
             return Status::OK;
         }
 
@@ -1112,18 +3064,88 @@ namespace scratchbird::core
             }
         }
 
+        if (pages_to_fetch.empty())
+        {
+            publishThrashState(ThrashDetectorState::None);
+            return Status::OK;
+        }
+
+        const uint64_t session_key = deriveCurrentPrefetchSessionKey();
+        const size_t original_prefetch_count = pages_to_fetch.size();
+        const uint32_t global_outstanding = currentOutstandingPrefetchDebtPages();
+        const uint32_t session_outstanding = currentOutstandingPrefetchDebtPages(session_key);
+        const uint32_t global_remaining =
+            (config_.prefetch_max_debt_pages > global_outstanding)
+                ? (config_.prefetch_max_debt_pages - global_outstanding)
+                : 0u;
+        const uint32_t session_budget = sessionPrefetchBudget();
+        const uint32_t session_remaining =
+            (session_budget > session_outstanding) ? (session_budget - session_outstanding) : 0u;
+
+        ThrashDetectorState thrash_state = evaluateThrashState(session_key);
+        size_t allowed_prefetch_count = pages_to_fetch.size();
+        if (global_remaining < allowed_prefetch_count)
+        {
+            allowed_prefetch_count = global_remaining;
+            thrash_state = ThrashDetectorState::GlobalDebtCap;
+        }
+        if (session_remaining < allowed_prefetch_count)
+        {
+            allowed_prefetch_count = session_remaining;
+            thrash_state = ThrashDetectorState::SessionBudgetCap;
+            stats_.fairness_session_budget_breaches.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        switch (thrash_state)
+        {
+            case ThrashDetectorState::UsefulnessCollapse:
+                allowed_prefetch_count = 0;
+                break;
+            case ThrashDetectorState::ScanPressure:
+                allowed_prefetch_count = std::min<size_t>(allowed_prefetch_count, 1u);
+                break;
+            case ThrashDetectorState::GlobalDebtCap:
+            case ThrashDetectorState::SessionBudgetCap:
+            case ThrashDetectorState::None:
+                break;
+        }
+
+        publishThrashState(thrash_state);
+        if (allowed_prefetch_count < pages_to_fetch.size())
+        {
+            stats_.prefetch_cancelled_pages.fetch_add(
+                static_cast<uint64_t>(pages_to_fetch.size() - allowed_prefetch_count),
+                std::memory_order_relaxed);
+            pages_to_fetch.resize(allowed_prefetch_count);
+        }
+
         // Prefetch pages by pinning then immediately unpinning
         // The pages stay in the buffer pool cache for subsequent access
         for (GPID gpid : pages_to_fetch)
         {
             void *buffer = nullptr;
-            Status status = pinPageGlobal(gpid, &buffer, ctx, strategy);
+            Status status = pinPageGlobal(gpid, &buffer, ctx, strategy, effective_workload);
             if (status == Status::OK)
             {
                 // Immediately unpin - page stays in cache
                 unpinPageGlobal(gpid, false, ctx);
+
+                size_t partition_idx = getPartitionIndex(gpid);
+                auto &partition = page_table_partitions_[partition_idx];
+                std::lock_guard<std::mutex> partition_lock(partition.mutex);
+                auto frame_it = partition.table.find(gpid);
+                if (frame_it != partition.table.end())
+                {
+                    markFramePrefetched(frame_it->second, session_key);
+                }
             }
             // Ignore errors - partial prefetch is still useful
+        }
+
+        if (pages_to_fetch.empty() && original_prefetch_count != 0 &&
+            thrash_state == ThrashDetectorState::None)
+        {
+            publishThrashState(ThrashDetectorState::GlobalDebtCap);
         }
 
         return Status::OK;
@@ -1163,7 +3185,9 @@ namespace scratchbird::core
                     continue;
                 }
                 if (frames_[i].gpid == INVALID_GPID ||
-                    !frames_[i].is_dirty.load(std::memory_order_acquire))
+                    !frames_[i].is_dirty.load(std::memory_order_acquire) ||
+                    static_cast<DirtyState>(frames_[i].dirty_state.load(std::memory_order_relaxed)) ==
+                        DirtyState::DirtyFlushedPendingFsync)
                 {
                     continue;
                 }
@@ -1171,9 +3195,12 @@ namespace scratchbird::core
                 // Flush this dirty page
                 const uint64_t flushed_generation =
                     frames_[i].dirty_generation.load(std::memory_order_acquire);
-                Status status = writePageToDisk(frames_[i].gpid, frames_[i].data.get(), ctx);
+                const WritebackQueueState queue_state = classifyWritebackQueueState(frames_[i]);
+                beginFrameWriteback(i, queue_state);
+                Status status = writePageToDisk(i, ctx, queue_state);
                 if (status != Status::OK)
                 {
+                    markFrameWritebackFailure(i, queue_state);
                     LOG_ERROR(BUFFER,
                              "Failed to flush page in tablespace %u during flushTablespace()",
                              tablespace_id);
@@ -1182,7 +3209,7 @@ namespace scratchbird::core
 
                 finishFrameWriteback(i,
                                      flushed_generation,
-                                     WritebackQueueState::BACKGROUND);
+                                     queue_state);
                 stats_.flushes.fetch_add(1, std::memory_order_relaxed);
                 flushed_count++;
             }
@@ -1318,18 +3345,7 @@ namespace scratchbird::core
             frame.is_dirty.store(false, std::memory_order_relaxed);
             frame.pin_count.store(0, std::memory_order_relaxed);
             frame.usage_count.store(0, std::memory_order_relaxed);
-            frame.mga_page_class.store(static_cast<uint8_t>(MgaPageClass::Generic),
-                                       std::memory_order_relaxed);
-            frame.oldest_interesting_txid.store(0, std::memory_order_relaxed);
-            frame.prune_safe_horizon_hint.store(0, std::memory_order_relaxed);
-            frame.dead_version_bytes.store(0, std::memory_order_relaxed);
-            frame.chain_depth_hint.store(0, std::memory_order_relaxed);
-            frame.last_gc_touch_generation.store(0, std::memory_order_relaxed);
-            frame.scan_probation_generation.store(0, std::memory_order_relaxed);
-            frame.dirty_generation.store(0, std::memory_order_relaxed);
-            frame.writeback_queue_state.store(static_cast<uint8_t>(WritebackQueueState::NONE),
-                                              std::memory_order_relaxed);
-            frame.commit_fence_member.store(false, std::memory_order_relaxed);
+            resetFrameScaffolding(frame);
             return Status::OK;
         }
 
@@ -1355,13 +3371,24 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        if (frame.is_dirty.load(std::memory_order_acquire))
+        const ResidencyTier residency_tier = static_cast<ResidencyTier>(
+            frame.residency_tier.load(std::memory_order_relaxed));
+        if (residency_tier == ResidencyTier::Protected ||
+            residency_tier == ResidencyTier::PinBiased)
+        {
+            return Status::INVALID_ARGUMENT;
+        }
+
+        const bool was_dirty = frame.is_dirty.load(std::memory_order_acquire);
+        if (was_dirty)
         {
             const uint64_t flushed_generation =
                 frame.dirty_generation.load(std::memory_order_acquire);
-            Status status = writePageToDisk(frame.gpid, frame.data.get(), ctx);
+            beginFrameWriteback(frame_index, WritebackQueueState::NONE);
+            Status status = writePageToDisk(frame_index, ctx, WritebackQueueState::NONE);
             if (status != Status::OK)
             {
+                markFrameWritebackFailure(frame_index, WritebackQueueState::NONE);
                 return status;
             }
             finishFrameWriteback(frame_index,
@@ -1377,28 +3404,33 @@ namespace scratchbird::core
 
         const MgaPageClass page_class = static_cast<MgaPageClass>(
             frame.mga_page_class.load(std::memory_order_relaxed));
+        const PolicyDomain domain = static_cast<PolicyDomain>(
+            frame.policy_domain.load(std::memory_order_relaxed));
+        const uint64_t eviction_generation =
+            residency_generation_clock_.fetch_add(1, std::memory_order_relaxed) + 1;
         if (page_class == MgaPageClass::SCAN_PROBATION)
         {
             stats_.mga_scan_probation_churn.fetch_add(1, std::memory_order_relaxed);
         }
+        recordGhostHistory(frame.gpid,
+                           domain,
+                           page_class,
+                           residency_tier,
+                           eviction_generation,
+                           was_dirty ? GhostEvictionReason::DirtyForeground
+                                     : (residency_tier == ResidencyTier::RingOnly
+                                            ? GhostEvictionReason::RingChurn
+                                            : GhostEvictionReason::ProbationaryAging));
+        recordUnusedPrefetchEviction(frame);
 
         partition.table.erase(page_table_it);
+        frame.lifecycle_state.store(static_cast<uint8_t>(LifecycleState::Evicting),
+                                    std::memory_order_relaxed);
         frame.gpid = INVALID_GPID;
         frame.is_dirty.store(false, std::memory_order_relaxed);
         frame.pin_count.store(0, std::memory_order_relaxed);
         frame.usage_count.store(0, std::memory_order_relaxed);
-        frame.mga_page_class.store(static_cast<uint8_t>(MgaPageClass::Generic),
-                                   std::memory_order_relaxed);
-        frame.oldest_interesting_txid.store(0, std::memory_order_relaxed);
-        frame.prune_safe_horizon_hint.store(0, std::memory_order_relaxed);
-        frame.dead_version_bytes.store(0, std::memory_order_relaxed);
-        frame.chain_depth_hint.store(0, std::memory_order_relaxed);
-        frame.last_gc_touch_generation.store(0, std::memory_order_relaxed);
-        frame.scan_probation_generation.store(0, std::memory_order_relaxed);
-        frame.dirty_generation.store(0, std::memory_order_relaxed);
-        frame.writeback_queue_state.store(static_cast<uint8_t>(WritebackQueueState::NONE),
-                                          std::memory_order_relaxed);
-        frame.commit_fence_member.store(false, std::memory_order_relaxed);
+        resetFrameScaffolding(frame);
         stats_.evictions.fetch_add(1, std::memory_order_relaxed);
         recordMgaEviction(page_class);
         return Status::OK;
@@ -1446,6 +3478,14 @@ namespace scratchbird::core
             uint32_t candidate_rank = UINT32_MAX;
             bool candidate_dirty = true;
             uint32_t protected_candidate_frame = UINT32_MAX;
+            uint32_t hard_emergency_candidate_frame = UINT32_MAX;
+            const uint64_t current_generation =
+                residency_generation_clock_.load(std::memory_order_relaxed);
+            const uint32_t protected_budget = protectedFrameBudget();
+            uint32_t protected_frames = currentProtectedFrameCount();
+            const DomainCounterArray resident_counts = collectDomainResidentCountsLocked();
+            std::array<bool, static_cast<size_t>(PolicyDomain::Count)>
+                reservation_skip_recorded{};
             uint32_t passes = 0;
             uint32_t scanned_in_pass = 0;
 
@@ -1506,14 +3546,38 @@ namespace scratchbird::core
 
                 const MgaPageClass page_class = static_cast<MgaPageClass>(
                     frame.mga_page_class.load(std::memory_order_relaxed));
+                const PolicyDomain domain = static_cast<PolicyDomain>(
+                    frame.policy_domain.load(std::memory_order_relaxed));
+                ResidencyTier residency_tier = static_cast<ResidencyTier>(
+                    frame.residency_tier.load(std::memory_order_relaxed));
                 const bool commit_fence_member =
                     frame.commit_fence_member.load(std::memory_order_relaxed);
 
-                if (commit_fence_member || isHardProtectedClass(page_class))
+                if (commit_fence_member || isHardProtectedClass(page_class) ||
+                    residency_tier == ResidencyTier::PinBiased)
                 {
-                    if (!commit_fence_member && protected_candidate_frame == UINT32_MAX)
+                    if (config_.layout == PoolLayout::Single && !commit_fence_member &&
+                        isHardProtectedClass(page_class) &&
+                        hard_emergency_candidate_frame == UINT32_MAX)
                     {
-                        protected_candidate_frame = current_hand;
+                        hard_emergency_candidate_frame = current_hand;
+                    }
+                    if (scanned_in_pass >= config_.pool_size)
+                    {
+                        passes++;
+                        scanned_in_pass = 0;
+                    }
+                    continue;
+                }
+
+                if (!canEvictFromDomainLocked(domain, resident_counts))
+                {
+                    const size_t domain_index = static_cast<size_t>(domain);
+                    if (!reservation_skip_recorded[domain_index])
+                    {
+                        domain_reservation_breach_counts_[domain_index].fetch_add(
+                            1, std::memory_order_relaxed);
+                        reservation_skip_recorded[domain_index] = true;
                     }
                     if (scanned_in_pass >= config_.pool_size)
                     {
@@ -1528,13 +3592,53 @@ namespace scratchbird::core
                 uint32_t current_usage_count = frame.usage_count.load(std::memory_order_relaxed);
                 if (current_usage_count == 0)
                 {
+                    if (residency_tier == ResidencyTier::Protected)
+                    {
+                        const uint64_t last_touch_generation =
+                            frame.last_touch_generation.load(std::memory_order_relaxed);
+                        const uint64_t age = (current_generation > last_touch_generation)
+                                                 ? (current_generation - last_touch_generation)
+                                                 : 0;
+                        const uint64_t max_protected_age = std::max<uint64_t>(
+                            4, static_cast<uint64_t>(config_.admission_second_touch_generations) * 2);
+                        if (protected_frames > protected_budget || age > max_protected_age)
+                        {
+                            frame.residency_tier.store(
+                                static_cast<uint8_t>(ResidencyTier::Probationary),
+                                std::memory_order_relaxed);
+                            stats_.mga_residency_demotions.fetch_add(
+                                1, std::memory_order_relaxed);
+                            residency_tier = ResidencyTier::Probationary;
+                            if (protected_frames > 0)
+                            {
+                                --protected_frames;
+                            }
+                        }
+                        else
+                        {
+                            if (protected_candidate_frame == UINT32_MAX)
+                            {
+                                protected_candidate_frame = current_hand;
+                            }
+                            if (scanned_in_pass >= config_.pool_size)
+                            {
+                                passes++;
+                                scanned_in_pass = 0;
+                            }
+                            continue;
+                        }
+                    }
+
                     if (page_class == MgaPageClass::GC_CANDIDATE)
                     {
                         offerGcCandidate(current_hand);
                     }
 
                     const bool is_dirty = frame.is_dirty.load(std::memory_order_acquire);
-                    const uint32_t rank = evictionRankForClass(page_class);
+                    const uint32_t rank =
+                        domainEvictionPriorityLocked(domain, resident_counts) * 128 +
+                        evictionRankForTier(residency_tier) * 16 +
+                                          evictionRankForClass(page_class);
                     if (candidate_frame == UINT32_MAX ||
                         rank < candidate_rank ||
                         (rank == candidate_rank && candidate_dirty && !is_dirty))
@@ -1553,6 +3657,13 @@ namespace scratchbird::core
                     if (page_class == MgaPageClass::SCAN_PROBATION)
                     {
                         frame.usage_count.store(0, std::memory_order_relaxed);
+                    }
+                    else if (residency_tier == ResidencyTier::Protected)
+                    {
+                        if (current_usage_count > 1)
+                        {
+                            frame.usage_count.fetch_sub(1, std::memory_order_relaxed);
+                        }
                     }
                     else if (page_class == MgaPageClass::CHAIN_HEAVY ||
                              page_class == MgaPageClass::INDEX_CHURN)
@@ -1606,6 +3717,42 @@ namespace scratchbird::core
                     // PHASE 1, TASK 1.2.3: Changed page_id to gpid
                     const MgaPageClass page_class = static_cast<MgaPageClass>(
                         frames_[frame_index].mga_page_class.load(std::memory_order_relaxed));
+                    const ResidencyTier residency_tier = static_cast<ResidencyTier>(
+                        frames_[frame_index].residency_tier.load(std::memory_order_relaxed));
+                    if (residency_tier == ResidencyTier::PinBiased ||
+                        isHardProtectedClass(page_class))
+                    {
+                        if (config_.layout == PoolLayout::Single &&
+                            !frames_[frame_index].commit_fence_member.load(
+                                std::memory_order_relaxed) &&
+                            isHardProtectedClass(page_class) &&
+                            hard_emergency_candidate_frame == UINT32_MAX)
+                        {
+                            hard_emergency_candidate_frame = frame_index;
+                        }
+                        continue;
+                    }
+                    const PolicyDomain domain = static_cast<PolicyDomain>(
+                        frames_[frame_index].policy_domain.load(std::memory_order_relaxed));
+                    if (!canEvictFromDomainLocked(domain, resident_counts))
+                    {
+                        const size_t domain_index = static_cast<size_t>(domain);
+                        if (!reservation_skip_recorded[domain_index])
+                        {
+                            domain_reservation_breach_counts_[domain_index].fetch_add(
+                                1, std::memory_order_relaxed);
+                            reservation_skip_recorded[domain_index] = true;
+                        }
+                        continue;
+                    }
+                    if (residency_tier == ResidencyTier::Protected)
+                    {
+                        if (protected_candidate_frame == UINT32_MAX)
+                        {
+                            protected_candidate_frame = frame_index;
+                        }
+                        continue;
+                    }
                     if (frames_[frame_index].pin_count.load(std::memory_order_relaxed) == 0 &&
                         frames_[frame_index].gpid != INVALID_GPID &&
                         !frames_[frame_index].commit_fence_member.load(std::memory_order_relaxed) &&
@@ -1624,6 +3771,26 @@ namespace scratchbird::core
                         1, std::memory_order_relaxed);
                     LOG_WARNING(BUFFER,
                                 "MGA protected-set collapse: evicting protected class %s",
+                                mgaPageClassToString(static_cast<MgaPageClass>(
+                                    frames_[candidate_frame].mga_page_class.load(
+                                        std::memory_order_relaxed))));
+                }
+
+                if (candidate_frame == UINT32_MAX &&
+                    hard_emergency_candidate_frame != UINT32_MAX &&
+                    commit_fence_depth_.load(std::memory_order_acquire) == 0 &&
+                    config_.layout == PoolLayout::Single)
+                {
+                    // Legacy single-layout pools still need a last-resort
+                    // bootstrap escape hatch. The canonical segmented policy
+                    // does not use hard-protected collapse for TX_STATE.
+                    candidate_frame = hard_emergency_candidate_frame;
+                    domain_emergency_breach_counts_[static_cast<size_t>(
+                        PolicyDomain::CriticalSystem)].fetch_add(1, std::memory_order_relaxed);
+                    stats_.mga_protected_set_collapse_events.fetch_add(
+                        1, std::memory_order_relaxed);
+                    LOG_WARNING(BUFFER,
+                                "MGA legacy-single emergency collapse: evicting hard-protected class %s",
                                 mgaPageClassToString(static_cast<MgaPageClass>(
                                     frames_[candidate_frame].mga_page_class.load(
                                         std::memory_order_relaxed))));
@@ -1656,6 +3823,9 @@ namespace scratchbird::core
             if (evicted_gpid == INVALID_GPID)
             {
                 DEBUG_LOG_BP("Evicting frame with INVALID_GPID at index " << candidate_frame);
+                frames_[candidate_frame].lifecycle_state.store(
+                    static_cast<uint8_t>(LifecycleState::Free),
+                    std::memory_order_relaxed);
                 evicted_frame = candidate_frame;
                 return Status::OK;
             }
@@ -1694,6 +3864,10 @@ namespace scratchbird::core
             evicted_frame = candidate_frame;
             const MgaPageClass evicted_page_class = static_cast<MgaPageClass>(
                 frames_[evicted_frame].mga_page_class.load(std::memory_order_relaxed));
+            const PolicyDomain evicted_domain = static_cast<PolicyDomain>(
+                frames_[evicted_frame].policy_domain.load(std::memory_order_relaxed));
+            const ResidencyTier evicted_residency_tier = static_cast<ResidencyTier>(
+                frames_[evicted_frame].residency_tier.load(std::memory_order_relaxed));
             if (evicted_page_class == MgaPageClass::GC_CANDIDATE)
             {
                 offerGcCandidate(evicted_frame);
@@ -1707,10 +3881,14 @@ namespace scratchbird::core
             {
                 const uint64_t flushed_generation =
                     frames_[evicted_frame].dirty_generation.load(std::memory_order_acquire);
-                Status status =
-                    writePageToDisk(evicted_gpid, frames_[evicted_frame].data.get(), ctx);
+                beginFrameWriteback(evicted_frame, WritebackQueueState::NONE);
+                Status status = writePageToDisk(evicted_frame,
+                                                ctx,
+                                                WritebackQueueState::NONE);
                 if (status != Status::OK)
                 {
+                    markFrameWritebackFailure(evicted_frame,
+                                              WritebackQueueState::NONE);
                     return status;
                 }
                 finishFrameWriteback(evicted_frame,
@@ -1731,29 +3909,36 @@ namespace scratchbird::core
                 stats_.mga_scan_probation_churn.fetch_add(1, std::memory_order_relaxed);
             }
 
+            const uint64_t eviction_generation =
+                residency_generation_clock_.fetch_add(1, std::memory_order_relaxed) + 1;
+            recordGhostHistory(evicted_gpid,
+                               evicted_domain,
+                               evicted_page_class,
+                               evicted_residency_tier,
+                               eviction_generation,
+                               (evicted_residency_tier == ResidencyTier::Protected ||
+                                evicted_residency_tier == ResidencyTier::PinBiased)
+                                   ? GhostEvictionReason::EmergencyCollapse
+                                   : (was_dirty ? GhostEvictionReason::DirtyForeground
+                                                   : (evicted_residency_tier == ResidencyTier::RingOnly
+                                                       ? GhostEvictionReason::RingChurn
+                                                       : GhostEvictionReason::ProbationaryAging)));
+            recordUnusedPrefetchEviction(frames_[evicted_frame]);
+
             // Remove from page table
             partition.table.erase(page_table_it);
 
             // Reset frame (including Clock Sweep usage_count)
             // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+            frames_[evicted_frame].lifecycle_state.store(
+                static_cast<uint8_t>(LifecycleState::Evicting),
+                std::memory_order_relaxed);
             frames_[evicted_frame].gpid = INVALID_GPID;
             frames_[evicted_frame].is_dirty.store(false, std::memory_order_relaxed);
             frames_[evicted_frame].pin_count.store(0, std::memory_order_relaxed);
             // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
             frames_[evicted_frame].usage_count.store(0, std::memory_order_relaxed); // Reset usage count for next page
-            frames_[evicted_frame].mga_page_class.store(
-                static_cast<uint8_t>(MgaPageClass::Generic), std::memory_order_relaxed);
-            frames_[evicted_frame].oldest_interesting_txid.store(0, std::memory_order_relaxed);
-            frames_[evicted_frame].prune_safe_horizon_hint.store(0, std::memory_order_relaxed);
-            frames_[evicted_frame].dead_version_bytes.store(0, std::memory_order_relaxed);
-            frames_[evicted_frame].chain_depth_hint.store(0, std::memory_order_relaxed);
-            frames_[evicted_frame].last_gc_touch_generation.store(0, std::memory_order_relaxed);
-            frames_[evicted_frame].scan_probation_generation.store(0, std::memory_order_relaxed);
-            frames_[evicted_frame].dirty_generation.store(0, std::memory_order_relaxed);
-            frames_[evicted_frame].writeback_queue_state.store(
-                static_cast<uint8_t>(WritebackQueueState::NONE),
-                std::memory_order_relaxed);
-            frames_[evicted_frame].commit_fence_member.store(false, std::memory_order_relaxed);
+            resetFrameScaffolding(frames_[evicted_frame]);
 
             // MEDIUM-1 FIX: Use relaxed atomic increment for stats
             stats_.evictions.fetch_add(1, std::memory_order_relaxed);
@@ -1792,13 +3977,27 @@ namespace scratchbird::core
     }
 
     // PHASE 1, TASK 1.2.4: Use Database::write_page_global() for GPID-based I/O
-    auto BufferPool::writePageToDisk(GPID gpid,
-                                     const uint8_t *buffer,
+    auto BufferPool::writePageToDisk(uint32_t frame_index,
                                      ErrorContext *ctx,
+                                     WritebackQueueState queue_state,
                                      bool checkpoint_flush)
         -> Status
     {
-        auto *mutable_buffer = const_cast<uint8_t *>(buffer);
+        if (frame_index >= frames_.size())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid frame index for writeback");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        const GPID gpid = frames_[frame_index].gpid;
+        auto *mutable_buffer = frames_[frame_index].data.get();
+        if (gpid == INVALID_GPID || mutable_buffer == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Invalid frame selected for writeback");
+            return Status::INVALID_ARGUMENT;
+        }
+
         auto *header = reinterpret_cast<PageHeader *>(mutable_buffer);
         const bool temporary_work = header->magic == K_MAGIC_SBRD && pageIsTemporaryWork(*header);
         if (header->magic == K_MAGIC_SBRD)
@@ -1826,11 +4025,85 @@ namespace scratchbird::core
             }
         }
 
+        WritebackAttribution attribution{};
+        switch (queue_state)
+        {
+            case WritebackQueueState::FOREGROUND_HELP:
+                attribution.queue_kind = WritebackQueueKind::FOREGROUND_HELP;
+                break;
+            case WritebackQueueState::BACKGROUND_AGE:
+                attribution.queue_kind = WritebackQueueKind::BACKGROUND_AGE;
+                break;
+            case WritebackQueueState::CHECKPOINT:
+                attribution.queue_kind = WritebackQueueKind::CHECKPOINT;
+                break;
+            case WritebackQueueState::METADATA_PRIORITY:
+                attribution.queue_kind = WritebackQueueKind::METADATA_PRIORITY;
+                break;
+            case WritebackQueueState::WRITE_COMBINE:
+                attribution.queue_kind = WritebackQueueKind::WRITE_COMBINE;
+                break;
+            case WritebackQueueState::REPAIR_RETRY:
+                attribution.queue_kind = WritebackQueueKind::REPAIR_RETRY;
+                break;
+            case WritebackQueueState::NONE:
+            default:
+                attribution.queue_kind = WritebackQueueKind::UNKNOWN;
+                break;
+        }
+
+        const MgaPageClass page_class = static_cast<MgaPageClass>(
+            frames_[frame_index].mga_page_class.load(std::memory_order_relaxed));
+        switch (page_class)
+        {
+            case MgaPageClass::TX_STATE:
+            case MgaPageClass::VERSION_ROOT:
+            case MgaPageClass::CHAIN_HEAVY:
+            case MgaPageClass::GC_CANDIDATE:
+                attribution.policy_domain = WritebackPolicyDomain::TRANSACTION;
+                break;
+            case MgaPageClass::SYSTEM_META:
+            case MgaPageClass::INDEX_ROOT_INTERNAL:
+                attribution.policy_domain = WritebackPolicyDomain::SYSTEM_STATE;
+                break;
+            case MgaPageClass::TEMP_WORK:
+                attribution.policy_domain = WritebackPolicyDomain::ALLOCATOR;
+                break;
+            case MgaPageClass::Generic:
+            case MgaPageClass::SCAN_PROBATION:
+            case MgaPageClass::INDEX_CHURN:
+            default:
+                attribution.policy_domain =
+                    queue_state == WritebackQueueState::CHECKPOINT
+                    ? WritebackPolicyDomain::CHECKPOINT
+                    : WritebackPolicyDomain::UNKNOWN;
+                break;
+        }
+        if (queue_state == WritebackQueueState::CHECKPOINT)
+        {
+            attribution.policy_domain = WritebackPolicyDomain::CHECKPOINT;
+        }
+        attribution.dirty_generation =
+            frames_[frame_index].dirty_generation.load(std::memory_order_relaxed);
+
         // Call new Database GPID method (supports multi-tablespace addressing)
         // Database class handles tablespace validation and routing for Phase 1
-        Status status = db_->write_page_global(gpid, mutable_buffer, ctx);
+        frames_[frame_index].io_generation.fetch_add(1, std::memory_order_relaxed);
+        Status status = db_->write_page_global(gpid, mutable_buffer, ctx, attribution);
         if (status == Status::OK)
         {
+            {
+                std::lock_guard<std::mutex> lock(dirty_tracking_mutex_);
+                if (temporary_work ||
+                    header->flush_generation <= header->checkpoint_generation)
+                {
+                    checkpoint_marker_candidates_.erase(gpid);
+                }
+                else
+                {
+                    checkpoint_marker_candidates_.insert(gpid);
+                }
+            }
             if (metrics_ && metrics_->buffer_pool_writes_total)
             {
                 metrics_->buffer_pool_writes_total->inc();
@@ -1934,6 +4207,11 @@ namespace scratchbird::core
         Status status = db_->allocate_page_id_global(tablespace_id, &new_gpid, ctx);
         if (status != Status::OK)
         {
+            LOG_WARNING(GENERAL,
+                        "BufferPool::allocatePageGlobal allocate_page_id_global failed: tablespace=%u status=%d msg=%s",
+                        static_cast<unsigned int>(tablespace_id),
+                        static_cast<int>(status),
+                        ctx ? ctx->message.c_str() : "");
             return status;
         }
 
@@ -1966,6 +4244,9 @@ namespace scratchbird::core
                                                                   std::memory_order_acq_rel,
                                                                   std::memory_order_acquire))
         {
+            frames_[frame_index].dirty_state.store(
+                static_cast<uint8_t>(DirtyState::DirtyUnscheduled),
+                std::memory_order_relaxed);
             dirty_page_count_.fetch_add(1, std::memory_order_relaxed);
             updateDirtyTelemetry();
             return true;
@@ -1980,6 +4261,8 @@ namespace scratchbird::core
                                                                   std::memory_order_acq_rel,
                                                                   std::memory_order_acquire))
         {
+            frames_[frame_index].dirty_state.store(static_cast<uint8_t>(DirtyState::Clean),
+                                                   std::memory_order_relaxed);
             dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
             updateDirtyTelemetry();
             return true;
@@ -1993,12 +4276,30 @@ namespace scratchbird::core
     {
         const uint64_t current_generation =
             frames_[frame_index].dirty_generation.load(std::memory_order_acquire);
+        frames_[frame_index].last_flush_generation.store(flushed_generation,
+                                                         std::memory_order_relaxed);
+        frames_[frame_index].lifecycle_state.store(static_cast<uint8_t>(LifecycleState::Valid),
+                                                   std::memory_order_relaxed);
         if (current_generation != flushed_generation)
+        {
+            frames_[frame_index].writeback_queue_state.store(
+                static_cast<uint8_t>(classifyWritebackQueueState(frames_[frame_index])),
+                std::memory_order_relaxed);
+            frames_[frame_index].dirty_state.store(
+                static_cast<uint8_t>(DirtyState::DirtyUnscheduled),
+                std::memory_order_relaxed);
+            return false;
+        }
+
+        if (dirty_queue_state != WritebackQueueState::NONE)
         {
             frames_[frame_index].writeback_queue_state.store(
                 static_cast<uint8_t>(dirty_queue_state),
                 std::memory_order_relaxed);
-            return false;
+            frames_[frame_index].dirty_state.store(
+                static_cast<uint8_t>(DirtyState::DirtyFlushedPendingFsync),
+                std::memory_order_relaxed);
+            return true;
         }
 
         const bool cleared = tryClearFrameDirty(frame_index);
@@ -2014,8 +4315,13 @@ namespace scratchbird::core
             dirty_generation_clock_.fetch_add(1, std::memory_order_relaxed) + 1;
         frames_[frame_index].dirty_generation.store(dirty_generation,
                                                     std::memory_order_relaxed);
+        frames_[frame_index].checkpoint_target_generation.store(
+            0, std::memory_order_relaxed);
+        frames_[frame_index].dirty_state.store(
+            static_cast<uint8_t>(DirtyState::DirtyUnscheduled),
+            std::memory_order_relaxed);
         frames_[frame_index].writeback_queue_state.store(
-            static_cast<uint8_t>(WritebackQueueState::BACKGROUND),
+            static_cast<uint8_t>(classifyWritebackQueueState(frames_[frame_index])),
             std::memory_order_relaxed);
         const GPID gpid = frames_[frame_index].gpid;
         if (gpid != INVALID_GPID)
@@ -2218,95 +4524,184 @@ namespace scratchbird::core
             }
         }
 
-        // Ensure we write at least 1 page if dirty ratio triggered flushing
         if (pages_to_write == 0)
         {
             pages_to_write = 1;
         }
 
-        // Flush dirty pages (up to pages_to_write limit)
-        // Strategy: Iterate through frames and flush dirty, unpinned pages
-        // Prefer pages with lower usage_count (clock sweep integration)
-        for (uint32_t i = 0; i < config_.pool_size && pages_written < pages_to_write; i++)
+        struct WritebackCandidate
         {
-            Frame &frame = frames_[i];
+            uint32_t frame_index = UINT32_MAX;
+            WritebackQueueState queue_state = WritebackQueueState::NONE;
+            uint32_t priority = UINT32_MAX;
+            uint64_t dirty_generation = 0;
+            uint32_t usage_count = 0;
+        };
 
+        auto queuePriority = [](WritebackQueueState queue_state) -> uint32_t
+        {
+            switch (queue_state)
+            {
+                case WritebackQueueState::FOREGROUND_HELP:
+                    return 0;
+                case WritebackQueueState::CHECKPOINT:
+                    return 1;
+                case WritebackQueueState::METADATA_PRIORITY:
+                    return 2;
+                case WritebackQueueState::BACKGROUND_AGE:
+                    return 3;
+                case WritebackQueueState::WRITE_COMBINE:
+                    return 4;
+                case WritebackQueueState::REPAIR_RETRY:
+                    return 5;
+                case WritebackQueueState::NONE:
+                default:
+                    return 6;
+            }
+        };
+
+        while (pages_written < pages_to_write)
+        {
+            std::vector<WritebackCandidate> candidates;
+            candidates.reserve(config_.pool_size);
+
+            for (uint32_t i = 0; i < config_.pool_size; ++i)
+            {
+                Frame &frame = frames_[i];
+                std::unique_lock<std::mutex> content_lock(*frame.content_mutex, std::try_to_lock);
+                if (!content_lock.owns_lock())
+                {
+                    continue;
+                }
+
+                const DirtyState dirty_state = static_cast<DirtyState>(
+                    frame.dirty_state.load(std::memory_order_relaxed));
+                if (!frame.is_dirty.load(std::memory_order_acquire) ||
+                    dirty_state == DirtyState::DirtyInFlight ||
+                    dirty_state == DirtyState::DirtyFlushedPendingFsync ||
+                    frame.pin_count.load(std::memory_order_relaxed) > 0 ||
+                    frame.gpid == INVALID_GPID)
+                {
+                    continue;
+                }
+
+                const MgaPageClass page_class = static_cast<MgaPageClass>(
+                    frame.mga_page_class.load(std::memory_order_relaxed));
+                WritebackQueueState queue_state = static_cast<WritebackQueueState>(
+                    frame.writeback_queue_state.load(std::memory_order_relaxed));
+                const WritebackQueueState derived_queue_state =
+                    classifyWritebackQueueState(frame);
+                if (queue_state == WritebackQueueState::NONE ||
+                    (queue_state != WritebackQueueState::CHECKPOINT &&
+                     queue_state != WritebackQueueState::REPAIR_RETRY &&
+                     queue_state != derived_queue_state))
+                {
+                    queue_state = derived_queue_state;
+                    frame.writeback_queue_state.store(
+                        static_cast<uint8_t>(queue_state),
+                        std::memory_order_relaxed);
+                }
+
+                if (queue_state == WritebackQueueState::NONE)
+                {
+                    continue;
+                }
+                if (page_class == MgaPageClass::SCAN_PROBATION &&
+                    queue_state == WritebackQueueState::BACKGROUND_AGE &&
+                    dirty_ratio < config_.dirty_ratio_checkpoint)
+                {
+                    continue;
+                }
+
+                candidates.push_back(WritebackCandidate{
+                    i,
+                    queue_state,
+                    queuePriority(queue_state),
+                    frame.dirty_generation.load(std::memory_order_relaxed),
+                    frame.usage_count.load(std::memory_order_relaxed)});
+            }
+
+            if (candidates.empty())
+            {
+                break;
+            }
+
+            std::sort(candidates.begin(),
+                      candidates.end(),
+                      [](const WritebackCandidate &lhs, const WritebackCandidate &rhs)
+                      {
+                          if (lhs.priority != rhs.priority)
+                          {
+                              return lhs.priority < rhs.priority;
+                          }
+                          if (lhs.dirty_generation != rhs.dirty_generation)
+                          {
+                              if (lhs.dirty_generation == 0)
+                              {
+                                  return false;
+                              }
+                              if (rhs.dirty_generation == 0)
+                              {
+                                  return true;
+                              }
+                              return lhs.dirty_generation < rhs.dirty_generation;
+                          }
+                          if (lhs.usage_count != rhs.usage_count)
+                          {
+                              return lhs.usage_count < rhs.usage_count;
+                          }
+                          return lhs.frame_index < rhs.frame_index;
+                      });
+
+            const WritebackCandidate candidate = candidates.front();
+            Frame &frame = frames_[candidate.frame_index];
             std::unique_lock<std::mutex> content_lock(*frame.content_mutex, std::try_to_lock);
             if (!content_lock.owns_lock())
             {
                 continue;
             }
 
-            // Skip non-dirty pages
-            if (!frame.is_dirty.load(std::memory_order_acquire))
-            {
-                continue;
-            }
-            if (static_cast<WritebackQueueState>(
-                    frame.writeback_queue_state.load(std::memory_order_relaxed)) !=
-                WritebackQueueState::BACKGROUND)
-            {
-                continue;
-            }
-
-            // Skip pinned pages (in use by transactions)
-            // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
-            if (frame.pin_count.load(std::memory_order_relaxed) > 0)
+            const DirtyState dirty_state = static_cast<DirtyState>(
+                frame.dirty_state.load(std::memory_order_relaxed));
+            if (!frame.is_dirty.load(std::memory_order_acquire) ||
+                dirty_state == DirtyState::DirtyInFlight ||
+                dirty_state == DirtyState::DirtyFlushedPendingFsync ||
+                frame.pin_count.load(std::memory_order_relaxed) > 0 ||
+                frame.gpid == INVALID_GPID)
             {
                 continue;
             }
 
-            // Skip invalid pages
-            // PHASE 1, TASK 1.2.3: Changed page_id to gpid
-            if (frame.gpid == INVALID_GPID)
-            {
-                continue;
-            }
-
-            const MgaPageClass page_class = static_cast<MgaPageClass>(
-                frame.mga_page_class.load(std::memory_order_relaxed));
-            if (frame.commit_fence_member.load(std::memory_order_relaxed))
-            {
-                continue;
-            }
-            if (page_class == MgaPageClass::SCAN_PROBATION &&
-                dirty_ratio < config_.dirty_ratio_checkpoint)
-            {
-                continue;
-            }
-
-            // Prefer pages with lower usage_count (cold pages)
-            // This integrates with Clock Sweep eviction algorithm
-            // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
-            if (page_class != MgaPageClass::TX_STATE &&
-                frame.usage_count.load(std::memory_order_relaxed) > 2 &&
-                pages_written < pages_to_write / 2)
-            {
-                // Skip hot pages in first half of writes (only flush cold pages)
-                continue;
-            }
-
-            // Flush this dirty page
-            // PHASE 1, TASK 1.2.3: Changed page_id to gpid
             const uint64_t flushed_generation =
                 frame.dirty_generation.load(std::memory_order_acquire);
-            Status status = writePageToDisk(frame.gpid, frame.data.get(), ctx);
+            const uint64_t checkpoint_target_generation =
+                candidate.queue_state == WritebackQueueState::CHECKPOINT
+                ? frame.checkpoint_target_generation.load(std::memory_order_relaxed)
+                : 0;
+            beginFrameWriteback(candidate.frame_index,
+                                candidate.queue_state,
+                                checkpoint_target_generation);
+            Status status = writePageToDisk(candidate.frame_index,
+                                            ctx,
+                                            candidate.queue_state,
+                                            candidate.queue_state ==
+                                                WritebackQueueState::CHECKPOINT);
             if (status == Status::OK)
             {
-                finishFrameWriteback(i,
+                finishFrameWriteback(candidate.frame_index,
                                      flushed_generation,
-                                     WritebackQueueState::BACKGROUND);
+                                     candidate.queue_state);
                 pages_written++;
-                // MEDIUM-1 FIX: Use relaxed atomic increment for stats
                 stats_.bgwriter_pages_written.fetch_add(1, std::memory_order_relaxed);
+                continue;
             }
-            else
-            {
-                // Log error but continue flushing other pages
-                // Background writer should be resilient to transient I/O errors
-                DEBUG_LOG_BP("Background writer failed to flush page "
-                             << gpidToString(frame.gpid) << ": " << static_cast<int>(status));
-            }
+
+            markFrameWritebackFailure(candidate.frame_index, candidate.queue_state);
+            DEBUG_LOG_BP("Background writer failed to flush page "
+                         << gpidToString(frame.gpid)
+                         << " queue="
+                         << writebackQueueStateToString(candidate.queue_state)
+                         << ": " << static_cast<int>(status));
         }
 
         // Update statistics
@@ -2330,16 +4725,59 @@ namespace scratchbird::core
         }
 
         std::vector<std::pair<GPID, uint64_t>> candidates;
+        std::unordered_set<GPID> seen_gpid;
         {
             std::lock_guard<std::mutex> lock(dirty_tracking_mutex_);
-            candidates.reserve(dirty_checkpoint_candidates_.size());
+            candidates.reserve(dirty_checkpoint_candidates_.size() +
+                               checkpoint_marker_candidates_.size());
             for (const auto &entry : dirty_checkpoint_candidates_)
             {
                 if (entry.second != 0 && entry.second <= dirty_generation_boundary)
                 {
                     candidates.push_back(entry);
+                    seen_gpid.insert(entry.first);
                 }
             }
+            for (const GPID gpid : checkpoint_marker_candidates_)
+            {
+                if (seen_gpid.find(gpid) == seen_gpid.end())
+                {
+                    candidates.emplace_back(gpid, 0);
+                    seen_gpid.insert(gpid);
+                }
+            }
+        }
+
+        for (const Frame &frame : frames_)
+        {
+            const GPID gpid = frame.gpid;
+            if (gpid == INVALID_GPID || seen_gpid.find(gpid) != seen_gpid.end())
+            {
+                continue;
+            }
+
+            auto *header = reinterpret_cast<PageHeader *>(frame.data.get());
+            if (header == nullptr || header->magic != K_MAGIC_SBRD || pageIsTemporaryWork(*header))
+            {
+                continue;
+            }
+
+            const bool needs_checkpoint_marker =
+                header->flush_generation > header->checkpoint_generation;
+            if (!needs_checkpoint_marker)
+            {
+                continue;
+            }
+
+            const DirtyState dirty_state = static_cast<DirtyState>(
+                frame.dirty_state.load(std::memory_order_relaxed));
+            if (dirty_state == DirtyState::DirtyInFlight)
+            {
+                continue;
+            }
+
+            candidates.emplace_back(gpid, 0);
+            seen_gpid.insert(gpid);
         }
 
         for (const auto &[gpid, queued_generation] : candidates)
@@ -2387,10 +4825,13 @@ namespace scratchbird::core
                     live_generation = it->second;
                 }
             }
-            if (live_generation == 0 || live_generation > dirty_generation_boundary)
+            const bool checkpoint_only_candidate = queued_generation == 0;
+            if (!checkpoint_only_candidate &&
+                (live_generation == 0 || live_generation > dirty_generation_boundary))
             {
+                frame.checkpoint_target_generation.store(0, std::memory_order_relaxed);
                 frame.writeback_queue_state.store(
-                    static_cast<uint8_t>(WritebackQueueState::BACKGROUND),
+                    static_cast<uint8_t>(classifyWritebackQueueState(frame)),
                     std::memory_order_relaxed);
                 (void)unpinPageGlobal(gpid, false, ctx);
                 continue;
@@ -2399,45 +4840,65 @@ namespace scratchbird::core
             auto *header = reinterpret_cast<PageHeader *>(buffer);
             if (pageIsTemporaryWork(*header))
             {
+                frame.checkpoint_target_generation.store(0, std::memory_order_relaxed);
                 frame.writeback_queue_state.store(
-                    static_cast<uint8_t>(WritebackQueueState::BACKGROUND),
+                    static_cast<uint8_t>(classifyWritebackQueueState(frame)),
                     std::memory_order_relaxed);
+                {
+                    std::lock_guard<std::mutex> lock(dirty_tracking_mutex_);
+                    checkpoint_marker_candidates_.erase(gpid);
+                }
                 (void)unpinPageGlobal(gpid, false, ctx);
                 continue;
             }
             const bool dirty = frame.is_dirty.load(std::memory_order_acquire);
+            const DirtyState dirty_state = static_cast<DirtyState>(
+                frame.dirty_state.load(std::memory_order_relaxed));
             const bool needs_checkpoint_marker =
                 header->magic == K_MAGIC_SBRD &&
                 header->flush_generation > header->checkpoint_generation;
-            if (dirty || needs_checkpoint_marker)
+            if (dirty_state == DirtyState::DirtyFlushedPendingFsync &&
+                frame.last_flush_generation.load(std::memory_order_relaxed) >= live_generation &&
+                !needs_checkpoint_marker)
             {
+                frame.checkpoint_target_generation.store(dirty_generation_boundary,
+                                                         std::memory_order_relaxed);
                 frame.writeback_queue_state.store(
                     static_cast<uint8_t>(WritebackQueueState::CHECKPOINT),
                     std::memory_order_relaxed);
-
-                const uint64_t flushed_generation =
+                (void)unpinPageGlobal(gpid, false, ctx);
+                continue;
+            }
+            if (dirty || needs_checkpoint_marker)
+            {
+                uint64_t flushed_generation =
                     frame.dirty_generation.load(std::memory_order_acquire);
-                status = writePageToDisk(gpid,
-                                         static_cast<uint8_t *>(buffer),
+                if (!dirty && needs_checkpoint_marker)
+                {
+                    (void)tryMarkFrameDirty(frame_index);
+                    flushed_generation =
+                        frame.dirty_generation.load(std::memory_order_acquire);
+                    if (flushed_generation == 0)
+                    {
+                        flushed_generation = publishDirtyGeneration(frame_index);
+                    }
+                }
+                beginFrameWriteback(frame_index,
+                                    WritebackQueueState::CHECKPOINT,
+                                    dirty_generation_boundary);
+                status = writePageToDisk(frame_index,
                                          ctx,
+                                         WritebackQueueState::CHECKPOINT,
                                          true);
                 if (status != Status::OK)
                 {
+                    markFrameWritebackFailure(frame_index, WritebackQueueState::CHECKPOINT);
                     (void)unpinPageGlobal(gpid, false, ctx);
                     return status;
                 }
-                if (dirty)
-                {
-                    finishFrameWriteback(frame_index,
-                                         flushed_generation,
-                                         WritebackQueueState::CHECKPOINT);
-                }
-                else
-                {
-                    frame.writeback_queue_state.store(
-                        static_cast<uint8_t>(WritebackQueueState::NONE),
-                        std::memory_order_relaxed);
-                }
+                finishFrameWriteback(frame_index,
+                                     flushed_generation,
+                                     WritebackQueueState::CHECKPOINT);
                 stats_.checkpoint_flushes.fetch_add(1, std::memory_order_relaxed);
             }
 
@@ -2446,9 +4907,15 @@ namespace scratchbird::core
                 auto it = dirty_checkpoint_candidates_.find(gpid);
                 if (it != dirty_checkpoint_candidates_.end() &&
                     it->second <= dirty_generation_boundary &&
-                    it->second == queued_generation)
+                    (queued_generation == 0 || it->second == queued_generation))
                 {
                     dirty_checkpoint_candidates_.erase(it);
+                }
+                if (header->magic != K_MAGIC_SBRD ||
+                    pageIsTemporaryWork(*header) ||
+                    header->flush_generation <= header->checkpoint_generation)
+                {
+                    checkpoint_marker_candidates_.erase(gpid);
                 }
             }
 

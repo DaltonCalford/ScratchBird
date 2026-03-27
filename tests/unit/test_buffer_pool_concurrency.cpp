@@ -11,14 +11,30 @@
 #include <thread>
 #include <vector>
 #include <atomic>
+#include <array>
 #include <random>
 #include <filesystem>
+#include <fstream>
 
+#include "scratchbird/core/config.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/error_context.h"
+#include "scratchbird/core/page_manager.h"
 #include "test_helpers.h"
 
 using namespace scratchbird::core;
+
+namespace {
+
+void writeTextFile(const std::filesystem::path& path, const std::string& contents)
+{
+    std::ofstream out(path);
+    ASSERT_TRUE(out.is_open()) << path;
+    out << contents;
+}
+
+} // namespace
 
 /**
  * Test buffer pool concurrency (Issue 1.3 from audit)
@@ -49,6 +65,95 @@ protected:
     std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_file_;
     Database db_;
     BufferPool* buffer_pool_ = nullptr;
+};
+
+class SegmentedOwnershipConcurrencyTest : public ::testing::Test {
+protected:
+    static constexpr uint16_t kPartitionCount = 64;
+    static constexpr uint32_t kPageSize = 16384;
+    static constexpr uint16_t kHomePartitionCount = 32;
+
+    void SetUp() override {
+        Config::getInstance().clear();
+
+        temp_root_ = std::filesystem::path(
+            scratchbird::testing::uniqueTestDbPath("test_buffer_pool_segmented_ownership", ""));
+        std::filesystem::create_directories(temp_root_);
+        config_path_ = temp_root_ / "sb_config.ini";
+        db_path_ = temp_root_ / "ownership.sbdb";
+
+        writeTextFile(config_path_,
+                      "[memory]\n"
+                      "buffer_pool_size = 32\n"
+                      "buffer_pool_layout = segmented\n"
+                      "buffer_pool_bgwriter_enabled = false\n");
+
+        ASSERT_EQ(Config::getInstance().initialize(config_path_.string(), &ctx_), Status::OK)
+            << ctx_.message;
+        ASSERT_EQ(Database::create(db_path_.string(), kPageSize, &ctx_), Status::OK)
+            << ctx_.message;
+        ASSERT_EQ(db_.open(db_path_.string(), &ctx_), Status::OK) << ctx_.message;
+
+        buffer_pool_ = db_.buffer_pool();
+        ASSERT_NE(buffer_pool_, nullptr);
+
+        const auto pool_config = buffer_pool_->getConfigSnapshot();
+        ASSERT_EQ(pool_config.layout, BufferPool::PoolLayout::Segmented);
+        ASSERT_EQ(pool_config.pool_size, static_cast<uint32_t>(kHomePartitionCount));
+        ASSERT_EQ(pool_config.page_size, kPageSize);
+    }
+
+    void TearDown() override {
+        db_.close();
+        Config::getInstance().clear();
+
+        std::error_code ec;
+        std::filesystem::remove_all(temp_root_, ec);
+    }
+
+    static auto ownershipPartition(uint32_t page_id) -> uint16_t {
+        return static_cast<uint16_t>(convertPageIDtoGPID(page_id) % kPartitionCount);
+    }
+
+    auto allocatePageForOwnershipPartition(uint16_t partition) -> uint32_t {
+        for (int attempt = 0; attempt < 4096; ++attempt) {
+            uint32_t page_id = 0;
+            const Status status = db_.page_manager()->allocatePage(page_id, &ctx_);
+            EXPECT_EQ(status, Status::OK) << ctx_.message;
+            if (status != Status::OK) {
+                return 0;
+            }
+            if (ownershipPartition(page_id) == partition) {
+                return page_id;
+            }
+        }
+
+        ADD_FAILURE() << "Failed to allocate page for partition " << partition;
+        return 0;
+    }
+
+    void materializePage(uint32_t page_id) {
+        void* buffer = nullptr;
+        ASSERT_EQ(buffer_pool_->pinPage(page_id, &buffer, &ctx_), Status::OK) << ctx_.message;
+        ASSERT_NE(buffer, nullptr);
+        ASSERT_EQ(buffer_pool_->unpinPage(page_id, false, &ctx_), Status::OK) << ctx_.message;
+    }
+
+    auto frameSnapshot(uint32_t page_id) -> BufferPool::MgaFrameSnapshot {
+        BufferPool::MgaFrameSnapshot snapshot{};
+        const Status status = buffer_pool_->getMgaFrameSnapshotGlobal(convertPageIDtoGPID(page_id),
+                                                                      &snapshot,
+                                                                      &ctx_);
+        EXPECT_EQ(status, Status::OK) << ctx_.message;
+        return snapshot;
+    }
+
+    std::filesystem::path temp_root_;
+    std::filesystem::path config_path_;
+    std::filesystem::path db_path_;
+    Database db_;
+    BufferPool* buffer_pool_ = nullptr;
+    ErrorContext ctx_;
 };
 
 // Test 1: Concurrent pin/unpin operations
@@ -310,4 +415,72 @@ TEST_F(BufferPoolConcurrencyTest, DoubleUnpinDetection) {
     // Second unpin should fail (pin_count is 0)
     status = buffer_pool_->unpinPage(TEST_PAGE_ID, false, nullptr);
     EXPECT_NE(status, Status::OK) << "Double unpin should fail";
+}
+
+TEST_F(SegmentedOwnershipConcurrencyTest,
+       SegmentedMissKeepsHomeOwnershipWhenTargetPartitionHasLocalCapacity) {
+    bool found_local_home = false;
+
+    for (uint16_t partition = 0; partition < kHomePartitionCount; ++partition) {
+        const uint32_t page_id = allocatePageForOwnershipPartition(partition);
+        ASSERT_EQ(ownershipPartition(page_id), partition);
+
+        materializePage(page_id);
+
+        const auto snapshot = frameSnapshot(page_id);
+        if (snapshot.owner_partition == partition && snapshot.home_partition == partition) {
+            EXPECT_TRUE(snapshot.resident);
+            found_local_home = true;
+            break;
+        }
+    }
+
+    EXPECT_TRUE(found_local_home)
+        << "Expected at least one bootstrap-surviving local home partition in the segmented pool";
+}
+
+TEST_F(SegmentedOwnershipConcurrencyTest,
+       SegmentedMissTransfersDonorFreeFramesToUnderprovisionedPartitions) {
+    const uint32_t page_id = allocatePageForOwnershipPartition(33);
+    ASSERT_EQ(ownershipPartition(page_id), 33u);
+
+    materializePage(page_id);
+
+    const auto snapshot = frameSnapshot(page_id);
+    EXPECT_TRUE(snapshot.resident);
+    EXPECT_EQ(snapshot.owner_partition, 33u);
+    EXPECT_NE(snapshot.home_partition, snapshot.owner_partition);
+    EXPECT_LT(snapshot.home_partition, kHomePartitionCount);
+}
+
+TEST_F(SegmentedOwnershipConcurrencyTest,
+       SegmentedMissCanTransferVictimOwnershipAfterFreeFramesExhausted) {
+    const std::array<uint16_t, 33> partitions{
+        33, 34, 35, 36, 37, 38, 39, 40, 41,
+        42, 43, 44, 45, 46, 47, 48, 49, 50,
+        51, 52, 53, 54, 55, 56, 57, 58, 59,
+        60, 61, 62, 63, 32, 33};
+    std::vector<uint32_t> page_ids;
+    page_ids.reserve(partitions.size());
+
+    for (uint16_t partition : partitions) {
+        page_ids.push_back(allocatePageForOwnershipPartition(partition));
+    }
+
+    for (size_t i = 0; i < static_cast<size_t>(kHomePartitionCount); ++i) {
+        materializePage(page_ids[i]);
+        const auto snapshot = frameSnapshot(page_ids[i]);
+        EXPECT_EQ(snapshot.owner_partition, partitions[i]);
+        EXPECT_NE(snapshot.home_partition, snapshot.owner_partition);
+    }
+
+    const auto stats_before = buffer_pool_->getStats();
+    materializePage(page_ids.back());
+    const auto stats_after = buffer_pool_->getStats();
+
+    const auto snapshot = frameSnapshot(page_ids.back());
+    EXPECT_TRUE(snapshot.resident);
+    EXPECT_EQ(snapshot.owner_partition, partitions.back());
+    EXPECT_NE(snapshot.home_partition, snapshot.owner_partition);
+    EXPECT_GT(stats_after.evictions, stats_before.evictions);
 }

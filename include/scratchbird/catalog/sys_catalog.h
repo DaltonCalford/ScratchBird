@@ -119,6 +119,11 @@ private:
     Status queryPlugin(VirtualResultSet& results, ErrorContext* ctx);
     Status queryPreparedStatements(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMgaRuntimeMetrics(VirtualResultSet& results, ErrorContext* ctx);
+    Status querySbBufferPoolStats(VirtualResultSet& results, ErrorContext* ctx);
+    Status querySbBufferDomainStats(VirtualResultSet& results, ErrorContext* ctx);
+    Status querySbBufferPolicyHealth(VirtualResultSet& results, ErrorContext* ctx);
+    Status querySbBufferPrefetchHealth(VirtualResultSet& results, ErrorContext* ctx);
+    Status querySbCheckpointWritebackPressure(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMgaActiveTransactions(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMgaDormantPolicy(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMgaDormantTransactions(VirtualResultSet& results, ErrorContext* ctx);

@@ -177,6 +177,34 @@ run_ctest_exact "transaction_semantics" "txn_sweep_dirty_restart_rewind" "Garbag
 run_ctest_exact "transaction_semantics" "txn_durability_observability_surface" "MgaObservabilityLiveViewsTest.BuildsDurabilityRowsFromCatalogHistoryAndRuntimeState" 1 || true
 
 # ------------------------------------------------------------------------------
+# Memory-model section 31 expansion (G6-BC / G7-BC)
+# ------------------------------------------------------------------------------
+# Audit contract:
+# - These steps make the segmented-memory architecture explicit in the
+#   required public beta gate instead of relying on indirect coverage through
+#   broader transaction or storage suites.
+# - The gate names the canonical memory-model proof surfaces directly:
+#   config loading, admission/ghost reuse, domain isolation, prefetch fairness,
+#   checkpoint-bound dirty handling, restart queue rebuild, ownership transfer,
+#   SQL-visible observability, and the scan-resistance benchmark.
+# - TSAN ownership coverage remains required under the sanitizer lifecycle, but
+#   it is not part of the default public-beta build because that artifact is
+#   only registered in sanitizer builds.
+run_ctest_exact "transaction_semantics" "memory_domain_config_surface" "HotPathRuntimeFixture.DatabaseOpenLoadsCanonicalSegmentedBufferDomainControls" 1 || true
+run_ctest_exact "transaction_semantics" "memory_admission_second_touch" "BufferPoolMgaPolicyTest.DefaultDemandReadEntersProbationaryAndSecondTouchPromotesToProtected" 1 || true
+run_ctest_exact "transaction_semantics" "memory_ghost_history_reuse" "BufferPoolMgaPolicyTest.GhostHistoryPromotesReloadedPageBackToProtectedResidency" 1 || true
+run_ctest_exact "transaction_semantics" "memory_domain_isolation_version_undo" "BufferPoolMgaPolicyTest.SweepGcVersionUndoPagesStayProtectedOutsideTheScanRing" 1 || true
+run_ctest_exact "transaction_semantics" "memory_domain_reservation_floor" "BufferPoolMgaPolicyTest.HardReservedDomainsDoNotEvictAtMinimumReservation" 1 || true
+run_ctest_exact "transaction_semantics" "memory_prefetch_fairness_budget" "BufferPoolMgaPolicyTest.PrefetchDebtCapsSpeculativeAdmissionsAndCancelsExcessWork" 1 || true
+run_ctest_exact "transaction_semantics" "memory_prefetch_thrash_guard" "BufferPoolMgaPolicyTest.UsefulnessCollapseCancelsFurtherSpeculativePrefetch" 1 || true
+run_ctest_exact "transaction_semantics" "memory_checkpoint_capture_debt" "ExecutorTransactionPayloadTest.CleanShutdownCheckpointControlCapturesDirtyGenerationBoundariesAndDebt" 1 || true
+run_ctest_exact "transaction_semantics" "memory_queue_rebuild_restart" "ExecutorTransactionPayloadTest.RestartQueueRebuildSeedsDirtyGenerationFloorAndRepublishesCheckpointDebt" 1 || true
+run_ctest_exact "transaction_semantics" "memory_partition_ownership_transfer" "SegmentedOwnershipConcurrencyTest.SegmentedMissTransfersDonorFreeFramesToUnderprovisionedPartitions" 1 || true
+run_ctest_exact "transaction_semantics" "memory_buffer_policy_observability" "MgaObservabilityLiveViewsTest.BuildsLiveBufferPolicyRowsFromSegmentedSnapshots" 1 || true
+run_ctest_exact "transaction_semantics" "memory_scan_resistance_benchmark" "CacheBufferBenchmarkTest.ScanResistanceBenchmark" 1 || true
+run_ctest_exact "transaction_semantics" "memory_mixed_workload_benchmark" "StoragePerformanceTest.MixedWorkloadBenchmark" 1 || true
+
+# ------------------------------------------------------------------------------
 # Category 3: security runtime enforcement
 # ------------------------------------------------------------------------------
 run_script_step "security_enforcement" "security_parity_matrix" 2 "${REPO_DIR}/tests/conformance/security/run_security_parity_matrix.sh" 1 || true

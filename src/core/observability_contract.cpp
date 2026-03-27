@@ -138,6 +138,80 @@ namespace scratchbird::core
             return db.uuid().toString();
         }
 
+        auto bufferProfileName(BufferPool::BufferProfile profile) -> const char*
+        {
+            switch (profile)
+            {
+                case BufferPool::BufferProfile::Dev:
+                    return "dev";
+                case BufferPool::BufferProfile::Oltp:
+                    return "oltp";
+                case BufferPool::BufferProfile::Mixed:
+                    return "mixed";
+                case BufferPool::BufferProfile::Analytics:
+                    return "analytics";
+                case BufferPool::BufferProfile::MaintenanceRecovery:
+                    return "maintenance_recovery";
+            }
+            return "unknown";
+        }
+
+        auto bufferLayoutName(BufferPool::PoolLayout layout) -> const char*
+        {
+            switch (layout)
+            {
+                case BufferPool::PoolLayout::Single:
+                    return "single";
+                case BufferPool::PoolLayout::Segmented:
+                    return "segmented";
+                case BufferPool::PoolLayout::HotCold:
+                    return "hot_cold";
+                case BufferPool::PoolLayout::Tablespace:
+                    return "tablespace";
+            }
+            return "unknown";
+        }
+
+        auto bufferDomainName(BufferPool::PolicyDomain domain) -> const char*
+        {
+            switch (domain)
+            {
+                case BufferPool::PolicyDomain::CriticalSystem:
+                    return "critical_system";
+                case BufferPool::PolicyDomain::HotOltp:
+                    return "hot_oltp";
+                case BufferPool::PolicyDomain::ReadMostly:
+                    return "read_mostly";
+                case BufferPool::PolicyDomain::ScanBulkRing:
+                    return "scan_bulk_ring";
+                case BufferPool::PolicyDomain::VersionUndo:
+                    return "version_undo";
+                case BufferPool::PolicyDomain::TemporaryWork:
+                    return "temporary_work";
+                case BufferPool::PolicyDomain::Count:
+                    break;
+            }
+            return "unknown";
+        }
+
+        auto thrashDetectorStateName(BufferPool::ThrashDetectorState state) -> const char*
+        {
+            switch (state)
+            {
+                case BufferPool::ThrashDetectorState::None:
+                    return "none";
+                case BufferPool::ThrashDetectorState::GlobalDebtCap:
+                    return "global_debt_cap";
+                case BufferPool::ThrashDetectorState::SessionBudgetCap:
+                    return "session_budget_cap";
+                case BufferPool::ThrashDetectorState::ScanPressure:
+                    return "scan_pressure";
+                case BufferPool::ThrashDetectorState::UsefulnessCollapse:
+                    return "usefulness_collapse";
+            }
+            return "unknown";
+        }
+
         auto relationNameForTableId(CatalogManager* catalog, const ID& table_id) -> std::string
         {
             if (catalog == nullptr || isZeroId(table_id))
@@ -723,6 +797,136 @@ namespace scratchbird::core
                                          {"db", "class"},
                                          "Scan-resistance probation churn events.",
                                          "events"),
+                    makeMetricDefinition("sb_buf_demotions_total",
+                                         MetricType::COUNTER,
+                                         {"db"},
+                                         "Residency demotions from protected or pin-biased policy tiers.",
+                                         "events"),
+                    makeMetricDefinition("sb_buf_dirty_generation_high_watermark",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Newest dirty generation currently resident in the buffer pool.",
+                                         "generation"),
+                    makeMetricDefinition("sb_buf_dirty_generation_low_watermark",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Oldest dirty generation currently resident in the buffer pool.",
+                                         "generation"),
+                    makeMetricDefinition("sb_buf_domain_borrowed_pages",
+                                         MetricType::GAUGE,
+                                         {"db", "domain"},
+                                         "Resident pages borrowed beyond a domain target or floor.",
+                                         "pages"),
+                    makeMetricDefinition("sb_buf_domain_commit_fence_pages",
+                                         MetricType::GAUGE,
+                                         {"db", "domain"},
+                                         "Commit-fence member pages by buffer policy domain.",
+                                         "pages"),
+                    makeMetricDefinition("sb_buf_domain_dirty_bytes",
+                                         MetricType::GAUGE,
+                                         {"db", "domain"},
+                                         "Resident dirty bytes by buffer policy domain.",
+                                         "bytes"),
+                    makeMetricDefinition("sb_buf_domain_dirty_pages",
+                                         MetricType::GAUGE,
+                                         {"db", "domain"},
+                                         "Resident dirty pages by buffer policy domain.",
+                                         "pages"),
+                    makeMetricDefinition("sb_buf_domain_emergency_breach_total",
+                                         MetricType::COUNTER,
+                                         {"db", "domain"},
+                                         "Emergency reservation breaches by buffer policy domain.",
+                                         "events"),
+                    makeMetricDefinition("sb_buf_domain_reservation_breach_total",
+                                         MetricType::COUNTER,
+                                         {"db", "domain"},
+                                         "Reservation breaches by buffer policy domain.",
+                                         "events"),
+                    makeMetricDefinition("sb_buf_domain_resident_pages",
+                                         MetricType::GAUGE,
+                                         {"db", "domain"},
+                                         "Resident pages by buffer policy domain.",
+                                         "pages"),
+                    makeMetricDefinition("sb_buf_fairness_object_budget_breaches_total",
+                                         MetricType::COUNTER,
+                                         {"db"},
+                                         "Per-object protected-set budget breaches from speculative prefetch.",
+                                         "events"),
+                    makeMetricDefinition("sb_buf_fairness_session_budget_breaches_total",
+                                         MetricType::COUNTER,
+                                         {"db"},
+                                         "Per-session speculative prefetch budget breaches.",
+                                         "events"),
+                    makeMetricDefinition("sb_buf_foreground_help_backlog_pages",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Foreground-help writeback backlog pages.",
+                                         "pages"),
+                    makeMetricDefinition("sb_buf_ghost_history_entries",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Bounded ghost-history entries retained by the segmented policy.",
+                                         "entries"),
+                    makeMetricDefinition("sb_buf_ghost_history_hits_total",
+                                         MetricType::COUNTER,
+                                         {"db"},
+                                         "Ghost-history hits that triggered re-admission or reuse.",
+                                         "events"),
+                    makeMetricDefinition("sb_buf_prefetch_cancelled_pages_total",
+                                         MetricType::COUNTER,
+                                         {"db"},
+                                         "Speculative prefetch pages cancelled before use.",
+                                         "pages"),
+                    makeMetricDefinition("sb_buf_prefetch_debt_pages",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Outstanding speculative prefetch debt pages.",
+                                         "pages"),
+                    makeMetricDefinition("sb_buf_prefetch_pages_total",
+                                         MetricType::COUNTER,
+                                         {"db"},
+                                         "Total speculative prefetch pages admitted.",
+                                         "pages"),
+                    makeMetricDefinition("sb_buf_prefetch_pages_unused_evicted_total",
+                                         MetricType::COUNTER,
+                                         {"db"},
+                                         "Speculative prefetch pages evicted before demand use.",
+                                         "pages"),
+                    makeMetricDefinition("sb_buf_prefetch_pages_useful_total",
+                                         MetricType::COUNTER,
+                                         {"db"},
+                                         "Speculative prefetch pages later consumed by demand access.",
+                                         "pages"),
+                    makeMetricDefinition("sb_buf_prefetch_scan_debt_pages",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Outstanding speculative prefetch debt pages in the scan domain.",
+                                         "pages"),
+                    makeMetricDefinition("sb_buf_prefetch_thrash_state",
+                                         MetricType::GAUGE,
+                                         {"db", "state"},
+                                         "Current speculative prefetch thrash-control posture.",
+                                         "state"),
+                    makeMetricDefinition("sb_buf_prefetch_usefulness_pct",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Observed speculative prefetch usefulness percentage.",
+                                         "pct"),
+                    makeMetricDefinition("sb_buf_promotions_total",
+                                         MetricType::COUNTER,
+                                         {"db"},
+                                         "Admissions or second-touch promotions into the protected set.",
+                                         "events"),
+                    makeMetricDefinition("sb_buf_protected_set_collapse_total",
+                                         MetricType::COUNTER,
+                                         {"db"},
+                                         "Protected-set collapse or last-resort demotion events.",
+                                         "events"),
+                    makeMetricDefinition("sb_buf_writeback_queue_depth",
+                                         MetricType::GAUGE,
+                                         {"db", "queue"},
+                                         "Resident dirty frames queued for writeback by queue family.",
+                                         "frames"),
                     makeMetricDefinition("sb_gc_background_reclaim_bytes_total",
                                          MetricType::COUNTER,
                                          {"db", "relation"},
@@ -1010,6 +1214,133 @@ namespace scratchbird::core
                     makeColumn("reserve_exhaustion_risk", "BOOLEAN", false),
                 };
                 definitions.push_back(std::move(buffer_writeback_debt));
+
+                SqlViewSchemaDefinition buffer_pool_stats{};
+                buffer_pool_stats.view_name = "sb_buffer_pool_stats";
+                buffer_pool_stats.schema_version = 1;
+                buffer_pool_stats.purpose =
+                    "Canonical segmented buffer policy config and top-level runtime counters.";
+                buffer_pool_stats.columns = {
+                    makeColumn("db_uuid", "UUID", false),
+                    makeColumn("profile", "VARCHAR", false),
+                    makeColumn("layout", "VARCHAR", false),
+                    makeColumn("pool_pages", "BIGINT", false),
+                    makeColumn("page_size_bytes", "BIGINT", false),
+                    makeColumn("pages_dirty", "BIGINT", false),
+                    makeColumn("hits_total", "BIGINT", false),
+                    makeColumn("misses_total", "BIGINT", false),
+                    makeColumn("evictions_total", "BIGINT", false),
+                    makeColumn("replacement_protected_pct", "BIGINT", false),
+                    makeColumn("replacement_ghost_history_pct", "BIGINT", false),
+                    makeColumn("admission_second_touch_generations", "BIGINT", false),
+                    makeColumn("admission_direct_protect_roots", "BOOLEAN", false),
+                    makeColumn("prefetch_enabled", "BOOLEAN", false),
+                    makeColumn("prefetch_max_debt_pages", "BIGINT", false),
+                    makeColumn("prefetch_usefulness_floor_pct", "BIGINT", false),
+                    makeColumn("thrash_session_budget_pct", "BIGINT", false),
+                    makeColumn("thrash_object_budget_pct", "BIGINT", false),
+                    makeColumn("thrash_prefetch_pressure_pct", "BIGINT", false),
+                    makeColumn("background_writer_enabled", "BOOLEAN", false),
+                    makeColumn("background_writer_batch_pages", "BIGINT", false),
+                    makeColumn("dirty_ratio_low", "DOUBLE", false),
+                    makeColumn("dirty_ratio_high", "DOUBLE", false),
+                    makeColumn("dirty_ratio_checkpoint", "DOUBLE", false),
+                    makeColumn("observed_at_ms", "BIGINT", false),
+                };
+                definitions.push_back(std::move(buffer_pool_stats));
+
+                SqlViewSchemaDefinition buffer_domain_stats{};
+                buffer_domain_stats.view_name = "sb_buffer_domain_stats";
+                buffer_domain_stats.schema_version = 1;
+                buffer_domain_stats.purpose =
+                    "Policy-domain budgets, residency tiers, dirty pressure, and borrowing.";
+                buffer_domain_stats.columns = {
+                    makeColumn("db_uuid", "UUID", false),
+                    makeColumn("domain_id", "VARCHAR", false),
+                    makeColumn("min_pages", "BIGINT", false),
+                    makeColumn("target_pages", "BIGINT", false),
+                    makeColumn("max_pages", "BIGINT", false),
+                    makeColumn("resident_pages", "BIGINT", false),
+                    makeColumn("protected_pages", "BIGINT", false),
+                    makeColumn("probationary_pages", "BIGINT", false),
+                    makeColumn("ring_only_pages", "BIGINT", false),
+                    makeColumn("pin_biased_pages", "BIGINT", false),
+                    makeColumn("dirty_pages", "BIGINT", false),
+                    makeColumn("dirty_bytes", "BIGINT", false),
+                    makeColumn("commit_fence_pages", "BIGINT", false),
+                    makeColumn("borrowed_pages", "BIGINT", false),
+                    makeColumn("reservation_breach_count", "BIGINT", false),
+                    makeColumn("emergency_breach_count", "BIGINT", false),
+                    makeColumn("observed_at_ms", "BIGINT", false),
+                };
+                definitions.push_back(std::move(buffer_domain_stats));
+
+                SqlViewSchemaDefinition buffer_policy_health{};
+                buffer_policy_health.view_name = "sb_buffer_policy_health";
+                buffer_policy_health.schema_version = 1;
+                buffer_policy_health.purpose =
+                    "Ghost reuse, promotion or demotion churn, and anti-thrashing posture.";
+                buffer_policy_health.columns = {
+                    makeColumn("db_uuid", "UUID", false),
+                    makeColumn("ghost_hits", "BIGINT", false),
+                    makeColumn("ghost_entries", "BIGINT", false),
+                    makeColumn("promotions", "BIGINT", false),
+                    makeColumn("demotions", "BIGINT", false),
+                    makeColumn("protected_set_collapse_events", "BIGINT", false),
+                    makeColumn("fairness_session_budget_breaches", "BIGINT", false),
+                    makeColumn("fairness_object_budget_breaches", "BIGINT", false),
+                    makeColumn("prefetch_usefulness_pct", "DOUBLE", false),
+                    makeColumn("thrash_detector_state", "VARCHAR", false),
+                    makeColumn("thrash_policy_shift_count", "BIGINT", false),
+                    makeColumn("observed_at_ms", "BIGINT", false),
+                };
+                definitions.push_back(std::move(buffer_policy_health));
+
+                SqlViewSchemaDefinition buffer_prefetch_health{};
+                buffer_prefetch_health.view_name = "sb_buffer_prefetch_health";
+                buffer_prefetch_health.schema_version = 1;
+                buffer_prefetch_health.purpose =
+                    "Speculative prefetch admissions, usefulness, debt, and cancellation state.";
+                buffer_prefetch_health.columns = {
+                    makeColumn("db_uuid", "UUID", false),
+                    makeColumn("prefetch_pages_total", "BIGINT", false),
+                    makeColumn("prefetch_pages_useful", "BIGINT", false),
+                    makeColumn("prefetch_pages_unused_evicted", "BIGINT", false),
+                    makeColumn("prefetch_cancelled_pages", "BIGINT", false),
+                    makeColumn("prefetch_debt_pages", "BIGINT", false),
+                    makeColumn("prefetch_scan_debt_pages", "BIGINT", false),
+                    makeColumn("prefetch_usefulness_pct", "DOUBLE", false),
+                    makeColumn("thrash_detector_state", "VARCHAR", false),
+                    makeColumn("observed_at_ms", "BIGINT", false),
+                };
+                definitions.push_back(std::move(buffer_prefetch_health));
+
+                SqlViewSchemaDefinition checkpoint_writeback_pressure{};
+                checkpoint_writeback_pressure.view_name = "sb_checkpoint_writeback_pressure";
+                checkpoint_writeback_pressure.schema_version = 1;
+                checkpoint_writeback_pressure.purpose =
+                    "Checkpoint drain and writeback queue pressure across resident dirty frames.";
+                checkpoint_writeback_pressure.columns = {
+                    makeColumn("db_uuid", "UUID", false),
+                    makeColumn("checkpoint_generation", "BIGINT", false),
+                    makeColumn("checkpoint_state", "VARCHAR", false),
+                    makeColumn("dirty_pages", "BIGINT", false),
+                    makeColumn("checkpoint_flush_debt_pages", "BIGINT", false),
+                    makeColumn("checkpoint_pages_remaining", "BIGINT", false),
+                    makeColumn("blocked_frame_count", "BIGINT", false),
+                    makeColumn("queue_depth_foreground_help", "BIGINT", false),
+                    makeColumn("queue_depth_background_age", "BIGINT", false),
+                    makeColumn("queue_depth_checkpoint", "BIGINT", false),
+                    makeColumn("queue_depth_metadata_priority", "BIGINT", false),
+                    makeColumn("queue_depth_write_combine", "BIGINT", false),
+                    makeColumn("queue_depth_repair_retry", "BIGINT", false),
+                    makeColumn("write_admission_fenced", "BOOLEAN", false),
+                    makeColumn("incident_open", "BOOLEAN", false),
+                    makeColumn("retry_count", "BIGINT", false),
+                    makeColumn("reserve_exhaustion_risk", "BOOLEAN", false),
+                    makeColumn("observed_at_ms", "BIGINT", false),
+                };
+                definitions.push_back(std::move(checkpoint_writeback_pressure));
 
                 SqlViewSchemaDefinition checkpoint_history{};
                 checkpoint_history.view_name = "sb_checkpoint_history";
@@ -1394,6 +1725,8 @@ namespace scratchbird::core
     {
         static const std::unordered_set<std::string> kAllowedLabels = {
             "db",
+            "domain",
+            "queue",
             "shard",
             "node",
             "protocol",
@@ -1870,6 +2203,7 @@ namespace scratchbird::core
         if (const auto* buffer_pool = db.buffer_pool())
         {
             const auto stats = buffer_pool->getStats();
+            const auto domain_snapshot = buffer_pool->getDomainAccountingSnapshot();
             add_row(SqlRuntimeMetricRow{
                 "sb_buf_commit_fence_backlog",
                 "gauge",
@@ -1882,14 +2216,35 @@ namespace scratchbird::core
                 static_cast<double>(stats.mga_frames_gc_candidate),
                 db_labels_json(),
                 updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_dirty_generation_low_watermark",
+                "gauge",
+                static_cast<double>(stats.dirty_generation_low_watermark),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_dirty_generation_high_watermark",
+                "gauge",
+                static_cast<double>(stats.dirty_generation_high_watermark),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_foreground_help_backlog_pages",
+                "gauge",
+                static_cast<double>(stats.foreground_help_backlog_pages),
+                db_labels_json(),
+                updated_at_ms});
 
-            const std::array<std::pair<const char*, uint64_t>, 6> frame_counts{{
+            const std::array<std::pair<const char*, uint64_t>, 9> frame_counts{{
                 {"tx_state", stats.mga_frames_tx_state},
+                {"system_meta", stats.mga_frames_system_meta},
+                {"index_root_internal", stats.mga_frames_index_root_internal},
                 {"version_root", stats.mga_frames_version_root},
                 {"chain_heavy", stats.mga_frames_chain_heavy},
                 {"gc_candidate", stats.mga_frames_gc_candidate},
                 {"scan_probation", stats.mga_frames_scan_probation},
                 {"index_churn", stats.mga_frames_index_churn},
+                {"temp_work", stats.mga_frames_temp_work},
             }};
             for (const auto& [klass, count] : frame_counts)
             {
@@ -1901,13 +2256,16 @@ namespace scratchbird::core
                     updated_at_ms});
             }
 
-            const std::array<std::pair<const char*, uint64_t>, 6> eviction_counts{{
+            const std::array<std::pair<const char*, uint64_t>, 9> eviction_counts{{
                 {"tx_state", stats.mga_evictions_tx_state},
+                {"system_meta", stats.mga_evictions_system_meta},
+                {"index_root_internal", stats.mga_evictions_index_root_internal},
                 {"version_root", stats.mga_evictions_version_root},
                 {"chain_heavy", stats.mga_evictions_chain_heavy},
                 {"gc_candidate", stats.mga_evictions_gc_candidate},
                 {"scan_probation", stats.mga_evictions_scan_probation},
                 {"index_churn", stats.mga_evictions_index_churn},
+                {"temp_work", stats.mga_evictions_temp_work},
             }};
             for (const auto& [klass, count] : eviction_counts)
             {
@@ -1926,6 +2284,163 @@ namespace scratchbird::core
                 static_cast<double>(stats.mga_scan_probation_churn),
                 makeLabelsJson({{"db", db_uuid}, {"class", "scan_probation"}}),
                 updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_promotions_total",
+                "counter",
+                static_cast<double>(stats.mga_admission_promotions),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_demotions_total",
+                "counter",
+                static_cast<double>(stats.mga_residency_demotions),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_protected_set_collapse_total",
+                "counter",
+                static_cast<double>(stats.mga_protected_set_collapse_events),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_ghost_history_hits_total",
+                "counter",
+                static_cast<double>(stats.mga_ghost_history_hits),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_ghost_history_entries",
+                "gauge",
+                static_cast<double>(stats.mga_ghost_history_entries),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_prefetch_pages_total",
+                "counter",
+                static_cast<double>(stats.prefetch_pages_total),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_prefetch_pages_useful_total",
+                "counter",
+                static_cast<double>(stats.prefetch_pages_useful),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_prefetch_pages_unused_evicted_total",
+                "counter",
+                static_cast<double>(stats.prefetch_pages_unused_evicted),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_prefetch_cancelled_pages_total",
+                "counter",
+                static_cast<double>(stats.prefetch_cancelled_pages),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_prefetch_debt_pages",
+                "gauge",
+                static_cast<double>(stats.prefetch_debt_pages),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_prefetch_scan_debt_pages",
+                "gauge",
+                static_cast<double>(stats.prefetch_scan_debt_pages),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_prefetch_usefulness_pct",
+                "gauge",
+                stats.prefetch_usefulness_pct,
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_prefetch_thrash_state",
+                "gauge",
+                1.0,
+                makeLabelsJson(
+                    {{"db", db_uuid},
+                     {"state", thrashDetectorStateName(stats.thrash_detector_state)}}),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_fairness_session_budget_breaches_total",
+                "counter",
+                static_cast<double>(stats.fairness_session_budget_breaches),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_fairness_object_budget_breaches_total",
+                "counter",
+                static_cast<double>(stats.fairness_object_budget_breaches),
+                db_labels_json(),
+                updated_at_ms});
+
+            const std::array<std::pair<const char*, uint64_t>, 6> queue_depths{{
+                {"foreground_help", stats.queue_depth_foreground_help},
+                {"background_age", stats.queue_depth_background_age},
+                {"checkpoint", stats.queue_depth_checkpoint},
+                {"metadata_priority", stats.queue_depth_metadata_priority},
+                {"write_combine", stats.queue_depth_write_combine},
+                {"repair_retry", stats.queue_depth_repair_retry},
+            }};
+            for (const auto& [queue, count] : queue_depths)
+            {
+                add_row(SqlRuntimeMetricRow{
+                    "sb_buf_writeback_queue_depth",
+                    "gauge",
+                    static_cast<double>(count),
+                    makeLabelsJson({{"db", db_uuid}, {"queue", queue}}),
+                    updated_at_ms});
+            }
+
+            for (const auto& domain_entry : domain_snapshot)
+            {
+                const std::string domain_name = bufferDomainName(domain_entry.domain);
+                add_row(SqlRuntimeMetricRow{
+                    "sb_buf_domain_resident_pages",
+                    "gauge",
+                    static_cast<double>(domain_entry.resident_pages),
+                    makeLabelsJson({{"db", db_uuid}, {"domain", domain_name}}),
+                    updated_at_ms});
+                add_row(SqlRuntimeMetricRow{
+                    "sb_buf_domain_dirty_pages",
+                    "gauge",
+                    static_cast<double>(domain_entry.dirty_pages),
+                    makeLabelsJson({{"db", db_uuid}, {"domain", domain_name}}),
+                    updated_at_ms});
+                add_row(SqlRuntimeMetricRow{
+                    "sb_buf_domain_dirty_bytes",
+                    "gauge",
+                    static_cast<double>(domain_entry.dirty_bytes),
+                    makeLabelsJson({{"db", db_uuid}, {"domain", domain_name}}),
+                    updated_at_ms});
+                add_row(SqlRuntimeMetricRow{
+                    "sb_buf_domain_commit_fence_pages",
+                    "gauge",
+                    static_cast<double>(domain_entry.commit_fence_pages),
+                    makeLabelsJson({{"db", db_uuid}, {"domain", domain_name}}),
+                    updated_at_ms});
+                add_row(SqlRuntimeMetricRow{
+                    "sb_buf_domain_borrowed_pages",
+                    "gauge",
+                    static_cast<double>(domain_entry.borrowed_pages),
+                    makeLabelsJson({{"db", db_uuid}, {"domain", domain_name}}),
+                    updated_at_ms});
+                add_row(SqlRuntimeMetricRow{
+                    "sb_buf_domain_reservation_breach_total",
+                    "counter",
+                    static_cast<double>(domain_entry.reservation_breach_count),
+                    makeLabelsJson({{"db", db_uuid}, {"domain", domain_name}}),
+                    updated_at_ms});
+                add_row(SqlRuntimeMetricRow{
+                    "sb_buf_domain_emergency_breach_total",
+                    "counter",
+                    static_cast<double>(domain_entry.emergency_breach_count),
+                    makeLabelsJson({{"db", db_uuid}, {"domain", domain_name}}),
+                    updated_at_ms});
+            }
         }
 
         if (const auto* gc = db.garbage_collector())
@@ -3081,6 +3596,205 @@ namespace scratchbird::core
         }
         row.reserve_exhaustion_risk = row.write_admission_fenced || row.incident_open;
 
+        rows_out.push_back(std::move(row));
+        return Status::OK;
+    }
+
+    // AUDIT CONTRACT:
+    // These buffer policy views expose runtime config and resident state only.
+    // They do not redefine MGA visibility, checkpoint truth, or recovery authority.
+    auto SqlObservabilityViewBuilder::buildBufferPoolStatsRows(
+        const Database& db,
+        uint64_t observed_at_ms,
+        std::vector<SqlBufferPoolStatsRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        const auto* buffer_pool = db.buffer_pool();
+        if (buffer_pool == nullptr)
+        {
+            return Status::OK;
+        }
+
+        const auto config = buffer_pool->getConfigSnapshot();
+        const auto stats = buffer_pool->getStats();
+
+        SqlBufferPoolStatsRow row{};
+        row.db_uuid = dbUuidString(db);
+        row.profile = bufferProfileName(config.profile);
+        row.layout = bufferLayoutName(config.layout);
+        row.pool_pages = config.pool_size;
+        row.page_size_bytes = config.page_size;
+        row.pages_dirty = buffer_pool->currentDirtyPageCount();
+        row.hits_total = stats.hits;
+        row.misses_total = stats.misses;
+        row.evictions_total = stats.evictions;
+        row.replacement_protected_pct = config.replacement_protected_pct;
+        row.replacement_ghost_history_pct = config.replacement_ghost_history_pct;
+        row.admission_second_touch_generations = config.admission_second_touch_generations;
+        row.admission_direct_protect_roots = config.admission_direct_protect_roots;
+        row.prefetch_enabled = config.prefetch_enabled;
+        row.prefetch_max_debt_pages = config.prefetch_max_debt_pages;
+        row.prefetch_usefulness_floor_pct = config.prefetch_usefulness_floor_pct;
+        row.thrash_session_budget_pct = config.thrash_session_budget_pct;
+        row.thrash_object_budget_pct = config.thrash_object_budget_pct;
+        row.thrash_prefetch_pressure_pct = config.thrash_prefetch_pressure_pct;
+        row.background_writer_enabled = config.enable_background_writer;
+        row.background_writer_batch_pages = config.bgwriter_max_pages;
+        row.dirty_ratio_low = config.dirty_ratio_low;
+        row.dirty_ratio_high = config.dirty_ratio_high;
+        row.dirty_ratio_checkpoint = config.dirty_ratio_checkpoint;
+        row.observed_at_ms = observed_at_ms;
+        rows_out.push_back(std::move(row));
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildBufferDomainStatsRows(
+        const Database& db,
+        uint64_t observed_at_ms,
+        std::vector<SqlBufferDomainStatsRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        const auto* buffer_pool = db.buffer_pool();
+        if (buffer_pool == nullptr)
+        {
+            return Status::OK;
+        }
+
+        const auto domain_snapshot = buffer_pool->getDomainAccountingSnapshot();
+        const std::string db_uuid = dbUuidString(db);
+        for (const auto& domain_entry : domain_snapshot)
+        {
+            SqlBufferDomainStatsRow row{};
+            row.db_uuid = db_uuid;
+            row.domain_id = bufferDomainName(domain_entry.domain);
+            row.min_pages = domain_entry.budget.min_frames;
+            row.target_pages = domain_entry.budget.target_frames;
+            row.max_pages = domain_entry.budget.max_frames;
+            row.resident_pages = domain_entry.resident_pages;
+            row.protected_pages = domain_entry.protected_pages;
+            row.probationary_pages = domain_entry.probationary_pages;
+            row.ring_only_pages = domain_entry.ring_only_pages;
+            row.pin_biased_pages = domain_entry.pin_biased_pages;
+            row.dirty_pages = domain_entry.dirty_pages;
+            row.dirty_bytes = domain_entry.dirty_bytes;
+            row.commit_fence_pages = domain_entry.commit_fence_pages;
+            row.borrowed_pages = domain_entry.borrowed_pages;
+            row.reservation_breach_count = domain_entry.reservation_breach_count;
+            row.emergency_breach_count = domain_entry.emergency_breach_count;
+            row.observed_at_ms = observed_at_ms;
+            rows_out.push_back(std::move(row));
+        }
+
+        std::sort(rows_out.begin(),
+                  rows_out.end(),
+                  [](const SqlBufferDomainStatsRow& lhs, const SqlBufferDomainStatsRow& rhs) {
+                      return lhs.domain_id < rhs.domain_id;
+                  });
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildBufferPolicyHealthRows(
+        const Database& db,
+        uint64_t observed_at_ms,
+        std::vector<SqlBufferPolicyHealthRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        const auto* buffer_pool = db.buffer_pool();
+        if (buffer_pool == nullptr)
+        {
+            return Status::OK;
+        }
+
+        const auto stats = buffer_pool->getStats();
+        SqlBufferPolicyHealthRow row{};
+        row.db_uuid = dbUuidString(db);
+        row.ghost_hits = stats.mga_ghost_history_hits;
+        row.ghost_entries = stats.mga_ghost_history_entries;
+        row.promotions = stats.mga_admission_promotions;
+        row.demotions = stats.mga_residency_demotions;
+        row.protected_set_collapse_events = stats.mga_protected_set_collapse_events;
+        row.fairness_session_budget_breaches = stats.fairness_session_budget_breaches;
+        row.fairness_object_budget_breaches = stats.fairness_object_budget_breaches;
+        row.prefetch_usefulness_pct = stats.prefetch_usefulness_pct;
+        row.thrash_detector_state = thrashDetectorStateName(stats.thrash_detector_state);
+        row.thrash_policy_shift_count = stats.thrash_policy_shift_count;
+        row.observed_at_ms = observed_at_ms;
+        rows_out.push_back(std::move(row));
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildBufferPrefetchHealthRows(
+        const Database& db,
+        uint64_t observed_at_ms,
+        std::vector<SqlBufferPrefetchHealthRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        const auto* buffer_pool = db.buffer_pool();
+        if (buffer_pool == nullptr)
+        {
+            return Status::OK;
+        }
+
+        const auto stats = buffer_pool->getStats();
+        SqlBufferPrefetchHealthRow row{};
+        row.db_uuid = dbUuidString(db);
+        row.prefetch_pages_total = stats.prefetch_pages_total;
+        row.prefetch_pages_useful = stats.prefetch_pages_useful;
+        row.prefetch_pages_unused_evicted = stats.prefetch_pages_unused_evicted;
+        row.prefetch_cancelled_pages = stats.prefetch_cancelled_pages;
+        row.prefetch_debt_pages = stats.prefetch_debt_pages;
+        row.prefetch_scan_debt_pages = stats.prefetch_scan_debt_pages;
+        row.prefetch_usefulness_pct = stats.prefetch_usefulness_pct;
+        row.thrash_detector_state = thrashDetectorStateName(stats.thrash_detector_state);
+        row.observed_at_ms = observed_at_ms;
+        rows_out.push_back(std::move(row));
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildCheckpointWritebackPressureRows(
+        const Database& db,
+        uint64_t observed_at_ms,
+        std::vector<SqlCheckpointWritebackPressureRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        std::vector<SqlBufferWritebackDebtRow> debt_rows;
+        Status status = buildBufferWritebackDebtRows(db, debt_rows);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        const auto* buffer_pool = db.buffer_pool();
+        const auto stats = buffer_pool ? buffer_pool->getStats() : BufferPool::StatsSnapshot{};
+
+        SqlCheckpointWritebackPressureRow row{};
+        row.db_uuid = dbUuidString(db);
+        row.queue_depth_foreground_help = stats.queue_depth_foreground_help;
+        row.queue_depth_background_age = stats.queue_depth_background_age;
+        row.queue_depth_checkpoint = stats.queue_depth_checkpoint;
+        row.queue_depth_metadata_priority = stats.queue_depth_metadata_priority;
+        row.queue_depth_write_combine = stats.queue_depth_write_combine;
+        row.queue_depth_repair_retry = stats.queue_depth_repair_retry;
+        row.observed_at_ms = observed_at_ms;
+        if (!debt_rows.empty())
+        {
+            const auto& debt = debt_rows.front();
+            row.checkpoint_generation = debt.checkpoint_generation;
+            row.checkpoint_state = debt.checkpoint_state;
+            row.dirty_pages = debt.dirty_pages;
+            row.checkpoint_flush_debt_pages = debt.checkpoint_flush_debt_pages;
+            row.checkpoint_pages_remaining = debt.checkpoint_pages_remaining;
+            row.blocked_frame_count = debt.blocked_frame_count;
+            row.write_admission_fenced = debt.write_admission_fenced;
+            row.incident_open = debt.incident_open;
+            row.retry_count = debt.retry_count;
+            row.reserve_exhaustion_risk = debt.reserve_exhaustion_risk;
+        }
         rows_out.push_back(std::move(row));
         return Status::OK;
     }

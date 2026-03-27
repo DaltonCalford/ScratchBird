@@ -37,7 +37,7 @@ gtcs_total=86
 - `timed_out`: `false`
 
 ```text
-Firebird compatibility tests passed. Logs: /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/results/ctest/20260326_113839
+Firebird compatibility tests passed. Logs: /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/results/ctest/20260326_223845
 ```
 
 ## Notes

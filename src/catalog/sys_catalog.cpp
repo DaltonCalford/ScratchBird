@@ -470,6 +470,11 @@ void SysCatalogHandler::initializeTableNames() {
         "io_stats",
         "cache_stats",
         "buffer_pool_stats",
+        "sb_buffer_pool_stats",
+        "sb_buffer_domain_stats",
+        "sb_buffer_policy_health",
+        "sb_buffer_prefetch_health",
+        "sb_checkpoint_writeback_pressure",
         "statement_cache",
         "server_capabilities",
         "jobs",
@@ -972,6 +977,103 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"is_valid", DataType::BOOLEAN, false}
     };
 
+    static const ColumnDefs kSbBufferPoolStatsColumns = {
+        {"db_uuid", DataType::UUID, false},
+        {"profile", DataType::TEXT, false},
+        {"layout", DataType::TEXT, false},
+        {"pool_pages", DataType::INT64, false},
+        {"page_size_bytes", DataType::INT64, false},
+        {"pages_dirty", DataType::INT64, false},
+        {"hits_total", DataType::INT64, false},
+        {"misses_total", DataType::INT64, false},
+        {"evictions_total", DataType::INT64, false},
+        {"replacement_protected_pct", DataType::INT64, false},
+        {"replacement_ghost_history_pct", DataType::INT64, false},
+        {"admission_second_touch_generations", DataType::INT64, false},
+        {"admission_direct_protect_roots", DataType::BOOLEAN, false},
+        {"prefetch_enabled", DataType::BOOLEAN, false},
+        {"prefetch_max_debt_pages", DataType::INT64, false},
+        {"prefetch_usefulness_floor_pct", DataType::INT64, false},
+        {"thrash_session_budget_pct", DataType::INT64, false},
+        {"thrash_object_budget_pct", DataType::INT64, false},
+        {"thrash_prefetch_pressure_pct", DataType::INT64, false},
+        {"background_writer_enabled", DataType::BOOLEAN, false},
+        {"background_writer_batch_pages", DataType::INT64, false},
+        {"dirty_ratio_low", DataType::FLOAT64, false},
+        {"dirty_ratio_high", DataType::FLOAT64, false},
+        {"dirty_ratio_checkpoint", DataType::FLOAT64, false},
+        {"observed_at_ms", DataType::INT64, false}
+    };
+
+    static const ColumnDefs kSbBufferDomainStatsColumns = {
+        {"db_uuid", DataType::UUID, false},
+        {"domain_id", DataType::TEXT, false},
+        {"min_pages", DataType::INT64, false},
+        {"target_pages", DataType::INT64, false},
+        {"max_pages", DataType::INT64, false},
+        {"resident_pages", DataType::INT64, false},
+        {"protected_pages", DataType::INT64, false},
+        {"probationary_pages", DataType::INT64, false},
+        {"ring_only_pages", DataType::INT64, false},
+        {"pin_biased_pages", DataType::INT64, false},
+        {"dirty_pages", DataType::INT64, false},
+        {"dirty_bytes", DataType::INT64, false},
+        {"commit_fence_pages", DataType::INT64, false},
+        {"borrowed_pages", DataType::INT64, false},
+        {"reservation_breach_count", DataType::INT64, false},
+        {"emergency_breach_count", DataType::INT64, false},
+        {"observed_at_ms", DataType::INT64, false}
+    };
+
+    static const ColumnDefs kSbBufferPolicyHealthColumns = {
+        {"db_uuid", DataType::UUID, false},
+        {"ghost_hits", DataType::INT64, false},
+        {"ghost_entries", DataType::INT64, false},
+        {"promotions", DataType::INT64, false},
+        {"demotions", DataType::INT64, false},
+        {"protected_set_collapse_events", DataType::INT64, false},
+        {"fairness_session_budget_breaches", DataType::INT64, false},
+        {"fairness_object_budget_breaches", DataType::INT64, false},
+        {"prefetch_usefulness_pct", DataType::FLOAT64, false},
+        {"thrash_detector_state", DataType::TEXT, false},
+        {"thrash_policy_shift_count", DataType::INT64, false},
+        {"observed_at_ms", DataType::INT64, false}
+    };
+
+    static const ColumnDefs kSbBufferPrefetchHealthColumns = {
+        {"db_uuid", DataType::UUID, false},
+        {"prefetch_pages_total", DataType::INT64, false},
+        {"prefetch_pages_useful", DataType::INT64, false},
+        {"prefetch_pages_unused_evicted", DataType::INT64, false},
+        {"prefetch_cancelled_pages", DataType::INT64, false},
+        {"prefetch_debt_pages", DataType::INT64, false},
+        {"prefetch_scan_debt_pages", DataType::INT64, false},
+        {"prefetch_usefulness_pct", DataType::FLOAT64, false},
+        {"thrash_detector_state", DataType::TEXT, false},
+        {"observed_at_ms", DataType::INT64, false}
+    };
+
+    static const ColumnDefs kSbCheckpointWritebackPressureColumns = {
+        {"db_uuid", DataType::UUID, false},
+        {"checkpoint_generation", DataType::INT64, false},
+        {"checkpoint_state", DataType::TEXT, false},
+        {"dirty_pages", DataType::INT64, false},
+        {"checkpoint_flush_debt_pages", DataType::INT64, false},
+        {"checkpoint_pages_remaining", DataType::INT64, false},
+        {"blocked_frame_count", DataType::INT64, false},
+        {"queue_depth_foreground_help", DataType::INT64, false},
+        {"queue_depth_background_age", DataType::INT64, false},
+        {"queue_depth_checkpoint", DataType::INT64, false},
+        {"queue_depth_metadata_priority", DataType::INT64, false},
+        {"queue_depth_write_combine", DataType::INT64, false},
+        {"queue_depth_repair_retry", DataType::INT64, false},
+        {"write_admission_fenced", DataType::BOOLEAN, false},
+        {"incident_open", DataType::BOOLEAN, false},
+        {"retry_count", DataType::INT64, false},
+        {"reserve_exhaustion_risk", DataType::BOOLEAN, false},
+        {"observed_at_ms", DataType::INT64, false}
+    };
+
     static const ColumnDefs kMgaRuntimeMetricsColumns = {
         {"metric_name", DataType::TEXT, false},
         {"metric_type", DataType::TEXT, false},
@@ -1112,6 +1214,21 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
     }
     if (equalsCaseInsensitive(table_name, "buffer_pool_stats")) {
         return &kBufferPoolStatsColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "sb_buffer_pool_stats")) {
+        return &kSbBufferPoolStatsColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "sb_buffer_domain_stats")) {
+        return &kSbBufferDomainStatsColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "sb_buffer_policy_health")) {
+        return &kSbBufferPolicyHealthColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "sb_buffer_prefetch_health")) {
+        return &kSbBufferPrefetchHealthColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "sb_checkpoint_writeback_pressure")) {
+        return &kSbCheckpointWritebackPressureColumns;
     }
     if (equalsCaseInsensitive(table_name, "statement_cache")) {
         return &kStatementCacheColumns;
@@ -1293,6 +1410,21 @@ Status SysCatalogHandler::queryTable(const std::string& schema_name,
     }
     if (equalsCaseInsensitive(table_name, "buffer_pool_stats")) {
         return queryBufferPoolStats(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "sb_buffer_pool_stats")) {
+        return querySbBufferPoolStats(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "sb_buffer_domain_stats")) {
+        return querySbBufferDomainStats(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "sb_buffer_policy_health")) {
+        return querySbBufferPolicyHealth(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "sb_buffer_prefetch_health")) {
+        return querySbBufferPrefetchHealth(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "sb_checkpoint_writeback_pressure")) {
+        return querySbCheckpointWritebackPressure(results, ctx);
     }
     if (equalsCaseInsensitive(table_name, "statement_cache")) {
         return queryStatementCache(results, ctx);
@@ -2958,6 +3090,305 @@ Status SysCatalogHandler::queryBufferPoolStats(VirtualResultSet& results, ErrorC
         {"updated_at", core::TypedValue::makeTimestamp(now_micros())}
     };
     results.rows.push_back(std::move(row));
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::querySbBufferPoolStats(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    const uint64_t now_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::vector<core::SqlBufferPoolStatsRow> rows;
+    Status status =
+        core::SqlObservabilityViewBuilder::buildBufferPoolStatsRows(*db, now_ms, rows);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    for (const auto& stats_row : rows) {
+        VirtualRow row;
+        row.columns = {
+            {"db_uuid", uuidValueOrNull(db->uuid())},
+            {"profile", core::TypedValue::makeText(stats_row.profile)},
+            {"layout", core::TypedValue::makeText(stats_row.layout)},
+            {"pool_pages", core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.pool_pages))},
+            {"page_size_bytes",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.page_size_bytes))},
+            {"pages_dirty", core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.pages_dirty))},
+            {"hits_total", core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.hits_total))},
+            {"misses_total", core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.misses_total))},
+            {"evictions_total",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.evictions_total))},
+            {"replacement_protected_pct",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.replacement_protected_pct))},
+            {"replacement_ghost_history_pct",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 stats_row.replacement_ghost_history_pct))},
+            {"admission_second_touch_generations",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 stats_row.admission_second_touch_generations))},
+            {"admission_direct_protect_roots",
+             core::TypedValue::makeBoolean(stats_row.admission_direct_protect_roots)},
+            {"prefetch_enabled", core::TypedValue::makeBoolean(stats_row.prefetch_enabled)},
+            {"prefetch_max_debt_pages",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.prefetch_max_debt_pages))},
+            {"prefetch_usefulness_floor_pct",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 stats_row.prefetch_usefulness_floor_pct))},
+            {"thrash_session_budget_pct",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.thrash_session_budget_pct))},
+            {"thrash_object_budget_pct",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.thrash_object_budget_pct))},
+            {"thrash_prefetch_pressure_pct",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 stats_row.thrash_prefetch_pressure_pct))},
+            {"background_writer_enabled",
+             core::TypedValue::makeBoolean(stats_row.background_writer_enabled)},
+            {"background_writer_batch_pages",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 stats_row.background_writer_batch_pages))},
+            {"dirty_ratio_low", core::TypedValue::makeFloat64(stats_row.dirty_ratio_low)},
+            {"dirty_ratio_high", core::TypedValue::makeFloat64(stats_row.dirty_ratio_high)},
+            {"dirty_ratio_checkpoint",
+             core::TypedValue::makeFloat64(stats_row.dirty_ratio_checkpoint)},
+            {"observed_at_ms",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.observed_at_ms))}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::querySbBufferDomainStats(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    const uint64_t now_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::vector<core::SqlBufferDomainStatsRow> rows;
+    Status status =
+        core::SqlObservabilityViewBuilder::buildBufferDomainStatsRows(*db, now_ms, rows);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    const core::TypedValue db_uuid = uuidValueOrNull(db->uuid());
+    for (const auto& stats_row : rows) {
+        VirtualRow row;
+        row.columns = {
+            {"db_uuid", db_uuid},
+            {"domain_id", core::TypedValue::makeText(stats_row.domain_id)},
+            {"min_pages", core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.min_pages))},
+            {"target_pages", core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.target_pages))},
+            {"max_pages", core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.max_pages))},
+            {"resident_pages",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.resident_pages))},
+            {"protected_pages",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.protected_pages))},
+            {"probationary_pages",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.probationary_pages))},
+            {"ring_only_pages",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.ring_only_pages))},
+            {"pin_biased_pages",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.pin_biased_pages))},
+            {"dirty_pages", core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.dirty_pages))},
+            {"dirty_bytes", core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.dirty_bytes))},
+            {"commit_fence_pages",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.commit_fence_pages))},
+            {"borrowed_pages",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.borrowed_pages))},
+            {"reservation_breach_count",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 stats_row.reservation_breach_count))},
+            {"emergency_breach_count",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.emergency_breach_count))},
+            {"observed_at_ms",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.observed_at_ms))}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::querySbBufferPolicyHealth(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    const uint64_t now_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::vector<core::SqlBufferPolicyHealthRow> rows;
+    Status status =
+        core::SqlObservabilityViewBuilder::buildBufferPolicyHealthRows(*db, now_ms, rows);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    const core::TypedValue db_uuid = uuidValueOrNull(db->uuid());
+    for (const auto& stats_row : rows) {
+        VirtualRow row;
+        row.columns = {
+            {"db_uuid", db_uuid},
+            {"ghost_hits", core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.ghost_hits))},
+            {"ghost_entries",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.ghost_entries))},
+            {"promotions",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.promotions))},
+            {"demotions",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.demotions))},
+            {"protected_set_collapse_events",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 stats_row.protected_set_collapse_events))},
+            {"fairness_session_budget_breaches",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 stats_row.fairness_session_budget_breaches))},
+            {"fairness_object_budget_breaches",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 stats_row.fairness_object_budget_breaches))},
+            {"prefetch_usefulness_pct",
+             core::TypedValue::makeFloat64(stats_row.prefetch_usefulness_pct)},
+            {"thrash_detector_state",
+             core::TypedValue::makeText(stats_row.thrash_detector_state)},
+            {"thrash_policy_shift_count",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 stats_row.thrash_policy_shift_count))},
+            {"observed_at_ms",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.observed_at_ms))}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::querySbBufferPrefetchHealth(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    const uint64_t now_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::vector<core::SqlBufferPrefetchHealthRow> rows;
+    Status status =
+        core::SqlObservabilityViewBuilder::buildBufferPrefetchHealthRows(*db, now_ms, rows);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    const core::TypedValue db_uuid = uuidValueOrNull(db->uuid());
+    for (const auto& stats_row : rows) {
+        VirtualRow row;
+        row.columns = {
+            {"db_uuid", db_uuid},
+            {"prefetch_pages_total",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.prefetch_pages_total))},
+            {"prefetch_pages_useful",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.prefetch_pages_useful))},
+            {"prefetch_pages_unused_evicted",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 stats_row.prefetch_pages_unused_evicted))},
+            {"prefetch_cancelled_pages",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 stats_row.prefetch_cancelled_pages))},
+            {"prefetch_debt_pages",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.prefetch_debt_pages))},
+            {"prefetch_scan_debt_pages",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 stats_row.prefetch_scan_debt_pages))},
+            {"prefetch_usefulness_pct",
+             core::TypedValue::makeFloat64(stats_row.prefetch_usefulness_pct)},
+            {"thrash_detector_state",
+             core::TypedValue::makeText(stats_row.thrash_detector_state)},
+            {"observed_at_ms",
+             core::TypedValue::makeInt64(static_cast<int64_t>(stats_row.observed_at_ms))}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::querySbCheckpointWritebackPressure(VirtualResultSet& results,
+                                                             ErrorContext* /* ctx */) {
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    const uint64_t now_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::vector<core::SqlCheckpointWritebackPressureRow> rows;
+    Status status = core::SqlObservabilityViewBuilder::buildCheckpointWritebackPressureRows(
+        *db, now_ms, rows);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    const core::TypedValue db_uuid = uuidValueOrNull(db->uuid());
+    for (const auto& pressure_row : rows) {
+        VirtualRow row;
+        row.columns = {
+            {"db_uuid", db_uuid},
+            {"checkpoint_generation",
+             core::TypedValue::makeInt64(static_cast<int64_t>(pressure_row.checkpoint_generation))},
+            {"checkpoint_state", core::TypedValue::makeText(pressure_row.checkpoint_state)},
+            {"dirty_pages", core::TypedValue::makeInt64(static_cast<int64_t>(pressure_row.dirty_pages))},
+            {"checkpoint_flush_debt_pages",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 pressure_row.checkpoint_flush_debt_pages))},
+            {"checkpoint_pages_remaining",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 pressure_row.checkpoint_pages_remaining))},
+            {"blocked_frame_count",
+             core::TypedValue::makeInt64(static_cast<int64_t>(pressure_row.blocked_frame_count))},
+            {"queue_depth_foreground_help",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 pressure_row.queue_depth_foreground_help))},
+            {"queue_depth_background_age",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 pressure_row.queue_depth_background_age))},
+            {"queue_depth_checkpoint",
+             core::TypedValue::makeInt64(static_cast<int64_t>(pressure_row.queue_depth_checkpoint))},
+            {"queue_depth_metadata_priority",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 pressure_row.queue_depth_metadata_priority))},
+            {"queue_depth_write_combine",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 pressure_row.queue_depth_write_combine))},
+            {"queue_depth_repair_retry",
+             core::TypedValue::makeInt64(static_cast<int64_t>(
+                 pressure_row.queue_depth_repair_retry))},
+            {"write_admission_fenced",
+             core::TypedValue::makeBoolean(pressure_row.write_admission_fenced)},
+            {"incident_open", core::TypedValue::makeBoolean(pressure_row.incident_open)},
+            {"retry_count", core::TypedValue::makeInt64(static_cast<int64_t>(pressure_row.retry_count))},
+            {"reserve_exhaustion_risk",
+             core::TypedValue::makeBoolean(pressure_row.reserve_exhaustion_risk)},
+            {"observed_at_ms",
+             core::TypedValue::makeInt64(static_cast<int64_t>(pressure_row.observed_at_ms))}
+        };
+        results.rows.push_back(std::move(row));
+    }
 
     return Status::OK;
 }

@@ -24,6 +24,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/mga_failpoint_manager.h"
+#include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/uuidv7.h"
 
@@ -166,7 +167,7 @@ namespace scratchbird::core
     {
         std::vector<SqlViewSchemaDefinition> views;
         ASSERT_EQ(MgaObservabilityContract::appendSqlViewDefinitions(views), Status::OK);
-        ASSERT_EQ(views.size(), 16u);
+        ASSERT_EQ(views.size(), 21u);
         for (const SqlViewSchemaDefinition& view : views)
         {
             EXPECT_EQ(view.schema_version, MgaObservabilityContract::sql_view_schema_version());
@@ -247,6 +248,55 @@ namespace scratchbird::core
         EXPECT_EQ(sweep_resume_view->columns[0].column_name, "sweep_generation");
         EXPECT_EQ(sweep_resume_view->columns[16].column_name, "resume_outcome");
 
+        const auto buffer_pool_stats_view = std::find_if(
+            views.begin(), views.end(), [](const SqlViewSchemaDefinition& view) {
+                return view.view_name == "sb_buffer_pool_stats";
+            });
+        ASSERT_NE(buffer_pool_stats_view, views.end());
+        EXPECT_EQ(buffer_pool_stats_view->columns[1].column_name, "profile");
+        EXPECT_EQ(buffer_pool_stats_view->columns[2].column_name, "layout");
+        EXPECT_EQ(buffer_pool_stats_view->columns[13].column_name, "prefetch_enabled");
+        EXPECT_EQ(buffer_pool_stats_view->columns[24].column_name, "observed_at_ms");
+
+        const auto buffer_domain_stats_view = std::find_if(
+            views.begin(), views.end(), [](const SqlViewSchemaDefinition& view) {
+                return view.view_name == "sb_buffer_domain_stats";
+            });
+        ASSERT_NE(buffer_domain_stats_view, views.end());
+        EXPECT_EQ(buffer_domain_stats_view->columns[1].column_name, "domain_id");
+        EXPECT_EQ(buffer_domain_stats_view->columns[6].column_name, "protected_pages");
+        EXPECT_EQ(buffer_domain_stats_view->columns[13].column_name, "borrowed_pages");
+        EXPECT_EQ(buffer_domain_stats_view->columns[16].column_name, "observed_at_ms");
+
+        const auto buffer_policy_health_view = std::find_if(
+            views.begin(), views.end(), [](const SqlViewSchemaDefinition& view) {
+                return view.view_name == "sb_buffer_policy_health";
+            });
+        ASSERT_NE(buffer_policy_health_view, views.end());
+        EXPECT_EQ(buffer_policy_health_view->columns[1].column_name, "ghost_hits");
+        EXPECT_EQ(buffer_policy_health_view->columns[8].column_name, "prefetch_usefulness_pct");
+        EXPECT_EQ(buffer_policy_health_view->columns[9].column_name, "thrash_detector_state");
+
+        const auto buffer_prefetch_health_view = std::find_if(
+            views.begin(), views.end(), [](const SqlViewSchemaDefinition& view) {
+                return view.view_name == "sb_buffer_prefetch_health";
+            });
+        ASSERT_NE(buffer_prefetch_health_view, views.end());
+        EXPECT_EQ(buffer_prefetch_health_view->columns[1].column_name, "prefetch_pages_total");
+        EXPECT_EQ(buffer_prefetch_health_view->columns[6].column_name, "prefetch_scan_debt_pages");
+        EXPECT_EQ(buffer_prefetch_health_view->columns[8].column_name, "thrash_detector_state");
+
+        const auto checkpoint_writeback_pressure_view = std::find_if(
+            views.begin(), views.end(), [](const SqlViewSchemaDefinition& view) {
+                return view.view_name == "sb_checkpoint_writeback_pressure";
+            });
+        ASSERT_NE(checkpoint_writeback_pressure_view, views.end());
+        EXPECT_EQ(checkpoint_writeback_pressure_view->columns[7].column_name,
+                  "queue_depth_foreground_help");
+        EXPECT_EQ(checkpoint_writeback_pressure_view->columns[12].column_name,
+                  "queue_depth_repair_retry");
+        EXPECT_EQ(checkpoint_writeback_pressure_view->columns[17].column_name, "observed_at_ms");
+
         std::vector<DashboardSchemaDefinition> dashboards;
         ASSERT_EQ(MgaObservabilityContract::appendDashboardDefinitions(dashboards), Status::OK);
         ASSERT_EQ(dashboards.size(), 5u);
@@ -277,6 +327,82 @@ namespace scratchbird::core
         ASSERT_NE(restart_dashboard, dashboards.end());
         EXPECT_EQ(restart_dashboard->panels[1].source_view, "sb_mga_failpoint_events");
         EXPECT_EQ(restart_dashboard->alerts[0].predicate, "commit fence backlog older than 2 s");
+    }
+
+    TEST_F(MgaObservabilityLiveViewsTest, BuildsLiveBufferPolicyRowsFromSegmentedSnapshots)
+    {
+        ErrorContext ctx;
+        ASSERT_NE(db_->buffer_pool(), nullptr);
+        ASSERT_NE(db_->page_manager(), nullptr);
+
+        uint32_t page_a = 0;
+        uint32_t page_b = 0;
+        ASSERT_EQ(db_->page_manager()->allocatePage(page_a, &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(db_->page_manager()->allocatePage(page_b, &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(db_->buffer_pool()->prefetchPages({page_a, page_b}, &ctx), Status::OK)
+            << ctx.message;
+
+        void* page_buffer = nullptr;
+        ASSERT_EQ(db_->buffer_pool()->pinPage(page_a, &page_buffer, &ctx), Status::OK)
+            << ctx.message;
+        ASSERT_NE(page_buffer, nullptr);
+        ASSERT_EQ(db_->buffer_pool()->unpinPage(page_a, false, &ctx), Status::OK) << ctx.message;
+
+        const uint64_t observed_at_ms = nowMicros() / 1000;
+
+        std::vector<SqlBufferPoolStatsRow> pool_rows;
+        ASSERT_EQ(
+            SqlObservabilityViewBuilder::buildBufferPoolStatsRows(
+                *db_, observed_at_ms, pool_rows),
+            Status::OK);
+        ASSERT_EQ(pool_rows.size(), 1u);
+        EXPECT_EQ(pool_rows.front().layout, "segmented");
+        EXPECT_TRUE(pool_rows.front().prefetch_enabled);
+        EXPECT_GT(pool_rows.front().pool_pages, 0u);
+
+        std::vector<SqlBufferDomainStatsRow> domain_rows;
+        ASSERT_EQ(
+            SqlObservabilityViewBuilder::buildBufferDomainStatsRows(
+                *db_, observed_at_ms, domain_rows),
+            Status::OK);
+        ASSERT_EQ(domain_rows.size(),
+                  static_cast<size_t>(BufferPool::PolicyDomain::Count));
+        const auto scan_row = std::find_if(
+            domain_rows.begin(), domain_rows.end(), [](const SqlBufferDomainStatsRow& row) {
+                return row.domain_id == "scan_bulk_ring";
+            });
+        ASSERT_NE(scan_row, domain_rows.end());
+        EXPECT_GT(scan_row->resident_pages, 0u);
+        EXPECT_GE(scan_row->ring_only_pages + scan_row->probationary_pages, 1u);
+
+        std::vector<SqlBufferPolicyHealthRow> policy_rows;
+        ASSERT_EQ(
+            SqlObservabilityViewBuilder::buildBufferPolicyHealthRows(
+                *db_, observed_at_ms, policy_rows),
+            Status::OK);
+        ASSERT_EQ(policy_rows.size(), 1u);
+        EXPECT_GE(policy_rows.front().promotions, 0u);
+        EXPECT_FALSE(policy_rows.front().thrash_detector_state.empty());
+
+        std::vector<SqlBufferPrefetchHealthRow> prefetch_rows;
+        ASSERT_EQ(
+            SqlObservabilityViewBuilder::buildBufferPrefetchHealthRows(
+                *db_, observed_at_ms, prefetch_rows),
+            Status::OK);
+        ASSERT_EQ(prefetch_rows.size(), 1u);
+        EXPECT_EQ(prefetch_rows.front().prefetch_pages_total, 2u);
+        EXPECT_EQ(prefetch_rows.front().prefetch_pages_useful, 1u);
+        EXPECT_GE(prefetch_rows.front().prefetch_debt_pages, 1u);
+        EXPECT_FALSE(prefetch_rows.front().thrash_detector_state.empty());
+
+        std::vector<SqlCheckpointWritebackPressureRow> pressure_rows;
+        ASSERT_EQ(
+            SqlObservabilityViewBuilder::buildCheckpointWritebackPressureRows(
+                *db_, observed_at_ms, pressure_rows),
+            Status::OK);
+        ASSERT_EQ(pressure_rows.size(), 1u);
+        EXPECT_EQ(pressure_rows.front().db_uuid, db_->uuid().toString());
+        EXPECT_GE(pressure_rows.front().queue_depth_foreground_help, 0u);
     }
 
     TEST_F(MgaObservabilityLiveViewsTest, BuildsLiveMgaRowsFromRuntimeCatalogAndFragmentationState)

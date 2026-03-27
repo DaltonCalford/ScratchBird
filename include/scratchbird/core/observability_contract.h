@@ -171,6 +171,108 @@ namespace scratchbird::core
         bool reserve_exhaustion_risk = false;
     };
 
+    struct SqlBufferPoolStatsRow
+    {
+        std::string db_uuid;
+        std::string profile;
+        std::string layout;
+        uint64_t pool_pages = 0;
+        uint64_t page_size_bytes = 0;
+        uint64_t pages_dirty = 0;
+        uint64_t hits_total = 0;
+        uint64_t misses_total = 0;
+        uint64_t evictions_total = 0;
+        uint64_t replacement_protected_pct = 0;
+        uint64_t replacement_ghost_history_pct = 0;
+        uint64_t admission_second_touch_generations = 0;
+        bool admission_direct_protect_roots = false;
+        bool prefetch_enabled = false;
+        uint64_t prefetch_max_debt_pages = 0;
+        uint64_t prefetch_usefulness_floor_pct = 0;
+        uint64_t thrash_session_budget_pct = 0;
+        uint64_t thrash_object_budget_pct = 0;
+        uint64_t thrash_prefetch_pressure_pct = 0;
+        bool background_writer_enabled = false;
+        uint64_t background_writer_batch_pages = 0;
+        double dirty_ratio_low = 0.0;
+        double dirty_ratio_high = 0.0;
+        double dirty_ratio_checkpoint = 0.0;
+        uint64_t observed_at_ms = 0;
+    };
+
+    struct SqlBufferDomainStatsRow
+    {
+        std::string db_uuid;
+        std::string domain_id;
+        uint64_t min_pages = 0;
+        uint64_t target_pages = 0;
+        uint64_t max_pages = 0;
+        uint64_t resident_pages = 0;
+        uint64_t protected_pages = 0;
+        uint64_t probationary_pages = 0;
+        uint64_t ring_only_pages = 0;
+        uint64_t pin_biased_pages = 0;
+        uint64_t dirty_pages = 0;
+        uint64_t dirty_bytes = 0;
+        uint64_t commit_fence_pages = 0;
+        uint64_t borrowed_pages = 0;
+        uint64_t reservation_breach_count = 0;
+        uint64_t emergency_breach_count = 0;
+        uint64_t observed_at_ms = 0;
+    };
+
+    struct SqlBufferPolicyHealthRow
+    {
+        std::string db_uuid;
+        uint64_t ghost_hits = 0;
+        uint64_t ghost_entries = 0;
+        uint64_t promotions = 0;
+        uint64_t demotions = 0;
+        uint64_t protected_set_collapse_events = 0;
+        uint64_t fairness_session_budget_breaches = 0;
+        uint64_t fairness_object_budget_breaches = 0;
+        double prefetch_usefulness_pct = 100.0;
+        std::string thrash_detector_state;
+        uint64_t thrash_policy_shift_count = 0;
+        uint64_t observed_at_ms = 0;
+    };
+
+    struct SqlBufferPrefetchHealthRow
+    {
+        std::string db_uuid;
+        uint64_t prefetch_pages_total = 0;
+        uint64_t prefetch_pages_useful = 0;
+        uint64_t prefetch_pages_unused_evicted = 0;
+        uint64_t prefetch_cancelled_pages = 0;
+        uint64_t prefetch_debt_pages = 0;
+        uint64_t prefetch_scan_debt_pages = 0;
+        double prefetch_usefulness_pct = 100.0;
+        std::string thrash_detector_state;
+        uint64_t observed_at_ms = 0;
+    };
+
+    struct SqlCheckpointWritebackPressureRow
+    {
+        std::string db_uuid;
+        uint64_t checkpoint_generation = 0;
+        std::string checkpoint_state;
+        uint64_t dirty_pages = 0;
+        uint64_t checkpoint_flush_debt_pages = 0;
+        uint64_t checkpoint_pages_remaining = 0;
+        uint64_t blocked_frame_count = 0;
+        uint64_t queue_depth_foreground_help = 0;
+        uint64_t queue_depth_background_age = 0;
+        uint64_t queue_depth_checkpoint = 0;
+        uint64_t queue_depth_metadata_priority = 0;
+        uint64_t queue_depth_write_combine = 0;
+        uint64_t queue_depth_repair_retry = 0;
+        bool write_admission_fenced = false;
+        bool incident_open = false;
+        uint64_t retry_count = 0;
+        bool reserve_exhaustion_risk = false;
+        uint64_t observed_at_ms = 0;
+    };
+
     struct SqlSweepResumeStatusRow
     {
         uint64_t sweep_generation = 0;
@@ -504,6 +606,31 @@ namespace scratchbird::core
         static auto buildBufferWritebackDebtRows(
             const Database& db,
             std::vector<SqlBufferWritebackDebtRow>& rows_out) -> Status;
+
+        static auto buildBufferPoolStatsRows(
+            const Database& db,
+            uint64_t observed_at_ms,
+            std::vector<SqlBufferPoolStatsRow>& rows_out) -> Status;
+
+        static auto buildBufferDomainStatsRows(
+            const Database& db,
+            uint64_t observed_at_ms,
+            std::vector<SqlBufferDomainStatsRow>& rows_out) -> Status;
+
+        static auto buildBufferPolicyHealthRows(
+            const Database& db,
+            uint64_t observed_at_ms,
+            std::vector<SqlBufferPolicyHealthRow>& rows_out) -> Status;
+
+        static auto buildBufferPrefetchHealthRows(
+            const Database& db,
+            uint64_t observed_at_ms,
+            std::vector<SqlBufferPrefetchHealthRow>& rows_out) -> Status;
+
+        static auto buildCheckpointWritebackPressureRows(
+            const Database& db,
+            uint64_t observed_at_ms,
+            std::vector<SqlCheckpointWritebackPressureRow>& rows_out) -> Status;
 
         static auto buildSweepResumeStatusRows(
             const Database& db,

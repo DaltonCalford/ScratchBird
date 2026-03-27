@@ -29,9 +29,12 @@
 #include <gtest/gtest.h>
 #include <thread>
 #include <vector>
+#include <array>
 #include <chrono>
 #include <atomic>
+#include <fstream>
 #include "test_helpers.h"
+#include "scratchbird/core/config.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
@@ -39,6 +42,17 @@
 
 using namespace scratchbird::core;
 using scratchbird::testing::uniqueTestDbPath;
+
+namespace {
+
+void writeTextFile(const std::filesystem::path& path, const std::string& contents)
+{
+    std::ofstream out(path);
+    ASSERT_TRUE(out.is_open()) << path;
+    out << contents;
+}
+
+} // namespace
 
 class TSANBufferPoolTest : public ::testing::Test {
 protected:
@@ -76,6 +90,89 @@ protected:
     std::string test_db_path_;
     std::unique_ptr<Database> db_;
     BufferPool* pool_;
+};
+
+class TSANSegmentedOwnershipTest : public ::testing::Test {
+protected:
+    static constexpr uint16_t kPartitionCount = 64;
+    static constexpr uint32_t kPageSize = 16384;
+    static constexpr uint16_t kHomePartitionCount = 32;
+
+    void SetUp() override {
+        Config::getInstance().clear();
+
+        root_path_ = std::filesystem::path(uniqueTestDbPath("test_tsan_segmented_ownership", ""));
+        std::filesystem::create_directories(root_path_);
+        config_path_ = root_path_ / "sb_config.ini";
+        test_db_path_ = root_path_ / "ownership_race.sbdb";
+
+        writeTextFile(config_path_,
+                      "[memory]\n"
+                      "buffer_pool_size = 32\n"
+                      "buffer_pool_layout = segmented\n"
+                      "buffer_pool_bgwriter_enabled = false\n");
+
+        ASSERT_EQ(Config::getInstance().initialize(config_path_.string(), &ctx_), Status::OK)
+            << ctx_.message;
+        ASSERT_EQ(Database::create(test_db_path_.string(), kPageSize, &ctx_), Status::OK)
+            << ctx_.message;
+
+        db_ = std::make_unique<Database>();
+        ASSERT_EQ(db_->open(test_db_path_.string(), &ctx_), Status::OK) << ctx_.message;
+
+        pool_ = db_->buffer_pool();
+        ASSERT_NE(pool_, nullptr);
+
+        const auto config = pool_->getConfigSnapshot();
+        ASSERT_EQ(config.layout, BufferPool::PoolLayout::Segmented);
+        ASSERT_EQ(config.pool_size, static_cast<uint32_t>(kHomePartitionCount));
+    }
+
+    void TearDown() override {
+        if (db_) {
+            db_->close();
+        }
+        Config::getInstance().clear();
+
+        std::error_code ec;
+        std::filesystem::remove_all(root_path_, ec);
+    }
+
+    static auto ownershipPartition(uint32_t page_id) -> uint16_t {
+        return static_cast<uint16_t>(convertPageIDtoGPID(page_id) % kPartitionCount);
+    }
+
+    auto allocatePageForOwnershipPartition(uint16_t partition) -> uint32_t {
+        for (int attempt = 0; attempt < 4096; ++attempt) {
+            uint32_t page_id = 0;
+            const Status status = db_->page_manager()->allocatePage(page_id, &ctx_);
+            EXPECT_EQ(status, Status::OK) << ctx_.message;
+            if (status != Status::OK) {
+                return 0;
+            }
+            if (ownershipPartition(page_id) == partition) {
+                return page_id;
+            }
+        }
+
+        ADD_FAILURE() << "Failed to allocate page for partition " << partition;
+        return 0;
+    }
+
+    auto frameSnapshot(uint32_t page_id) -> BufferPool::MgaFrameSnapshot {
+        BufferPool::MgaFrameSnapshot snapshot{};
+        const Status status =
+            pool_->getMgaFrameSnapshotGlobal(convertPageIDtoGPID(page_id), &snapshot, &ctx_);
+        EXPECT_EQ(status, Status::OK) << ctx_.message;
+        return snapshot;
+    }
+
+    std::filesystem::path root_path_;
+    std::filesystem::path config_path_;
+    std::filesystem::path test_db_path_;
+    std::unique_ptr<Database> db_;
+    BufferPool* pool_ = nullptr;
+    ErrorContext ctx_;
 };
 
 /**
@@ -242,6 +339,58 @@ TEST_F(TSANBufferPoolTest, ConcurrentUsageCountUpdates) {
 
     // With 200 unique pages and buffer pool size ~32-128, we should see evictions
     EXPECT_GT(stats.evictions, 0u) << "Expected evictions when accessing " << UNIQUE_PAGES << " pages";
+}
+
+TEST_F(TSANSegmentedOwnershipTest, ConcurrentSegmentedMissesTransferOwnershipToTargetPartitions) {
+    const std::array<uint16_t, 4> partitions{33, 34, 35, 36};
+    std::array<std::array<uint32_t, 2>, partitions.size()> pages{};
+    for (size_t i = 0; i < partitions.size(); ++i) {
+        pages[i][0] = allocatePageForOwnershipPartition(partitions[i]);
+        pages[i][1] = allocatePageForOwnershipPartition(partitions[i]);
+    }
+
+    std::atomic<int> errors{0};
+    std::vector<std::thread> threads;
+
+    for (size_t i = 0; i < pages.size(); ++i) {
+        threads.emplace_back([&, i]() {
+            ErrorContext local_ctx;
+            for (int iter = 0; iter < 200; ++iter) {
+                void* buffer = nullptr;
+                const uint32_t page_id = pages[i][static_cast<size_t>(iter % 2)];
+                Status s = pool_->pinPage(page_id, &buffer, &local_ctx);
+                if (s != Status::OK) {
+                    errors.fetch_add(1, std::memory_order_relaxed);
+                    continue;
+                }
+
+                std::this_thread::yield();
+
+                s = pool_->unpinPage(page_id, false, &local_ctx);
+                if (s != Status::OK) {
+                    errors.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    EXPECT_EQ(errors.load(), 0);
+
+    for (size_t i = 0; i < pages.size(); ++i) {
+        void* buffer = nullptr;
+        ASSERT_EQ(pool_->pinPage(pages[i][0], &buffer, &ctx_), Status::OK) << ctx_.message;
+        ASSERT_NE(buffer, nullptr);
+        ASSERT_EQ(pool_->unpinPage(pages[i][0], false, &ctx_), Status::OK) << ctx_.message;
+
+        const auto snapshot = frameSnapshot(pages[i][0]);
+        EXPECT_TRUE(snapshot.resident);
+        EXPECT_EQ(snapshot.owner_partition, partitions[i]);
+        EXPECT_NE(snapshot.home_partition, snapshot.owner_partition);
+    }
 }
 
 /**

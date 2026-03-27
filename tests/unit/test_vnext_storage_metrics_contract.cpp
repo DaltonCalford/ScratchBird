@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -9,6 +10,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/observability_contract.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/telemetry.h"
 
@@ -91,4 +93,59 @@ TEST_F(VNextStorageMetricsContractTest, BufferPoolEventsEmitCanonicalVNextStorag
     EXPECT_GE(hit_after - hit_before, 1.0);
     EXPECT_GE(miss_after - miss_before, 1.0);
     EXPECT_GE(read_after - read_before, 1.0);
+}
+
+TEST_F(VNextStorageMetricsContractTest, MgaRuntimeMetricsExposeBufferPolicyAndPrefetchCounters)
+{
+    ErrorContext ctx;
+
+    uint32_t prefetched_page = 0;
+    ASSERT_EQ(db_->page_manager()->allocatePage(prefetched_page, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(db_->buffer_pool()->prefetchPages({prefetched_page}, &ctx), Status::OK) << ctx.message;
+
+    void* page_buffer = nullptr;
+    ASSERT_EQ(db_->buffer_pool()->pinPage(prefetched_page, &page_buffer, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_NE(page_buffer, nullptr);
+    ASSERT_EQ(db_->buffer_pool()->unpinPage(prefetched_page, false, &ctx), Status::OK)
+        << ctx.message;
+
+    const uint64_t now_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::vector<SqlRuntimeMetricRow> rows;
+    ASSERT_EQ(SqlObservabilityViewBuilder::buildMgaRuntimeRows(
+                  *db_, MetricsRegistry::getInstance(), now_ms, rows),
+              Status::OK);
+
+    const auto find_metric = [&rows](const std::string& metric_name,
+                                     const std::string& labels_fragment)
+        -> std::vector<SqlRuntimeMetricRow>::const_iterator {
+        return std::find_if(
+            rows.begin(), rows.end(),
+            [&](const SqlRuntimeMetricRow& row) {
+                return row.metric_name == metric_name &&
+                       row.labels_json.find(labels_fragment) != std::string::npos;
+            });
+    };
+
+    const auto prefetch_total = find_metric("sb_buf_prefetch_pages_total", "\"db\":");
+    ASSERT_NE(prefetch_total, rows.end());
+    EXPECT_EQ(prefetch_total->value, 1.0);
+
+    const auto prefetch_useful =
+        find_metric("sb_buf_prefetch_pages_useful_total", "\"db\":");
+    ASSERT_NE(prefetch_useful, rows.end());
+    EXPECT_EQ(prefetch_useful->value, 1.0);
+
+    const auto hot_domain =
+        find_metric("sb_buf_domain_resident_pages", "\"domain\":\"hot_oltp\"");
+    ASSERT_NE(hot_domain, rows.end());
+    EXPECT_GE(hot_domain->value, 1.0);
+
+    const auto usefulness =
+        find_metric("sb_buf_prefetch_usefulness_pct", "\"db\":");
+    ASSERT_NE(usefulness, rows.end());
+    EXPECT_GE(usefulness->value, 100.0);
 }

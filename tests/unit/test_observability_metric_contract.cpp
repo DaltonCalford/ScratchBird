@@ -104,7 +104,7 @@ namespace scratchbird::core
 
         std::vector<MetricSchemaDefinition> definitions;
         ASSERT_EQ(MgaObservabilityContract::appendMetricDefinitions(definitions), Status::OK);
-        ASSERT_EQ(definitions.size(), 45u);
+        ASSERT_EQ(definitions.size(), 71u);
         EXPECT_EQ(definitions.front().metric_name, "sb_buf_commit_fence_backlog");
         EXPECT_EQ(definitions.back().metric_name, "sb_writeback_incidents_open");
         for (const MetricSchemaDefinition& definition : definitions)
@@ -126,6 +126,14 @@ namespace scratchbird::core
             dynamic_cast<Histogram*>(registry.get("sb_tx_commit_fence_flush_seconds"));
         auto* chain_depth = dynamic_cast<Gauge*>(registry.get("sb_mga_chain_depth_bucket"));
         auto* buf_frames = dynamic_cast<Gauge*>(registry.get("sb_buf_frames_by_class"));
+        auto* buf_domain_resident =
+            dynamic_cast<Gauge*>(registry.get("sb_buf_domain_resident_pages"));
+        auto* buf_prefetch_usefulness =
+            dynamic_cast<Gauge*>(registry.get("sb_buf_prefetch_usefulness_pct"));
+        auto* buf_queue_depth =
+            dynamic_cast<Gauge*>(registry.get("sb_buf_writeback_queue_depth"));
+        auto* buf_promotions =
+            dynamic_cast<Counter*>(registry.get("sb_buf_promotions_total"));
         auto* lock_wait = dynamic_cast<Counter*>(registry.get("sb_lock_wait_seconds_total"));
         auto* checkpoint_generation =
             dynamic_cast<Gauge*>(registry.get("sb_checkpoint_generation_current"));
@@ -138,6 +146,10 @@ namespace scratchbird::core
         ASSERT_NE(commit_fence, nullptr);
         ASSERT_NE(chain_depth, nullptr);
         ASSERT_NE(buf_frames, nullptr);
+        ASSERT_NE(buf_domain_resident, nullptr);
+        ASSERT_NE(buf_prefetch_usefulness, nullptr);
+        ASSERT_NE(buf_queue_depth, nullptr);
+        ASSERT_NE(buf_promotions, nullptr);
         ASSERT_NE(lock_wait, nullptr);
         ASSERT_NE(checkpoint_generation, nullptr);
         ASSERT_NE(recovery_generation, nullptr);
@@ -148,6 +160,10 @@ namespace scratchbird::core
         commit_fence->observe(0.012, {"sb", "ok"});
         chain_depth->set(4.0, {"sb", "orders", "depth_4_7"});
         buf_frames->set(128.0, {"sb", "commit_fence"});
+        buf_domain_resident->set(32.0, {"sb", "hot_oltp"});
+        buf_prefetch_usefulness->set(75.0, {"sb"});
+        buf_queue_depth->set(6.0, {"sb", "checkpoint"});
+        buf_promotions->inc(2.0, {"sb"});
         lock_wait->inc(0.50, {"sb", "WAIT"});
         checkpoint_generation->set(3.0, {"sb"});
         recovery_generation->set(4.0, {"sb"});

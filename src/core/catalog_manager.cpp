@@ -114,6 +114,23 @@ bool isUuidV7Local(const ID& id)
     return TypeExtractor::extractUUIDVersion(bytes) == 7;
 }
 
+bool isAllZeroCatalogPageBuffer(const void* page_buffer, uint32_t page_size)
+{
+    if (page_buffer == nullptr)
+    {
+        return false;
+    }
+    const auto* bytes = static_cast<const uint8_t*>(page_buffer);
+    for (uint32_t i = 0; i < page_size; ++i)
+    {
+        if (bytes[i] != 0u)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 int compareUuidBytesLocal(const ID& lhs, const ID& rhs)
 {
     return std::memcmp(lhs.bytes.data(), rhs.bytes.data(), lhs.bytes.size());
@@ -22073,6 +22090,22 @@ bool hasTriggerNameConflictInTable(
         std::unordered_set<ID, IDHash> expected_default_name_ids;
         expected_default_name_ids.reserve(resolved_objects.size() + 1);
 
+        std::unordered_set<ID, IDHash> resolved_schema_ids;
+        std::unordered_set<ID, IDHash> resolved_table_ids;
+        resolved_schema_ids.reserve(resolved_objects.size());
+        resolved_table_ids.reserve(resolved_objects.size());
+        for (const auto& resolved : resolved_objects)
+        {
+            if (resolved.object_type == ObjectType::SCHEMA)
+            {
+                resolved_schema_ids.insert(resolved.object_id);
+            }
+            else if (resolved.object_type == ObjectType::TABLE)
+            {
+                resolved_table_ids.insert(resolved.object_id);
+            }
+        }
+
         std::string database_name = "scratchbird";
         if (database_table_page_ != 0)
         {
@@ -22530,10 +22563,26 @@ bool hasTriggerNameConflictInTable(
                 {
                     return true;
                 }
+                if (resolved_schema_ids.find(candidate) != resolved_schema_ids.end())
+                {
+                    return true;
+                }
+                std::lock_guard<CatalogMutex> lock(mutex_);
+                return schema_cache_.find(candidate) != schema_cache_.end();
+            };
+            auto schema_parent_in_resolved = [&](const ID& candidate) -> bool {
+                return candidate == database_id ||
+                    resolved_schema_ids.find(candidate) != resolved_schema_ids.end();
+            };
+            auto schema_parent_in_cache = [&](const ID& candidate) -> bool {
                 std::lock_guard<CatalogMutex> lock(mutex_);
                 return schema_cache_.find(candidate) != schema_cache_.end();
             };
             auto is_table_parent = [&](const ID& candidate) -> bool {
+                if (resolved_table_ids.find(candidate) != resolved_table_ids.end())
+                {
+                    return true;
+                }
                 std::lock_guard<CatalogMutex> lock(mutex_);
                 return table_cache_.find(candidate) != table_cache_.end();
             };
@@ -22598,12 +22647,28 @@ bool hasTriggerNameConflictInTable(
                     }
                     if (parent_object_id != schema_id || !is_schema_parent(parent_object_id))
                     {
+                        ErrorContext raw_schema_ctx;
+                        auto raw_schema_predicate = [&](const SchemaRecord& rec) {
+                            return rec.schema_id == parent_object_id && rec.is_valid == 1;
+                        };
+                        auto raw_schema_result =
+                            findRecordInHeapPage<SchemaRecord>(schemas_table_page_,
+                                                               raw_schema_predicate,
+                                                               &raw_schema_ctx);
                         std::string detail =
                             "PARENT_TYPE_MISMATCH: schema-owned object parent must be schema";
                         detail += " type=" + objectTypeToString(resolved.object_type);
                         detail += " object_id=" + resolved.object_id.toString();
                         detail += " schema_id=" + schema_id.toString();
                         detail += " parent_object_id=" + parent_object_id.toString();
+                        detail += " schema_parent_in_resolved=";
+                        detail += schema_parent_in_resolved(parent_object_id) ? "1" : "0";
+                        detail += " schema_parent_in_cache=";
+                        detail += schema_parent_in_cache(parent_object_id) ? "1" : "0";
+                        detail += " schema_parent_in_raw_heap=";
+                        detail += raw_schema_result.status == Status::OK ? "1" : "0";
+                        detail += " raw_heap_status=" +
+                                  std::to_string(static_cast<uint32_t>(raw_schema_result.status));
                         if (!name_text.empty())
                         {
                             detail += " name=" + name_text;
@@ -22752,6 +22817,214 @@ bool hasTriggerNameConflictInTable(
         return Status::OK;
     }
 
+    auto CatalogManager::catalogPageIsOverflowTarget(uint32_t target_page_id,
+                                                     bool& is_overflow_target,
+                                                     ErrorContext* ctx) -> Status
+    {
+        is_overflow_target = false;
+        if (target_page_id == 0)
+        {
+            return Status::OK;
+        }
+
+        BufferPool* bp = db_->buffer_pool();
+        PageManager* pm = db_->page_manager();
+        if (bp == nullptr || pm == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Catalog overflow scan requires buffer pool and page manager");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        const uint32_t total_pages = pm->totalPages();
+        for (uint32_t page_id = BOOTSTRAP_FIXED_PAGE_COUNT; page_id < total_pages; ++page_id)
+        {
+            if (page_id == target_page_id || !pm->isAllocated(page_id))
+            {
+                continue;
+            }
+
+            void* page_buffer = nullptr;
+            Status status = bp->pinPage(page_id, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                continue;
+            }
+
+            const auto* header = reinterpret_cast<const PageHeader*>(page_buffer);
+            if (header->magic == K_MAGIC_SBRD && header->page_type == PAGE_TYPE_CATALOG_PAGE)
+            {
+                const auto* heap = reinterpret_cast<const CatalogHeapPage*>(page_buffer);
+                if (heap->next_page == target_page_id)
+                {
+                    is_overflow_target = true;
+                }
+            }
+
+            Status unpin_status = bp->unpinPage(page_id, false, ctx);
+            if (unpin_status != Status::OK)
+            {
+                return unpin_status;
+            }
+
+            if (is_overflow_target)
+            {
+                return Status::OK;
+            }
+        }
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::ensureStandaloneCatalogRuntimePage(uint32_t& page_id,
+                                                            bool& page_changed,
+                                                            ErrorContext* ctx) -> Status
+    {
+        page_changed = false;
+
+        BufferPool* bp = db_->buffer_pool();
+        PageManager* pm = db_->page_manager();
+        if (bp == nullptr || pm == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Catalog runtime page allocation requires buffer pool and page manager");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        auto page_is_standalone = [&](uint32_t candidate_page_id, bool& standalone) -> Status {
+            standalone = false;
+            if (candidate_page_id == 0 || !pm->isAllocated(candidate_page_id))
+            {
+                return Status::OK;
+            }
+
+            bool overflow_target = false;
+            Status status = catalogPageIsOverflowTarget(candidate_page_id, overflow_target, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            if (overflow_target)
+            {
+                return Status::OK;
+            }
+
+            void* page_buffer = nullptr;
+            status = bp->pinPage(candidate_page_id, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return Status::OK;
+            }
+
+            const auto* header = reinterpret_cast<const PageHeader*>(page_buffer);
+            standalone =
+                !isAllZeroCatalogPageBuffer(page_buffer, db_->page_size()) &&
+                header->magic == K_MAGIC_SBRD &&
+                header->page_type == PAGE_TYPE_CATALOG_PAGE &&
+                header->page_size == db_->page_size() &&
+                header->page_id == candidate_page_id;
+
+            Status unpin_status = bp->unpinPage(candidate_page_id, false, ctx);
+            return unpin_status != Status::OK ? unpin_status : Status::OK;
+        };
+
+        bool standalone_existing = false;
+        Status status = page_is_standalone(page_id, standalone_existing);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (standalone_existing)
+        {
+            return Status::OK;
+        }
+
+        constexpr uint32_t kMaxAllocateAttempts = 32;
+        for (uint32_t attempt = 0; attempt < kMaxAllocateAttempts; ++attempt)
+        {
+            uint32_t candidate_page_id = 0;
+            void* page_buffer = nullptr;
+            status = bp->allocatePage(&candidate_page_id, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            bool overflow_target = false;
+            status = catalogPageIsOverflowTarget(candidate_page_id, overflow_target, ctx);
+            if (status != Status::OK)
+            {
+                Status unpin_status = bp->unpinPage(candidate_page_id, false, ctx);
+                return unpin_status != Status::OK ? unpin_status : status;
+            }
+
+            const bool fresh_zero_page =
+                isAllZeroCatalogPageBuffer(page_buffer, db_->page_size());
+            if (!fresh_zero_page || overflow_target)
+            {
+                LOG_WARNING(CATALOG,
+                            "Rejected late-bound catalog runtime page %u (fresh_zero_page=%d overflow_target=%d)",
+                            candidate_page_id,
+                            fresh_zero_page ? 1 : 0,
+                            overflow_target ? 1 : 0);
+                Status unpin_status = bp->unpinPage(candidate_page_id, false, ctx);
+                if (unpin_status != Status::OK)
+                {
+                    return unpin_status;
+                }
+                continue;
+            }
+
+            status = bp->lockPage(candidate_page_id, ctx);
+            if (status != Status::OK)
+            {
+                Status unpin_status = bp->unpinPage(candidate_page_id, false, ctx);
+                return unpin_status != Status::OK ? unpin_status : status;
+            }
+
+            // AUDIT CONTRACT:
+            // Runtime-history catalog roots must be standalone heap roots.
+            // They are allowed to allocate late, but they must never alias an
+            // overflow page already linked from another catalog heap chain.
+            memset(page_buffer, 0, db_->page_size());
+            auto* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
+            heap->header.magic = K_MAGIC_SBRD;
+            heap->header.version = 1;
+            heap->header.page_type = PAGE_TYPE_CATALOG_PAGE;
+            heap->header.page_size = db_->page_size();
+            heap->header.page_id = candidate_page_id;
+            heap->header.flags = 0;
+            heap->header.generation = 1;
+            heap->record_count = 0;
+            heap->free_offset = sizeof(CatalogHeapPage);
+            heap->next_page = 0;
+            heap->reserved = 0;
+            pageSetLower(heap->header, sizeof(CatalogHeapPage));
+            pageSetUpper(heap->header, db_->page_size());
+            pageSetSpecial(heap->header, db_->page_size());
+
+            Status unlock_status = bp->unlockPage(candidate_page_id, ctx);
+            Status unpin_status = bp->unpinPage(candidate_page_id, true, ctx);
+            if (unlock_status != Status::OK)
+            {
+                return unlock_status;
+            }
+            if (unpin_status != Status::OK)
+            {
+                return unpin_status;
+            }
+
+            page_id = candidate_page_id;
+            page_changed = true;
+            return Status::OK;
+        }
+
+        SET_ERROR_CONTEXT(ctx,
+                          Status::PAGE_CORRUPT,
+                          "Failed to allocate a standalone late-bound catalog runtime page");
+        return Status::PAGE_CORRUPT;
+    }
+
     auto CatalogManager::allocateCatalogPage(uint32_t &page_id, ErrorContext *ctx) -> Status
     {
         if (page_id != 0)
@@ -22816,16 +23089,58 @@ bool hasTriggerNameConflictInTable(
         BufferPool *bp = db_->buffer_pool();
         PageManager *pm = db_->page_manager();
         uint32_t current_page_id = page_id;
+        uint32_t cached_tail_page_id = 0;
+        constexpr uint32_t MAX_ITERATIONS = 1000;  // Safety limit
         {
             std::lock_guard<std::mutex> lock(heap_page_tail_mutex_);
             auto it = heap_page_tail_cache_.find(page_id);
             if (it != heap_page_tail_cache_.end())
             {
-                current_page_id = it->second;
+                cached_tail_page_id = it->second;
+            }
+        }
+        if (cached_tail_page_id != 0 && cached_tail_page_id != page_id)
+        {
+            uint32_t probe_page_id = page_id;
+            uint32_t probe_iterations = 0;
+            bool cached_tail_reachable = false;
+
+            while (probe_page_id != 0 && ++probe_iterations <= MAX_ITERATIONS)
+            {
+                void* probe_buffer = nullptr;
+                Status probe_status = bp->pinPage(probe_page_id, &probe_buffer, ctx);
+                if (probe_status != Status::OK)
+                {
+                    return probe_status;
+                }
+
+                auto* probe_heap = reinterpret_cast<CatalogHeapPage*>(probe_buffer);
+                uint32_t next_page = probe_heap->next_page;
+                Status unpin_status = bp->unpinPage(probe_page_id, false, ctx);
+                if (unpin_status != Status::OK)
+                {
+                    return unpin_status;
+                }
+
+                if (probe_page_id == cached_tail_page_id)
+                {
+                    cached_tail_reachable = true;
+                    break;
+                }
+                probe_page_id = next_page;
+            }
+
+            if (cached_tail_reachable)
+            {
+                current_page_id = cached_tail_page_id;
+            }
+            else
+            {
+                std::lock_guard<std::mutex> lock(heap_page_tail_mutex_);
+                heap_page_tail_cache_.erase(page_id);
             }
         }
         uint32_t iteration_count = 0;
-        constexpr uint32_t MAX_ITERATIONS = 1000;  // Safety limit
 
         while (true)
         {
@@ -23370,7 +23685,10 @@ bool hasTriggerNameConflictInTable(
         record.last_modified_time = schema.last_modified_time;
         record.is_valid = 1;
 
-        return writeRecordToHeapPage(schemas_table_page_, record, ctx);
+        auto predicate = [&](const SchemaRecord& existing) {
+            return existing.schema_id == schema.schema_id && existing.is_valid == 1;
+        };
+        return updateRecordInHeapPage(schemas_table_page_, predicate, record, ctx);
     }
 
     auto CatalogManager::readSchemaRecords(ErrorContext *ctx) -> Status
@@ -23400,6 +23718,185 @@ bool hasTriggerNameConflictInTable(
         auto key_extractor = [](const SchemaInfo &info) { return info.schema_id; };
         return readRecordsFromHeapPage<SchemaRecord, SchemaInfo, ID>(
             schemas_table_page_, schema_cache_, converter, key_extractor, ctx);
+    }
+
+    auto CatalogManager::rawSchemaRecordExistsForTesting(const ID& schema_id, bool& exists,
+                                                         ErrorContext* ctx) -> Status
+    {
+        auto predicate = [&](const SchemaRecord& record)
+        {
+            return record.schema_id == schema_id && record.is_valid == 1;
+        };
+        auto result = findRecordInHeapPage<SchemaRecord>(schemas_table_page_, predicate, ctx);
+        if (result.status == Status::OK)
+        {
+            exists = true;
+            return Status::OK;
+        }
+        if (result.status == Status::NOT_FOUND)
+        {
+            exists = false;
+            return Status::OK;
+        }
+        exists = false;
+        return result.status;
+    }
+
+    auto CatalogManager::rawSchemaRecordByNameForTesting(const std::string& schema_name,
+                                                         bool& found,
+                                                         ID& schema_id_out,
+                                                         uint32_t& is_valid_out,
+                                                         uint32_t& page_id_out,
+                                                         uint32_t& slot_index_out,
+                                                         ErrorContext* ctx) -> Status
+    {
+        BufferPool* bp = db_->buffer_pool();
+        uint32_t current_page_id = schemas_table_page_;
+        uint32_t chain_slot_index = 0;
+        found = false;
+        schema_id_out = ID{};
+        is_valid_out = 0;
+        page_id_out = 0;
+        slot_index_out = 0;
+
+        while (current_page_id != 0)
+        {
+            void* page_buffer = nullptr;
+            Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
+            uint32_t offset = sizeof(CatalogHeapPage);
+            for (uint32_t i = 0; i < heap->record_count; ++i)
+            {
+                auto* record = reinterpret_cast<SchemaRecord*>(
+                    reinterpret_cast<uint8_t*>(page_buffer) + offset);
+                const size_t raw_name_len =
+                    strnlen(record->schema_name, sizeof(record->schema_name));
+                std::string raw_name(record->schema_name, raw_name_len);
+                if (raw_name == schema_name)
+                {
+                    found = true;
+                    schema_id_out = record->schema_id;
+                    is_valid_out = record->is_valid;
+                    page_id_out = current_page_id;
+                    slot_index_out = chain_slot_index + i;
+                    status = bp->unpinPage(current_page_id, false, ctx);
+                    return status;
+                }
+                offset += sizeof(SchemaRecord);
+            }
+
+            uint32_t next_page = heap->next_page;
+            chain_slot_index += heap->record_count;
+            status = bp->unpinPage(current_page_id, false, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            current_page_id = next_page;
+        }
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::rawSchemaHeapLayoutForTesting(std::string& summary,
+                                                       ErrorContext* ctx) -> Status
+    {
+        BufferPool* bp = db_->buffer_pool();
+        uint32_t current_page_id = schemas_table_page_;
+        summary.clear();
+        bool first = true;
+
+        while (current_page_id != 0)
+        {
+            void* page_buffer = nullptr;
+            Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
+            const uint32_t expected_free_offset =
+                static_cast<uint32_t>(sizeof(CatalogHeapPage) +
+                                      (heap->record_count * sizeof(SchemaRecord)));
+            if (!first)
+            {
+                summary += " | ";
+            }
+            first = false;
+            summary += "page=" + std::to_string(current_page_id);
+            summary += ",records=" + std::to_string(heap->record_count);
+            summary += ",free_offset=" + std::to_string(heap->free_offset);
+            summary += ",expected_free_offset=" + std::to_string(expected_free_offset);
+            summary += ",next=" + std::to_string(heap->next_page);
+
+            uint32_t next_page = heap->next_page;
+            status = bp->unpinPage(current_page_id, false, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            current_page_id = next_page;
+        }
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::lastRawSchemaRecordForTesting(ID& schema_id_out,
+                                                       std::string& schema_name_out,
+                                                       uint32_t& is_valid_out,
+                                                       ErrorContext* ctx) -> Status
+    {
+        BufferPool* bp = db_->buffer_pool();
+        uint32_t current_page_id = schemas_table_page_;
+        bool found = false;
+        SchemaRecord last_record{};
+
+        while (current_page_id != 0)
+        {
+            void* page_buffer = nullptr;
+            Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
+            uint32_t offset = sizeof(CatalogHeapPage);
+            for (uint32_t i = 0; i < heap->record_count; ++i)
+            {
+                auto* record = reinterpret_cast<SchemaRecord*>(
+                    reinterpret_cast<uint8_t*>(page_buffer) + offset);
+                last_record = *record;
+                found = true;
+                offset += sizeof(SchemaRecord);
+            }
+
+            uint32_t next_page = heap->next_page;
+            status = bp->unpinPage(current_page_id, false, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            current_page_id = next_page;
+        }
+
+        if (!found)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "No raw schema records found");
+            return Status::NOT_FOUND;
+        }
+
+        last_record.schema_name[sizeof(last_record.schema_name) - 1] = '\0';
+        schema_id_out = last_record.schema_id;
+        schema_name_out = last_record.schema_name;
+        is_valid_out = last_record.is_valid;
+        return Status::OK;
     }
 
     auto CatalogManager::writeTableRecord(const TableInfo &table, ErrorContext *ctx) -> Status
@@ -29023,14 +29520,16 @@ bool hasTriggerNameConflictInTable(
         record.is_valid = 1;
         std::memset(record.padding, 0, sizeof(record.padding));
 
-        // Check if migration_history_table_page_ is allocated
-        if (migration_history_table_page_ == 0) {
-            Status status = allocateCatalogPage(migration_history_table_page_, ctx);
-            if (status != Status::OK) {
-                SET_ERROR_CONTEXT(ctx, status, "Failed to allocate migration history table page");
-                return status;
-            }
+        bool migration_history_page_changed = false;
+        Status status = ensureStandaloneCatalogRuntimePage(migration_history_table_page_,
+                                                           migration_history_page_changed,
+                                                           ctx);
+        if (status != Status::OK) {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to allocate migration history table page");
+            return status;
+        }
 
+        if (migration_history_page_changed) {
             LOG_INFO(CATALOG, "recordMigrationHistory: Allocated migration history table page {}",
                     migration_history_table_page_);
 
@@ -29039,7 +29538,7 @@ bool hasTriggerNameConflictInTable(
         }
 
         // Write record to migration history table
-        Status status = writeRecordToHeapPage(migration_history_table_page_, record, ctx);
+        status = writeRecordToHeapPage(migration_history_table_page_, record, ctx);
         if (status != Status::OK) {
             SET_ERROR_CONTEXT(ctx, status, "Failed to write migration history record");
             return status;
@@ -66516,13 +67015,16 @@ auto CatalogManager::upsertCheckpointRunCatalogEntry(const CheckpointRunCatalogI
                           "checkpoint_run.start_time is required");
         return Status::INVALID_ARGUMENT;
     }
-    if (checkpoint_run_table_page_ == 0)
+    bool checkpoint_run_page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(checkpoint_run_table_page_,
+                                                       checkpoint_run_page_changed,
+                                                       ctx);
+    if (status != Status::OK)
     {
-        Status status = allocateCatalogPage(checkpoint_run_table_page_, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
+        return status;
+    }
+    if (checkpoint_run_page_changed)
+    {
         status = writeCatalogRoot(ctx);
         if (status != Status::OK)
         {
@@ -66671,13 +67173,16 @@ auto CatalogManager::upsertRecoveryRunCatalogEntry(const RecoveryRunCatalogInfo&
                           "recovery_run.start_time is required");
         return Status::INVALID_ARGUMENT;
     }
-    if (recovery_run_table_page_ == 0)
+    bool recovery_run_page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(recovery_run_table_page_,
+                                                       recovery_run_page_changed,
+                                                       ctx);
+    if (status != Status::OK)
     {
-        Status status = allocateCatalogPage(recovery_run_table_page_, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
+        return status;
+    }
+    if (recovery_run_page_changed)
+    {
         status = writeCatalogRoot(ctx);
         if (status != Status::OK)
         {
@@ -66825,13 +67330,16 @@ auto CatalogManager::appendSweepCursorStateCatalogEntry(SweepCursorStateCatalogI
     {
         info.sweep_cursor_state_uuid = generateUuidV7();
     }
-    if (sweep_cursor_state_table_page_ == 0)
+    bool sweep_cursor_state_page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(sweep_cursor_state_table_page_,
+                                                       sweep_cursor_state_page_changed,
+                                                       ctx);
+    if (status != Status::OK)
     {
-        Status status = allocateCatalogPage(sweep_cursor_state_table_page_, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
+        return status;
+    }
+    if (sweep_cursor_state_page_changed)
+    {
         status = writeCatalogRoot(ctx);
         if (status != Status::OK)
         {
@@ -66925,13 +67433,16 @@ auto CatalogManager::upsertWritebackIncidentCatalogEntry(
                           "writeback_incident timestamps are required");
         return Status::INVALID_ARGUMENT;
     }
-    if (writeback_incident_table_page_ == 0)
+    bool writeback_incident_page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(writeback_incident_table_page_,
+                                                       writeback_incident_page_changed,
+                                                       ctx);
+    if (status != Status::OK)
     {
-        Status status = allocateCatalogPage(writeback_incident_table_page_, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
+        return status;
+    }
+    if (writeback_incident_page_changed)
+    {
         status = writeCatalogRoot(ctx);
         if (status != Status::OK)
         {
@@ -67130,13 +67641,16 @@ auto CatalogManager::appendRecoveryIncidentCatalogEntry(RecoveryIncidentCatalogI
     {
         info.recovery_incident_uuid = generateUuidV7();
     }
-    if (recovery_incident_table_page_ == 0)
+    bool recovery_incident_page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(recovery_incident_table_page_,
+                                                       recovery_incident_page_changed,
+                                                       ctx);
+    if (status != Status::OK)
     {
-        Status status = allocateCatalogPage(recovery_incident_table_page_, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
+        return status;
+    }
+    if (recovery_incident_page_changed)
+    {
         status = writeCatalogRoot(ctx);
         if (status != Status::OK)
         {
