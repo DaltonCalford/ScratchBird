@@ -54,7 +54,7 @@ std::string base64UrlEncode(const std::vector<uint8_t>& bytes) {
     if (bytes.empty()) {
         return "";
     }
-    std::vector<uint8_t> encoded(((bytes.size() + 2) / 3) * 4);
+    std::vector<uint8_t> encoded((((bytes.size() + 2) / 3) * 4) + 1);
     const int n = EVP_EncodeBlock(encoded.data(), bytes.data(), static_cast<int>(bytes.size()));
     if (n <= 0) {
         return "";

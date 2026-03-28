@@ -1,4 +1,4 @@
-Last updated: 2026-03-26
+Last updated: 2026-03-28
 
 # MY-EMU-041 MTR Smoke Report
 
@@ -41,24 +41,24 @@ ports_per_thread:30
                   TEST NAME                       RESULT  TIME (ms) COMMENT
 ------------------------------------------------------------------------------
 [  6%] main.select_distinct_debug                [ skipped ]  Test needs debug binaries.
-[ 13%] main.select_count                         [ pass ]   1073
-[ 20%] main.select_for_update                    [ pass ]   5968
-[ 26%] main.select_all                           [ pass ]  45673
-[ 33%] main.select_all_bka                       [ pass ]  43635
-[ 40%] main.select_all_bka_nobnl                 [ pass ]  43355
-[ 46%] main.select_found                         [ pass ]   3667
-[ 53%] main.select_icp_mrr                       [ pass ]  43071
-[ 60%] main.select_icp_mrr_bka                   [ pass ]  43592
-[ 66%] main.select_icp_mrr_bka_nobnl             [ pass ]  43042
-[ 73%] main.select_none                          [ pass ]  42510
-[ 80%] main.select_none_bka                      [ pass ]  42167
-[ 86%] main.select_none_bka_nobnl                [ pass ]  43368
-[ 93%] main.select_safe                          [ pass ]   1025
+[ 13%] main.select_count                         [ pass ]    987
+[ 20%] main.select_for_update                    [ pass ]   6870
+[ 26%] main.select_all                           [ pass ]  45402
+[ 33%] main.select_all_bka                       [ pass ]  44309
+[ 40%] main.select_all_bka_nobnl                 [ pass ]  43889
+[ 46%] main.select_found                         [ pass ]   3851
+[ 53%] main.select_icp_mrr                       [ pass ]  42774
+[ 60%] main.select_icp_mrr_bka                   [ pass ]  43989
+[ 66%] main.select_icp_mrr_bka_nobnl             [ pass ]  42743
+[ 73%] main.select_none                          [ pass ]  43732
+[ 80%] main.select_none_bka                      [ pass ]  43132
+[ 86%] main.select_none_bka_nobnl                [ pass ]  43764
+[ 93%] main.select_safe                          [ pass ]   1135
 [100%] shutdown_report                           [ pass ]       
 ------------------------------------------------------------------------------
 The servers were restarted 2 times
 The servers were reinitialized 0 times
-Spent 402.146 of 430 seconds executing testcases
+Spent 406.577 of 434 seconds executing testcases
 
 Completed: All 14 tests were successful.
 

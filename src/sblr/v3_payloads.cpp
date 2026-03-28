@@ -173,7 +173,8 @@ const SchemaDef* schemaForOpcode(uint16_t opcode) {
         return lookupSchema(schema);
     }
 
-    if (name == "SBLR3_EXPR_FUNCTION_CALL" || name.rfind("SBLR3_FUNC_", 0) == 0) {
+    if (name == "SBLR3_EXPR_FUNCTION_CALL" || name == "SBLR3_REPEAT" ||
+        name.rfind("SBLR3_FUNC_", 0) == 0) {
         return lookupSchema("SCHEMA_FUNC_CALL");
     }
     if (name == "SBLR3_JSON_OBJECT" || name == "SBLR3_JSON_ARRAY" ||

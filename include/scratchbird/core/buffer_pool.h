@@ -596,6 +596,13 @@ namespace scratchbird::core
         auto flushDirtyCheckpointBoundary(uint64_t dirty_generation_boundary,
                                           ErrorContext *ctx = nullptr) -> Status;
 
+        // AUDIT CONTRACT:
+        // Database shutdown must quiesce the background writer before
+        // clean-shutdown publication or checkpoint-boundary draining mutate
+        // dirty-tracking state. This keeps teardown publication single-writer
+        // and avoids racing the close path against background writeback.
+        void quiesceBackgroundWriterForShutdown();
+
         void beginCommitFence();
         void endCommitFence();
         // Called by Database::sync() once the engine-wide forced-write fence
@@ -882,7 +889,10 @@ namespace scratchbird::core
                 stats_.mga_residency_demotions.load(std::memory_order_relaxed);
             snapshot.mga_ghost_history_hits =
                 stats_.mga_ghost_history_hits.load(std::memory_order_relaxed);
-            snapshot.mga_ghost_history_entries = ghost_history_.size();
+            {
+                std::lock_guard<std::mutex> ghost_lock(ghost_history_mutex_);
+                snapshot.mga_ghost_history_entries = ghost_history_count_;
+            }
             snapshot.mga_commit_fence_backlog =
                 commit_fence_backlog_.load(std::memory_order_relaxed);
             snapshot.foreground_help_backlog_pages = snapshot.mga_commit_fence_backlog;
@@ -1443,6 +1453,7 @@ namespace scratchbird::core
         };
 
         void resetFrameScaffolding(Frame &frame);
+        void purgeFramePageTableMappings(uint32_t frame_index);
 
         void logStatsEvent(const char *event, GPID gpid);
 
@@ -1589,7 +1600,11 @@ namespace scratchbird::core
         std::mutex dirty_tracking_mutex_;
         std::unordered_map<GPID, uint64_t> dirty_checkpoint_candidates_;
         std::unordered_set<GPID> checkpoint_marker_candidates_;
-        std::deque<GhostEntry> ghost_history_;
+        mutable std::mutex ghost_history_mutex_;
+        std::vector<GhostEntry> ghost_history_;
+        size_t ghost_history_head_ = 0;
+        size_t ghost_history_count_ = 0;
+        size_t ghost_history_capacity_ = 0;
 
         // Background writer state (Issue 2.20)
         std::unique_ptr<std::thread> bgwriter_thread_;      // Background writer thread
@@ -1638,7 +1653,8 @@ namespace scratchbird::core
         static auto evictionRankForClass(MgaPageClass page_class) -> uint32_t;
         static auto evictionRankForTier(ResidencyTier tier) -> uint32_t;
         static auto isVersionUndoClass(MgaPageClass page_class) -> bool;
-        static auto isHardProtectedClass(MgaPageClass page_class) -> bool;
+        static auto isBootstrapCriticalTxStateFrame(const Frame &frame) -> bool;
+        static auto isHardProtectedFrame(const Frame &frame) -> bool;
         static auto isHardReservedDomain(PolicyDomain domain) -> bool;
         static auto isDirectProtectClass(MgaPageClass page_class) -> bool;
         static auto isDirectProtectSystemMetaPageType(uint16_t page_type) -> bool;
@@ -1679,9 +1695,26 @@ namespace scratchbird::core
                                           size_t from_partition,
                                           size_t to_partition);
         auto tryClaimFreeFrameLocked(size_t owner_partition, uint32_t &frame_index) -> bool;
+        auto tryReclaimHomeFreeFrameLocked(size_t owner_partition,
+                                           uint32_t &frame_index) -> bool;
         auto tryStealFreeFrameLocked(size_t owner_partition, uint32_t &frame_index) -> bool;
         auto selectOwnedVictimFrameLocked(size_t owner_partition,
-                                          uint32_t &candidate_frame) -> bool;
+                                          uint32_t &candidate_frame,
+                                          uint16_t required_home_partition = UINT16_MAX,
+                                          uint32_t *candidate_rank_out = nullptr,
+                                          bool *protected_collapse_out = nullptr,
+                                          bool *aging_progress_out = nullptr)
+            -> bool;
+        auto selectBestDonorVictimFrameLocked(size_t owner_partition,
+                                              uint32_t &frame_index,
+                                              size_t &donor_partition,
+                                              uint32_t &candidate_rank,
+                                              uint16_t required_home_partition = UINT16_MAX,
+                                              bool *aging_progress_out = nullptr)
+            -> bool;
+        auto tryReclaimHomeVictimFrameLocked(size_t owner_partition,
+                                             uint32_t &frame_index,
+                                             ErrorContext *ctx) -> Status;
         auto tryClaimOwnedVictimFrameLocked(size_t owner_partition,
                                             uint32_t &frame_index,
                                             ErrorContext *ctx) -> Status;
@@ -1725,6 +1758,7 @@ namespace scratchbird::core
         void updatePoolTelemetry();                         // Sync pool size/total gauges
         bool tryMarkFrameDirty(uint32_t frame_index);       // Dirty transition false->true
         bool tryClearFrameDirty(uint32_t frame_index);      // Dirty transition true->false
+        void discardTemporaryWorkFrameDirtyState(uint32_t frame_index);
         bool finishFrameWriteback(uint32_t frame_index,
                                   uint64_t flushed_generation,
                                   WritebackQueueState dirty_queue_state);

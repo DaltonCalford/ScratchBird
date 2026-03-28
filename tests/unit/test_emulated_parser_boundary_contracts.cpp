@@ -22,6 +22,10 @@
 #include "scratchbird/protocol/adapters/mysql_adapter.h"
 #include "scratchbird/protocol/adapters/postgresql_adapter.h"
 #include "scratchbird/protocol/adapters/firebird_adapter.h"
+#include "scratchbird/sblr/v3_codec.h"
+#include "scratchbird/sblr/v3_container.h"
+#include "scratchbird/sblr/v3_opcode_registry.h"
+#include "scratchbird/sblr/v3_payloads.h"
 
 // Include core types before firebird_parser_agent.h (header references core types).
 #include "scratchbird/core/types.h"
@@ -133,6 +137,86 @@ scratchbird::core::Status compileSql(CompileHarness<AdapterT>& adapter, const st
     std::vector<uint8_t> bytecode;
     std::string error;
     return adapter.runCompile(sql, bytecode, error);
+}
+
+template <typename AdapterT>
+scratchbird::core::Status compileSqlDetailed(CompileHarness<AdapterT>& adapter,
+                                             const std::string& sql,
+                                             std::vector<uint8_t>& bytecode_out,
+                                             std::string& error_out) {
+    return adapter.runCompile(sql, bytecode_out, error_out);
+}
+
+bool containsOpcodeDeep(const std::vector<uint8_t>& bytecode,
+                        scratchbird::sblr::v3::Opcode opcode) {
+    scratchbird::sblr::v3::Container container;
+    std::string err;
+    if (!scratchbird::sblr::v3::decodeContainer(bytecode.data(), bytecode.size(), container, err)) {
+        return false;
+    }
+
+    auto valueContainsOpcode = [&](const auto& self,
+                                   const scratchbird::sblr::v3::Value& value) -> bool {
+        if (auto ptr = std::get_if<scratchbird::sblr::v3::Value::InstrPtr>(&value.data)) {
+            if (*ptr && (*ptr)->opcode == static_cast<uint16_t>(opcode)) {
+                return true;
+            }
+            return *ptr ? self(self, (*ptr)->payload) : false;
+        }
+        if (auto bytes = std::get_if<scratchbird::sblr::v3::Value::Bytes>(&value.data)) {
+            if (bytes->empty()) {
+                return false;
+            }
+            size_t offset = 0;
+            scratchbird::sblr::v3::Instruction nested;
+            scratchbird::sblr::v3::DecodeError decode_err;
+            if (!scratchbird::sblr::v3::decodeInstructionWithSchema(
+                    bytes->data(), bytes->size(), offset, nested, decode_err) &&
+                !scratchbird::sblr::v3::decodeInstruction(
+                    bytes->data(), bytes->size(), offset, nested, decode_err)) {
+                return false;
+            }
+            return nested.opcode == static_cast<uint16_t>(opcode) || self(self, nested.payload);
+        }
+        if (auto list = std::get_if<scratchbird::sblr::v3::Value::List>(&value.data)) {
+            for (const auto& entry : *list) {
+                if (self(self, entry)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (auto obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&value.data)) {
+            for (const auto& kv : *obj) {
+                if (self(self, kv.second)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    size_t offset = 0;
+    scratchbird::sblr::v3::DecodeError decode_err;
+    while (offset < container.bytecode_stream.size()) {
+        scratchbird::sblr::v3::Instruction inst;
+        if (!scratchbird::sblr::v3::decodeInstructionWithSchema(container.bytecode_stream.data(),
+                                                                container.bytecode_stream.size(),
+                                                                offset,
+                                                                inst,
+                                                                decode_err) &&
+            !scratchbird::sblr::v3::decodeInstruction(container.bytecode_stream.data(),
+                                                      container.bytecode_stream.size(),
+                                                      offset,
+                                                      inst,
+                                                      decode_err)) {
+            break;
+        }
+        if (inst.opcode == static_cast<uint16_t>(opcode) || valueContainsOpcode(valueContainsOpcode, inst.payload)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void appendBe32(std::vector<uint8_t>& out, uint32_t value) {
@@ -477,6 +561,20 @@ TEST(EmulatedParserBoundaryContractsTest, PostgresqlBoundaryRejectAcceptPack) {
     EXPECT_EQ(scratchbird::core::Status::OK, compileSql(adapter, "VACUUM"));
     EXPECT_NE(scratchbird::core::Status::OK, compileSql(adapter, "SET AUTOCOMMIT = 1"));
     EXPECT_NE(scratchbird::core::Status::OK, compileSql(adapter, "SHOW TABLES"));
+}
+
+TEST(EmulatedParserBoundaryContractsTest, PostgresqlBoundaryRepeatUsesDedicatedOpcode) {
+    CompileHarness<scratchbird::protocol::PostgresqlAdapter> adapter(
+        makeAdapterConfig("epfc024_postgresql_repeat.sbdb"));
+
+    std::vector<uint8_t> bytecode;
+    std::string error;
+    EXPECT_EQ(scratchbird::core::Status::OK,
+              compileSqlDetailed(adapter, "SELECT repeat('ab', 3)", bytecode, error))
+        << error;
+    EXPECT_TRUE(containsOpcodeDeep(bytecode, scratchbird::sblr::v3::Opcode::SBLR3_REPEAT));
+    EXPECT_FALSE(containsOpcodeDeep(bytecode,
+                                    scratchbird::sblr::v3::Opcode::SBLR3_EXPR_FUNCTION_CALL));
 }
 
 TEST(EmulatedParserBoundaryContractsTest, PostgresqlAuthPacketsUseValidLengthPrefixes) {

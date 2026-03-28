@@ -1283,8 +1283,9 @@ static_assert(sizeof(PageHeader) == 106,
     inline void preparePageForWrite(uint8_t *page, uint32_t page_size, uint64_t page_id)
     {
         auto *header = reinterpret_cast<PageHeader *>(page);
-        const bool had_valid_checksum = (header->flags & PAGE_FLAG_CHECKSUM_VALID) != 0u;
+        header->magic = K_MAGIC_SBRD;
         header->page_id = page_id;
+        header->page_size = page_size;
         if (header->version == 0u)
         {
             header->version = 1u;
@@ -1294,11 +1295,46 @@ static_assert(sizeof(PageHeader) == 106,
         {
             header->repair_state_raw = static_cast<uint16_t>(PageRepairState::REPAIR_NONE);
         }
-        if (had_valid_checksum)
+        if (header->generation == 0)
+        {
+            header->generation = 1;
+        }
+        else
         {
             header->generation += 1;
         }
-        else if (header->generation == 0)
+        if (header->flush_generation > header->generation)
+        {
+            header->flush_generation = header->generation;
+        }
+        if (header->checkpoint_generation > header->flush_generation)
+        {
+            header->checkpoint_generation = header->flush_generation;
+        }
+        header->flags |= PAGE_FLAG_CHECKSUM_VALID;
+        header->payload_checksum = calculatePageChecksum(page, page_size);
+        header->header_checksum = calculatePageHeaderChecksum(
+            page, static_cast<uint32_t>(header->header_bytes));
+    }
+
+    inline void refreshPageChecksumsWithoutGenerationAdvance(uint8_t *page,
+                                                             uint32_t page_size,
+                                                             uint64_t page_id)
+    {
+        auto *header = reinterpret_cast<PageHeader *>(page);
+        header->magic = K_MAGIC_SBRD;
+        header->page_id = page_id;
+        header->page_size = page_size;
+        if (header->version == 0u)
+        {
+            header->version = 1u;
+        }
+        header->header_bytes = CANONICAL_PAGE_HEADER_BYTES;
+        if (header->repair_state_raw == 0u)
+        {
+            header->repair_state_raw = static_cast<uint16_t>(PageRepairState::REPAIR_NONE);
+        }
+        if (header->generation == 0)
         {
             header->generation = 1;
         }

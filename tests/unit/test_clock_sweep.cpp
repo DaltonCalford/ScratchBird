@@ -294,15 +294,15 @@ TEST_F(ClockSweepTest, BulkWriteModeUsesRing)
         page_ids.push_back(page_id);
     }
 
-    ConnectionContext conn_ctx(db_.get(), 0);
-    conn_ctx.setBulkWriteMode(true);
-    ConnectionContext::setCurrent(&conn_ctx);
-
     void *buf = nullptr;
     ASSERT_EQ(local_pool.pinPage(page_ids[0], &buf, &err_ctx), Status::OK);
     local_pool.unpinPage(page_ids[0], false, &err_ctx);
     ASSERT_EQ(local_pool.pinPage(page_ids[1], &buf, &err_ctx), Status::OK);
     local_pool.unpinPage(page_ids[1], false, &err_ctx);
+
+    ConnectionContext conn_ctx(db_.get(), 0);
+    conn_ctx.setBulkWriteMode(true);
+    ConnectionContext::setCurrent(&conn_ctx);
 
     for (size_t i = 2; i < page_ids.size(); ++i)
     {

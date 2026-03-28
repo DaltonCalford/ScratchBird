@@ -1,0 +1,22 @@
+{
+  "metadata": {
+    "source_run_dir": "/home/dcalford/CliWork/ScratchBird/tests/results/full_gate/20260323T230236Z_tdrw019",
+    "run_status_path": "",
+    "configure_log": "/home/dcalford/CliWork/ScratchBird/tests/results/full_gate/20260323T230236Z_tdrw019/configure.log",
+    "build_log": "/home/dcalford/CliWork/ScratchBird/tests/results/full_gate/20260323T230236Z_tdrw019/build.log",
+    "ctest_log": "/home/dcalford/CliWork/ScratchBird/tests/results/full_gate/20260323T230236Z_tdrw019/ctest.log"
+  },
+  "summary": {
+    "configure_exit": null,
+    "build_exit": null,
+    "ctest_exit": 0,
+    "total_tests": null,
+    "passed": null,
+    "failed": null,
+    "skipped": 0,
+    "total_time_sec": null
+  },
+  "results": {
+    "labels": []
+  }
+}

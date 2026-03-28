@@ -30,6 +30,7 @@
 #include "scratchbird/core/gist_index.h"
 #include "scratchbird/core/hnsw_index.h"
 #include "scratchbird/core/hash_index.h"
+#include "scratchbird/core/oversized_value_lifecycle.h"
 #include "scratchbird/core/lsm_tree_index.h"  // LSM Integration Phase 4
 #include "scratchbird/core/rtree_index.h"  // R-Tree DML Integration
 #include "scratchbird/core/spgist_index.h"
@@ -4690,9 +4691,21 @@ namespace scratchbird::core
 
         // Capture the current tuple before update for index key comparison.
         std::vector<uint8_t> old_tuple_buffer;
-        const bool defer_old_toast_cleanup =
+        const bool old_payload_requires_savepoint_retention =
             conn_ctx != nullptr && conn_ctx->hasActiveSavepoints() &&
             !conn_ctx->isSavepointRollbackInProgress();
+        OversizedValueLifecycleInput oversized_value_input{};
+        oversized_value_input.family = OversizedValueFamily::heap_toast;
+        oversized_value_input.savepoint_visible = old_payload_requires_savepoint_retention;
+        oversized_value_input.old_payload_still_referenced =
+            old_payload_requires_savepoint_retention;
+        oversized_value_input.rewrite_publication_complete =
+            !old_payload_requires_savepoint_retention;
+        const OversizedValueLifecycleDecision oversized_value_decision =
+            classifyOversizedValueLifecycle(oversized_value_input);
+        const bool defer_old_toast_cleanup =
+            oversized_value_decision.action ==
+            OversizedValueActionKind::defer_old_payload_cleanup;
         uint32_t old_tuple_length = 0;
         {
             HeapPage snapshot_page(page_data, db_->page_size(), toast_mgr, db_, table_id);

@@ -47703,6 +47703,7 @@ namespace scratchbird
                     case Opcode::SBLR3_FUNC_TANH:
                     case Opcode::SBLR3_FUNC_CONCAT:
                     case Opcode::SBLR3_FUNC_CONCAT_WS:
+                    case Opcode::SBLR3_REPEAT:
                     case Opcode::SBLR3_FUNC_REPLACE:
                     case Opcode::SBLR3_FUNC_ENDS_WITH:
                     case Opcode::SBLR3_FUNC_NOW:
@@ -49388,6 +49389,29 @@ namespace scratchbird
                                 end--;
                             }
                             return Value::makeVarchar(str.substr(0, end));
+                        }
+
+                        if (op == Opcode::SBLR3_REPEAT)
+                        {
+                            if (args.size() != 2 || args[0].isNull() || args[1].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+
+                            std::string str = args[0].toString();
+                            int64_t count = args[1].toInt64();
+                            if (count <= 0)
+                            {
+                                return Value::makeVarchar("");
+                            }
+
+                            std::string result;
+                            result.reserve(str.length() * static_cast<size_t>(count));
+                            for (int64_t i = 0; i < count; ++i)
+                            {
+                                result += str;
+                            }
+                            return Value::makeVarchar(result);
                         }
 
                         if (op == Opcode::SBLR3_FUNC_SUBSTRING)

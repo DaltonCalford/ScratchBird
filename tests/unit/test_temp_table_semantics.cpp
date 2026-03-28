@@ -14,8 +14,13 @@
 #include <gtest/gtest.h>
 #include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/executor.h"
+#include "scratchbird/sblr/v3_container.h"
+#include "scratchbird/sblr/v3_payloads.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/heap_page.h"
+#include "scratchbird/core/page_manager.h"
+#include "scratchbird/optimizer/plan_payload.h"
 #include "unit/test_user_helpers.h"
 #include <fcntl.h>
 #include <unistd.h>
@@ -38,6 +43,72 @@ static std::string makeUniquePath(const std::string& prefix, const std::string& 
         << std::chrono::steady_clock::now().time_since_epoch().count()
         << suffix;
     return oss.str();
+}
+
+static bool decodeFirstSelectInstruction(const std::vector<uint8_t>& bytecode,
+                                         scratchbird::sblr::v3::Instruction& out)
+{
+    scratchbird::sblr::v3::Container container;
+    std::string err;
+    if (!scratchbird::sblr::v3::decodeContainer(bytecode.data(),
+                                                bytecode.size(),
+                                                container,
+                                                err))
+    {
+        return false;
+    }
+
+    size_t offset = 0;
+    scratchbird::sblr::v3::DecodeError decode_err;
+    while (offset < container.bytecode_stream.size())
+    {
+        scratchbird::sblr::v3::Instruction inst;
+        if (!scratchbird::sblr::v3::decodeInstructionWithSchema(
+                container.bytecode_stream.data(),
+                container.bytecode_stream.size(),
+                offset,
+                inst,
+                decode_err))
+        {
+            return false;
+        }
+        if (static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode) ==
+            scratchbird::sblr::v3::Opcode::SBLR3_SELECT)
+        {
+            out = std::move(inst);
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool decodeRuntimePlanFromBytecode(const std::vector<uint8_t>& bytecode,
+                                          scratchbird::optimizer::RuntimePlan& plan_out)
+{
+    scratchbird::sblr::v3::Instruction select_inst;
+    if (!decodeFirstSelectInstruction(bytecode, select_inst))
+    {
+        return false;
+    }
+    const auto* obj =
+        std::get_if<scratchbird::sblr::v3::Value::Object>(&select_inst.payload.data);
+    if (!obj)
+    {
+        return false;
+    }
+    auto it_plan = obj->find("plan");
+    if (it_plan == obj->end())
+    {
+        return false;
+    }
+    const auto* bytes =
+        std::get_if<scratchbird::sblr::v3::Value::Bytes>(&it_plan->second.data);
+    if (!bytes)
+    {
+        return false;
+    }
+    std::string err;
+    return scratchbird::optimizer::decodeRuntimePlan(*bytes, plan_out, err);
 }
 
 class TempTableExecutorTest : public ::testing::Test
@@ -385,14 +456,242 @@ TEST_F(TempTableExecutorTest, TempTableSavepointRollbackRemovesNewRows)
     ASSERT_EQ(status, Status::OK) << ctx.message;
 
     connection_ctx_ = connectAs("alice");
+    const auto session_id_before_savepoint = connection_ctx_->effectiveSessionId();
+    auto inspect_root_page =
+        [&](const CatalogManager::TableInfo &table_info,
+            std::vector<std::tuple<uint16_t, uint64_t, uint64_t, ID>> &rows_out)
+    {
+        void *root_page_buffer = nullptr;
+        ErrorContext local_ctx;
+        EXPECT_EQ(db_.buffer_pool()->pinPageGlobal(table_info.root_gpid, &root_page_buffer, &local_ctx),
+                  Status::OK)
+            << local_ctx.message;
+        if (root_page_buffer == nullptr)
+        {
+            return;
+        }
+        auto *root_page_data = static_cast<uint8_t *>(root_page_buffer);
+        scratchbird::core::HeapPage root_heap_page(root_page_data,
+                                                   db_.page_size(),
+                                                   nullptr,
+                                                   &db_,
+                                                   table_info.table_id);
+        const uint16_t root_item_count = root_heap_page.getItemCount();
+        for (uint16_t item_id = 0; item_id < root_item_count; ++item_id)
+        {
+            const uint8_t *tuple_data = nullptr;
+            uint32_t tuple_size = 0;
+            if (root_heap_page.getTuple(item_id, &tuple_data, &tuple_size, nullptr) != Status::OK)
+            {
+                continue;
+            }
+            const auto *tuple_header =
+                reinterpret_cast<const scratchbird::core::TupleHeader *>(tuple_data);
+            rows_out.emplace_back(item_id,
+                                  tuple_header->xmin,
+                                  tuple_header->xmax,
+                                  tuple_header->session_id);
+        }
+        db_.buffer_pool()->unpinPageGlobal(table_info.root_gpid, false, &local_ctx);
+    };
+    auto scan_table_rows =
+        [&](const ID &table_id,
+            std::vector<std::tuple<uint64_t, uint64_t, ID>> &rows_out)
+    {
+        ErrorContext local_ctx;
+        auto scan = db_.storage_engine()->createScanAll(table_id, &local_ctx);
+        EXPECT_NE(scan, nullptr);
+        if (!scan)
+        {
+            return;
+        }
+        while (true)
+        {
+            Tuple tuple{};
+            auto scan_status = scan->next(&tuple, &local_ctx);
+            if (scan_status == Status::NOT_FOUND)
+            {
+                break;
+            }
+            EXPECT_EQ(scan_status, Status::OK) << local_ctx.message;
+            if (scan_status != Status::OK)
+            {
+                break;
+            }
+            const auto *tuple_header =
+                reinterpret_cast<const scratchbird::core::TupleHeader *>(tuple.data);
+            rows_out.emplace_back(tuple_header->xmin,
+                                  tuple_header->xmax,
+                                  tuple_header->session_id);
+        }
+    };
+    auto scan_physical_table_rows =
+        [&](const CatalogManager::TableInfo &table_info,
+            std::vector<std::tuple<uint64_t, uint64_t, ID>> &rows_out)
+    {
+        auto *page_manager = db_.page_manager();
+        ASSERT_NE(page_manager, nullptr);
+        std::vector<GPID> allocated_pages;
+        ErrorContext local_ctx;
+        ASSERT_EQ(page_manager->getAllocatedPages(table_info.tablespace_id, allocated_pages, &local_ctx),
+                  Status::OK)
+            << local_ctx.message;
+        for (const auto &gpid : allocated_pages)
+        {
+            if (getPageNumber(gpid) < 2)
+            {
+                continue;
+            }
+            void *page_buffer = nullptr;
+            if (db_.buffer_pool()->pinPageGlobal(gpid, &page_buffer, &local_ctx) != Status::OK ||
+                page_buffer == nullptr)
+            {
+                continue;
+            }
+            auto *page_data = static_cast<uint8_t *>(page_buffer);
+            auto *header = reinterpret_cast<scratchbird::core::PageHeader *>(page_data);
+            const auto *special = reinterpret_cast<const scratchbird::core::HeapPageSpecial *>(
+                page_data + header->page_size - sizeof(scratchbird::core::HeapPageSpecial));
+            const bool table_match =
+                header->page_type == PAGE_TYPE_HEAP &&
+                std::memcmp(special->table_id.bytes.data(),
+                            table_info.table_id.bytes.data(),
+                            table_info.table_id.bytes.size()) == 0;
+            if (table_match)
+            {
+                scratchbird::core::HeapPage heap_page(page_data,
+                                                      db_.page_size(),
+                                                      nullptr,
+                                                      &db_,
+                                                      table_info.table_id);
+                for (uint16_t item_id = 0; item_id < heap_page.getItemCount(); ++item_id)
+                {
+                    const uint8_t *tuple_data = nullptr;
+                    uint32_t tuple_size = 0;
+                    if (heap_page.getTuple(item_id, &tuple_data, &tuple_size, nullptr) != Status::OK)
+                    {
+                        continue;
+                    }
+                    const auto *tuple_header =
+                        reinterpret_cast<const scratchbird::core::TupleHeader *>(tuple_data);
+                    rows_out.emplace_back(tuple_header->xmin,
+                                          tuple_header->xmax,
+                                          tuple_header->session_id);
+                }
+            }
+            db_.buffer_pool()->unpinPageGlobal(gpid, false, &local_ctx);
+        }
+    };
+    auto dump_session_temp_tables =
+        [&](std::vector<std::tuple<ID, std::string, size_t>> &rows_out)
+    {
+        std::vector<CatalogManager::TableInfo> temp_tables;
+        ErrorContext local_ctx;
+        ASSERT_EQ(catalog_->listTemporaryTablesForSession(connection_ctx_->effectiveSessionId(),
+                                                          temp_tables,
+                                                          &local_ctx),
+                  Status::OK)
+            << local_ctx.message;
+        for (const auto &temp_table : temp_tables)
+        {
+            std::vector<std::tuple<uint64_t, uint64_t, ID>> temp_rows;
+            scan_physical_table_rows(temp_table, temp_rows);
+            rows_out.emplace_back(temp_table.table_id,
+                                  temp_table.table_name,
+                                  temp_rows.size());
+        }
+    };
 
     ASSERT_TRUE(compileAndExecute("START TRANSACTION").success());
     ASSERT_TRUE(compileAndExecute(
         "CREATE TEMP TABLE temp_rollback_rows (id INT) ON COMMIT PRESERVE ROWS").success());
     ASSERT_TRUE(compileAndExecute("INSERT INTO temp_rollback_rows VALUES (1)").success());
+    CatalogManager::SchemaInfo temp_schema;
+    status = catalog_->getSchema("users.alice.temp", temp_schema, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    CatalogManager::TableInfo table_info;
+    status = catalog_->getTable(temp_schema.schema_id, "temp_rollback_rows", table_info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    std::vector<std::tuple<uint16_t, uint64_t, uint64_t, ID>> rows_after_insert_one;
+    inspect_root_page(table_info, rows_after_insert_one);
+    std::vector<std::tuple<uint64_t, uint64_t, ID>> scan_rows_after_insert_one;
+    scan_table_rows(table_info.table_id, scan_rows_after_insert_one);
+    std::vector<std::tuple<uint64_t, uint64_t, ID>> physical_rows_after_insert_one;
+    scan_physical_table_rows(table_info, physical_rows_after_insert_one);
+    std::vector<std::tuple<ID, std::string, size_t>> session_temp_tables_after_insert_one;
+    dump_session_temp_tables(session_temp_tables_after_insert_one);
+    std::ostringstream temp_table_debug;
+    temp_table_debug << "session_temp_tables_after_insert_one:";
+    for (const auto &[temp_table_id, temp_table_name, temp_row_count] :
+         session_temp_tables_after_insert_one)
+    {
+        temp_table_debug << " [" << temp_table_name
+                         << " id=" << temp_table_id.toString()
+                         << " rows=" << temp_row_count << "]";
+    }
+    ASSERT_EQ(physical_rows_after_insert_one.size(), 1u) << temp_table_debug.str();
+    ASSERT_EQ(scan_rows_after_insert_one.size(), 1u);
+    const uint64_t xid_before_savepoint = connection_ctx_->getCurrentXid();
+    ASSERT_NE(xid_before_savepoint, 0u);
     ASSERT_TRUE(compileAndExecute("SAVEPOINT temp_rows_sp").success());
     ASSERT_TRUE(compileAndExecute("INSERT INTO temp_rollback_rows VALUES (2)").success());
+    std::vector<std::tuple<uint16_t, uint64_t, uint64_t, ID>> rows_after_insert_two;
+    inspect_root_page(table_info, rows_after_insert_two);
+    std::vector<std::tuple<uint64_t, uint64_t, ID>> scan_rows_after_insert_two;
+    scan_table_rows(table_info.table_id, scan_rows_after_insert_two);
+    ASSERT_EQ(scan_rows_after_insert_two.size(), 2u);
     ASSERT_TRUE(compileAndExecute("ROLLBACK TO SAVEPOINT temp_rows_sp").success());
+    EXPECT_EQ(connection_ctx_->getCurrentXid(), xid_before_savepoint);
+    EXPECT_EQ(connection_ctx_->effectiveSessionId(), session_id_before_savepoint);
+    size_t root_live_rows = 0;
+    size_t root_matching_session_rows = 0;
+    std::vector<std::tuple<uint16_t, uint64_t, uint64_t, ID>> rows_after_rollback;
+    inspect_root_page(table_info, rows_after_rollback);
+    for (const auto &[item_id, xmin, xmax, session_id] : rows_after_rollback)
+    {
+        (void)item_id;
+        (void)xmin;
+        (void)xmax;
+        ++root_live_rows;
+        if (session_id == session_id_before_savepoint)
+        {
+            ++root_matching_session_rows;
+        }
+    }
+    EXPECT_GE(root_live_rows, 1u);
+    EXPECT_GE(root_matching_session_rows, 1u);
+
+    auto raw_scan = db_.storage_engine()->createScanAll(table_info.table_id, &ctx);
+    ASSERT_NE(raw_scan, nullptr);
+    size_t raw_row_count = 0;
+    uint64_t raw_xmin = 0;
+    uint64_t raw_xmax = 0;
+    while (true)
+    {
+        Tuple tuple{};
+        auto scan_status = raw_scan->next(&tuple, &ctx);
+        if (scan_status == Status::NOT_FOUND)
+        {
+            break;
+        }
+        ASSERT_EQ(scan_status, Status::OK) << ctx.message;
+        const auto *tuple_header =
+            reinterpret_cast<const scratchbird::core::TupleHeader *>(tuple.data);
+        raw_xmin = tuple_header->xmin;
+        raw_xmax = tuple_header->xmax;
+        ++raw_row_count;
+    }
+    EXPECT_EQ(raw_row_count, 1u);
+    EXPECT_EQ(raw_xmin, xid_before_savepoint);
+    EXPECT_EQ(raw_xmax, 0u);
+
+    auto plain_select_result =
+        compileAndExecute("SELECT id FROM temp_rollback_rows");
+    ASSERT_TRUE(plain_select_result.hasResultSet()) << plain_select_result.error();
+    ASSERT_EQ(plain_select_result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(plain_select_result.resultSet()->getValue(0, 0).toInt64(), 1);
 
     auto select_result =
         compileAndExecute("SELECT id FROM temp_rollback_rows ORDER BY id");

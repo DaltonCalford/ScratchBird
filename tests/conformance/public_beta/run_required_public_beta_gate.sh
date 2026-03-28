@@ -99,9 +99,15 @@ run_step() {
     }
 
     if [[ "${attempt}" -lt "${retries}" ]]; then
-      # Repair the shared example fixture for transport-level endpoint failures
-      # before the final retry.
+      # The required-gate script steps share a dynamic example fixture. A failed
+      # attempt can leave that fixture in a listener-only or parser-depleted
+      # state even when the nested compatibility script never emits a classic
+      # transport failure into the outer step log. Always refresh before the
+      # final retry so the second attempt does not inherit stale control
+      # sockets, parser pools, or an exited example engine. Preserve the
+      # transport-specific repair hook as an additional signal-driven refresh.
       retry_after_fixture_transport_failure "${log_file}" || true
+      refresh_fixture || true
       attempt=$((attempt + 1))
       continue
     fi

@@ -1,0 +1,53 @@
+# Recent ScratchBird Run Comparison
+
+- Current matrix: `/home/dcalford/CliWork/ScratchBird/tests/results/full_run_metrics/20260328T125600Z_emulation_compare_refresh/matrix-summary.json`
+- Prior runs considered: `2`
+
+| Prior Run | Suite | Metric | Engine | Current | Prior | Delta | Delta % |
+|---|---|---|---|---:|---:|---:|---:|
+| `20260328T045919Z_post_ctest_dir_fix` | `full-gate` | `matrix.duration_seconds` | `scratchbird` | 0.0 | 8298.71 | -8298.71 | -100.0 |
+| `20260328T045919Z_post_ctest_dir_fix` | `full-gate` | `summary.failed` | `scratchbird` |  | 0 |  |  |
+| `20260328T045919Z_post_ctest_dir_fix` | `full-gate` | `summary.total_time_sec` | `scratchbird` |  | 8298.71 |  |  |
+| `20260328T045919Z_post_ctest_dir_fix` | `native-v3-inet` | `matrix.duration_seconds` | `scratchbird` | 0.0 | 0.0 | 0.0 |  |
+| `20260328T045919Z_post_ctest_dir_fix` | `public-beta` | `matrix.duration_seconds` | `scratchbird` | 0.0 | 0.0 | 0.0 |  |
+| `20260328T045919Z_post_ctest_dir_fix` | `public-beta` | `summary.failed` | `scratchbird` | 0 | 0 | 0.0 |  |
+| `20260328T045919Z_post_ctest_dir_fix` | `public-beta` | `summary.total_steps` | `scratchbird` | 67 | 67 | 0.0 | 0.0 |
+| `20260328T045919Z_post_ctest_dir_fix` | `regression` | `matrix.duration_seconds` | `firebird` | 0.0 | 0.0 | 0.0 |  |
+| `20260328T045919Z_post_ctest_dir_fix` | `regression` | `matrix.duration_seconds` | `mysql` | 0.0 | 0.0 | 0.0 |  |
+| `20260328T045919Z_post_ctest_dir_fix` | `regression` | `matrix.duration_seconds` | `postgresql` | 0.0 | 0.0 | 0.0 |  |
+| `20260328T045919Z_post_ctest_dir_fix` | `regression` | `matrix.duration_seconds` | `scratchbird` | 0.0 | 0.0 | 0.0 |  |
+| `20260328T045919Z_post_ctest_dir_fix` | `regression` | `totals.failed` | `firebird` | 0 | 0 | 0.0 |  |
+| `20260328T045919Z_post_ctest_dir_fix` | `regression` | `totals.failed` | `mysql` | 0 | 0 | 0.0 |  |
+| `20260328T045919Z_post_ctest_dir_fix` | `regression` | `totals.failed` | `postgresql` | 0 | 0 | 0.0 |  |
+| `20260328T045919Z_post_ctest_dir_fix` | `regression` | `totals.failed` | `scratchbird` | 0 | 0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `full-gate` | `matrix.duration_seconds` | `scratchbird` | 0.0 | 3810.88 | -3810.88 | -100.0 |
+| `20260323T001743Z_postfix_native_flush` | `full-gate` | `summary.failed` | `scratchbird` |  | 0 |  |  |
+| `20260323T001743Z_postfix_native_flush` | `full-gate` | `summary.total_time_sec` | `scratchbird` |  | 3810.88 |  |  |
+| `20260323T001743Z_postfix_native_flush` | `native-v3-inet` | `matrix.duration_seconds` | `scratchbird` | 0.0 | 0.0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `matrix.duration_seconds` | `ref_duckdb` | 0.0 | 0.0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `matrix.duration_seconds` | `ref_firebird` | 0.0 | 0.0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `matrix.duration_seconds` | `ref_mysql` | 0.0 | 0.0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `matrix.duration_seconds` | `ref_postgresql` | 0.0 | 0.0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `matrix.duration_seconds` | `scratchbird_emulated_firebird` | 0.0 | 0.0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `matrix.duration_seconds` | `scratchbird_emulated_mysql` | 0.0 | 0.0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `matrix.duration_seconds` | `scratchbird_emulated_postgresql` | 0.0 | 0.0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `matrix.duration_seconds` | `scratchbird_native` | 0.0 | 0.0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `summary.avg_exec_elapsed_ms` | `ref_duckdb` | 10.2 | 10.2 | 0.0 | 0.0 |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `summary.avg_exec_elapsed_ms` | `ref_firebird` | 82.0 | 82.0 | 0.0 | 0.0 |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `summary.avg_exec_elapsed_ms` | `ref_mysql` | 29.4 | 29.4 | 0.0 | 0.0 |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `summary.avg_exec_elapsed_ms` | `ref_postgresql` | 15.0 | 15.0 | 0.0 | 0.0 |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `summary.avg_exec_elapsed_ms` | `scratchbird_emulated_firebird` | 297.8 | 297.8 | 0.0 | 0.0 |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `summary.avg_exec_elapsed_ms` | `scratchbird_emulated_mysql` | 173.2 | 173.2 | 0.0 | 0.0 |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `summary.avg_exec_elapsed_ms` | `scratchbird_emulated_postgresql` | 119.4 | 119.4 | 0.0 | 0.0 |
+| `20260323T001743Z_postfix_native_flush` | `optimizer-donor-compare` | `summary.avg_exec_elapsed_ms` | `scratchbird_native` | 319.8 | 319.8 | 0.0 | 0.0 |
+| `20260323T001743Z_postfix_native_flush` | `public-beta` | `matrix.duration_seconds` | `scratchbird` | 0.0 | 0.0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `public-beta` | `summary.failed` | `scratchbird` | 0 | 0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `public-beta` | `summary.total_steps` | `scratchbird` | 67 | 67 | 0.0 | 0.0 |
+| `20260323T001743Z_postfix_native_flush` | `regression` | `matrix.duration_seconds` | `firebird` | 0.0 | 0.0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `regression` | `matrix.duration_seconds` | `mysql` | 0.0 | 0.0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `regression` | `matrix.duration_seconds` | `postgresql` | 0.0 | 0.0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `regression` | `matrix.duration_seconds` | `scratchbird` | 0.0 | 0.0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `regression` | `totals.failed` | `firebird` | 0 | 0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `regression` | `totals.failed` | `mysql` | 0 | 0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `regression` | `totals.failed` | `postgresql` | 0 | 0 | 0.0 |  |
+| `20260323T001743Z_postfix_native_flush` | `regression` | `totals.failed` | `scratchbird` | 0 | 0 | 0.0 |  |

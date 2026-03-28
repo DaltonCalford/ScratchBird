@@ -78,6 +78,11 @@ FB_USER="${SCRATCHBIRD_FB_USER:-SYSDBA}"
 FB_PASSWORD="${SCRATCHBIRD_FB_PASSWORD:-masterkey}"
 PER_TEST_TIMEOUT_SEC="${SCRATCHBIRD_FB_PER_TEST_TIMEOUT_SEC:-120}"
 TIMEOUT_BIN="$(command -v timeout 2>/dev/null || true)"
+COMPARISON_CONTRACT_ID="compatibility-emulation-compare-v1"
+COMPARISON_SUITE_FAMILY="emulation-comparison"
+COMPARISON_HARNESS="compatibility_converted_sql_ctest"
+COMPARISON_TARGET_ROLE="$([[ "$ISQL_MODE" == "native_firebird" ]] && echo "original" || echo "emulation")"
+COMPARISON_TARGET_ID="$([[ "$ISQL_MODE" == "native_firebird" ]] && echo "upstream-firebird" || echo "scratchbird-firebird")"
 
 json_escape() {
   local value="$1"
@@ -103,6 +108,11 @@ write_run_manifest() {
   "protocol_surface": "firebird_remote",
   "parser_core": "v3",
   "parser_mode": "emulation_surface_only",
+  "comparison_suite_family": "$(json_escape "$COMPARISON_SUITE_FAMILY")",
+  "comparison_contract_id": "$(json_escape "$COMPARISON_CONTRACT_ID")",
+  "comparison_harness": "$(json_escape "$COMPARISON_HARNESS")",
+  "comparison_target_role": "$(json_escape "$COMPARISON_TARGET_ROLE")",
+  "comparison_target_id": "$(json_escape "$COMPARISON_TARGET_ID")",
   "execution_mode": "$([[ "$ISQL_MODE" == "native_firebird" ]] && echo "native_firebird_client" || echo "scratchbird_fb_emulation_client")",
   "isql_binary": "$(json_escape "$ISQL_BIN")",
   "ctest_list_mode": "$(json_escape "$LIST_MODE")",

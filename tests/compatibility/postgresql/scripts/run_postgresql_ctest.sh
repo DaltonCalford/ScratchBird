@@ -102,6 +102,11 @@ UPSTREAM_WATCH_PID_FILE="${SCRATCHBIRD_PG_COMPAT_WATCH_PID_FILE:-}"
 POSTGRES_COMPAT_SQL_TIMEOUT_SEC="${SCRATCHBIRD_PG_TEST_TIMEOUT_SEC:-240}"
 RESOLVED_ADMIN_SECRET=""
 RESOLVED_ADMIN_SECRET_SOURCE="none"
+COMPARISON_CONTRACT_ID="compatibility-emulation-compare-v1"
+COMPARISON_SUITE_FAMILY="emulation-comparison"
+COMPARISON_TARGET_ROLE="$([[ "$REQUIRE_SB_EMULATION" == "1" ]] && echo "emulation" || echo "original")"
+COMPARISON_TARGET_ID="$([[ "$REQUIRE_SB_EMULATION" == "1" ]] && echo "scratchbird-postgresql" || echo "upstream-postgresql")"
+COMPARISON_HARNESS="$([[ "$USE_UPSTREAM_PG_REGRESS" == "1" ]] && echo "upstream_pg_regress" || echo "compatibility_converted_sql_ctest")"
 
 if [[ -z "$STRICT_DB_ROOT" ]]; then
   if [[ "$COMPAT_RUN" == "1" ]]; then
@@ -140,6 +145,11 @@ write_run_manifest() {
   "protocol_surface": "postgresql_v3",
   "parser_core": "v3",
   "parser_mode": "emulation_surface_only",
+  "comparison_suite_family": "$(json_escape "$COMPARISON_SUITE_FAMILY")",
+  "comparison_contract_id": "$(json_escape "$COMPARISON_CONTRACT_ID")",
+  "comparison_harness": "$(json_escape "$COMPARISON_HARNESS")",
+  "comparison_target_role": "$(json_escape "$COMPARISON_TARGET_ROLE")",
+  "comparison_target_id": "$(json_escape "$COMPARISON_TARGET_ID")",
   "execution_mode": "$([[ "$USE_UPSTREAM_PG_REGRESS" == "1" ]] && echo "upstream_pg_regress" || echo "converted_sql_ctest")",
   "isql_binary": "$(json_escape "$ISQL_BIN")",
   "ctest_list_mode": "$(json_escape "$LIST_MODE")",

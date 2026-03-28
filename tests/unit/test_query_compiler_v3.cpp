@@ -18,6 +18,7 @@
 
 #include <gtest/gtest.h>
 #include "scratchbird/sblr/query_compiler_v3.h"
+#include "scratchbird/sblr/postgresql_query_compiler.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/bytecode_validator.h"
 #include "scratchbird/sblr/extract_element_ops.h"
@@ -1211,20 +1212,65 @@ TEST_F(QueryCompilerV3Test, ExecuteV3RegexOperatorEvaluates) {
 
 TEST_F(QueryCompilerV3Test, ExecuteV3MathAndConcatFunctionsEvaluate) {
     auto result = compileAndExecute(
-        "SELECT POWER(2, 3), SIN(0), COS(0), TAN(0), CONCAT('a', 'b')");
+        "SELECT POWER(2, 3), SIN(0), COS(0), TAN(0), CONCAT('a', 'b'), REPEAT('xy', 3)");
     ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
     ASSERT_TRUE(result.hasResultSet());
 
     auto* rs = result.resultSet();
     ASSERT_NE(rs, nullptr);
     ASSERT_EQ(rs->rowCount(), 1);
-    ASSERT_EQ(rs->columnCount(), 5);
+    ASSERT_EQ(rs->columnCount(), 6);
 
     EXPECT_NEAR(rs->getValue(0, 0).toDouble(), 8.0, 1e-9);
     EXPECT_NEAR(rs->getValue(0, 1).toDouble(), 0.0, 1e-9);
     EXPECT_NEAR(rs->getValue(0, 2).toDouble(), 1.0, 1e-9);
     EXPECT_NEAR(rs->getValue(0, 3).toDouble(), 0.0, 1e-9);
     EXPECT_EQ(rs->getValue(0, 4).toString(), "ab");
+    EXPECT_EQ(rs->getValue(0, 5).toString(), "xyxyxy");
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteV3RepeatFunctionHandlesNullAndNegativeCount) {
+    auto result = compileAndExecute(
+        "SELECT REPEAT('ab', -1), REPEAT(NULL, 3), REPEAT('ab', NULL)");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1);
+    ASSERT_EQ(rs->columnCount(), 3);
+
+    EXPECT_EQ(rs->getValue(0, 0).toString(), "");
+    EXPECT_TRUE(rs->getValue(0, 1).isNull());
+    EXPECT_TRUE(rs->getValue(0, 2).isNull());
+}
+
+TEST_F(QueryCompilerV3Test, ExecutePostgreSqlRepeatFunctionInInsertValuesPath) {
+    scratchbird::sblr::PostgreSQLQueryCompiler pg_compiler(&db_);
+    pg_compiler.setDefaultSchema("public");
+
+    auto create_result = pg_compiler.compile("CREATE TABLE pg_repeat_insert (payload TEXT)");
+    ASSERT_TRUE(create_result.success()) << (create_result.errors().empty() ? "" : create_result.errors()[0]);
+    ASSERT_TRUE(executor_->execute(create_result.bytecode()).success());
+
+    auto insert_result = pg_compiler.compile(
+        "INSERT INTO pg_repeat_insert (payload) VALUES (repeat('x', 5))");
+    ASSERT_TRUE(insert_result.success()) << (insert_result.errors().empty() ? "" : insert_result.errors()[0]);
+    ASSERT_TRUE(containsOpcodeDeep(insert_result.bytecode(), scratchbird::sblr::v3::Opcode::SBLR3_REPEAT));
+    auto exec_result = executor_->execute(insert_result.bytecode());
+    ASSERT_TRUE(exec_result.success()) << exec_result.error();
+
+    auto select_result = pg_compiler.compile("SELECT payload FROM pg_repeat_insert");
+    ASSERT_TRUE(select_result.success()) << (select_result.errors().empty() ? "" : select_result.errors()[0]);
+    auto read_result = executor_->execute(select_result.bytecode());
+    ASSERT_TRUE(read_result.success()) << read_result.error();
+    ASSERT_TRUE(read_result.hasResultSet());
+
+    auto* rs = read_result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1);
+    ASSERT_EQ(rs->columnCount(), 1);
+    EXPECT_EQ(rs->getValue(0, 0).toString(), "xxxxx");
 }
 
 TEST_F(QueryCompilerV3Test, CanonicalFunctionDispatchUsesDedicatedOpcodes) {
@@ -1284,6 +1330,7 @@ TEST_F(QueryCompilerV3Test, CanonicalFunctionDispatchUsesDedicatedOpcodes) {
         {"SELECT OCTET_LENGTH('abc')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_OCTET_LENGTH},
         {"SELECT PI()", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_PI},
         {"SELECT POWER(2, 3)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_POWER},
+        {"SELECT REPEAT('ab', 3)", scratchbird::sblr::v3::Opcode::SBLR3_REPEAT},
         {"SELECT RADIANS(180)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_RADIANS},
         {"SELECT REPLACE('abc', 'a', 'z')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_REPLACE},
         {"SELECT ROUND(3.1415926535, 2)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_ROUND},

@@ -48,6 +48,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/error_context.h"
 #include "test_helpers.h"
 
@@ -201,7 +202,7 @@ TEST_F(PageManagerDestructorTest, MultipleOpenCloseCycles) {
     ASSERT_EQ(status, Status::OK);
 
     const int NUM_CYCLES = 10;
-    uint32_t last_page_id = 0;
+    std::vector<uint32_t> allocated_pages;
 
     for (int cycle = 0; cycle < NUM_CYCLES; ++cycle) {
         std::unique_ptr<Database> db = std::make_unique<Database>();
@@ -218,10 +219,38 @@ TEST_F(PageManagerDestructorTest, MultipleOpenCloseCycles) {
             EXPECT_EQ(status, Status::OK) << "Allocation failed in cycle " << cycle;
 
             if (status == Status::OK) {
-                // Page IDs should be monotonically increasing across cycles
-                EXPECT_GT(page_id, last_page_id)
-                    << "Page IDs should increase across cycles (FSM persists)";
-                last_page_id = page_id;
+                // Publish a real heap-page claim so restart reconstruction keeps the
+                // page allocated across open/close cycles. Bare FSM allocations are
+                // allowed to return to the free set if the caller never initializes
+                // the page body.
+                void* buffer = nullptr;
+                status = db->buffer_pool()->pinPage(page_id, &buffer, &ctx);
+                ASSERT_EQ(status, Status::OK)
+                    << "Failed to pin allocated page in cycle " << cycle;
+                memset(buffer, 0, db->page_size());
+
+                ID table_id{};
+                table_id.bytes[0] = static_cast<uint8_t>(cycle);
+                table_id.bytes[1] = static_cast<uint8_t>(i);
+
+                HeapPage heap_page(static_cast<uint8_t*>(buffer),
+                                   db->page_size(),
+                                   nullptr,
+                                   db.get(),
+                                   table_id);
+                status = heap_page.initialize(page_id, &ctx);
+                ASSERT_EQ(status, Status::OK)
+                    << "Failed to initialize heap page in cycle " << cycle;
+                status = db->buffer_pool()->unpinPage(page_id, true, &ctx);
+                ASSERT_EQ(status, Status::OK)
+                    << "Failed to unpin initialized page in cycle " << cycle;
+
+                // Once the page is initialized and published, reopening the
+                // database must not recycle it unless it is explicitly freed.
+                EXPECT_EQ(std::find(allocated_pages.begin(), allocated_pages.end(), page_id),
+                          allocated_pages.end())
+                    << "Allocated page was reused across open/close cycles without a free";
+                allocated_pages.push_back(page_id);
             }
         }
 

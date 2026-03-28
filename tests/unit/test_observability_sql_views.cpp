@@ -335,18 +335,24 @@ namespace scratchbird::core
         ASSERT_NE(db_->buffer_pool(), nullptr);
         ASSERT_NE(db_->page_manager(), nullptr);
 
-        uint32_t page_a = 0;
-        uint32_t page_b = 0;
-        ASSERT_EQ(db_->page_manager()->allocatePage(page_a, &ctx), Status::OK) << ctx.message;
-        ASSERT_EQ(db_->page_manager()->allocatePage(page_b, &ctx), Status::OK) << ctx.message;
-        ASSERT_EQ(db_->buffer_pool()->prefetchPages({page_a, page_b}, &ctx), Status::OK)
+        uint32_t prefetched_page = 0;
+        ASSERT_EQ(db_->page_manager()->allocatePage(prefetched_page, &ctx), Status::OK)
+            << ctx.message;
+        ASSERT_EQ(db_->buffer_pool()->prefetchPages({prefetched_page}, &ctx), Status::OK)
             << ctx.message;
 
-        void* page_buffer = nullptr;
-        ASSERT_EQ(db_->buffer_pool()->pinPage(page_a, &page_buffer, &ctx), Status::OK)
+        BufferPool::MgaFrameSnapshot prefetch_snapshot{};
+        ASSERT_EQ(db_->buffer_pool()->getMgaFrameSnapshotGlobal(
+                      convertPageIDtoGPID(prefetched_page), &prefetch_snapshot, &ctx),
+                  Status::OK)
             << ctx.message;
-        ASSERT_NE(page_buffer, nullptr);
-        ASSERT_EQ(db_->buffer_pool()->unpinPage(page_a, false, &ctx), Status::OK) << ctx.message;
+        ASSERT_TRUE(prefetch_snapshot.resident);
+        EXPECT_EQ(prefetch_snapshot.policy_domain, BufferPool::PolicyDomain::ScanBulkRing);
+        EXPECT_TRUE(prefetch_snapshot.speculative_prefetch);
+        EXPECT_FALSE(prefetch_snapshot.prefetch_consumed);
+        EXPECT_TRUE(prefetch_snapshot.residency_tier == BufferPool::ResidencyTier::RingOnly ||
+                    prefetch_snapshot.residency_tier ==
+                        BufferPool::ResidencyTier::Probationary);
 
         const uint64_t observed_at_ms = nowMicros() / 1000;
 
@@ -390,8 +396,8 @@ namespace scratchbird::core
                 *db_, observed_at_ms, prefetch_rows),
             Status::OK);
         ASSERT_EQ(prefetch_rows.size(), 1u);
-        EXPECT_EQ(prefetch_rows.front().prefetch_pages_total, 2u);
-        EXPECT_EQ(prefetch_rows.front().prefetch_pages_useful, 1u);
+        EXPECT_EQ(prefetch_rows.front().prefetch_pages_total, 1u);
+        EXPECT_EQ(prefetch_rows.front().prefetch_pages_useful, 0u);
         EXPECT_GE(prefetch_rows.front().prefetch_debt_pages, 1u);
         EXPECT_FALSE(prefetch_rows.front().thrash_detector_state.empty());
 

@@ -27,6 +27,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/gpid.h"
+#include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/page_manager.h"
 
@@ -134,6 +135,10 @@ protected:
         void* page_buffer = nullptr;
         ASSERT_EQ(buffer_pool->pinPage(page_id, &page_buffer, &ctx), Status::OK) << ctx.message;
         auto* page_bytes = static_cast<uint8_t*>(page_buffer);
+        {
+            HeapPage heap_page(page_bytes, db_.page_size(), nullptr, &db_, ID{});
+            ASSERT_EQ(heap_page.initialize(page_id, &ctx), Status::OK) << ctx.message;
+        }
         auto* page_header = reinterpret_cast<PageHeader*>(page_bytes);
         ASSERT_EQ(page_header->page_type, PAGE_TYPE_HEAP);
 

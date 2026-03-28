@@ -31,6 +31,39 @@ For an already-provisioned local developer environment (repos already pulled, to
 
 This archives prior verification artifacts, restarts the runtime stack, and executes a fresh verification pass.
 
+### Full-Run Metrics Normalizer
+
+Post-run normalization lives under `scripts/full_run_metrics/`.
+
+Use:
+```bash
+python3 scripts/full_run_metrics/normalize_full_run.py \
+  --repo-root /path/to/ScratchBird \
+  --benchmarks-root /path/to/ScratchBird-Benchmarks/results
+```
+
+This consumes the current full-gate logs, public-beta output, compatibility lane
+manifests, and any verification-bundle perf/optimizer results that already
+exist, then emits:
+
+- `tests/results/full_run_metrics/<run-id>/matrix-summary.json`
+- `tests/results/full_run_metrics/<run-id>/.matrix-runs.tsv`
+- `tests/results/full_run_metrics/<run-id>/matrix-comparison-unified.csv`
+- per-suite JSON summaries under `tests/results/full_run_metrics/<run-id>/<engine>/<suite>/`
+- `system-info.json`
+- `benchmark-baseline-comparison.csv/.md`
+- `history-comparison.csv/.md`
+
+For a one-shot clean build/test plus normalization workflow:
+```bash
+./scripts/run_full_build_test_with_metrics.sh --run-public-beta
+```
+
+The normalizer uses the same matrix/unified-CSV shape as
+`ScratchBird-Benchmarks` so current ScratchBird runs can be compared directly
+against upstream engine baselines and the most recent normalized ScratchBird
+full runs.
+
 ### 1. generate-project-stats.sh
 Generates comprehensive project statistics.
 

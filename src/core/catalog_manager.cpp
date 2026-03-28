@@ -23087,10 +23087,8 @@ bool hasTriggerNameConflictInTable(
                                                ErrorContext *ctx) -> Status
     {
         BufferPool *bp = db_->buffer_pool();
-        PageManager *pm = db_->page_manager();
         uint32_t current_page_id = page_id;
         uint32_t cached_tail_page_id = 0;
-        constexpr uint32_t MAX_ITERATIONS = 1000;  // Safety limit
         {
             std::lock_guard<std::mutex> lock(heap_page_tail_mutex_);
             auto it = heap_page_tail_cache_.find(page_id);
@@ -23102,11 +23100,18 @@ bool hasTriggerNameConflictInTable(
         if (cached_tail_page_id != 0 && cached_tail_page_id != page_id)
         {
             uint32_t probe_page_id = page_id;
-            uint32_t probe_iterations = 0;
             bool cached_tail_reachable = false;
+            std::unordered_set<uint32_t> visited_probe_pages;
 
-            while (probe_page_id != 0 && ++probe_iterations <= MAX_ITERATIONS)
+            while (probe_page_id != 0)
             {
+                if (!visited_probe_pages.insert(probe_page_id).second)
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      Status::DATA_CORRUPTED,
+                                      "Detected cycle while validating cached catalog heap tail");
+                    return Status::DATA_CORRUPTED;
+                }
                 void* probe_buffer = nullptr;
                 Status probe_status = bp->pinPage(probe_page_id, &probe_buffer, ctx);
                 if (probe_status != Status::OK)
@@ -23140,14 +23145,16 @@ bool hasTriggerNameConflictInTable(
                 heap_page_tail_cache_.erase(page_id);
             }
         }
-        uint32_t iteration_count = 0;
+        std::unordered_set<uint32_t> visited_pages;
 
         while (true)
         {
-            if (++iteration_count > MAX_ITERATIONS)
+            if (!visited_pages.insert(current_page_id).second)
             {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Too many iterations in writeRecordToHeapPage");
-                return Status::INVALID_ARGUMENT;
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::DATA_CORRUPTED,
+                                  "Detected cycle while appending to catalog heap overflow chain");
+                return Status::DATA_CORRUPTED;
             }
             void *page_buffer;
             Status status = bp->pinPage(current_page_id, &page_buffer, ctx);

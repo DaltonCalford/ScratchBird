@@ -300,22 +300,31 @@ std::string objectTypeToString(core::CatalogManager::ObjectType type)
 
 std::string findRepoRoot()
 {
-    std::filesystem::path current = std::filesystem::current_path();
-    for (int i = 0; i < 16; ++i)
+    const auto try_from = [](std::filesystem::path current) -> std::string {
+        for (int i = 0; i < 16; ++i)
+        {
+            const auto header = current / "include" / "scratchbird" / "core" / "catalog_manager.h";
+            const auto source = current / "src" / "core" / "catalog_manager.cpp";
+            if (std::filesystem::exists(header) && std::filesystem::exists(source))
+            {
+                return current.string();
+            }
+            if (!current.has_parent_path())
+            {
+                break;
+            }
+            current = current.parent_path();
+        }
+        return "";
+    };
+
+    std::string repo_root = try_from(std::filesystem::current_path());
+    if (!repo_root.empty())
     {
-        const auto header = current / "include" / "scratchbird" / "core" / "catalog_manager.h";
-        const auto source = current / "src" / "core" / "catalog_manager.cpp";
-        if (std::filesystem::exists(header) && std::filesystem::exists(source))
-        {
-            return current.string();
-        }
-        if (!current.has_parent_path())
-        {
-            break;
-        }
-        current = current.parent_path();
+        return repo_root;
     }
-    return "";
+
+    return try_from(std::filesystem::path(__FILE__).parent_path());
 }
 
 std::unordered_map<std::string, std::string> parseSystemAliasMap(const std::filesystem::path& source_path)

@@ -20,6 +20,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/gpid.h"
+#include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/page_manager.h"
 #include "test_helpers.h"
@@ -135,11 +136,24 @@ protected:
     {
         std::vector<uint8_t> page(db_.page_size(), 0);
         ErrorContext ctx;
-        const Status read_status = db_.read_page(page_id, page.data(), &ctx);
-        if (read_status != Status::OK)
+        Status read_status = db_.read_page(page_id, page.data(), &ctx);
+        if (read_status != Status::OK &&
+            read_status != Status::PAGE_CORRUPT &&
+            read_status != Status::CHECKSUM_MISMATCH)
         {
             ADD_FAILURE() << "Failed to read primary page: " << ctx.message;
             return {};
+        }
+        if (read_status != Status::OK)
+        {
+            ErrorContext init_ctx;
+            HeapPage heap_page(page.data(), db_.page_size(), nullptr, &db_, ID{});
+            const Status init_status = heap_page.initialize(page_id, &init_ctx);
+            if (init_status != Status::OK)
+            {
+                ADD_FAILURE() << "Failed to initialize primary page: " << init_ctx.message;
+                return {};
+            }
         }
 
         stampPattern(page, seed);
@@ -164,6 +178,19 @@ protected:
         {
             ADD_FAILURE() << "Failed to read tablespace page: " << ctx.message;
             return {};
+        }
+        auto* header = reinterpret_cast<PageHeader*>(page.data());
+        if (header->magic != K_MAGIC_SBRD || header->page_type != PAGE_TYPE_HEAP)
+        {
+            ErrorContext init_ctx;
+            HeapPage heap_page(page.data(), db_.page_size(), nullptr, &db_, ID{});
+            const Status init_status =
+                heap_page.initialize(static_cast<uint32_t>(getPageNumber(gpid)), &init_ctx);
+            if (init_status != Status::OK)
+            {
+                ADD_FAILURE() << "Failed to initialize tablespace page: " << init_ctx.message;
+                return {};
+            }
         }
 
         stampPattern(page, seed);

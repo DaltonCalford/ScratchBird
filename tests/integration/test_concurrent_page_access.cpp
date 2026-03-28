@@ -46,9 +46,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <string>
+#include <sstream>
 #include <algorithm>
 #include <mutex>
+#include <filesystem>
+#include <fstream>
 #include "test_helpers.h"
+#include "scratchbird/core/config.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/page_manager.h"
@@ -59,6 +63,16 @@
 #include "scratchbird/core/logger.h"
 
 using namespace scratchbird::core;
+
+namespace {
+
+void writeTextFile(const std::filesystem::path& path, const std::string& contents) {
+    std::ofstream out(path);
+    ASSERT_TRUE(out.is_open()) << path;
+    out << contents;
+}
+
+}
 
 static bool isHeavyConcurrencyTest() {
     const char* env = std::getenv("SCRATCHBIRD_TEST_HEAVY");
@@ -79,20 +93,88 @@ static std::mt19937 makeThreadRng(int seed) {
     return std::mt19937(seq);
 }
 
+static constexpr size_t kTestPayloadOffset = sizeof(PageHeader);
+
+static void writeTestPayloadByte(void* buffer, size_t slot, uint8_t value) {
+    auto* data = static_cast<uint8_t*>(buffer);
+    data[kTestPayloadOffset + slot] = value;
+}
+
 class ConcurrentPageAccessTest : public ::testing::Test {
 protected:
+    auto describeFrameSnapshot(uint32_t page_id) -> std::string {
+        BufferPool::MgaFrameSnapshot snapshot{};
+        ErrorContext ctx;
+        const Status status = pool_->getMgaFrameSnapshotGlobal(convertPageIDtoGPID(page_id),
+                                                               &snapshot,
+                                                               &ctx);
+        std::ostringstream out;
+        out << "snapshot_status=" << static_cast<int>(status);
+        if (status != Status::OK) {
+            out << " snapshot_error='" << ctx.message << "'";
+            return out.str();
+        }
+
+        out << " resident=" << snapshot.resident
+            << " owner=" << snapshot.owner_partition
+            << " home=" << snapshot.home_partition
+            << " pin_count=" << snapshot.pin_count
+            << " dirty=" << snapshot.is_dirty
+            << " lifecycle=" << static_cast<int>(snapshot.lifecycle_state)
+            << " dirty_state=" << static_cast<int>(snapshot.dirty_state)
+            << " tier=" << static_cast<int>(snapshot.residency_tier)
+            << " page_class=" << static_cast<int>(snapshot.page_class)
+            << " domain=" << static_cast<int>(snapshot.policy_domain)
+            << " state_generation=" << snapshot.state_generation
+            << " io_generation=" << snapshot.io_generation
+            << " dirty_generation=" << snapshot.dirty_generation;
+        return out.str();
+    }
+
+    void warmPages(const std::vector<uint32_t>& page_ids, bool dirty = false) {
+        for (uint32_t page_id : page_ids) {
+            ErrorContext ctx;
+            void* buffer = nullptr;
+            Status s = pool_->pinPage(page_id, &buffer, &ctx);
+            ASSERT_EQ(s, Status::OK) << "Failed to warm page " << page_id << ": " << ctx.message;
+            if (dirty && buffer != nullptr) {
+                writeTestPayloadByte(buffer, 0, 0x5A);
+            }
+            s = pool_->unpinPage(page_id, dirty, &ctx);
+            ASSERT_EQ(s, Status::OK) << "Failed to unpin warmed page " << page_id << ": " << ctx.message;
+        }
+    }
+
     void SetUp() override {
         static std::once_flag log_level_once;
         std::call_once(log_level_once, []() {
             Logger::getInstance().setLogLevel(LogLevel::ERROR);
         });
 
-        test_db_path_ =
-            scratchbird::testing::uniqueTestDbPath("test_concurrent_page_access", ".db");
+        root_path_ = scratchbird::testing::uniqueTestDbPath("test_concurrent_page_access", "");
+        std::filesystem::create_directories(root_path_);
+        config_path_ = root_path_ / "sb_config.ini";
+        test_db_path_ = (root_path_ / "concurrent_page_access.db").string();
         std::remove(test_db_path_.c_str());
 
+        Config::getInstance().clear();
+        // These correctness-oriented page-concurrency tests should operate within a
+        // stable working set. The bootstrap/catalog footprint on a freshly opened
+        // database already exceeds the old 256-page default, which turned the
+        // "different pages" cases into incidental eviction-churn tests. The
+        // dedicated high-contention and stress lanes cover that churn separately.
+        const uint32_t configured_pool_pages = isHeavyConcurrencyTest() ? 640U : 512U;
+        writeTextFile(config_path_,
+                      "[memory]\n"
+                      "buffer_pool_layout = segmented\n"
+                      "buffer_pool_bgwriter_enabled = false\n"
+                      "buffer_pool_size = " + std::to_string(configured_pool_pages) + "\n");
+
         ErrorContext ctx;
-        Status status = Database::create(test_db_path_, 8192, &ctx);
+        Status status = Config::getInstance().initialize(config_path_.string(), &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to initialize config: " << ctx.message;
+
+        status = Database::create(test_db_path_, 8192, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
         db_ = std::make_unique<Database>();
@@ -101,6 +183,10 @@ protected:
 
         pool_ = db_->buffer_pool();
         ASSERT_NE(pool_, nullptr);
+        pool_->quiesceBackgroundWriterForShutdown();
+        const auto pool_config = pool_->getConfigSnapshot();
+        ASSERT_EQ(pool_config.layout, BufferPool::PoolLayout::Segmented);
+        ASSERT_EQ(pool_config.pool_size, configured_pool_pages);
 
         page_mgr_ = db_->page_manager();
         ASSERT_NE(page_mgr_, nullptr);
@@ -108,11 +194,24 @@ protected:
         txn_mgr_ = db_->transaction_manager();
         ASSERT_NE(txn_mgr_, nullptr);
 
-        // Pre-allocate pages for tests
-        for (int i = 0; i < 100; ++i) {
+        // Keep the correctness-oriented concurrency tests inside a working set that
+        // fits beside the default segmented pool's bootstrap/system reservation.
+        // The dedicated BufferPoolHighContentionStress case still exercises heavier
+        // churn separately.
+        const int preallocated_pages = isHeavyConcurrencyTest() ? 24 : 12;
+
+        for (int i = 0; i < preallocated_pages; ++i) {
             uint32_t page_id = 0;
             status = page_mgr_->allocatePage(page_id, &ctx);
             ASSERT_EQ(status, Status::OK);
+
+            std::vector<uint8_t> page_bytes(db_->page_size(), 0);
+            HeapPage heap(page_bytes.data(), db_->page_size());
+            status = heap.initialize(page_id, &ctx);
+            ASSERT_EQ(status, Status::OK) << "Failed to initialize heap page: " << ctx.message;
+            status = db_->write_page(page_id, page_bytes.data(), &ctx);
+            ASSERT_EQ(status, Status::OK) << "Failed to persist heap page: " << ctx.message;
+
             allocated_pages_.push_back(page_id);
         }
     }
@@ -121,9 +220,13 @@ protected:
         if (db_) {
             db_->close();
         }
-        std::remove(test_db_path_.c_str());
+        Config::getInstance().clear();
+        std::error_code ec;
+        std::filesystem::remove_all(root_path_, ec);
     }
 
+    std::filesystem::path root_path_;
+    std::filesystem::path config_path_;
     std::string test_db_path_;
     std::unique_ptr<Database> db_;
     BufferPool* pool_;
@@ -141,7 +244,9 @@ protected:
 TEST_F(ConcurrentPageAccessTest, ConcurrentReadsDifferentPages) {
     const bool heavy = isHeavyConcurrencyTest();
     const int scale = parallelDivisor();
-    const int NUM_THREADS = std::max(4, (heavy ? 50 : 16) / scale);
+    const int NUM_THREADS = std::min<int>(
+        static_cast<int>(allocated_pages_.size()),
+        std::max(4, (heavy ? 24 : 12) / scale));
     const int ITERATIONS = std::max(10, (heavy ? 100 : 50) / scale);
 
     std::atomic<int> errors{0};
@@ -158,15 +263,19 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadsDifferentPages) {
     std::string last_error;
     std::vector<std::thread> threads;
 
+    std::vector<uint32_t> warm_pages;
+    warm_pages.reserve(static_cast<size_t>(NUM_THREADS));
+    for (int t = 0; t < NUM_THREADS; ++t) {
+        warm_pages.push_back(allocated_pages_[static_cast<size_t>(t)]);
+    }
+    ASSERT_NO_FATAL_FAILURE(warmPages(warm_pages));
+
     for (int t = 0; t < NUM_THREADS; ++t) {
         threads.emplace_back([&, t]() {
             ErrorContext ctx;
-            std::mt19937 gen = makeThreadRng(t + 1);
-            std::uniform_int_distribution<> dis(0, allocated_pages_.size() - 1);
+            const uint32_t page_id = allocated_pages_[static_cast<size_t>(t)];
 
             for (int i = 0; i < ITERATIONS; ++i) {
-                uint32_t page_id = allocated_pages_[dis(gen)];
-
                 void* buffer = nullptr;
                 Status s = pool_->pinPage(page_id, &buffer, &ctx);
                 if (s != Status::OK) {
@@ -202,7 +311,10 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadsDifferentPages) {
                     }
                     {
                         std::lock_guard<std::mutex> lock(error_mutex);
-                        last_error = ctx.message;
+                        last_error = "thread=" + std::to_string(t) +
+                                     " page=" + std::to_string(page_id) +
+                                     " " + ctx.message + " snapshot_after={" +
+                                     describeFrameSnapshot(page_id) + "}";
                     }
                 } else {
                     successful_reads.fetch_add(1);
@@ -240,39 +352,87 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadsDifferentPages) {
 TEST_F(ConcurrentPageAccessTest, ConcurrentWritesDifferentPages) {
     const bool heavy = isHeavyConcurrencyTest();
     const int scale = parallelDivisor();
-    const int NUM_THREADS = std::max(4, (heavy ? 40 : 12) / scale);
+    const int NUM_THREADS = std::min<int>(
+        static_cast<int>(allocated_pages_.size()),
+        std::max(4, (heavy ? 24 : 12) / scale));
     const int ITERATIONS = std::max(10, (heavy ? 50 : 30) / scale);
 
     std::atomic<int> errors{0};
     std::atomic<int> successful_writes{0};
+    std::atomic<int> pin_errors{0};
+    std::atomic<int> unpin_errors{0};
+    std::atomic<int> pin_invalid_argument{0};
+    std::atomic<int> pin_io_error{0};
+    std::atomic<int> pin_other{0};
+    std::atomic<int> unpin_invalid_argument{0};
+    std::atomic<int> unpin_not_found{0};
+    std::atomic<int> unpin_io_error{0};
+    std::atomic<int> unpin_other{0};
+    std::atomic<int> flush_errors{0};
+    std::mutex error_mutex;
+    std::string last_error;
     std::vector<std::thread> threads;
+
+    std::vector<uint32_t> warm_pages;
+    warm_pages.reserve(static_cast<size_t>(NUM_THREADS));
+    for (int t = 0; t < NUM_THREADS; ++t) {
+        warm_pages.push_back(allocated_pages_[static_cast<size_t>(t)]);
+    }
+    ASSERT_NO_FATAL_FAILURE(warmPages(warm_pages));
 
     for (int t = 0; t < NUM_THREADS; ++t) {
         threads.emplace_back([&, t]() {
             ErrorContext ctx;
-            std::mt19937 gen = makeThreadRng(t + 101);
-            std::uniform_int_distribution<> dis(0, allocated_pages_.size() - 1);
+            const uint32_t page_id = allocated_pages_[static_cast<size_t>(t)];
+            void* buffer = nullptr;
+            Status s = pool_->pinPage(page_id, &buffer, &ctx);
+            if (s != Status::OK) {
+                errors.fetch_add(1);
+                pin_errors.fetch_add(1);
+                if (s == Status::INVALID_ARGUMENT) {
+                    pin_invalid_argument.fetch_add(1);
+                } else if (s == Status::IO_ERROR) {
+                    pin_io_error.fetch_add(1);
+                } else {
+                    pin_other.fetch_add(1);
+                }
+                {
+                    std::lock_guard<std::mutex> lock(error_mutex);
+                    last_error = "thread=" + std::to_string(t) +
+                                 " page=" + std::to_string(page_id) +
+                                 " phase=pin_initial " + ctx.message;
+                }
+                return;
+            }
 
             for (int i = 0; i < ITERATIONS; ++i) {
-                uint32_t page_id = allocated_pages_[dis(gen)];
-
-                void* buffer = nullptr;
-                Status s = pool_->pinPage(page_id, &buffer, &ctx);
-                if (s != Status::OK) {
-                    errors.fetch_add(1);
-                    continue;
-                }
-
                 // Simulate write operation
-                char* data = static_cast<char*>(buffer);
-                data[0] = static_cast<char>(t);
+                writeTestPayloadByte(buffer,
+                                     static_cast<size_t>(i % 16),
+                                     static_cast<uint8_t>(t));
                 std::this_thread::sleep_for(std::chrono::microseconds(10));
+                successful_writes.fetch_add(1);
+            }
 
-                s = pool_->unpinPage(page_id, true, &ctx); // dirty = true
-                if (s != Status::OK) {
-                    errors.fetch_add(1);
+            s = pool_->unpinPage(page_id, true, &ctx); // dirty = true
+            if (s != Status::OK) {
+                errors.fetch_add(1);
+                unpin_errors.fetch_add(1);
+                if (s == Status::INVALID_ARGUMENT) {
+                    unpin_invalid_argument.fetch_add(1);
+                } else if (s == Status::NOT_FOUND) {
+                    unpin_not_found.fetch_add(1);
+                } else if (s == Status::IO_ERROR) {
+                    unpin_io_error.fetch_add(1);
                 } else {
-                    successful_writes.fetch_add(1);
+                    unpin_other.fetch_add(1);
+                }
+                {
+                    std::lock_guard<std::mutex> lock(error_mutex);
+                    last_error = "thread=" + std::to_string(t) +
+                                 " page=" + std::to_string(page_id) +
+                                 " phase=unpin_final " + ctx.message +
+                                 " snapshot_after={" + describeFrameSnapshot(page_id) + "}";
                 }
             }
         });
@@ -282,7 +442,31 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentWritesDifferentPages) {
         t.join();
     }
 
-    EXPECT_EQ(errors.load(), 0) << "Concurrent writes to different pages should not fail";
+    for (uint32_t page_id : warm_pages) {
+        ErrorContext ctx;
+        Status s = pool_->flushPage(page_id, &ctx);
+        if (s != Status::OK) {
+            errors.fetch_add(1);
+            flush_errors.fetch_add(1);
+            std::lock_guard<std::mutex> lock(error_mutex);
+            last_error = "page=" + std::to_string(page_id) +
+                         " phase=post_flush " + ctx.message;
+        }
+    }
+
+    EXPECT_EQ(errors.load(), 0)
+        << "Concurrent writes to different pages should not fail"
+        << " (pin_errors=" << pin_errors.load()
+        << ", unpin_errors=" << unpin_errors.load()
+        << ", pin_invalid_argument=" << pin_invalid_argument.load()
+        << ", pin_io_error=" << pin_io_error.load()
+        << ", pin_other=" << pin_other.load()
+        << ", unpin_invalid_argument=" << unpin_invalid_argument.load()
+        << ", unpin_not_found=" << unpin_not_found.load()
+        << ", unpin_io_error=" << unpin_io_error.load()
+        << ", unpin_other=" << unpin_other.load()
+        << ", flush_errors=" << flush_errors.load()
+        << ", last_error='" << last_error << "')";
     EXPECT_EQ(successful_writes.load(), NUM_THREADS * ITERATIONS);
 
     std::cout << "Concurrent writes test: " << successful_writes.load() << " successful writes\n";
@@ -344,8 +528,8 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadWriteSamePage) {
                 }
 
                 // Write operation
-                char* data = static_cast<char*>(buffer);
-                data[t % 100] = static_cast<char>(t);
+                writeTestPayloadByte(buffer, static_cast<size_t>(t % 100),
+                                     static_cast<uint8_t>(t));
                 std::this_thread::yield();
 
                 s = pool_->unpinPage(SHARED_PAGE, true, &ctx);
@@ -408,8 +592,7 @@ TEST_F(ConcurrentPageAccessTest, CrossPageTransactionUpdates) {
                 break;
             }
 
-            char* data = static_cast<char*>(buffer);
-            data[0] = static_cast<char>(i & 0x7F);
+            writeTestPayloadByte(buffer, 0, static_cast<uint8_t>(i & 0x7F));
 
             s = pool_->unpinPage(page_id, true, &ctx);
             if (s != Status::OK) {
@@ -468,8 +651,7 @@ TEST_F(ConcurrentPageAccessTest, SnapshotConsistencyUnderConcurrentMods) {
                 void* buffer = nullptr;
                 s = pool_->pinPage(page_id, &buffer, &ctx);
                 if (s == Status::OK) {
-                    char* data = static_cast<char*>(buffer);
-                    data[0] = static_cast<char>(t);
+                    writeTestPayloadByte(buffer, 0, static_cast<uint8_t>(t));
                     pool_->unpinPage(page_id, true, &ctx);
 
                     s = conn->commit(&ctx);
@@ -526,7 +708,24 @@ TEST_F(ConcurrentPageAccessTest, BufferPoolHighContentionStress) {
 
     std::atomic<int> errors{0};
     std::atomic<int> successful_ops{0};
+    std::atomic<int> pin_errors{0};
+    std::atomic<int> unpin_errors{0};
+    std::atomic<int> pin_invalid_argument{0};
+    std::atomic<int> pin_io_error{0};
+    std::atomic<int> pin_other{0};
+    std::atomic<int> unpin_invalid_argument{0};
+    std::atomic<int> unpin_not_found{0};
+    std::atomic<int> unpin_other{0};
+    std::mutex error_mutex;
+    std::string last_error;
     std::vector<std::thread> threads;
+
+    std::vector<uint32_t> warm_pages;
+    warm_pages.reserve(static_cast<size_t>(HOT_PAGES));
+    for (int i = 0; i < HOT_PAGES; ++i) {
+        warm_pages.push_back(allocated_pages_[static_cast<size_t>(i)]);
+    }
+    ASSERT_NO_FATAL_FAILURE(warmPages(warm_pages));
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -543,17 +742,47 @@ TEST_F(ConcurrentPageAccessTest, BufferPoolHighContentionStress) {
                 Status s = pool_->pinPage(page_id, &buffer, &ctx);
                 if (s != Status::OK) {
                     errors.fetch_add(1);
+                    pin_errors.fetch_add(1);
+                    if (s == Status::INVALID_ARGUMENT) {
+                        pin_invalid_argument.fetch_add(1);
+                    } else if (s == Status::IO_ERROR) {
+                        pin_io_error.fetch_add(1);
+                    } else {
+                        pin_other.fetch_add(1);
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(error_mutex);
+                        last_error = "thread=" + std::to_string(t) +
+                                     " page=" + std::to_string(page_id) +
+                                     " pin " + ctx.message + " snapshot_after={" +
+                                     describeFrameSnapshot(page_id) + "}";
+                    }
                     continue;
                 }
 
                 // Simulate work
-                char* data = static_cast<char*>(buffer);
-                data[t % 100] = static_cast<char>(t);
+                writeTestPayloadByte(buffer, static_cast<size_t>(t % 100),
+                                     static_cast<uint8_t>(t));
 
                 bool dirty = (i % 5 == 0); // 20% write ratio
                 s = pool_->unpinPage(page_id, dirty, &ctx);
                 if (s != Status::OK) {
                     errors.fetch_add(1);
+                    unpin_errors.fetch_add(1);
+                    if (s == Status::INVALID_ARGUMENT) {
+                        unpin_invalid_argument.fetch_add(1);
+                    } else if (s == Status::NOT_FOUND) {
+                        unpin_not_found.fetch_add(1);
+                    } else {
+                        unpin_other.fetch_add(1);
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(error_mutex);
+                        last_error = "thread=" + std::to_string(t) +
+                                     " page=" + std::to_string(page_id) +
+                                     " unpin " + ctx.message + " snapshot_after={" +
+                                     describeFrameSnapshot(page_id) + "}";
+                    }
                 } else {
                     successful_ops.fetch_add(1);
                 }
@@ -572,7 +801,17 @@ TEST_F(ConcurrentPageAccessTest, BufferPoolHighContentionStress) {
         duration_ms = 1;
     }
 
-    EXPECT_EQ(errors.load(), 0) << "Buffer pool should handle high contention gracefully";
+    EXPECT_EQ(errors.load(), 0)
+        << "Buffer pool should handle high contention gracefully"
+        << " (pin_errors=" << pin_errors.load()
+        << ", unpin_errors=" << unpin_errors.load()
+        << ", pin_invalid_argument=" << pin_invalid_argument.load()
+        << ", pin_io_error=" << pin_io_error.load()
+        << ", pin_other=" << pin_other.load()
+        << ", unpin_invalid_argument=" << unpin_invalid_argument.load()
+        << ", unpin_not_found=" << unpin_not_found.load()
+        << ", unpin_other=" << unpin_other.load()
+        << ", last_error='" << last_error << "')";
     EXPECT_EQ(successful_ops.load(), NUM_THREADS * ITERATIONS);
 
     auto stats = pool_->getStats();

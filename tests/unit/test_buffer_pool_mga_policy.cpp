@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstring>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -229,6 +230,61 @@ TEST_F(BufferPoolMgaPolicyTest, CommitFenceProtectsTxStatePagesUnderPressure)
     policy_pool_->endCommitFence();
     auto header_cleared = frameSnapshot(0);
     EXPECT_FALSE(header_cleared.commit_fence_member);
+}
+
+TEST_F(BufferPoolMgaPolicyTest, NonRootTransactionMapPagesStayCriticalButEvictable)
+{
+    const uint32_t tx_map_leaf = allocateTypedPage(PAGE_TYPE_TRANSACTION_MAP);
+
+    touchPage(0);
+    touchPage(tx_map_leaf);
+
+    const auto tx_map_before = frameSnapshot(tx_map_leaf);
+    EXPECT_TRUE(tx_map_before.resident);
+    EXPECT_EQ(tx_map_before.page_class, BufferPool::MgaPageClass::TX_STATE);
+    EXPECT_EQ(tx_map_before.policy_domain, BufferPool::PolicyDomain::CriticalSystem);
+    EXPECT_EQ(tx_map_before.residency_tier, BufferPool::ResidencyTier::Probationary);
+
+    std::vector<uint32_t> pressure_pages;
+    for (int i = 0; i < 48; ++i)
+    {
+        pressure_pages.push_back(allocateHeapPage());
+    }
+
+    for (int pass = 0; pass < 3 && frameSnapshot(tx_map_leaf).resident; ++pass)
+    {
+        pressurePages(pressure_pages, BufferPool::AccessStrategy::Normal);
+    }
+
+    EXPECT_TRUE(frameSnapshot(0).resident);
+    EXPECT_FALSE(frameSnapshot(tx_map_leaf).resident);
+}
+
+TEST_F(BufferPoolMgaPolicyTest, DirtyNonBootstrapZeroTypePageDoesNotBecomeBootstrapTxState)
+{
+    const uint32_t heap_page = allocateHeapPage();
+
+    void *buffer = nullptr;
+    ASSERT_EQ(policy_pool_->pinPage(heap_page, &buffer, &ctx_), Status::OK) << ctx_.message;
+
+    std::memset(buffer, 0, db_.page_size());
+    auto *header = static_cast<PageHeader *>(buffer);
+    header->magic = K_MAGIC_SBRD;
+    header->page_type = PAGE_TYPE_DATABASE_HEADER;
+    header->page_id = heap_page;
+
+    ASSERT_EQ(policy_pool_->unpinPage(heap_page, true, &ctx_), Status::OK) << ctx_.message;
+    ASSERT_EQ(policy_pool_->flushAll(&ctx_), Status::OK) << ctx_.message;
+    ASSERT_EQ(db_.sync(&ctx_), Status::OK) << ctx_.message;
+
+    ASSERT_EQ(policy_pool_->pinPage(heap_page, &buffer, &ctx_), Status::OK) << ctx_.message;
+    ASSERT_EQ(policy_pool_->unpinPage(heap_page, false, &ctx_), Status::OK) << ctx_.message;
+
+    const auto reloaded = frameSnapshot(heap_page);
+    EXPECT_TRUE(reloaded.resident);
+    EXPECT_EQ(reloaded.page_class, BufferPool::MgaPageClass::Generic);
+    EXPECT_EQ(reloaded.policy_domain, BufferPool::PolicyDomain::HotOltp);
+    EXPECT_NE(reloaded.residency_tier, BufferPool::ResidencyTier::PinBiased);
 }
 
 TEST_F(BufferPoolMgaPolicyTest, ChainHeavyPagesSurviveSequentialScanPressure)
@@ -502,17 +558,42 @@ TEST_F(BufferPoolMgaPolicyTest,
     const uint32_t seq_page = allocateHeapPage();
     const uint32_t index_root_page = allocateTypedPage(PAGE_TYPE_BTREE_INTERNAL);
 
-    touchPage(range_page,
-              BufferPool::AccessStrategy::Normal,
-              BufferPool::WorkloadClass::RangeScan);
-    touchPage(seq_page, BufferPool::AccessStrategy::Sequential);
-    touchPage(index_root_page,
-              BufferPool::AccessStrategy::Sequential,
-              BufferPool::WorkloadClass::SequentialScan);
+    void *range_buffer = nullptr;
+    ASSERT_EQ(policy_pool_->pinPage(range_page,
+                                    &range_buffer,
+                                    &ctx_,
+                                    BufferPool::AccessStrategy::Normal,
+                                    BufferPool::WorkloadClass::RangeScan),
+              Status::OK)
+        << ctx_.message;
+    ASSERT_NE(range_buffer, nullptr);
+
+    void *seq_buffer = nullptr;
+    ASSERT_EQ(policy_pool_->pinPage(seq_page,
+                                    &seq_buffer,
+                                    &ctx_,
+                                    BufferPool::AccessStrategy::Sequential),
+              Status::OK)
+        << ctx_.message;
+    ASSERT_NE(seq_buffer, nullptr);
+
+    void *index_root_buffer = nullptr;
+    ASSERT_EQ(policy_pool_->pinPage(index_root_page,
+                                    &index_root_buffer,
+                                    &ctx_,
+                                    BufferPool::AccessStrategy::Sequential,
+                                    BufferPool::WorkloadClass::SequentialScan),
+              Status::OK)
+        << ctx_.message;
+    ASSERT_NE(index_root_buffer, nullptr);
 
     const auto range_snapshot = frameSnapshot(range_page);
     const auto seq_snapshot = frameSnapshot(seq_page);
     const auto index_root_snapshot = frameSnapshot(index_root_page);
+
+    EXPECT_TRUE(range_snapshot.resident);
+    EXPECT_TRUE(seq_snapshot.resident);
+    EXPECT_TRUE(index_root_snapshot.resident);
 
     EXPECT_EQ(range_snapshot.page_class, BufferPool::MgaPageClass::Generic);
     EXPECT_EQ(range_snapshot.workload_class, BufferPool::WorkloadClass::RangeScan);
@@ -528,6 +609,10 @@ TEST_F(BufferPoolMgaPolicyTest,
     EXPECT_EQ(index_root_snapshot.workload_class, BufferPool::WorkloadClass::SequentialScan);
     EXPECT_EQ(index_root_snapshot.policy_domain, BufferPool::PolicyDomain::HotOltp);
     EXPECT_EQ(index_root_snapshot.residency_tier, BufferPool::ResidencyTier::Protected);
+
+    ASSERT_EQ(policy_pool_->unpinPage(index_root_page, false, &ctx_), Status::OK) << ctx_.message;
+    ASSERT_EQ(policy_pool_->unpinPage(seq_page, false, &ctx_), Status::OK) << ctx_.message;
+    ASSERT_EQ(policy_pool_->unpinPage(range_page, false, &ctx_), Status::OK) << ctx_.message;
 }
 
 TEST_F(BufferPoolMgaPolicyTest, BulkWriteAndPrefetchPlumbCanonicalWorkloadHints)
@@ -1173,6 +1258,75 @@ TEST_F(BufferPoolMgaPolicyTest,
               BufferPool::WritebackQueueState::BACKGROUND_AGE);
     EXPECT_EQ(generic_snapshot.dirty_state,
               BufferPool::DirtyState::DirtyUnscheduled);
+}
+
+TEST_F(BufferPoolMgaPolicyTest,
+       BackgroundWriterSkipsTemporaryWorkPages)
+{
+    ASSERT_EQ(policy_pool_->shutdown(&ctx_), Status::OK) << ctx_.message;
+    policy_pool_.reset();
+
+    BufferPool::Config config = makePolicyConfig();
+    config.enable_background_writer = true;
+    config.bgwriter_delay_ms = 250;
+    config.bgwriter_max_pages = 1;
+    config.dirty_ratio_low = 0.10;
+    config.dirty_ratio_high = 1.00;
+    config.dirty_ratio_checkpoint = 1.00;
+
+    policy_pool_ = std::make_unique<BufferPool>(&db_, config);
+    ASSERT_EQ(policy_pool_->initialize(&ctx_), Status::OK) << ctx_.message;
+
+    void *buffer = nullptr;
+    const uint32_t temp_page = allocateTypedPage(PAGE_TYPE_TEMP_HEAP);
+    ASSERT_EQ(policy_pool_->pinPage(temp_page, &buffer, &ctx_), Status::OK) << ctx_.message;
+    ASSERT_EQ(policy_pool_->unpinPage(temp_page, true, &ctx_), Status::OK) << ctx_.message;
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+
+    EXPECT_EQ(policy_pool_->getStats().bgwriter_pages_written, 0u);
+
+    const auto temp_snapshot = frameSnapshot(temp_page);
+    EXPECT_TRUE(temp_snapshot.is_dirty);
+    EXPECT_EQ(temp_snapshot.dirty_state, BufferPool::DirtyState::DirtyUnscheduled);
+    EXPECT_EQ(temp_snapshot.writeback_queue_state,
+              BufferPool::WritebackQueueState::BACKGROUND_AGE);
+    EXPECT_EQ(temp_snapshot.last_flush_generation, 0u);
+}
+
+TEST_F(BufferPoolMgaPolicyTest,
+       SessionTempHeapPagesSurviveEvictionReloadWithoutDurableGenerations)
+{
+    void *buffer = nullptr;
+    const uint32_t temp_heap_page =
+        allocateTypedPage(PAGE_TYPE_HEAP,
+                          static_cast<uint32_t>(PAGE_FLAG_TEMPORARY_WORK),
+                          91);
+
+    ASSERT_EQ(policy_pool_->pinPage(temp_heap_page, &buffer, &ctx_), Status::OK) << ctx_.message;
+    ASSERT_NE(buffer, nullptr);
+    auto *header = reinterpret_cast<PageHeader *>(buffer);
+    header->version = 77;
+    ASSERT_EQ(policy_pool_->unpinPage(temp_heap_page, true, &ctx_), Status::OK) << ctx_.message;
+
+    std::vector<uint32_t> pressure_pages;
+    for (int i = 0; i < 64; ++i)
+    {
+        pressure_pages.push_back(allocateHeapPage());
+    }
+    pressurePages(pressure_pages, BufferPool::AccessStrategy::Normal);
+
+    const auto evicted_snapshot = frameSnapshot(temp_heap_page);
+    EXPECT_FALSE(evicted_snapshot.resident);
+
+    ASSERT_EQ(policy_pool_->pinPage(temp_heap_page, &buffer, &ctx_), Status::OK) << ctx_.message;
+    ASSERT_NE(buffer, nullptr);
+    header = reinterpret_cast<PageHeader *>(buffer);
+    EXPECT_EQ(header->version, 77);
+    EXPECT_NE(header->flags & static_cast<uint16_t>(PAGE_FLAG_TEMPORARY_WORK), 0u);
+    EXPECT_EQ(header->flush_generation, 0u);
+    EXPECT_EQ(header->checkpoint_generation, 0u);
+    ASSERT_EQ(policy_pool_->unpinPage(temp_heap_page, false, &ctx_), Status::OK) << ctx_.message;
 }
 
 TEST_F(BufferPoolMgaPolicyTest,

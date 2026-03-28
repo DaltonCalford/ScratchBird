@@ -2995,6 +2995,10 @@ namespace scratchbird::core
 
         if (buffer_pool_ != nullptr)
         {
+            // Quiesce the background writer before clean-shutdown publication so
+            // checkpoint-boundary draining does not race a concurrent writeback path.
+            buffer_pool_->quiesceBackgroundWriterForShutdown();
+
             ErrorContext ctx;
             if (clean_shutdown_eligible_)
             {
@@ -5339,7 +5343,9 @@ namespace scratchbird::core
         }
 
         PageManager::ReconstructionSummary page_summary{};
-        status = page_manager_->reconstructFromPages(&page_summary, ctx);
+        status = page_manager_->reconstructFromPages(&page_summary,
+                                                     ctx,
+                                                     state.clean_shutdown_marker);
         state.relinkable_chain_pages = page_summary.relinkable_chain_pages;
         state.cleanup_blocked_chain_pages = page_summary.cleanup_blocked_chain_pages;
         state.quarantinable_chain_pages = page_summary.quarantinable_chain_pages;
@@ -6509,6 +6515,92 @@ namespace scratchbird::core
         }
 
         return Status::OK;
+    }
+
+    auto Database::write_free_page_image_global(GPID gpid,
+                                                const void *buffer,
+                                                ErrorContext *ctx,
+                                                WritebackAttribution attribution) -> Status
+    {
+        if (buffer == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Buffer cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        int tablespace_fd = -1;
+        std::string unused_path;
+        const uint16_t tablespace_id = getTablespaceID(gpid);
+        const uint64_t page_number = getPageNumber(gpid);
+        Status route_status = resolveFilespaceRoute(tablespace_id,
+                                                    &tablespace_fd,
+                                                    &unused_path,
+                                                    ctx);
+        if (route_status != Status::OK)
+        {
+            return route_status;
+        }
+
+        attribution.filespace_id =
+            attribution.filespace_id == 0 ? tablespace_id : attribution.filespace_id;
+
+        MgaFailpointManager *failpoints = mga_failpoint_manager_.get();
+        if (failpoints != nullptr)
+        {
+            Status failpoint_status = failpoints->trip(
+                MgaFailpointTriggers::kWritebackPageWriteFailure,
+                {},
+                ctx);
+            if (failpoint_status != Status::OK)
+            {
+                noteWritebackFailure(failpoint_status,
+                                     classifyWritebackFailure(failpoint_status, 0, false),
+                                     attribution,
+                                     false,
+                                     ctx);
+                return failpoint_status;
+            }
+        }
+
+        const off_t offset = static_cast<off_t>(page_number) * static_cast<off_t>(page_size_);
+        size_t bytes_written = 0;
+        errno = 0;
+        if (!pwriteFully(tablespace_fd, buffer, page_size_, offset, &bytes_written))
+        {
+            char msg[256];
+            if (errno != 0)
+            {
+                snprintf(msg, sizeof(msg),
+                         "Write failed for free page image %lu in tablespace %u after %zu/%u bytes: %s",
+                         static_cast<unsigned long>(page_number),
+                         static_cast<unsigned int>(tablespace_id),
+                         bytes_written,
+                         page_size_,
+                         std::strerror(errno));
+            }
+            else
+            {
+                snprintf(msg,
+                         sizeof(msg),
+                         "Short write on free page image (%zu/%u bytes)",
+                         bytes_written,
+                         page_size_);
+            }
+            const Status failure_status = (errno == ENOSPC) ? Status::DISK_FULL : Status::IO_ERROR;
+            SET_ERROR_CONTEXT(ctx, failure_status, msg);
+            noteWritebackFailure(failure_status,
+                                 classifyWritebackFailure(failure_status, errno, false),
+                                 attribution,
+                                 false,
+                                 ctx);
+            return failure_status;
+        }
+
+        return mirrorShadowFilespaceWrite(tablespace_id,
+                                          static_cast<uint64_t>(offset),
+                                          buffer,
+                                          page_size_,
+                                          ctx);
     }
 
     auto Database::allocate_page_id_global(uint16_t tablespace_id, GPID *gpid_out,

@@ -1,0 +1,74 @@
+{
+  "metadata": {
+    "dialect_family": "firebird",
+    "target_role": "emulation",
+    "target_engine": "scratchbird-firebird",
+    "source_result_dir": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/results/ctest/20260311_144417",
+    "source_manifest": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/results/ctest/20260311_144417/RUN_MANIFEST.json",
+    "latest_seen_result_dir": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/results/ctest/20260311_144417",
+    "latest_seen_manifest": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/results/ctest/20260311_144417/RUN_MANIFEST.json"
+  },
+  "comparison_contract": {
+    "suite_family": "emulation-comparison",
+    "contract_id": "compatibility-emulation-compare-v1",
+    "expected_harness": "compatibility_converted_sql_ctest",
+    "dialect_family": "firebird",
+    "target_role": "emulation",
+    "target_engine": "scratchbird-firebird",
+    "contract_state": "eligible",
+    "pairwise_eligible": true,
+    "protocol_surface": "firebird_remote",
+    "parser_core": "v3",
+    "parser_mode": "emulation_surface_only",
+    "ctest_list_mode": "curated",
+    "ctest_list_identity": "config/ctest_list.txt",
+    "listed_tests": 12,
+    "execution_mode": "scratchbird_fb_emulation_client"
+  },
+  "summary": {
+    "total": 12,
+    "passed": 12,
+    "failed": 0,
+    "skipped": 0,
+    "pass_rate": 1.0,
+    "result": "passed"
+  },
+  "results": {
+    "manifest": {
+      "run_id": "20260311_144417",
+      "engine": "firebird",
+      "protocol_surface": "firebird_remote",
+      "parser_core": "v3",
+      "parser_mode": "emulation_surface_only",
+      "execution_mode": "scratchbird_fb_emulation_client",
+      "isql_binary": "/home/dcalford/CliWork/ScratchBird-driver/build/tracks/alpha/drivers/cli/sb_fb_isql",
+      "ctest_list_mode": "curated",
+      "ctest_list_file": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/config/ctest_list.txt",
+      "listed_tests": 12,
+      "status": "passed",
+      "failure_count": 0,
+      "results_dir": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/results/ctest/20260311_144417",
+      "isql_mode": "scratchbird",
+      "username": "SYSDBA",
+      "timestamp_utc": "2026-03-11T18:44:22Z"
+    },
+    "latest_seen_manifest": {
+      "run_id": "20260311_144417",
+      "engine": "firebird",
+      "protocol_surface": "firebird_remote",
+      "parser_core": "v3",
+      "parser_mode": "emulation_surface_only",
+      "execution_mode": "scratchbird_fb_emulation_client",
+      "isql_binary": "/home/dcalford/CliWork/ScratchBird-driver/build/tracks/alpha/drivers/cli/sb_fb_isql",
+      "ctest_list_mode": "curated",
+      "ctest_list_file": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/config/ctest_list.txt",
+      "listed_tests": 12,
+      "status": "passed",
+      "failure_count": 0,
+      "results_dir": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/results/ctest/20260311_144417",
+      "isql_mode": "scratchbird",
+      "username": "SYSDBA",
+      "timestamp_utc": "2026-03-11T18:44:22Z"
+    }
+  }
+}

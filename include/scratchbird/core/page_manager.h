@@ -290,9 +290,13 @@ namespace scratchbird::core
         // Flush FSM to disk
         auto flush(ErrorContext *ctx = nullptr) -> Status;
 
-        // Reconstruct FSM from actual page state (MGA-style recovery)
+        // Reconstruct FSM from actual page state (MGA-style recovery).
+        // When `preserve_loaded_allocations` is true, clean-shutdown restart keeps
+        // the already-persisted FSM authoritative for pages that were allocated but
+        // never initialized with a canonical page header before close.
         auto reconstructFromPages(ReconstructionSummary *summary_out = nullptr,
-                                  ErrorContext *ctx = nullptr) -> Status;
+                                  ErrorContext *ctx = nullptr,
+                                  bool preserve_loaded_allocations = false) -> Status;
 
         // === NEW: Tablespace Metrics (Phase 3, Task 3.1.5) ===
 

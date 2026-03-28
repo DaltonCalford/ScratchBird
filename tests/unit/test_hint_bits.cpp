@@ -96,8 +96,27 @@ protected:
 
     ID resolveDefaultSchema(ErrorContext *ctx)
     {
+        CatalogManager::SchemaInfo schema{};
+        Status status = db_.catalog_manager()->getSchema("main", schema, ctx);
+        if (status == Status::OK)
+        {
+            return schema.schema_id;
+        }
+
+        status = db_.catalog_manager()->getSchema("users.public", schema, ctx);
+        if (status == Status::OK)
+        {
+            return schema.schema_id;
+        }
+
+        status = db_.catalog_manager()->getSchema("public", schema, ctx);
+        if (status == Status::OK)
+        {
+            return schema.schema_id;
+        }
+
         std::vector<CatalogManager::SchemaInfo> schemas;
-        Status status = db_.catalog_manager()->listSchemas(schemas, ctx);
+        status = db_.catalog_manager()->listSchemas(schemas, ctx);
         if (status == Status::OK && !schemas.empty())
         {
             return schemas.front().schema_id;

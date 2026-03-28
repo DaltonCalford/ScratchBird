@@ -361,6 +361,44 @@ TEST_F(EngineIPCSessionHandlerTest, onCompiledQuery_Delete) {
     }
 }
 
+TEST_F(EngineIPCSessionHandlerTest, onCompiledQuery_DeleteAllVisibleRowsAcrossScanPages) {
+    {
+        core::ErrorContext ctx;
+        ASSERT_EQ(executeCompiledQuery(1,
+                                       "CREATE TABLE delete_all_test (id INT, payload TEXT)",
+                                       &ctx),
+                  core::Status::OK)
+            << "Failed to create delete_all_test: " << ctx.message;
+
+        const std::string payload(384, 'x');
+        for (int id = 0; id < 96; ++id) {
+            core::ErrorContext insert_ctx;
+            const std::string insert_sql =
+                "INSERT INTO delete_all_test VALUES (" + std::to_string(id) + ", '" +
+                payload + "')";
+            ASSERT_EQ(executeCompiledQuery(1, insert_sql, &insert_ctx), core::Status::OK)
+                << "Insert failed for id=" << id << ": " << insert_ctx.message;
+        }
+        handler_->reset();
+    }
+
+    {
+        core::ErrorContext ctx;
+        const auto status = executeCompiledQuery(1, "DELETE FROM delete_all_test", &ctx);
+        EXPECT_EQ(status, core::Status::OK) << ctx.message;
+        EXPECT_EQ(handler_->lastCommandTag(), "DELETE 96");
+        EXPECT_EQ(handler_->lastRowsAffected(), 96u);
+    }
+
+    {
+        core::ErrorContext ctx;
+        handler_->reset();
+        ASSERT_EQ(executeCompiledQuery(1, "SELECT * FROM delete_all_test", &ctx), core::Status::OK)
+            << ctx.message;
+        EXPECT_TRUE(handler_->lastRows().empty());
+    }
+}
+
 TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_TextPathDisabled) {
     core::ErrorContext ctx;
     auto status = handler_->onSimpleQuery(1, "SELECT 1", &ctx);

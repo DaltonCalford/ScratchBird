@@ -573,6 +573,13 @@ namespace scratchbird
                                      const void *buffer,
                                      ErrorContext *ctx = nullptr,
                                      WritebackAttribution attribution = {});
+            // Raw free-page publication for allocator growth. This uses the same
+            // failpoint/fencing/shadow-write contract as ordinary writeback but
+            // does not canonicalize the buffer as a live page image.
+            Status write_free_page_image_global(GPID gpid,
+                                                const void *buffer,
+                                                ErrorContext *ctx = nullptr,
+                                                WritebackAttribution attribution = {});
             bool write_admission_enforcement_suspended() const
             {
                 return write_admission_enforcement_suspended_;

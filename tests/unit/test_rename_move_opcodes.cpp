@@ -350,6 +350,15 @@ TEST_F(RenameMoveOpcodeV3Test, PostgresExistsCompilesToSubqueryExistsOpcode)
     EXPECT_TRUE(containsOpcodeDeep(result.bytecode(), sblr_v3::Opcode::SBLR3_SUBQUERY_EXISTS));
 }
 
+TEST_F(RenameMoveOpcodeV3Test, PostgresRepeatCompilesToDedicatedRepeatOpcode)
+{
+    PostgreSQLQueryCompiler compiler(db_.get());
+    auto result = compiler.compile("SELECT repeat('ab', 3)");
+    ASSERT_TRUE(result.success()) << (result.errors().empty() ? "" : result.errors()[0]);
+    EXPECT_TRUE(containsOpcodeDeep(result.bytecode(), sblr_v3::Opcode::SBLR3_REPEAT));
+    EXPECT_FALSE(containsOpcodeDeep(result.bytecode(), sblr_v3::Opcode::SBLR3_EXPR_FUNCTION_CALL));
+}
+
 TEST_F(RenameMoveOpcodeV3Test, PostgresSerialColumnsEmitIdentityOpcode)
 {
     PostgreSQLQueryCompiler compiler(db_.get());

@@ -5781,6 +5781,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitFunctionCall(parser::v3::Funct
         {"COALESCE", Opcode::SBLR3_COALESCE},
         {"NULLIF", Opcode::SBLR3_NULLIF},
         {"POWER", Opcode::SBLR3_FUNC_POWER},
+        {"REPEAT", Opcode::SBLR3_REPEAT},
         {"ABS", Opcode::SBLR3_FUNC_ABS},
         {"ACOS", Opcode::SBLR3_FUNC_ACOS},
         {"ACOSH", Opcode::SBLR3_FUNC_ACOSH},

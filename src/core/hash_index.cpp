@@ -12,6 +12,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/hash_functions.h"
+#include "scratchbird/core/oversized_value_lifecycle.h"
 #include "scratchbird/core/transaction_manager.h"  // For isVersionVisible()
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/gpid.h"
@@ -794,6 +795,21 @@ namespace scratchbird
                 }
                 else
                 {
+                    OversizedValueLifecycleInput overflow_input{};
+                    overflow_input.family = OversizedValueFamily::hash_overflow;
+                    overflow_input.overflow_allocation_requested = true;
+                    const OversizedValueLifecycleDecision overflow_decision =
+                        classifyOversizedValueLifecycle(overflow_input);
+                    if (overflow_decision.action !=
+                        OversizedValueActionKind::allocate_overflow_page)
+                    {
+                        SET_ERROR_CONTEXT(ctx,
+                                          Status::INVALID_ARGUMENT,
+                                          overflow_decision.reason_code);
+                        unpinIndexPage(current_page, false, ctx);
+                        return Status::INVALID_ARGUMENT;
+                    }
+
                     // Add overflow page
                     uint32_t overflow_page = 0;
                     status = allocateOverflowPage(&overflow_page, ctx);
@@ -2053,29 +2069,39 @@ namespace scratchbird
                     // Compact entries by removing deleted ones
                     if (bucket->hbp_deleted_count > 0)
                     {
-                        uint16_t write_idx = 0;
-                        for (uint16_t read_idx = 0; read_idx < bucket->hbp_entry_count; read_idx++)
+                        OversizedValueLifecycleInput overflow_compaction_input{};
+                        overflow_compaction_input.family = OversizedValueFamily::hash_overflow;
+                        overflow_compaction_input.compaction_required = true;
+                        const OversizedValueLifecycleDecision overflow_compaction_decision =
+                            classifyOversizedValueLifecycle(overflow_compaction_input);
+
+                        if (overflow_compaction_decision.action ==
+                            OversizedValueActionKind::compact_overflow_chain)
                         {
-                            HashEntry entry = loadHashEntry(&bucket->hbp_entries[read_idx]);
-
-                            // Keep non-deleted entries (deleted entries have he_xmax set or invalid TID)
-                            if (entry.he_xmax == 0 && entry.getTID() != INVALID_TID)
+                            uint16_t write_idx = 0;
+                            for (uint16_t read_idx = 0; read_idx < bucket->hbp_entry_count; read_idx++)
                             {
-                                if (write_idx != read_idx)
+                                HashEntry entry = loadHashEntry(&bucket->hbp_entries[read_idx]);
+
+                                // Keep non-deleted entries (deleted entries have he_xmax set or invalid TID)
+                                if (entry.he_xmax == 0 && entry.getTID() != INVALID_TID)
                                 {
-                                    storeHashEntry(&bucket->hbp_entries[write_idx], entry);
+                                    if (write_idx != read_idx)
+                                    {
+                                        storeHashEntry(&bucket->hbp_entries[write_idx], entry);
+                                    }
+                                    write_idx++;
                                 }
-                                write_idx++;
+                                else
+                                {
+                                    total_deleted_removed++;
+                                }
                             }
-                            else
-                            {
-                                total_deleted_removed++;
-                            }
-                        }
 
-                        // Update counts
-                        bucket->hbp_entry_count = write_idx;
-                        bucket->hbp_deleted_count = 0;
+                            // Update counts
+                            bucket->hbp_entry_count = write_idx;
+                            bucket->hbp_deleted_count = 0;
+                        }
                     }
 
                     uint32_t next_page = bucket->hbp_overflow_page;
@@ -2084,34 +2110,45 @@ namespace scratchbird
                     // Only free overflow pages (not the primary bucket page)
                     if (!is_first_page && bucket->hbp_entry_count == 0)
                     {
-                        // This overflow page is empty - unlink it from the chain
-                        // First, update the previous page's overflow pointer
-                        if (prev_page != 0)
+                        OversizedValueLifecycleInput overflow_unlink_input{};
+                        overflow_unlink_input.family = OversizedValueFamily::hash_overflow;
+                        overflow_unlink_input.overflow_page_empty = true;
+                        overflow_unlink_input.rewrite_publication_complete = true;
+                        const OversizedValueLifecycleDecision overflow_unlink_decision =
+                            classifyOversizedValueLifecycle(overflow_unlink_input);
+
+                        if (overflow_unlink_decision.action ==
+                            OversizedValueActionKind::unlink_empty_overflow_page)
                         {
-                            uint8_t *prev_data = nullptr;
-                            Status prev_status = pinIndexPage(prev_page, (void **)&prev_data, ctx);
-                            if (prev_status == Status::OK)
+                            // This overflow page is empty - unlink it from the chain
+                            // First, update the previous page's overflow pointer
+                            if (prev_page != 0)
                             {
-                                auto *prev_bucket = reinterpret_cast<SBHashBucketPage *>(prev_data);
-                                // Skip this empty page - point to the next one
-                                prev_bucket->hbp_overflow_page = next_page;
-                                unpinIndexPage(prev_page, true, ctx);
+                                uint8_t *prev_data = nullptr;
+                                Status prev_status = pinIndexPage(prev_page, (void **)&prev_data, ctx);
+                                if (prev_status == Status::OK)
+                                {
+                                    auto *prev_bucket = reinterpret_cast<SBHashBucketPage *>(prev_data);
+                                    // Skip this empty page - point to the next one
+                                    prev_bucket->hbp_overflow_page = next_page;
+                                    unpinIndexPage(prev_page, true, ctx);
+                                }
                             }
-                        }
 
-                        // Free this empty overflow page via page manager
-                        auto page_mgr = db_->page_manager();
-                        if (page_mgr)
-                        {
-                            // Mark page as free for reuse
-                            // Note: freePage marks the page in the free space map
-                            page_mgr->freePageGlobal(indexGPID(current_page), ctx);
-                        }
+                            // Free this empty overflow page via page manager
+                            auto page_mgr = db_->page_manager();
+                            if (page_mgr)
+                            {
+                                // Mark page as free for reuse
+                                // Note: freePage marks the page in the free space map
+                                page_mgr->freePageGlobal(indexGPID(current_page), ctx);
+                            }
 
-                        unpinIndexPage(current_page, true, ctx);
-                        // Don't update prev_page since we removed current_page
-                        current_page = next_page;
-                        continue;
+                            unpinIndexPage(current_page, true, ctx);
+                            // Don't update prev_page since we removed current_page
+                            current_page = next_page;
+                            continue;
+                        }
                     }
 
                     unpinIndexPage(current_page, true, ctx);

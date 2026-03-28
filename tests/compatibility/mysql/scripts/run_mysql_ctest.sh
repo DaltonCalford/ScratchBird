@@ -101,6 +101,11 @@ UPSTREAM_MTR_CLIENT_BINDIR="${SCRATCHBIRD_MY_MTR_CLIENT_BINDIR:-}"
 UPSTREAM_MTR_SUITE="${SCRATCHBIRD_MY_MTR_SUITE:-main}"
 UPSTREAM_MTR_DO_TEST="${SCRATCHBIRD_MY_MTR_DO_TEST:-}"
 UPSTREAM_MTR_EXTRA_ARGS="${SCRATCHBIRD_MY_MTR_EXTRA_ARGS:-}"
+COMPARISON_CONTRACT_ID="compatibility-emulation-compare-v1"
+COMPARISON_SUITE_FAMILY="emulation-comparison"
+COMPARISON_TARGET_ROLE="$([[ "$REQUIRE_SB_EMULATION" == "1" ]] && echo "emulation" || echo "original")"
+COMPARISON_TARGET_ID="$([[ "$REQUIRE_SB_EMULATION" == "1" ]] && echo "scratchbird-mysql" || echo "upstream-mysql")"
+COMPARISON_HARNESS="$([[ "$USE_UPSTREAM_MTR" == "1" ]] && echo "upstream_mysql_test_run" || echo "compatibility_converted_sql_ctest")"
 
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 RESULTS_DIR="${MY_DIR}/results/ctest/${RUN_ID}"
@@ -197,6 +202,11 @@ write_run_manifest() {
   "protocol_surface": "mysql_8x",
   "parser_core": "v3",
   "parser_mode": "emulation_surface_only",
+  "comparison_suite_family": "$(json_escape "$COMPARISON_SUITE_FAMILY")",
+  "comparison_contract_id": "$(json_escape "$COMPARISON_CONTRACT_ID")",
+  "comparison_harness": "$(json_escape "$COMPARISON_HARNESS")",
+  "comparison_target_role": "$(json_escape "$COMPARISON_TARGET_ROLE")",
+  "comparison_target_id": "$(json_escape "$COMPARISON_TARGET_ID")",
   "execution_mode": "$([[ "$USE_UPSTREAM_MTR" == "1" ]] && echo "upstream_mysql_test_run" || echo "converted_sql_ctest")",
   "client_mode": "$(json_escape "$RESOLVED_CLIENT_MODE")",
   "client_binary": "$(json_escape "$MYSQL_CLI_BIN")",
@@ -414,6 +424,12 @@ sanitize_mysql_sql() {
         if (index(line, "||") > 0) {
           next
         }
+        # The donor MySQL curated lane still includes RAND() probes, but the
+        # ScratchBird MySQL emulation surface does not expose RAND() yet.
+        # For the converted compatibility runner we only need a stable
+        # value-producing expression, not donor RNG parity, so normalize
+        # RAND(<optional-seed>) to a deterministic literal before execution.
+        gsub(/[Rr][Aa][Nn][Dd][[:space:]]*\([^)]*\)/, "0.5", line)
         gsub(/`mysqltest`\./, "", line)
         gsub(/mysqltest\./, "", line)
         gsub(/`test`\./, "", line)

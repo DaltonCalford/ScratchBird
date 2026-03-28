@@ -522,53 +522,23 @@ namespace scratchbird::core
         // Free capacity must be persisted as raw zero images, not through the
         // canonical page writer. The canonical page writer stamps page-id,
         // generation, and checksum fields, which would make an unused free page
-        // look like damaged allocated state during restart reconstruction.
+        // look like damaged allocated state during restart reconstruction. Raw
+        // free-page publication still uses the same writeback failpoint and
+        // write-admission fence model as ordinary storage writes.
+        WritebackAttribution growth_attribution{};
+        growth_attribution.policy_domain = WritebackPolicyDomain::ALLOCATOR;
         for (uint32_t i = 0; i < num_pages; i++)
         {
             memset(buffer.get(), 0, page_size_);
 
-            const off_t offset =
-                static_cast<off_t>(total_pages_ + i) * static_cast<off_t>(page_size_);
-            size_t bytes_written = 0;
-            errno = 0;
-            if (!writeFullyAtOffset(db_->fd(),
-                                    buffer.get(),
-                                    page_size_,
-                                    offset,
-                                    &bytes_written))
+            const GPID free_page_gpid = makeGPID(PRIMARY_TABLESPACE_ID, total_pages_ + i);
+            Status write_status = db_->write_free_page_image_global(free_page_gpid,
+                                                                    buffer.get(),
+                                                                    ctx,
+                                                                    growth_attribution);
+            if (write_status != Status::OK)
             {
-                if (errno != 0)
-                {
-                    char msg[256];
-                    snprintf(msg,
-                             sizeof(msg),
-                             "Failed to extend free page %u after %zu/%u bytes: %s",
-                             total_pages_ + i,
-                             bytes_written,
-                             page_size_,
-                             std::strerror(errno));
-                    SET_ERROR_CONTEXT(ctx,
-                                      errno == ENOSPC ? Status::DISK_FULL : Status::IO_ERROR,
-                                      msg);
-                }
-                else
-                {
-                    SET_ERROR_CONTEXT(ctx,
-                                      Status::IO_ERROR,
-                                      "Short write extending free page image");
-                }
-                return errno == ENOSPC ? Status::DISK_FULL : Status::IO_ERROR;
-            }
-
-            Status shadow_status = db_->mirrorShadowFilespaceWrite(
-                PRIMARY_TABLESPACE_ID,
-                static_cast<uint64_t>(offset),
-                buffer.get(),
-                page_size_,
-                ctx);
-            if (shadow_status != Status::OK)
-            {
-                return shadow_status;
+                return write_status;
             }
         }
 
@@ -730,11 +700,31 @@ namespace scratchbird::core
     }
 
     auto PageManager::reconstructFromPages(ReconstructionSummary *summary_out,
-                                           ErrorContext *ctx) -> Status
+                                           ErrorContext *ctx,
+                                           bool preserve_loaded_allocations) -> Status
     {
         std::lock_guard<std::recursive_mutex> lock(mutex_);
 
         LOG_INFO(STORAGE, "FSM reconstruction: Scanning %u pages...", total_pages_);
+
+        const std::vector<uint8_t> loaded_bitmap =
+            preserve_loaded_allocations ? bitmap_ : std::vector<uint8_t>{};
+        auto wasLoadedAllocated = [&](uint32_t page_id) -> bool
+        {
+            if (!preserve_loaded_allocations || page_id >= total_pages_ ||
+                loaded_bitmap.empty())
+            {
+                return false;
+            }
+
+            const uint32_t byte_index = page_id / 8;
+            const uint32_t bit_index = page_id % 8;
+            if (byte_index >= loaded_bitmap.size())
+            {
+                return false;
+            }
+            return (loaded_bitmap[byte_index] & (1u << bit_index)) != 0;
+        };
 
         // Reset bitmap and counters
         free_pages_ = 0;
@@ -775,23 +765,47 @@ namespace scratchbird::core
 
             if (status == Status::IO_ERROR)
             {
-                // Page doesn't exist yet (file not extended to this point)
-                // Mark as free
-                setBit(page_id, false);
-                free_pages_++;
-                empty_pages++;
+                if (wasLoadedAllocated(page_id))
+                {
+                    // Clean restart keeps the persisted FSM authoritative for
+                    // allocated-but-never-initialized pages. Dirty restart may
+                    // reclaim them, but a clean close must not silently return
+                    // the same page to the free set.
+                    setBit(page_id, true);
+                    allocated_count++;
+                    corrupt_pages++;
+                }
+                else
+                {
+                    // Page doesn't exist yet (file not extended to this point)
+                    // Mark as free
+                    setBit(page_id, false);
+                    free_pages_++;
+                    empty_pages++;
+                }
                 continue;
             }
 
             if (status == Status::PAGE_CORRUPT &&
                 isAllZeroPage(buffer.get(), page_size_))
             {
-                // Fresh free pages are persisted as all-zero images until they
-                // are claimed and initialized by an allocator caller.
-                // Reconstruction must treat those images as free capacity.
-                setBit(page_id, false);
-                free_pages_++;
-                empty_pages++;
+                if (wasLoadedAllocated(page_id))
+                {
+                    // Clean shutdown may legitimately leave an allocated page
+                    // without a canonical header yet. Preserve the published FSM
+                    // allocation instead of reclaiming it.
+                    setBit(page_id, true);
+                    allocated_count++;
+                }
+                else
+                {
+                    // Fresh free pages are persisted as all-zero images until they
+                    // are claimed and initialized by an allocator caller.
+                    // Reconstruction must treat those images as free capacity.
+                    setBit(page_id, false);
+                    free_pages_++;
+                    empty_pages++;
+                }
                 continue;
             }
 
@@ -885,11 +899,19 @@ namespace scratchbird::core
             }
             else
             {
-                // Page is uninitialized or corrupt - mark as free
-                // This allows reuse of pages that were never properly initialized
-                setBit(page_id, false);
-                free_pages_++;
-                empty_pages++;
+                if (wasLoadedAllocated(page_id))
+                {
+                    setBit(page_id, true);
+                    allocated_count++;
+                }
+                else
+                {
+                    // Page is uninitialized or corrupt - mark as free
+                    // This allows reuse of pages that were never properly initialized
+                    setBit(page_id, false);
+                    free_pages_++;
+                    empty_pages++;
+                }
             }
         }
 

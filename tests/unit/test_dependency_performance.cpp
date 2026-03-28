@@ -61,7 +61,8 @@ protected:
             ASSERT_EQ(catalog->createDependency(
                 generateUuidV7(), CatalogManager::ObjectType::VIEW,
                 referenced_id, CatalogManager::ObjectType::TABLE,
-                CatalogManager::DependencyType::NORMAL, dep_id, &ctx), Status::OK);
+                CatalogManager::DependencyType::NORMAL, dep_id, &ctx), Status::OK)
+                << ctx.message;
         }
     }
 };
