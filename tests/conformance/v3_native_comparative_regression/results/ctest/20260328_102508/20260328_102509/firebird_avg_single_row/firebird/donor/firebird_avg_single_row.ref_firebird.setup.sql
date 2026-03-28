@@ -1,0 +1,3 @@
+CREATE TABLE vncr_77ac2b_test(id INTEGER NOT NULL);
+INSERT INTO vncr_77ac2b_test VALUES (5);
+COMMIT;

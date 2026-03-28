@@ -73953,6 +73953,74 @@ namespace scratchbird
 
                         std::vector<core::CatalogManager::ColumnInfo> using_columns;
                         std::vector<std::vector<Value>> using_rows;
+                        struct DeleteSourceBinding {
+                            std::string alias;
+                            std::string table_name;
+                            size_t offset = 0;
+                            size_t width = 0;
+                        };
+                        auto normalize_delete_name = [](const std::string& name) {
+                            return core::IdentifierUtils::toUpper(name);
+                        };
+                        auto add_delete_alias_bindings =
+                            [&](std::unordered_map<std::string, size_t>& out,
+                                const std::string& qualifier,
+                                const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                                size_t base_index,
+                                size_t width) {
+                                if (qualifier.empty() || width == 0 || base_index >= columns.size())
+                                {
+                                    return;
+                                }
+                                auto add_for_qualifier = [&](const std::string& raw_qualifier) {
+                                    if (raw_qualifier.empty())
+                                    {
+                                        return;
+                                    }
+                                    const std::string q = normalize_delete_name(raw_qualifier);
+                                    const size_t max_count = std::min(width, columns.size() - base_index);
+                                    for (size_t i = 0; i < max_count; ++i)
+                                    {
+                                        out[q + "." +
+                                            normalize_delete_name(columns[base_index + i].column_name)] =
+                                            base_index + i;
+                                    }
+                                };
+                                add_for_qualifier(qualifier);
+                                auto parts = splitSchemaComponents(qualifier);
+                                if (!parts.empty())
+                                {
+                                    add_for_qualifier(parts.back());
+                                }
+                            };
+                        auto build_delete_alias_map =
+                            [&](const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                                const std::vector<DeleteSourceBinding>& bindings) {
+                                std::unordered_map<std::string, size_t> out;
+                                for (const auto& binding : bindings)
+                                {
+                                    add_delete_alias_bindings(
+                                        out, binding.alias, columns, binding.offset, binding.width);
+                                    add_delete_alias_bindings(
+                                        out, binding.table_name, columns, binding.offset, binding.width);
+                                }
+                                return out;
+                            };
+                        std::vector<DeleteSourceBinding> delete_bindings;
+                        delete_bindings.push_back(DeleteSourceBinding{
+                            table_info.table_name.empty() ? table_path : table_info.table_name,
+                            table_info.table_name.empty() ? table_path : table_info.table_name,
+                            0,
+                            all_columns.size()});
+                        auto it_alias = payload.find("alias");
+                        if (it_alias != payload.end())
+                        {
+                            std::string delete_alias;
+                            if (getString(payload, "alias", delete_alias) && !delete_alias.empty())
+                            {
+                                delete_bindings[0].alias = delete_alias;
+                            }
+                        }
                         auto it_using = payload.find("using");
                         auto it_joins = payload.find("using_joins");
                         bool has_using = (it_using != payload.end() && !it_using->second.isNull());
@@ -73973,6 +74041,12 @@ namespace scratchbird
                             {
                                 return base_res;
                             }
+                            std::vector<DeleteSourceBinding> using_bindings;
+                            using_bindings.push_back(DeleteSourceBinding{
+                                base_table.alias,
+                                base_table.info.table_name,
+                                all_columns.size(),
+                                base_table.columns.size()});
 
                             struct JoinSpec {
                                 TableData table;
@@ -74097,6 +74171,11 @@ namespace scratchbird
                                     spec.has_condition = has_cond;
                                     spec.using_cols = std::move(using_cols);
                                     spec.is_natural = natural_join;
+                                    using_bindings.push_back(DeleteSourceBinding{
+                                        spec.table.alias,
+                                        spec.table.info.table_name,
+                                        0,
+                                        spec.table.columns.size()});
                                     joins.push_back(std::move(spec));
                                 }
                             }
@@ -74109,6 +74188,17 @@ namespace scratchbird
                                 std::vector<std::vector<Value>> new_rows;
                                 std::vector<core::CatalogManager::ColumnInfo> combined_cols = all_cols;
                                 combined_cols.insert(combined_cols.end(), right.columns.begin(), right.columns.end());
+                                std::vector<DeleteSourceBinding> join_bindings = using_bindings;
+                                if (!join_bindings.empty())
+                                {
+                                    size_t next_offset = all_columns.size();
+                                    for (auto& binding : join_bindings)
+                                    {
+                                        binding.offset = next_offset;
+                                        next_offset += binding.width;
+                                    }
+                                    current_row_alias_map_ = build_delete_alias_map(combined_cols, join_bindings);
+                                }
 
                                 std::vector<std::string> using_cols = join.using_cols;
                                 if (join.is_natural)
@@ -74229,6 +74319,15 @@ namespace scratchbird
 
                             using_columns = std::move(all_cols);
                             using_rows = std::move(combined);
+                            size_t next_offset = all_columns.size();
+                            for (auto& binding : using_bindings)
+                            {
+                                binding.offset = next_offset;
+                                next_offset += binding.width;
+                            }
+                            delete_bindings.insert(delete_bindings.end(),
+                                                   using_bindings.begin(),
+                                                   using_bindings.end());
                         }
                         else
                         {
@@ -74296,6 +74395,7 @@ namespace scratchbird
 
                         std::vector<core::CatalogManager::ColumnInfo> combined_columns = all_columns;
                         combined_columns.insert(combined_columns.end(), using_columns.begin(), using_columns.end());
+                        auto delete_alias_map = build_delete_alias_map(combined_columns, delete_bindings);
 
                         uint64_t xid = db_->storage_engine()->getCurrentXid();
                         int deleted = 0;
@@ -74326,9 +74426,11 @@ namespace scratchbird
                                 {
                                     current_row_values_ = &combined;
                                     current_row_columns_ = &combined_columns;
+                                    current_row_alias_map_ = delete_alias_map;
                                     Value cond = evalExpr(where_inst);
                                     current_row_values_ = nullptr;
                                     current_row_columns_ = nullptr;
+                                    current_row_alias_map_.clear();
                                     if (!predicateIsTrue(cond))
                                     {
                                         continue;
@@ -74430,12 +74532,14 @@ namespace scratchbird
                                 combined_after.insert(combined_after.end(), matched_using.begin(), matched_using.end());
                                 current_row_values_ = &combined_after;
                                 current_row_columns_ = &combined_columns;
+                                current_row_alias_map_ = delete_alias_map;
                                 for (const auto& rinst : returning_items)
                                 {
                                     out_row.push_back(evalExpr(rinst));
                                 }
                                 current_row_values_ = nullptr;
                                 current_row_columns_ = nullptr;
+                                current_row_alias_map_.clear();
                                 returning_rs->addRow(std::move(out_row));
                             }
                         }

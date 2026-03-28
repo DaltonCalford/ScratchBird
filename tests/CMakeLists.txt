@@ -2798,6 +2798,7 @@ set(SCRATCHBIRD_COMPAT_MYSQL_RUNNER "${SCRATCHBIRD_COMPAT_ROOT}/mysql/scripts/ru
 set(SCRATCHBIRD_COMPAT_POSTGRESQL_RUNNER "${SCRATCHBIRD_COMPAT_ROOT}/postgresql/scripts/run_postgresql_ctest.sh")
 set(SCRATCHBIRD_COMPAT_SCRATCHBIRD_NATIVE_RUNNER "${SCRATCHBIRD_COMPAT_ROOT}/scratchbird/scripts/run_scratchbird_native_ctest.sh")
 set(SCRATCHBIRD_CONFORMANCE_V3_NATIVE_INET_RUNNER "${CMAKE_SOURCE_DIR}/tests/conformance/v3_native_inet/run_v3_native_inet_ctest.sh")
+set(SCRATCHBIRD_CONFORMANCE_V3_NATIVE_COMPARATIVE_RUNNER "${CMAKE_SOURCE_DIR}/tests/conformance/v3_native_comparative_regression/run_v3_native_comparative_regression_ctest.sh")
 set(SCRATCHBIRD_CONFORMANCE_PUBLIC_BETA_REQUIRED_GATE_RUNNER "${CMAKE_SOURCE_DIR}/tests/conformance/public_beta/run_required_public_beta_gate.sh")
 set(SCRATCHBIRD_COMPAT_EXAMPLE_DB_MANAGER "${SCRATCHBIRD_COMPAT_ROOT}/scripts/manage_example_db.sh")
 set(SCRATCHBIRD_COMPAT_VERIFY_RUNNER "${SCRATCHBIRD_COMPAT_ROOT}/scripts/verify_required_emulation_tests.sh")
@@ -2885,6 +2886,26 @@ if(EXISTS "${SCRATCHBIRD_CONFORMANCE_V3_NATIVE_INET_RUNNER}")
             ENVIRONMENT "${SCRATCHBIRD_COMPAT_EXAMPLE_NATIVE_ENV}"
             RUN_SERIAL TRUE
             DEPENDS "CompatibilityScratchBirdNative"
+        )
+    endif()
+endif()
+
+if(EXISTS "${SCRATCHBIRD_CONFORMANCE_V3_NATIVE_COMPARATIVE_RUNNER}")
+    add_test(
+        NAME ConformanceV3NativeComparativeRegression
+        COMMAND bash "${SCRATCHBIRD_CONFORMANCE_V3_NATIVE_COMPARATIVE_RUNNER}"
+    )
+    set_tests_properties(ConformanceV3NativeComparativeRegression PROPERTIES
+        LABELS "integration;conformance;v3;parser;native;comparative;linux_only"
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION}
+        SKIP_RETURN_CODE 77
+    )
+    if(EXISTS "${SCRATCHBIRD_COMPAT_EXAMPLE_DB_MANAGER}")
+        set_tests_properties(ConformanceV3NativeComparativeRegression PROPERTIES
+            FIXTURES_REQUIRED "${SCRATCHBIRD_COMPAT_EXAMPLE_FIXTURE}"
+            ENVIRONMENT "${SCRATCHBIRD_COMPAT_EXAMPLE_NATIVE_ENV}"
+            RUN_SERIAL TRUE
+            DEPENDS "ConformanceV3NativeParserInet;CompatibilityFirebird;CompatibilityMySQL;CompatibilityPostgreSQL"
         )
     endif()
 endif()

@@ -1,0 +1,118 @@
+{
+  "metadata": {
+    "source_result_dir": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508",
+    "artifact_dir": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509",
+    "manifest": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/RUN_MANIFEST.json",
+    "summary_json": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/comparative_summary.json",
+    "engine_csv": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/comparative_engine_runs.csv"
+  },
+  "comparison_contract": {
+    "suite_family": "native-comparative-regression",
+    "contract_id": "native-v3-comparative-regression-v1",
+    "expected_harness": "static_translated_regression_corpus",
+    "translation_contract": {
+      "translation_contract_id": "vncr-frozen-static-corpus-v1",
+      "required_translation_mode": "static_native_v3",
+      "runtime_translation_allowed": false,
+      "runtime_substitution_only": [
+        "__VNCR_NS__"
+      ],
+      "translation_inventory_csv": "comparative_translation_inventory.csv",
+      "validated_cases": 14,
+      "validated_sql_artifacts": 60,
+      "native_sql_artifacts": 30,
+      "donor_sql_artifacts": 30,
+      "corpus_fingerprint_sha256": "e8e0fbdec9ee4abf815ff524bbab42bbcec33f609431bdd2ff08b46253b3c070"
+    },
+    "target_engine": "upstream-postgresql",
+    "target_role": "original",
+    "parser_core": "v3",
+    "parser_mode": "donor_reference"
+  },
+  "summary": {
+    "total_cases": 5,
+    "exec_ok": 4,
+    "exec_error": 1,
+    "exec_failed": 0,
+    "positive_cases": 4,
+    "negative_cases": 1,
+    "avg_exec_elapsed_ms": 51.2
+  },
+  "results": [
+    {
+      "case_id": "postgresql_select_ordered_predicate",
+      "engine_id": "ref_postgresql",
+      "dialect_family": "postgresql",
+      "role": "donor",
+      "expectation": "must_match",
+      "behavior_class": "select_ordered_predicate",
+      "translation_mode": "static_native_v3",
+      "exec_status": "ok",
+      "sqlstate": "00000",
+      "assert_count": "3",
+      "exec_elapsed_ms": "44",
+      "donor_source_path": "tests/compatibility/postgresql/converted/core/select.sql",
+      "donor_converted_path": "tests/compatibility/postgresql/converted/core/select.sql"
+    },
+    {
+      "case_id": "postgresql_insert_defaults_values",
+      "engine_id": "ref_postgresql",
+      "dialect_family": "postgresql",
+      "role": "donor",
+      "expectation": "must_match",
+      "behavior_class": "insert_default_and_values",
+      "translation_mode": "static_native_v3",
+      "exec_status": "ok",
+      "sqlstate": "00000",
+      "assert_count": "2",
+      "exec_elapsed_ms": "59",
+      "donor_source_path": "tests/compatibility/postgresql/converted/core/insert.sql",
+      "donor_converted_path": "tests/compatibility/postgresql/converted/core/insert.sql"
+    },
+    {
+      "case_id": "postgresql_update_target_qualifier_error",
+      "engine_id": "ref_postgresql",
+      "dialect_family": "postgresql",
+      "role": "donor",
+      "expectation": "must_fail_same_class",
+      "behavior_class": "update_target_column_qualification_error",
+      "translation_mode": "static_native_v3",
+      "exec_status": "error",
+      "sqlstate": "42000",
+      "assert_count": "0",
+      "exec_elapsed_ms": "15",
+      "donor_source_path": "tests/compatibility/postgresql/converted/core/update.sql",
+      "donor_converted_path": "tests/compatibility/postgresql/converted/core/update.sql"
+    },
+    {
+      "case_id": "postgresql_delete_alias_visibility",
+      "engine_id": "ref_postgresql",
+      "dialect_family": "postgresql",
+      "role": "donor",
+      "expectation": "must_match",
+      "behavior_class": "delete_alias_visibility",
+      "translation_mode": "static_native_v3",
+      "exec_status": "ok",
+      "sqlstate": "00000",
+      "assert_count": "2",
+      "exec_elapsed_ms": "64",
+      "donor_source_path": "tests/compatibility/postgresql/converted/core/delete.sql",
+      "donor_converted_path": "tests/compatibility/postgresql/converted/core/delete.sql"
+    },
+    {
+      "case_id": "postgresql_join_using",
+      "engine_id": "ref_postgresql",
+      "dialect_family": "postgresql",
+      "role": "donor",
+      "expectation": "must_match",
+      "behavior_class": "join_using_alias_projection",
+      "translation_mode": "static_native_v3",
+      "exec_status": "ok",
+      "sqlstate": "00000",
+      "assert_count": "3",
+      "exec_elapsed_ms": "74",
+      "donor_source_path": "tests/compatibility/postgresql/converted/core/join.sql",
+      "donor_converted_path": "tests/compatibility/postgresql/converted/core/join.sql"
+    }
+  ]
+}

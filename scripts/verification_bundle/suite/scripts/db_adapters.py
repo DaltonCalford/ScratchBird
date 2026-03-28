@@ -77,12 +77,39 @@ def resolve_sql_path(sql_ref: str, workspace_root: Path) -> Path:
 
 
 def _extract_sqlstate(combined: str) -> str:
+    m = re.search(r"SQLSTATE\s*=\s*([0-9A-Z]{5})", combined, re.IGNORECASE)
+    if m:
+        return m.group(1)
     m = re.search(r"\(([0-9A-Z]{5})\)", combined)
     if m:
         return m.group(1)
-    m = re.search(r"\b([0-9A-Z]{5})\b", combined)
-    if m:
-        return m.group(1)
+    for match in re.finditer(r"\b([0-9A-Z]{5})\b", combined):
+        candidate = match.group(1)
+        if any(ch.isdigit() for ch in candidate):
+            return candidate
+
+    lowered = combined.lower()
+    syntax_markers = (
+        " does not exist",
+        "expected '=' in set clause",
+        "requires from",
+        "group by projection not in grouping set",
+        "syntax error",
+        "unsuccessful metadata update",
+        "unknown column",
+        "column ",
+    )
+    if any(marker in lowered for marker in syntax_markers):
+        return "42000"
+
+    connection_markers = (
+        "connection refused",
+        "failed to establish a connection",
+        "unable to complete network request",
+        "connection failed",
+    )
+    if any(marker in lowered for marker in connection_markers):
+        return "08006"
     return "00000"
 
 

@@ -1,0 +1,5 @@
+
+CONCATENATION                                                  
+============================================================== 
+ASSERT|firebird_delete_all_rows|remaining|0                    
+

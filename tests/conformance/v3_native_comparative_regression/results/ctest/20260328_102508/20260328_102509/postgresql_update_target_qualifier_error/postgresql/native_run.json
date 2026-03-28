@@ -1,0 +1,38 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\nRows affected: 1\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 1363,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/postgresql_update_target_qualifier_error/postgresql/native/raw/scratchbird_native.setup.06bbfac58e28.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/postgresql_update_target_qualifier_error/postgresql/native/raw/scratchbird_native.setup.06bbfac58e28.stderr.txt"
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "42000",
+    "message": "Stopping due to error (SET BAIL is ON)",
+    "stdout": "\n\nError: Expected '=' in SET clause\nStopping due to error (SET BAIL is ON)\n",
+    "stderr": "",
+    "elapsed_ms": 916,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/postgresql_update_target_qualifier_error/postgresql/native/raw/scratchbird_native.exec.01bad0ac7c6c.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/postgresql_update_target_qualifier_error/postgresql/native/raw/scratchbird_native.exec.01bad0ac7c6c.stderr.txt"
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 1277,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/postgresql_update_target_qualifier_error/postgresql/native/raw/scratchbird_native.teardown.bf1534f07cd0.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/postgresql_update_target_qualifier_error/postgresql/native/raw/scratchbird_native.teardown.bf1534f07cd0.stderr.txt"
+  }
+}

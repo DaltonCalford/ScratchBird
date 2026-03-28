@@ -1,0 +1,2 @@
+Error: Expected '=' in SET clause
+Stopping due to error (SET BAIL is ON)

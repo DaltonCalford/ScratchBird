@@ -1,0 +1,38 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\nRows affected: 1\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 963,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/mysql_alias_wildcard_error/mysql/native/raw/scratchbird_native.setup.3e6134359489.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/mysql_alias_wildcard_error/mysql/native/raw/scratchbird_native.setup.3e6134359489.stderr.txt"
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "42000",
+    "message": "Stopping due to error (SET BAIL is ON)",
+    "stdout": "\n\nError: V3 SELECT * requires FROM\nStopping due to error (SET BAIL is ON)\n",
+    "stderr": "",
+    "elapsed_ms": 649,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/mysql_alias_wildcard_error/mysql/native/raw/scratchbird_native.exec.f4271f60b7c8.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/mysql_alias_wildcard_error/mysql/native/raw/scratchbird_native.exec.f4271f60b7c8.stderr.txt"
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 918,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/mysql_alias_wildcard_error/mysql/native/raw/scratchbird_native.teardown.2a86a021c47f.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/mysql_alias_wildcard_error/mysql/native/raw/scratchbird_native.teardown.2a86a021c47f.stderr.txt"
+  }
+}

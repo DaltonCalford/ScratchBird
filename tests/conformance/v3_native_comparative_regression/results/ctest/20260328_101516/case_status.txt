@@ -1,0 +1,14 @@
+CASE|firebird_delete_all_rows|firebird|PASS
+CASE|firebird_insert_default_values|firebird|PASS
+CASE|firebird_join_using|firebird|PASS
+CASE|firebird_avg_single_row|firebird|PASS
+CASE|firebird_count_empty|firebird|PASS
+CASE|mysql_alias_wildcard_error|mysql|PASS
+CASE|mysql_ansi_concat_operator|mysql|PASS
+CASE|mysql_ansi_groupby_error|mysql|PASS
+CASE|mysql_insert_defaults_identity|mysql|FAIL
+CASE|postgresql_select_ordered_predicate|postgresql|PASS
+CASE|postgresql_insert_defaults_values|postgresql|PASS
+CASE|postgresql_update_target_qualifier_error|postgresql|PASS
+CASE|postgresql_delete_alias_visibility|postgresql|FAIL
+CASE|postgresql_join_using|postgresql|PASS

@@ -1,0 +1,1 @@
+DROP TABLE vncr_c29107_t1;

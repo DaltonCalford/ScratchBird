@@ -1,0 +1,85 @@
+{
+  "metadata": {
+    "source_run_dir": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_131640",
+    "summary_json": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_131640/optimizer_summary.json",
+    "engine_csv": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/results/optimizer_donor_compare/20260319_131640/optimizer_engine_runs.csv"
+  },
+  "summary": {
+    "total_cases": 5,
+    "exec_ok": 5,
+    "plan_ok": 5,
+    "avg_exec_elapsed_ms": 319.8
+  },
+  "results": [
+    {
+      "case_id": "point_lookup_exact",
+      "engine_id": "scratchbird_native",
+      "lane": "native",
+      "surface_key": "native",
+      "setup_status": "ok",
+      "plan_status": "ok",
+      "exec_status": "ok",
+      "teardown_status": "ok",
+      "plan_line_count": "2",
+      "assert_line_count": "1",
+      "metric_line_count": "0",
+      "exec_elapsed_ms": "273"
+    },
+    {
+      "case_id": "range_selectivity",
+      "engine_id": "scratchbird_native",
+      "lane": "native",
+      "surface_key": "native",
+      "setup_status": "ok",
+      "plan_status": "ok",
+      "exec_status": "ok",
+      "teardown_status": "ok",
+      "plan_line_count": "2",
+      "assert_line_count": "1",
+      "metric_line_count": "0",
+      "exec_elapsed_ms": "283"
+    },
+    {
+      "case_id": "ordered_limit_topk",
+      "engine_id": "scratchbird_native",
+      "lane": "native",
+      "surface_key": "native",
+      "setup_status": "ok",
+      "plan_status": "ok",
+      "exec_status": "ok",
+      "teardown_status": "ok",
+      "plan_line_count": "2",
+      "assert_line_count": "0",
+      "metric_line_count": "0",
+      "exec_elapsed_ms": "314"
+    },
+    {
+      "case_id": "merge_join_presorted",
+      "engine_id": "scratchbird_native",
+      "lane": "native",
+      "surface_key": "native",
+      "setup_status": "ok",
+      "plan_status": "ok",
+      "exec_status": "ok",
+      "teardown_status": "ok",
+      "plan_line_count": "2",
+      "assert_line_count": "0",
+      "metric_line_count": "0",
+      "exec_elapsed_ms": "364"
+    },
+    {
+      "case_id": "expression_lookup",
+      "engine_id": "scratchbird_native",
+      "lane": "native",
+      "surface_key": "native",
+      "setup_status": "ok",
+      "plan_status": "ok",
+      "exec_status": "ok",
+      "teardown_status": "ok",
+      "plan_line_count": "2",
+      "assert_line_count": "2",
+      "metric_line_count": "0",
+      "exec_elapsed_ms": "365"
+    }
+  ]
+}

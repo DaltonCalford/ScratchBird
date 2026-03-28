@@ -1,0 +1,38 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 349,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095711/20260328_095712/firebird_join_using/firebird/donor/raw/ref_firebird.setup.f93fdf47f90f.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095711/20260328_095712/firebird_join_using/firebird/donor/raw/ref_firebird.setup.f93fdf47f90f.stderr.txt"
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 87,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095711/20260328_095712/firebird_join_using/firebird/donor/raw/ref_firebird.exec.02fecadcb49f.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095711/20260328_095712/firebird_join_using/firebird/donor/raw/ref_firebird.exec.02fecadcb49f.stderr.txt"
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 170,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095711/20260328_095712/firebird_join_using/firebird/donor/raw/ref_firebird.teardown.1735c5999e70.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095711/20260328_095712/firebird_join_using/firebird/donor/raw/ref_firebird.teardown.1735c5999e70.stderr.txt"
+  }
+}

@@ -1,0 +1,2 @@
+CREATE TABLE __VNCR_NS___t1 (a INT, b INT, c INT);
+INSERT INTO __VNCR_NS___t1 VALUES (1, 2, 3);

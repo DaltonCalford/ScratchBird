@@ -1,0 +1,25 @@
+{
+  "suite_family": "native-comparative-regression",
+  "contract_id": "native-v3-comparative-regression-v1",
+  "total_cases": 14,
+  "total_pairs": 14,
+  "passed_pairs": 4,
+  "failed_pairs": 10,
+  "positive_pairs": 11,
+  "negative_pairs": 3,
+  "pair_pass_rate": 0.285714,
+  "translation_contract": {
+    "translation_contract_id": "vncr-frozen-static-corpus-v1",
+    "required_translation_mode": "static_native_v3",
+    "runtime_translation_allowed": false,
+    "runtime_substitution_only": [
+      "__VNCR_NS__"
+    ],
+    "translation_inventory_csv": "comparative_translation_inventory.csv",
+    "validated_cases": 14,
+    "validated_sql_artifacts": 40,
+    "native_sql_artifacts": 20,
+    "donor_sql_artifacts": 20,
+    "corpus_fingerprint_sha256": "4ec1805a771184a3e5e9d27ebca176364e3d83356f0e3540dfc34414f8b623e5"
+  }
+}

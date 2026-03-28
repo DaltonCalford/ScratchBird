@@ -1,0 +1,38 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 80,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095930/20260328_095931/mysql_alias_wildcard_error/mysql/donor/raw/ref_mysql.setup.407ed31d352d.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095930/20260328_095931/mysql_alias_wildcard_error/mysql/donor/raw/ref_mysql.setup.407ed31d352d.stderr.txt"
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "42000",
+    "message": "ERROR 1064 (42000) at line 1: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'AS with_alias FROM vncr_de04f7_t1' at line 1",
+    "stdout": "\nERROR 1064 (42000) at line 1: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'AS with_alias FROM vncr_de04f7_t1' at line 1\n",
+    "stderr": "",
+    "elapsed_ms": 44,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095930/20260328_095931/mysql_alias_wildcard_error/mysql/donor/raw/ref_mysql.exec.790a22788b1c.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095930/20260328_095931/mysql_alias_wildcard_error/mysql/donor/raw/ref_mysql.exec.790a22788b1c.stderr.txt"
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 60,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095930/20260328_095931/mysql_alias_wildcard_error/mysql/donor/raw/ref_mysql.teardown.34410333c623.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095930/20260328_095931/mysql_alias_wildcard_error/mysql/donor/raw/ref_mysql.teardown.34410333c623.stderr.txt"
+  }
+}

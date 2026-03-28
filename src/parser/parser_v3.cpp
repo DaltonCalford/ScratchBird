@@ -3221,7 +3221,9 @@ std::vector<ColumnConstraint> Parser::parseColumnConstraints() {
             if (matchContextual("ALWAYS")) {
                 constraint.generated_always = true;
             } else if (matchContextual("BY")) {
-                expectContextual("DEFAULT", "Expected DEFAULT after BY");
+                if (!(match(TokenType::KW_DEFAULT) || matchContextual("DEFAULT"))) {
+                    errorCode("PRS_0504", "Expected DEFAULT after BY");
+                }
                 by_default = true;
             } else {
                 errorCode("PRS_0504", "Expected ALWAYS or BY DEFAULT after GENERATED");

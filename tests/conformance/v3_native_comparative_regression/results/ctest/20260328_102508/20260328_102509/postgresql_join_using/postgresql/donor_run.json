@@ -1,0 +1,42 @@
+{
+  "setup": {
+    "status": "skipped",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "",
+    "stderr": "",
+    "elapsed_ms": 0,
+    "assert_lines": [],
+    "stdout_path": "",
+    "stderr_path": ""
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "ASSERT|postgresql_join_using|row|1\nASSERT|postgresql_join_using|row|2\nASSERT|postgresql_join_using|row|3\n\n",
+    "stderr": "",
+    "elapsed_ms": 74,
+    "assert_lines": [
+      "ASSERT|postgresql_join_using|row|1",
+      "ASSERT|postgresql_join_using|row|2",
+      "ASSERT|postgresql_join_using|row|3"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/postgresql_join_using/postgresql/donor/raw/ref_postgresql.exec.743824289aba.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/postgresql_join_using/postgresql/donor/raw/ref_postgresql.exec.743824289aba.stderr.txt"
+  },
+  "teardown": {
+    "status": "skipped",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "",
+    "stderr": "",
+    "elapsed_ms": 0,
+    "assert_lines": [],
+    "stdout_path": "",
+    "stderr_path": ""
+  }
+}

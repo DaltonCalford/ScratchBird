@@ -1,0 +1,2 @@
+Error: Table or view not found: RDB (Object not found)
+Stopping due to error (SET BAIL is ON)

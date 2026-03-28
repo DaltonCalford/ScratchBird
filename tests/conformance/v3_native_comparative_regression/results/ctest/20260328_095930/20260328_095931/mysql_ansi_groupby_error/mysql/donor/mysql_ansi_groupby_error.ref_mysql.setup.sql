@@ -1,0 +1,2 @@
+CREATE TABLE vncr_0962ba_t1 (id INT, id2 INT);
+INSERT INTO vncr_0962ba_t1 VALUES (1, 10);

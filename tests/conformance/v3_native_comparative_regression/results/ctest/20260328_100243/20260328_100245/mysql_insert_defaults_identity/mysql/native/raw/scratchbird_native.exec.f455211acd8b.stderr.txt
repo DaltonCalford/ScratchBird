@@ -1,0 +1,2 @@
+Error: Expected DEFAULT after BY
+Stopping due to error (SET BAIL is ON)

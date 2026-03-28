@@ -1,0 +1,38 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\nRows affected: 1\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 4099,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_100243/20260328_100245/mysql_ansi_groupby_error/mysql/native/raw/scratchbird_native.setup.a9491a9b426b.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_100243/20260328_100245/mysql_ansi_groupby_error/mysql/native/raw/scratchbird_native.setup.a9491a9b426b.stderr.txt"
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "42000",
+    "message": "Stopping due to error (SET BAIL is ON)",
+    "stdout": "\n\nError: V3 SELECT GROUP BY projection not in grouping set: ID\nStopping due to error (SET BAIL is ON)\n",
+    "stderr": "",
+    "elapsed_ms": 3518,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_100243/20260328_100245/mysql_ansi_groupby_error/mysql/native/raw/scratchbird_native.exec.59488fe33d9a.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_100243/20260328_100245/mysql_ansi_groupby_error/mysql/native/raw/scratchbird_native.exec.59488fe33d9a.stderr.txt"
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 3865,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_100243/20260328_100245/mysql_ansi_groupby_error/mysql/native/raw/scratchbird_native.teardown.8ea06fe83609.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_100243/20260328_100245/mysql_ansi_groupby_error/mysql/native/raw/scratchbird_native.teardown.8ea06fe83609.stderr.txt"
+  }
+}

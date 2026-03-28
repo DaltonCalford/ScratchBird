@@ -1,0 +1,10 @@
+Rows affected: 0
+Rows affected: 1
+Rows affected: 1
++---------------------------------------------+
+| expr1                                       |
++---------------------------------------------+
+| ASSERT|firebird_delete_all_rows|remaining|0 |
++---------------------------------------------+
+(1 row)
+Rows affected: 0

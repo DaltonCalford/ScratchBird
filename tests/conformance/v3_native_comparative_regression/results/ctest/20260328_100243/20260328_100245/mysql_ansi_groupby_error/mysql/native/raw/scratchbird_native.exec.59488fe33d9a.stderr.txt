@@ -1,0 +1,2 @@
+Error: V3 SELECT GROUP BY projection not in grouping set: ID
+Stopping due to error (SET BAIL is ON)

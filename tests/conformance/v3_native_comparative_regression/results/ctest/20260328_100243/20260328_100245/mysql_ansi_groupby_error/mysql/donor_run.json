@@ -1,0 +1,38 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 71,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_100243/20260328_100245/mysql_ansi_groupby_error/mysql/donor/raw/ref_mysql.setup.8d644c935ea5.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_100243/20260328_100245/mysql_ansi_groupby_error/mysql/donor/raw/ref_mysql.setup.8d644c935ea5.stderr.txt"
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "42000",
+    "message": "ERROR 1055 (42000) at line 2: Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'benchmark.vncr_7dd219_t1.id' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by",
+    "stdout": "\nERROR 1055 (42000) at line 2: Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'benchmark.vncr_7dd219_t1.id' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by\n",
+    "stderr": "",
+    "elapsed_ms": 38,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_100243/20260328_100245/mysql_ansi_groupby_error/mysql/donor/raw/ref_mysql.exec.9a3e080b5834.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_100243/20260328_100245/mysql_ansi_groupby_error/mysql/donor/raw/ref_mysql.exec.9a3e080b5834.stderr.txt"
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 54,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_100243/20260328_100245/mysql_ansi_groupby_error/mysql/donor/raw/ref_mysql.teardown.48ca12c093f0.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_100243/20260328_100245/mysql_ansi_groupby_error/mysql/donor/raw/ref_mysql.teardown.48ca12c093f0.stderr.txt"
+  }
+}

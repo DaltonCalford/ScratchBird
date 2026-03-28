@@ -1,0 +1,2 @@
+CREATE TABLE vncr_ae55e1_t1 (id INTEGER, id2 INTEGER);
+INSERT INTO vncr_ae55e1_t1 VALUES (1, 10);

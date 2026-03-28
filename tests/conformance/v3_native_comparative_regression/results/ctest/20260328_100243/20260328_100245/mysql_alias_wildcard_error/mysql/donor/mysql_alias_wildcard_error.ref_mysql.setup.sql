@@ -1,0 +1,2 @@
+CREATE TABLE vncr_3208de_t1 (a INT, b INT, c INT);
+INSERT INTO vncr_3208de_t1 VALUES (1, 2, 3);

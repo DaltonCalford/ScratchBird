@@ -1,0 +1,398 @@
+{
+  "version": 1,
+  "translation_contract": {
+    "id": "vncr-frozen-static-corpus-v1",
+    "required_translation_mode": "static_native_v3",
+    "runtime_translation_allowed": false,
+    "runtime_substitution_only": [
+      "__VNCR_NS__"
+    ]
+  },
+  "defaults": {
+    "timeout_seconds": 180
+  },
+  "cases": [
+    {
+      "id": "firebird_delete_all_rows",
+      "enabled": true,
+      "expectation": "must_match",
+      "behavior_class": "dml_delete_all_rows",
+      "translation_mode": "static_native_v3",
+      "normalization": {
+        "order_sensitive": false
+      },
+      "intent": "Delete all rows from a single table and prove the relation is empty.",
+      "provenance": {
+        "donor_source_path": "tests/compatibility/firebird/converted/functional/dml/delete_01.sql",
+        "donor_converted_path": "tests/compatibility/firebird/converted/functional/dml/delete_01.sql",
+        "donor_curated_list": "tests/compatibility/firebird/config/ctest_list.txt",
+        "donor_statement_scope": "DELETE FROM tb; SELECT * FROM tb;"
+      },
+      "surfaces": {
+        "native": {
+          "setup": "cases/comparative/sql/native/firebird_delete_all_rows.setup.sql",
+          "teardown": "cases/comparative/sql/native/firebird_delete_all_rows.teardown.sql",
+          "exec": "cases/comparative/sql/native/firebird_delete_all_rows.exec.sql"
+        },
+        "firebird": {
+          "setup": "cases/comparative/sql/firebird/firebird_delete_all_rows.setup.sql",
+          "teardown": "cases/comparative/sql/firebird/firebird_delete_all_rows.teardown.sql",
+          "exec": "cases/comparative/sql/firebird/firebird_delete_all_rows.exec.sql"
+        }
+      }
+    },
+    {
+      "id": "firebird_insert_default_values",
+      "enabled": true,
+      "expectation": "must_match",
+      "behavior_class": "insert_default_values",
+      "translation_mode": "static_native_v3",
+      "normalization": {
+        "order_sensitive": false
+      },
+      "intent": "Insert default values and prove defaulted columns are materialized.",
+      "provenance": {
+        "donor_source_path": "tests/compatibility/firebird/converted/functional/dml/insert_01.sql",
+        "donor_converted_path": "tests/compatibility/firebird/converted/functional/dml/insert_01.sql",
+        "donor_curated_list": "tests/compatibility/firebird/config/ctest_list.txt",
+        "donor_statement_scope": "insert into employee DEFAULT VALUES; SELECT * FROM employee;"
+      },
+      "surfaces": {
+        "native": {
+          "setup": "cases/comparative/sql/native/firebird_insert_default_values.setup.sql",
+          "teardown": "cases/comparative/sql/native/firebird_insert_default_values.teardown.sql",
+          "exec": "cases/comparative/sql/native/firebird_insert_default_values.exec.sql"
+        },
+        "firebird": {
+          "setup": "cases/comparative/sql/firebird/firebird_insert_default_values.setup.sql",
+          "teardown": "cases/comparative/sql/firebird/firebird_insert_default_values.teardown.sql",
+          "exec": "cases/comparative/sql/firebird/firebird_insert_default_values.exec.sql"
+        }
+      }
+    },
+    {
+      "id": "firebird_join_using",
+      "enabled": true,
+      "expectation": "must_match",
+      "behavior_class": "join_using_named_columns",
+      "translation_mode": "static_native_v3",
+      "normalization": {
+        "order_sensitive": true
+      },
+      "intent": "Join two tables through USING and prove the projected rows are stable.",
+      "provenance": {
+        "donor_source_path": "tests/compatibility/firebird/converted/functional/dml/join_01.sql",
+        "donor_converted_path": "tests/compatibility/firebird/converted/functional/dml/join_01.sql",
+        "donor_curated_list": "tests/compatibility/firebird/config/ctest_list.txt",
+        "donor_statement_scope": "select employee.prenom , department.name from employee join department using (id_department);"
+      },
+      "surfaces": {
+        "native": {
+          "setup": "cases/comparative/sql/native/firebird_join_using.setup.sql",
+          "teardown": "cases/comparative/sql/native/firebird_join_using.teardown.sql",
+          "exec": "cases/comparative/sql/native/firebird_join_using.exec.sql"
+        },
+        "firebird": {
+          "setup": "cases/comparative/sql/firebird/firebird_join_using.setup.sql",
+          "teardown": "cases/comparative/sql/firebird/firebird_join_using.teardown.sql",
+          "exec": "cases/comparative/sql/firebird/firebird_join_using.exec.sql"
+        }
+      }
+    },
+    {
+      "id": "firebird_avg_single_row",
+      "enabled": true,
+      "expectation": "must_match",
+      "behavior_class": "aggregate_avg_single_row",
+      "translation_mode": "static_native_v3",
+      "normalization": {
+        "order_sensitive": false
+      },
+      "intent": "AVG over a single integer row yields that same integer value.",
+      "provenance": {
+        "donor_source_path": "tests/compatibility/firebird/converted/functional/intfunc/avg_01.sql",
+        "donor_converted_path": "tests/compatibility/firebird/converted/functional/intfunc/avg_01.sql",
+        "donor_curated_list": "tests/compatibility/firebird/config/ctest_list.txt",
+        "donor_statement_scope": "SELECT AVG(id) FROM test;"
+      },
+      "surfaces": {
+        "native": {
+          "setup": "cases/comparative/sql/native/firebird_avg_single_row.setup.sql",
+          "teardown": "cases/comparative/sql/native/firebird_avg_single_row.teardown.sql",
+          "exec": "cases/comparative/sql/native/firebird_avg_single_row.exec.sql"
+        },
+        "firebird": {
+          "setup": "cases/comparative/sql/firebird/firebird_avg_single_row.setup.sql",
+          "teardown": "cases/comparative/sql/firebird/firebird_avg_single_row.teardown.sql",
+          "exec": "cases/comparative/sql/firebird/firebird_avg_single_row.exec.sql"
+        }
+      }
+    },
+    {
+      "id": "firebird_count_empty",
+      "enabled": true,
+      "expectation": "must_match",
+      "behavior_class": "aggregate_count_empty",
+      "translation_mode": "static_native_v3",
+      "normalization": {
+        "order_sensitive": false
+      },
+      "intent": "COUNT(*) over an empty table yields zero.",
+      "provenance": {
+        "donor_source_path": "tests/compatibility/firebird/converted/functional/intfunc/count_01_v1_0.sql",
+        "donor_converted_path": "tests/compatibility/firebird/converted/functional/intfunc/count_01_v1_0.sql",
+        "donor_curated_list": "tests/compatibility/firebird/config/ctest_list.txt",
+        "donor_statement_scope": "SELECT COUNT(*) FROM test;"
+      },
+      "surfaces": {
+        "native": {
+          "setup": "cases/comparative/sql/native/firebird_count_empty.setup.sql",
+          "teardown": "cases/comparative/sql/native/firebird_count_empty.teardown.sql",
+          "exec": "cases/comparative/sql/native/firebird_count_empty.exec.sql"
+        },
+        "firebird": {
+          "setup": "cases/comparative/sql/firebird/firebird_count_empty.setup.sql",
+          "teardown": "cases/comparative/sql/firebird/firebird_count_empty.teardown.sql",
+          "exec": "cases/comparative/sql/firebird/firebird_count_empty.exec.sql"
+        }
+      }
+    },
+    {
+      "id": "mysql_alias_wildcard_error",
+      "enabled": true,
+      "expectation": "must_fail_same_class",
+      "behavior_class": "wildcard_alias_rejection",
+      "translation_mode": "static_native_v3",
+      "normalization": {
+        "order_sensitive": false
+      },
+      "intent": "Aliasing a table wildcard projection is rejected as a syntax/semantic error.",
+      "provenance": {
+        "donor_source_path": "tests/compatibility/mysql/converted/main/alias.sql",
+        "donor_converted_path": "tests/compatibility/mysql/converted/main/alias.sql",
+        "donor_curated_list": "tests/compatibility/mysql/config/ctest_list.txt",
+        "donor_statement_scope": "select t1.* as with_alias from t1;"
+      },
+      "surfaces": {
+        "native": {
+          "setup": "cases/comparative/sql/native/mysql_alias_wildcard_error.setup.sql",
+          "exec": "cases/comparative/sql/native/mysql_alias_wildcard_error.exec.sql",
+          "teardown": "cases/comparative/sql/native/mysql_alias_wildcard_error.teardown.sql"
+        },
+        "mysql": {
+          "setup": "cases/comparative/sql/mysql/mysql_alias_wildcard_error.setup.sql",
+          "exec": "cases/comparative/sql/mysql/mysql_alias_wildcard_error.exec.sql",
+          "teardown": "cases/comparative/sql/mysql/mysql_alias_wildcard_error.teardown.sql"
+        }
+      }
+    },
+    {
+      "id": "mysql_ansi_concat_operator",
+      "enabled": true,
+      "expectation": "must_match",
+      "behavior_class": "ansi_concat_operator",
+      "translation_mode": "static_native_v3",
+      "normalization": {
+        "order_sensitive": false
+      },
+      "intent": "The donor ANSI concat task is represented in native v3 with the same string-concatenation intent.",
+      "provenance": {
+        "donor_source_path": "tests/compatibility/mysql/converted/main/ansi.sql",
+        "donor_converted_path": "tests/compatibility/mysql/converted/main/ansi.sql",
+        "donor_curated_list": "tests/compatibility/mysql/config/ctest_list.txt",
+        "donor_statement_scope": "SET @@sql_mode='ANSI'; SELECT 'A' || 'B';"
+      },
+      "surfaces": {
+        "native": {
+          "exec": "cases/comparative/sql/native/mysql_ansi_concat_operator.exec.sql"
+        },
+        "mysql": {
+          "exec": "cases/comparative/sql/mysql/mysql_ansi_concat_operator.exec.sql"
+        }
+      }
+    },
+    {
+      "id": "mysql_ansi_groupby_error",
+      "enabled": true,
+      "expectation": "must_fail_same_class",
+      "behavior_class": "group_by_error_class",
+      "translation_mode": "static_native_v3",
+      "normalization": {
+        "order_sensitive": false
+      },
+      "intent": "A grouped query that projects a non-grouped column fails in the same error class.",
+      "provenance": {
+        "donor_source_path": "tests/compatibility/mysql/converted/main/ansi.sql",
+        "donor_converted_path": "tests/compatibility/mysql/converted/main/ansi.sql",
+        "donor_curated_list": "tests/compatibility/mysql/config/ctest_list.txt",
+        "donor_statement_scope": "SELECT id FROM t1 GROUP BY id2;"
+      },
+      "surfaces": {
+        "native": {
+          "setup": "cases/comparative/sql/native/mysql_ansi_groupby_error.setup.sql",
+          "exec": "cases/comparative/sql/native/mysql_ansi_groupby_error.exec.sql",
+          "teardown": "cases/comparative/sql/native/mysql_ansi_groupby_error.teardown.sql"
+        },
+        "mysql": {
+          "setup": "cases/comparative/sql/mysql/mysql_ansi_groupby_error.setup.sql",
+          "exec": "cases/comparative/sql/mysql/mysql_ansi_groupby_error.exec.sql",
+          "teardown": "cases/comparative/sql/mysql/mysql_ansi_groupby_error.teardown.sql"
+        }
+      }
+    },
+    {
+      "id": "mysql_insert_defaults_identity",
+      "enabled": true,
+      "expectation": "must_match",
+      "behavior_class": "insert_defaults_identity",
+      "translation_mode": "static_native_v3",
+      "normalization": {
+        "order_sensitive": false
+      },
+      "intent": "Insert rows through defaults and identity semantics while preserving the same final row-state checks.",
+      "provenance": {
+        "donor_source_path": "tests/compatibility/mysql/converted/main/insert.sql",
+        "donor_converted_path": "tests/compatibility/mysql/converted/main/insert.sql",
+        "donor_curated_list": "tests/compatibility/mysql/config/ctest_list.txt",
+        "donor_statement_scope": "create table t1(... auto_increment ...); insert defaults; select row count and defaulted values;"
+      },
+      "surfaces": {
+        "native": {
+          "exec": "cases/comparative/sql/native/mysql_insert_defaults_identity.exec.sql"
+        },
+        "mysql": {
+          "exec": "cases/comparative/sql/mysql/mysql_insert_defaults_identity.exec.sql"
+        }
+      }
+    },
+    {
+      "id": "postgresql_select_ordered_predicate",
+      "enabled": true,
+      "expectation": "must_match",
+      "behavior_class": "select_ordered_predicate",
+      "translation_mode": "static_native_v3",
+      "normalization": {
+        "order_sensitive": true
+      },
+      "intent": "Ordered predicate filtering preserves row order and row membership.",
+      "provenance": {
+        "donor_source_path": "tests/compatibility/postgresql/converted/core/select.sql",
+        "donor_converted_path": "tests/compatibility/postgresql/converted/core/select.sql",
+        "donor_curated_list": "tests/compatibility/postgresql/config/ctest_list.txt",
+        "donor_statement_scope": "SELECT * FROM onek WHERE unique1 < 10 ORDER BY unique1;"
+      },
+      "surfaces": {
+        "native": {
+          "exec": "cases/comparative/sql/native/postgresql_select_ordered_predicate.exec.sql"
+        },
+        "postgresql": {
+          "exec": "cases/comparative/sql/postgresql/postgresql_select_ordered_predicate.exec.sql"
+        }
+      }
+    },
+    {
+      "id": "postgresql_insert_defaults_values",
+      "enabled": true,
+      "expectation": "must_match",
+      "behavior_class": "insert_default_and_values",
+      "translation_mode": "static_native_v3",
+      "normalization": {
+        "order_sensitive": false
+      },
+      "intent": "INSERT with DEFAULT and VALUES preserves the expected final row-state checks.",
+      "provenance": {
+        "donor_source_path": "tests/compatibility/postgresql/converted/core/insert.sql",
+        "donor_converted_path": "tests/compatibility/postgresql/converted/core/insert.sql",
+        "donor_curated_list": "tests/compatibility/postgresql/config/ctest_list.txt",
+        "donor_statement_scope": "insert defaults and values into inserttest; select * from inserttest;"
+      },
+      "surfaces": {
+        "native": {
+          "exec": "cases/comparative/sql/native/postgresql_insert_defaults_values.exec.sql"
+        },
+        "postgresql": {
+          "exec": "cases/comparative/sql/postgresql/postgresql_insert_defaults_values.exec.sql"
+        }
+      }
+    },
+    {
+      "id": "postgresql_update_target_qualifier_error",
+      "enabled": true,
+      "expectation": "must_fail_same_class",
+      "behavior_class": "update_target_column_qualification_error",
+      "translation_mode": "static_native_v3",
+      "normalization": {
+        "order_sensitive": false
+      },
+      "intent": "Qualifying the target column in UPDATE is rejected with the same error class.",
+      "provenance": {
+        "donor_source_path": "tests/compatibility/postgresql/converted/core/update.sql",
+        "donor_converted_path": "tests/compatibility/postgresql/converted/core/update.sql",
+        "donor_curated_list": "tests/compatibility/postgresql/config/ctest_list.txt",
+        "donor_statement_scope": "UPDATE update_test t SET t.b = t.b + 10 WHERE t.a = 10;"
+      },
+      "surfaces": {
+        "native": {
+          "setup": "cases/comparative/sql/native/postgresql_update_target_qualifier_error.setup.sql",
+          "exec": "cases/comparative/sql/native/postgresql_update_target_qualifier_error.exec.sql",
+          "teardown": "cases/comparative/sql/native/postgresql_update_target_qualifier_error.teardown.sql"
+        },
+        "postgresql": {
+          "setup": "cases/comparative/sql/postgresql/postgresql_update_target_qualifier_error.setup.sql",
+          "exec": "cases/comparative/sql/postgresql/postgresql_update_target_qualifier_error.exec.sql",
+          "teardown": "cases/comparative/sql/postgresql/postgresql_update_target_qualifier_error.teardown.sql"
+        }
+      }
+    },
+    {
+      "id": "postgresql_delete_alias_visibility",
+      "enabled": true,
+      "expectation": "must_match",
+      "behavior_class": "delete_alias_visibility",
+      "translation_mode": "static_native_v3",
+      "normalization": {
+        "order_sensitive": false
+      },
+      "intent": "DELETE with a target alias removes the intended rows and preserves the remaining rows.",
+      "provenance": {
+        "donor_source_path": "tests/compatibility/postgresql/converted/core/delete.sql",
+        "donor_converted_path": "tests/compatibility/postgresql/converted/core/delete.sql",
+        "donor_curated_list": "tests/compatibility/postgresql/config/ctest_list.txt",
+        "donor_statement_scope": "DELETE FROM delete_test AS dt WHERE dt.a > 75;"
+      },
+      "surfaces": {
+        "native": {
+          "exec": "cases/comparative/sql/native/postgresql_delete_alias_visibility.exec.sql"
+        },
+        "postgresql": {
+          "exec": "cases/comparative/sql/postgresql/postgresql_delete_alias_visibility.exec.sql"
+        }
+      }
+    },
+    {
+      "id": "postgresql_join_using",
+      "enabled": true,
+      "expectation": "must_match",
+      "behavior_class": "join_using_alias_projection",
+      "translation_mode": "static_native_v3",
+      "normalization": {
+        "order_sensitive": true
+      },
+      "intent": "JOIN ... USING preserves the expected joined key rows in stable order.",
+      "provenance": {
+        "donor_source_path": "tests/compatibility/postgresql/converted/core/join.sql",
+        "donor_converted_path": "tests/compatibility/postgresql/converted/core/join.sql",
+        "donor_curated_list": "tests/compatibility/postgresql/config/ctest_list.txt",
+        "donor_statement_scope": "SELECT * FROM J1_TBL JOIN J2_TBL USING (i);"
+      },
+      "surfaces": {
+        "native": {
+          "exec": "cases/comparative/sql/native/postgresql_join_using.exec.sql"
+        },
+        "postgresql": {
+          "exec": "cases/comparative/sql/postgresql/postgresql_join_using.exec.sql"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+CREATE TABLE vncr_2a8a04_test(id INTEGER);

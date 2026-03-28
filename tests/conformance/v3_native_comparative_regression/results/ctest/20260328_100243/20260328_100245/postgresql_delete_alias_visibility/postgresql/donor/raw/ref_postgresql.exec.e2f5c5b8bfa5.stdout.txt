@@ -1,0 +1,2 @@
+ASSERT|postgresql_delete_alias_visibility|rows|2
+ASSERT|postgresql_delete_alias_visibility|max_a|50

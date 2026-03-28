@@ -33,6 +33,7 @@ SUITE_ORDER = [
     "public-beta",
     "regression",
     "emulation-comparison",
+    "native-comparative-regression",
     "native-v3-inet",
     "performance",
     "optimizer-donor-compare",
@@ -49,6 +50,8 @@ HISTORY_KEY_METRICS = {
     ("regression", "matrix.duration_seconds"),
     ("emulation-comparison", "summary.failed"),
     ("emulation-comparison", "summary.total"),
+    ("native-comparative-regression", "summary.exec_failed"),
+    ("native-comparative-regression", "summary.avg_exec_elapsed_ms"),
     ("performance", "summary.avg_latency_p95_ms"),
     ("performance", "summary.avg_throughput_tps"),
     ("optimizer-donor-compare", "summary.avg_exec_elapsed_ms"),
@@ -57,6 +60,8 @@ HISTORY_KEY_METRICS = {
 EMULATION_COMPARE_DIALECTS = ("firebird", "mysql", "postgresql")
 EMULATION_COMPARE_CONTRACT_ID = "compatibility-emulation-compare-v1"
 EMULATION_COMPARE_HARNESS = "compatibility_converted_sql_ctest"
+NATIVE_COMPARATIVE_CONTRACT_ID = "native-v3-comparative-regression-v1"
+NATIVE_COMPARATIVE_HARNESS = "static_translated_regression_corpus"
 
 
 @dataclass
@@ -110,6 +115,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="V3 native inet result directory.",
+    )
+    parser.add_argument(
+        "--v3-native-comparative-dir",
+        type=Path,
+        default=None,
+        help="V3 native comparative regression result directory.",
     )
     parser.add_argument(
         "--verification-root",
@@ -839,6 +850,160 @@ def parse_v3_native_inet(result_dir: Path, output_root: Path) -> SuiteArtifact |
     )
 
 
+def comparative_engine_name(engine_id: str) -> str:
+    mapping = {
+        "scratchbird_native": "scratchbird-native",
+        "ref_firebird": "upstream-firebird",
+        "ref_mysql": "upstream-mysql",
+        "ref_postgresql": "upstream-postgresql",
+    }
+    return mapping.get(engine_id, engine_id)
+
+
+def write_native_comparative_pairwise(
+    output_root: Path,
+    pair_rows: List[Dict[str, str]],
+    translation_contract: Mapping[str, Any] | None = None,
+) -> None:
+    json_path = output_root / "native-comparative-regression-pairwise.json"
+    md_path = output_root / "native-comparative-regression-pairwise.md"
+    by_dialect: Dict[str, List[Dict[str, str]]] = {}
+    for row in pair_rows:
+        by_dialect.setdefault(str(row.get("dialect_family", "unknown")), []).append(row)
+
+    pairs: List[Dict[str, Any]] = []
+    for dialect, rows in sorted(by_dialect.items()):
+        total = len(rows)
+        passed = sum(1 for row in rows if row.get("result") == "pass")
+        failed = total - passed
+        ratios = [safe_float(row.get("latency_ratio")) for row in rows]
+        ratio_values = [value for value in ratios if value is not None]
+        pairs.append(
+            {
+                "dialect_family": dialect,
+                "total_pairs": total,
+                "passed_pairs": passed,
+                "failed_pairs": failed,
+                "avg_latency_ratio": round(statistics.mean(ratio_values), 6) if ratio_values else 0.0,
+                "verdict": "comparable" if failed == 0 else "failed",
+            }
+        )
+
+    write_json(
+        json_path,
+        {
+            "suite_family": "native-comparative-regression",
+            "contract_id": NATIVE_COMPARATIVE_CONTRACT_ID,
+            "translation_contract": dict(translation_contract or {}),
+            "pairs": pairs,
+        },
+    )
+    lines = [
+        "# Native Comparative Regression Pairwise Verdicts",
+        "",
+        "| Dialect | Total | Passed | Failed | Avg Latency Ratio | Verdict |",
+        "|---|---:|---:|---:|---:|---|",
+    ]
+    for item in pairs:
+        lines.append(
+            f"| `{item['dialect_family']}` | {item['total_pairs']} | {item['passed_pairs']} | {item['failed_pairs']} | {item['avg_latency_ratio']} | `{item['verdict']}` |"
+        )
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def parse_native_comparative(result_dir: Path, output_root: Path) -> List[SuiteArtifact]:
+    manifest_path = result_dir / "RUN_MANIFEST.json"
+    artifact_dir = result_dir
+    summary_json = artifact_dir / "comparative_summary.json"
+    engine_csv = artifact_dir / "comparative_engine_runs.csv"
+    pairwise_csv = artifact_dir / "comparative_pairwise_scores.csv"
+    if not summary_json.exists() or not engine_csv.exists():
+        nested_artifact_dir = latest_subdir(result_dir, require="comparative_summary.json")
+        if nested_artifact_dir is not None:
+            artifact_dir = nested_artifact_dir
+            summary_json = artifact_dir / "comparative_summary.json"
+            engine_csv = artifact_dir / "comparative_engine_runs.csv"
+            pairwise_csv = artifact_dir / "comparative_pairwise_scores.csv"
+    if not manifest_path.exists() or not summary_json.exists() or not engine_csv.exists():
+        return []
+
+    manifest = load_json(manifest_path)
+    summary_payload = load_json(summary_json)
+    rows = read_csv_rows(engine_csv)
+    by_engine: Dict[str, List[Dict[str, str]]] = {}
+    for row in rows:
+        by_engine.setdefault(str(row.get("engine_id", "unknown")), []).append(row)
+
+    artifacts: List[SuiteArtifact] = []
+    suite_manifest_status = str(manifest.get("status", "unknown"))
+    for engine_id, engine_rows in by_engine.items():
+        engine = comparative_engine_name(engine_id)
+        exec_ok = sum(1 for row in engine_rows if row.get("exec_status") == "ok")
+        exec_error = sum(1 for row in engine_rows if row.get("exec_status") == "error")
+        total_cases = len(engine_rows)
+        exec_times = [safe_float(row.get("exec_elapsed_ms")) or 0.0 for row in engine_rows]
+        positive_cases = sum(1 for row in engine_rows if row.get("expectation") == "must_match")
+        negative_cases = total_cases - positive_cases
+        exec_unexpected = sum(
+            1
+            for row in engine_rows
+            if row.get("exec_status") not in ("ok", "error")
+        )
+        suite_dir = output_root / engine / "native-comparative-regression"
+        ensure_dir(suite_dir)
+        summary_path = suite_dir / f"native-comparative-regression-{engine}-summary.json"
+        payload = {
+            "metadata": {
+                "source_result_dir": str(result_dir),
+                "artifact_dir": str(artifact_dir),
+                "manifest": str(manifest_path),
+                "summary_json": str(summary_json),
+                "engine_csv": str(engine_csv),
+            },
+            "comparison_contract": {
+                "suite_family": "native-comparative-regression",
+                "contract_id": NATIVE_COMPARATIVE_CONTRACT_ID,
+                "expected_harness": NATIVE_COMPARATIVE_HARNESS,
+                "translation_contract": dict(summary_payload.get("translation_contract", {}) or {}),
+                "target_engine": engine,
+                "target_role": "native" if engine_id == "scratchbird_native" else "original",
+                "parser_core": "v3",
+                "parser_mode": "native_core" if engine_id == "scratchbird_native" else "donor_reference",
+            },
+            "summary": {
+                "total_cases": total_cases,
+                "exec_ok": exec_ok,
+                "exec_error": exec_error,
+                "exec_failed": exec_unexpected,
+                "positive_cases": positive_cases,
+                "negative_cases": negative_cases,
+                "avg_exec_elapsed_ms": round(statistics.mean(exec_times), 6) if exec_times else 0.0,
+            },
+            "results": engine_rows,
+        }
+        write_json(summary_path, payload)
+        artifacts.append(
+            SuiteArtifact(
+                engine=engine,
+                suite="native-comparative-regression",
+                status="passed" if suite_manifest_status in ("passed", "skipped") and exec_unexpected == 0 else "failed",
+                exit_code=0 if suite_manifest_status in ("passed", "skipped") and exec_unexpected == 0 else 1,
+                started_at=str(manifest.get("timestamp_utc", utc_now_iso())),
+                duration_seconds=0.0,
+                output_dir=suite_dir,
+                summary_path=summary_path,
+            )
+        )
+
+    if pairwise_csv.exists():
+        write_native_comparative_pairwise(
+            output_root,
+            read_csv_rows(pairwise_csv),
+            summary_payload.get("translation_contract", {}) or {},
+        )
+    return artifacts
+
+
 def read_csv_rows(path: Path) -> List[Dict[str, str]]:
     with path.open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
@@ -1395,6 +1560,10 @@ def normalize(args: argparse.Namespace) -> Path:
         repo_root / "tests" / "conformance" / "v3_native_inet" / "results" / "ctest",
         require="RUN_MANIFEST.json",
     )
+    v3_native_comparative_dir = args.v3_native_comparative_dir.resolve() if args.v3_native_comparative_dir else latest_subdir(
+        repo_root / "tests" / "conformance" / "v3_native_comparative_regression" / "results" / "ctest",
+        require="RUN_MANIFEST.json",
+    )
     verification_root = (args.verification_root or (repo_root / "scripts" / "verification_bundle" / "suite" / "results")).resolve()
     anchor_timestamp = anchor_timestamp_for_run(full_gate_dir)
 
@@ -1413,6 +1582,8 @@ def normalize(args: argparse.Namespace) -> Path:
         v3_artifact = parse_v3_native_inet(v3_native_inet_dir, output_root)
         if v3_artifact:
             artifacts.append(v3_artifact)
+    if v3_native_comparative_dir:
+        artifacts.extend(parse_native_comparative(v3_native_comparative_dir, output_root))
     artifacts.extend(parse_verification_perf(verification_root, output_root, anchor_timestamp))
     artifacts.extend(parse_optimizer_compare(verification_root, output_root, anchor_timestamp))
 

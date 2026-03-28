@@ -1,0 +1,2 @@
+ASSERT|postgresql_insert_defaults_values|rows|4
+ASSERT|postgresql_insert_defaults_values|testing_rows|3

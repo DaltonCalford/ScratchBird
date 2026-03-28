@@ -1,0 +1,20 @@
+{
+  "run_id": "20260328_102508",
+  "engine": "scratchbird_native",
+  "protocol_surface": "sbwp_native",
+  "parser_core": "v3",
+  "parser_mode": "native_core",
+  "comparison_suite_family": "native-comparative-regression",
+  "comparison_contract_id": "native-v3-comparative-regression-v1",
+  "comparison_harness": "static_translated_regression_corpus",
+  "translation_contract_id": "vncr-frozen-static-corpus-v1",
+  "translation_runtime_allowed": false,
+  "execution_mode": "static_translated_regression_corpus",
+  "engines_config": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/configs/native_comparative_regression_engines.json",
+  "corpus_config": "/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/configs/native_comparative_regression_corpus.json",
+  "listed_tests": 14,
+  "status": "passed",
+  "failure_count": 0,
+  "results_dir": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508",
+  "timestamp_utc": "2026-03-28T14:25:49Z"
+}

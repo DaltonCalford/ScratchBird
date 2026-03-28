@@ -1,0 +1,7 @@
++--------------------------------------------------+
+| expr1                                            |
++--------------------------------------------------+
+| ASSERT|firebird_join_using|row|benoit|somme      |
+| ASSERT|firebird_join_using|row|tom|pas de calais |
++--------------------------------------------------+
+(2 rows)

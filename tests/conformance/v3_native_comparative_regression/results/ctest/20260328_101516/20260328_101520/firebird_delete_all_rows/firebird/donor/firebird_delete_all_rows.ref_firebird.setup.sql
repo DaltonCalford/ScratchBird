@@ -1,0 +1,2 @@
+CREATE TABLE vncr_347db6_tb(id INT);
+INSERT INTO vncr_347db6_tb VALUES (10);

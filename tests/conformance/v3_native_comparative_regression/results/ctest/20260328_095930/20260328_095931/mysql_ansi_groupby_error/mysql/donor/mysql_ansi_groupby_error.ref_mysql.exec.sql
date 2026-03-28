@@ -1,0 +1,2 @@
+SET @@sql_mode = 'ANSI';
+SELECT id FROM vncr_0962ba_t1 GROUP BY id2;

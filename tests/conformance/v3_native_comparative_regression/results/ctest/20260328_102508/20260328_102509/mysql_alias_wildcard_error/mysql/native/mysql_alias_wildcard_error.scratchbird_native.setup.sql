@@ -1,0 +1,2 @@
+CREATE TABLE vncr_80f5ec_t1 (a INTEGER, b INTEGER, c INTEGER);
+INSERT INTO vncr_80f5ec_t1 VALUES (1, 2, 3);

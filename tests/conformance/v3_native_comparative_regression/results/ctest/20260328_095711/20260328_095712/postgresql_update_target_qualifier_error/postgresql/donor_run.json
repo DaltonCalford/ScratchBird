@@ -1,0 +1,38 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 44,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095711/20260328_095712/postgresql_update_target_qualifier_error/postgresql/donor/raw/ref_postgresql.setup.ee25f16d1e97.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095711/20260328_095712/postgresql_update_target_qualifier_error/postgresql/donor/raw/ref_postgresql.setup.ee25f16d1e97.stderr.txt"
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 3,
+    "sqlstate": "42000",
+    "message": "               ^",
+    "stdout": "\npsql:/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095711/20260328_095712/postgresql_update_target_qualifier_error/postgresql/donor/postgresql_update_target_qualifier_error.ref_postgresql.exec.sql:3: ERROR:  column \"t\" of relation \"vncr_846dc4_update_test\" does not exist\nLINE 2:    SET t.b = t.b + 10\n               ^\n",
+    "stderr": "",
+    "elapsed_ms": 19,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095711/20260328_095712/postgresql_update_target_qualifier_error/postgresql/donor/raw/ref_postgresql.exec.999d6d64846a.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095711/20260328_095712/postgresql_update_target_qualifier_error/postgresql/donor/raw/ref_postgresql.exec.999d6d64846a.stderr.txt"
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 18,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095711/20260328_095712/postgresql_update_target_qualifier_error/postgresql/donor/raw/ref_postgresql.teardown.0c2375d6d80d.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095711/20260328_095712/postgresql_update_target_qualifier_error/postgresql/donor/raw/ref_postgresql.teardown.0c2375d6d80d.stderr.txt"
+  }
+}

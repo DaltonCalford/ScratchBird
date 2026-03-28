@@ -1,0 +1,5 @@
+
+CONCATENATION                                          
+====================================================== 
+ASSERT|firebird_count_empty|value|0                    
+

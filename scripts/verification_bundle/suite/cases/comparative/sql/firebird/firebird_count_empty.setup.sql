@@ -1,0 +1,1 @@
+CREATE TABLE __VNCR_NS___test(id INTEGER);

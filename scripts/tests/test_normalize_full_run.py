@@ -28,6 +28,7 @@ class NormalizeFullRunTest(unittest.TestCase):
             (repo / "tests" / "results" / "full_gate" / "run-a").mkdir(parents=True)
             (repo / "tests" / "conformance" / "public_beta" / "results" / "gate-a").mkdir(parents=True)
             (repo / "tests" / "conformance" / "v3_native_inet" / "results" / "ctest" / "v3-a").mkdir(parents=True)
+            (repo / "tests" / "conformance" / "v3_native_comparative_regression" / "results" / "ctest" / "vncr-a").mkdir(parents=True)
             (repo / "tests" / "compatibility" / "firebird" / "results" / "ctest" / "firebird-a").mkdir(parents=True)
             (repo / "tests" / "compatibility" / "mysql" / "results" / "ctest" / "mysql-a").mkdir(parents=True)
             (repo / "tests" / "compatibility" / "postgresql" / "results" / "ctest" / "postgresql-a").mkdir(parents=True)
@@ -81,6 +82,208 @@ class NormalizeFullRunTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (v3_dir / "case_status.txt").write_text("CASE|one|PASS\nCASE|two|PASS\n", encoding="utf-8")
+
+            v3_comparative_dir = repo / "tests" / "conformance" / "v3_native_comparative_regression" / "results" / "ctest" / "vncr-a"
+            v3_comparative_artifact_dir = v3_comparative_dir / "vncr-a-inner"
+            (v3_comparative_dir / "RUN_MANIFEST.json").write_text(
+                json.dumps(
+                    {
+                        "status": "passed",
+                        "listed_tests": 3,
+                        "failure_count": 0,
+                        "comparison_suite_family": "native-comparative-regression",
+                        "comparison_contract_id": "native-v3-comparative-regression-v1",
+                        "timestamp_utc": "2026-03-28T00:00:00Z",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            v3_comparative_artifact_dir.mkdir(parents=True)
+            (v3_comparative_artifact_dir / "comparative_summary.json").write_text(
+                json.dumps(
+                    {
+                        "suite_family": "native-comparative-regression",
+                        "contract_id": "native-v3-comparative-regression-v1",
+                        "translation_contract": {
+                            "translation_contract_id": "vncr-frozen-static-corpus-v1",
+                            "required_translation_mode": "static_native_v3",
+                            "runtime_translation_allowed": False,
+                            "runtime_substitution_only": ["__VNCR_NS__"],
+                            "corpus_fingerprint_sha256": "abc123",
+                        },
+                        "total_cases": 2,
+                        "total_pairs": 3,
+                        "passed_pairs": 3,
+                        "failed_pairs": 0,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with (v3_comparative_artifact_dir / "comparative_engine_runs.csv").open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "case_id",
+                        "engine_id",
+                        "dialect_family",
+                        "role",
+                        "expectation",
+                        "behavior_class",
+                        "translation_mode",
+                        "exec_status",
+                        "sqlstate",
+                        "assert_count",
+                        "exec_elapsed_ms",
+                        "donor_source_path",
+                        "donor_converted_path",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "case_id": "firebird_delete_all_rows",
+                        "engine_id": "scratchbird_native",
+                        "dialect_family": "firebird",
+                        "role": "native",
+                        "expectation": "must_match",
+                        "behavior_class": "dml_delete_all_rows",
+                        "translation_mode": "static_native_v3",
+                        "exec_status": "ok",
+                        "sqlstate": "00000",
+                        "assert_count": 1,
+                        "exec_elapsed_ms": 5,
+                        "donor_source_path": "fb.sql",
+                        "donor_converted_path": "fb.sql",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "case_id": "firebird_delete_all_rows",
+                        "engine_id": "ref_firebird",
+                        "dialect_family": "firebird",
+                        "role": "donor",
+                        "expectation": "must_match",
+                        "behavior_class": "dml_delete_all_rows",
+                        "translation_mode": "static_native_v3",
+                        "exec_status": "ok",
+                        "sqlstate": "00000",
+                        "assert_count": 1,
+                        "exec_elapsed_ms": 7,
+                        "donor_source_path": "fb.sql",
+                        "donor_converted_path": "fb.sql",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "case_id": "mysql_alias_wildcard_error",
+                        "engine_id": "scratchbird_native",
+                        "dialect_family": "mysql",
+                        "role": "native",
+                        "expectation": "must_fail_same_class",
+                        "behavior_class": "wildcard_alias_rejection",
+                        "translation_mode": "static_native_v3",
+                        "exec_status": "error",
+                        "sqlstate": "42000",
+                        "assert_count": 0,
+                        "exec_elapsed_ms": 4,
+                        "donor_source_path": "my.sql",
+                        "donor_converted_path": "my.sql",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "case_id": "mysql_alias_wildcard_error",
+                        "engine_id": "ref_mysql",
+                        "dialect_family": "mysql",
+                        "role": "donor",
+                        "expectation": "must_fail_same_class",
+                        "behavior_class": "wildcard_alias_rejection",
+                        "translation_mode": "static_native_v3",
+                        "exec_status": "error",
+                        "sqlstate": "42000",
+                        "assert_count": 0,
+                        "exec_elapsed_ms": 6,
+                        "donor_source_path": "my.sql",
+                        "donor_converted_path": "my.sql",
+                    }
+                )
+            with (v3_comparative_artifact_dir / "comparative_pairwise_scores.csv").open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "case_id",
+                        "dialect_family",
+                        "donor_engine_id",
+                        "native_engine_id",
+                        "expectation",
+                        "behavior_class",
+                        "translation_mode",
+                        "result",
+                        "reason",
+                        "native_exec_status",
+                        "donor_exec_status",
+                        "native_sqlstate",
+                        "donor_sqlstate",
+                        "native_exec_elapsed_ms",
+                        "donor_exec_elapsed_ms",
+                        "latency_ratio",
+                        "donor_source_path",
+                        "donor_converted_path",
+                        "donor_curated_list",
+                        "donor_statement_scope",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "case_id": "firebird_delete_all_rows",
+                        "dialect_family": "firebird",
+                        "donor_engine_id": "ref_firebird",
+                        "native_engine_id": "scratchbird_native",
+                        "expectation": "must_match",
+                        "behavior_class": "dml_delete_all_rows",
+                        "translation_mode": "static_native_v3",
+                        "result": "pass",
+                        "reason": "",
+                        "native_exec_status": "ok",
+                        "donor_exec_status": "ok",
+                        "native_sqlstate": "00000",
+                        "donor_sqlstate": "00000",
+                        "native_exec_elapsed_ms": 5,
+                        "donor_exec_elapsed_ms": 7,
+                        "latency_ratio": 0.714286,
+                        "donor_source_path": "fb.sql",
+                        "donor_converted_path": "fb.sql",
+                        "donor_curated_list": "fb.list",
+                        "donor_statement_scope": "delete all rows",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "case_id": "mysql_alias_wildcard_error",
+                        "dialect_family": "mysql",
+                        "donor_engine_id": "ref_mysql",
+                        "native_engine_id": "scratchbird_native",
+                        "expectation": "must_fail_same_class",
+                        "behavior_class": "wildcard_alias_rejection",
+                        "translation_mode": "static_native_v3",
+                        "result": "pass",
+                        "reason": "",
+                        "native_exec_status": "error",
+                        "donor_exec_status": "error",
+                        "native_sqlstate": "42000",
+                        "donor_sqlstate": "42000",
+                        "native_exec_elapsed_ms": 4,
+                        "donor_exec_elapsed_ms": 6,
+                        "latency_ratio": 0.666667,
+                        "donor_source_path": "my.sql",
+                        "donor_converted_path": "my.sql",
+                        "donor_curated_list": "my.list",
+                        "donor_statement_scope": "wildcard alias error",
+                    }
+                )
 
             firebird_original_dir = repo / "tests" / "compatibility" / "firebird" / "results" / "ctest" / "firebird-original-a"
             firebird_emulation_dir = repo / "tests" / "compatibility" / "firebird" / "results" / "ctest" / "firebird-emulation-a"
@@ -428,6 +631,7 @@ class NormalizeFullRunTest(unittest.TestCase):
                     public_beta_dir=public_beta,
                     compatibility_root=repo / "tests" / "compatibility",
                     v3_native_inet_dir=v3_dir,
+                    v3_native_comparative_dir=v3_comparative_dir,
                     verification_root=repo / "scripts" / "verification_bundle" / "suite" / "results",
                     benchmarks_root=baseline_root,
                     history_root=history_root,
@@ -445,6 +649,8 @@ class NormalizeFullRunTest(unittest.TestCase):
             self.assertTrue((output_root / "upstream-mysql" / "emulation-comparison" / "emulation-comparison-upstream-mysql-summary.json").exists())
             self.assertTrue((output_root / "scratchbird-mysql" / "emulation-comparison" / "emulation-comparison-scratchbird-mysql-summary.json").exists())
             self.assertTrue((output_root / "emulation-comparison-pairwise.json").exists())
+            self.assertTrue((output_root / "native-comparative-regression-pairwise.json").exists())
+            self.assertTrue((output_root / "scratchbird-native" / "native-comparative-regression" / "native-comparative-regression-scratchbird-native-summary.json").exists())
             self.assertTrue((output_root / "system-info.json").exists())
             baseline_md = (output_root / "benchmark-baseline-comparison.md").read_text(encoding="utf-8")
             self.assertIn("## Baseline Suite Health", baseline_md)
@@ -456,14 +662,41 @@ class NormalizeFullRunTest(unittest.TestCase):
             self.assertEqual(verdicts["firebird"], "comparable")
             self.assertEqual(verdicts["mysql"], "comparable")
             self.assertEqual(verdicts["postgresql"], "comparable")
+            native_pairwise = json.loads((output_root / "native-comparative-regression-pairwise.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                native_pairwise["translation_contract"]["translation_contract_id"],
+                "vncr-frozen-static-corpus-v1",
+            )
+            native_summary = json.loads(
+                (
+                    output_root
+                    / "scratchbird-native"
+                    / "native-comparative-regression"
+                    / "native-comparative-regression-scratchbird-native-summary.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                native_summary["comparison_contract"]["translation_contract"]["corpus_fingerprint_sha256"],
+                "abc123",
+            )
 
             summary = json.loads((output_root / "matrix-summary.json").read_text(encoding="utf-8"))
             self.assertIn("emulation-comparison", summary["suites_requested"])
+            self.assertIn("native-comparative-regression", summary["suites_requested"])
             self.assertIn("public-beta", summary["suites_requested"])
             self.assertIn("scratchbird", summary["engines_requested"])
+            self.assertIn("scratchbird-native", summary["engines_requested"])
             self.assertIn("firebird", summary["engines_requested"])
             self.assertIn("upstream-firebird", summary["engines_requested"])
             self.assertIn("scratchbird-postgresql", summary["engines_requested"])
+            native_suite_status = {
+                (row["engine"], row["suite"]): row["status"]
+                for row in summary["suite_runs"]
+                if row["suite"] == "native-comparative-regression"
+            }
+            self.assertEqual(native_suite_status[("scratchbird-native", "native-comparative-regression")], "passed")
+            self.assertEqual(native_suite_status[("upstream-firebird", "native-comparative-regression")], "passed")
+            self.assertEqual(native_suite_status[("upstream-mysql", "native-comparative-regression")], "passed")
 
     def test_emulation_comparison_marks_missing_same_contract_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

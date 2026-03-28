@@ -1,0 +1,118 @@
+{
+  "metadata": {
+    "source_result_dir": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508",
+    "artifact_dir": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509",
+    "manifest": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/RUN_MANIFEST.json",
+    "summary_json": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/comparative_summary.json",
+    "engine_csv": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/comparative_engine_runs.csv"
+  },
+  "comparison_contract": {
+    "suite_family": "native-comparative-regression",
+    "contract_id": "native-v3-comparative-regression-v1",
+    "expected_harness": "static_translated_regression_corpus",
+    "translation_contract": {
+      "translation_contract_id": "vncr-frozen-static-corpus-v1",
+      "required_translation_mode": "static_native_v3",
+      "runtime_translation_allowed": false,
+      "runtime_substitution_only": [
+        "__VNCR_NS__"
+      ],
+      "translation_inventory_csv": "comparative_translation_inventory.csv",
+      "validated_cases": 14,
+      "validated_sql_artifacts": 60,
+      "native_sql_artifacts": 30,
+      "donor_sql_artifacts": 30,
+      "corpus_fingerprint_sha256": "e8e0fbdec9ee4abf815ff524bbab42bbcec33f609431bdd2ff08b46253b3c070"
+    },
+    "target_engine": "upstream-firebird",
+    "target_role": "original",
+    "parser_core": "v3",
+    "parser_mode": "donor_reference"
+  },
+  "summary": {
+    "total_cases": 5,
+    "exec_ok": 5,
+    "exec_error": 0,
+    "exec_failed": 0,
+    "positive_cases": 5,
+    "negative_cases": 0,
+    "avg_exec_elapsed_ms": 91.2
+  },
+  "results": [
+    {
+      "case_id": "firebird_delete_all_rows",
+      "engine_id": "ref_firebird",
+      "dialect_family": "firebird",
+      "role": "donor",
+      "expectation": "must_match",
+      "behavior_class": "dml_delete_all_rows",
+      "translation_mode": "static_native_v3",
+      "exec_status": "ok",
+      "sqlstate": "00000",
+      "assert_count": "1",
+      "exec_elapsed_ms": "89",
+      "donor_source_path": "tests/compatibility/firebird/converted/functional/dml/delete_01.sql",
+      "donor_converted_path": "tests/compatibility/firebird/converted/functional/dml/delete_01.sql"
+    },
+    {
+      "case_id": "firebird_insert_default_values",
+      "engine_id": "ref_firebird",
+      "dialect_family": "firebird",
+      "role": "donor",
+      "expectation": "must_match",
+      "behavior_class": "insert_default_values",
+      "translation_mode": "static_native_v3",
+      "exec_status": "ok",
+      "sqlstate": "00000",
+      "assert_count": "2",
+      "exec_elapsed_ms": "111",
+      "donor_source_path": "tests/compatibility/firebird/converted/functional/dml/insert_01.sql",
+      "donor_converted_path": "tests/compatibility/firebird/converted/functional/dml/insert_01.sql"
+    },
+    {
+      "case_id": "firebird_join_using",
+      "engine_id": "ref_firebird",
+      "dialect_family": "firebird",
+      "role": "donor",
+      "expectation": "must_match",
+      "behavior_class": "join_using_named_columns",
+      "translation_mode": "static_native_v3",
+      "exec_status": "ok",
+      "sqlstate": "00000",
+      "assert_count": "2",
+      "exec_elapsed_ms": "81",
+      "donor_source_path": "tests/compatibility/firebird/converted/functional/dml/join_01.sql",
+      "donor_converted_path": "tests/compatibility/firebird/converted/functional/dml/join_01.sql"
+    },
+    {
+      "case_id": "firebird_avg_single_row",
+      "engine_id": "ref_firebird",
+      "dialect_family": "firebird",
+      "role": "donor",
+      "expectation": "must_match",
+      "behavior_class": "aggregate_avg_single_row",
+      "translation_mode": "static_native_v3",
+      "exec_status": "ok",
+      "sqlstate": "00000",
+      "assert_count": "1",
+      "exec_elapsed_ms": "95",
+      "donor_source_path": "tests/compatibility/firebird/converted/functional/intfunc/avg_01.sql",
+      "donor_converted_path": "tests/compatibility/firebird/converted/functional/intfunc/avg_01.sql"
+    },
+    {
+      "case_id": "firebird_count_empty",
+      "engine_id": "ref_firebird",
+      "dialect_family": "firebird",
+      "role": "donor",
+      "expectation": "must_match",
+      "behavior_class": "aggregate_count_empty",
+      "translation_mode": "static_native_v3",
+      "exec_status": "ok",
+      "sqlstate": "00000",
+      "assert_count": "1",
+      "exec_elapsed_ms": "80",
+      "donor_source_path": "tests/compatibility/firebird/converted/functional/intfunc/count_01_v1_0.sql",
+      "donor_converted_path": "tests/compatibility/firebird/converted/functional/intfunc/count_01_v1_0.sql"
+    }
+  ]
+}

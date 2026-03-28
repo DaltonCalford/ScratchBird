@@ -1,0 +1,40 @@
+{
+  "setup": {
+    "status": "skipped",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "",
+    "stderr": "",
+    "elapsed_ms": 0,
+    "assert_lines": [],
+    "stdout_path": "",
+    "stderr_path": ""
+  },
+  "exec": {
+    "status": "error",
+    "returncode": 1,
+    "sqlstate": "42000",
+    "message": "-object TABLE \"VNCR_ECE440_TEST\" is in use",
+    "stdout": "\nCONCATENATION                                          \n====================================================== \nASSERT|firebird_count_empty|value|0                    \n\n\nStatement failed, SQLSTATE = 42000\nunsuccessful metadata update\n-object TABLE \"VNCR_ECE440_TEST\" is in use\n",
+    "stderr": "",
+    "elapsed_ms": 215,
+    "assert_lines": [
+      "ASSERT|firebird_count_empty|value|0"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095003/20260328_095003/firebird_count_empty/firebird/donor/raw/ref_firebird.exec.ef62220c4e22.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095003/20260328_095003/firebird_count_empty/firebird/donor/raw/ref_firebird.exec.ef62220c4e22.stderr.txt"
+  },
+  "teardown": {
+    "status": "skipped",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "",
+    "stderr": "",
+    "elapsed_ms": 0,
+    "assert_lines": [],
+    "stdout_path": "",
+    "stderr_path": ""
+  }
+}

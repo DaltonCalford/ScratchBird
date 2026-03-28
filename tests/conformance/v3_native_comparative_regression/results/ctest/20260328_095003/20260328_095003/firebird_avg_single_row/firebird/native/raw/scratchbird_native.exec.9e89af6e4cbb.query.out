@@ -1,0 +1,9 @@
+Rows affected: 0
+Rows affected: 1
++----------------------------------------+
+| expr1                                  |
++----------------------------------------+
+| ASSERT|firebird_avg_single_row|value|5 |
++----------------------------------------+
+(1 row)
+Rows affected: 0

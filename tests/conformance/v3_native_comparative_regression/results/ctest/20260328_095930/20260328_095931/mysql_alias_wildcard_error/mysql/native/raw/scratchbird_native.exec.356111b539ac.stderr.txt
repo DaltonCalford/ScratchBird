@@ -1,0 +1,2 @@
+Error: V3 SELECT * requires FROM
+Stopping due to error (SET BAIL is ON)

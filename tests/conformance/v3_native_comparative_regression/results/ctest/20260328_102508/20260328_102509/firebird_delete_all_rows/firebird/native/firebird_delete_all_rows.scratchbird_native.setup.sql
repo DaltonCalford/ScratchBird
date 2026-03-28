@@ -1,0 +1,2 @@
+CREATE TABLE vncr_b9426f_tb(id INTEGER);
+INSERT INTO vncr_b9426f_tb VALUES (10);

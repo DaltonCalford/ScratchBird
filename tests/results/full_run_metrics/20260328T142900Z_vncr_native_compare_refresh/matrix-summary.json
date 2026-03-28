@@ -1,0 +1,267 @@
+{
+  "run_id": "20260328T142900Z_vncr_native_compare_refresh",
+  "output_root": "/home/dcalford/CliWork/ScratchBird/tests/results/full_run_metrics/20260328T142900Z_vncr_native_compare_refresh",
+  "started_at_utc": "2026-03-28T14:30:05Z",
+  "completed_at_utc": "2026-03-28T14:30:05Z",
+  "duration_seconds": 0.0,
+  "engines_requested": [
+    "scratchbird",
+    "firebird",
+    "mysql",
+    "postgresql",
+    "scratchbird-firebird",
+    "scratchbird-mysql",
+    "scratchbird-postgresql",
+    "upstream-firebird",
+    "upstream-mysql",
+    "upstream-postgresql",
+    "scratchbird-native",
+    "ref_duckdb",
+    "ref_firebird",
+    "ref_mysql",
+    "ref_postgresql",
+    "scratchbird_emulated_firebird",
+    "scratchbird_emulated_mysql",
+    "scratchbird_emulated_postgresql",
+    "scratchbird_native"
+  ],
+  "suites_requested": [
+    "full-gate",
+    "public-beta",
+    "regression",
+    "emulation-comparison",
+    "native-comparative-regression",
+    "native-v3-inet",
+    "optimizer-donor-compare"
+  ],
+  "result": "failed",
+  "failed_suite_runs": 3,
+  "total_suite_runs": 25,
+  "suite_runs": [
+    {
+      "engine": "scratchbird",
+      "suite": "full-gate",
+      "started_at": "2026-03-28T14:30:05Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "scratchbird/full-gate"
+    },
+    {
+      "engine": "scratchbird",
+      "suite": "public-beta",
+      "started_at": "2026-03-28T14:30:05Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "scratchbird/public-beta"
+    },
+    {
+      "engine": "firebird",
+      "suite": "regression",
+      "started_at": "2026-03-28T07:10:14Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "firebird/regression"
+    },
+    {
+      "engine": "mysql",
+      "suite": "regression",
+      "started_at": "2026-03-28T12:54:30Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "mysql/regression"
+    },
+    {
+      "engine": "postgresql",
+      "suite": "regression",
+      "started_at": "2026-03-28T12:54:26Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "postgresql/regression"
+    },
+    {
+      "engine": "scratchbird",
+      "suite": "regression",
+      "started_at": "2026-03-28T07:03:42Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "scratchbird/regression"
+    },
+    {
+      "engine": "scratchbird-firebird",
+      "suite": "emulation-comparison",
+      "started_at": "2026-03-11T18:44:22Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "scratchbird-firebird/emulation-comparison"
+    },
+    {
+      "engine": "scratchbird-mysql",
+      "suite": "emulation-comparison",
+      "started_at": "2026-03-28T07:02:31Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "scratchbird-mysql/emulation-comparison"
+    },
+    {
+      "engine": "scratchbird-postgresql",
+      "suite": "emulation-comparison",
+      "started_at": "2026-03-28T06:52:06Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "scratchbird-postgresql/emulation-comparison"
+    },
+    {
+      "engine": "upstream-firebird",
+      "suite": "emulation-comparison",
+      "started_at": "2026-03-28T07:10:14Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "upstream-firebird/emulation-comparison"
+    },
+    {
+      "engine": "upstream-mysql",
+      "suite": "emulation-comparison",
+      "started_at": "2026-03-28T12:54:30Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "upstream-mysql/emulation-comparison"
+    },
+    {
+      "engine": "upstream-postgresql",
+      "suite": "emulation-comparison",
+      "started_at": "2026-03-28T12:54:26Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "upstream-postgresql/emulation-comparison"
+    },
+    {
+      "engine": "scratchbird-native",
+      "suite": "native-comparative-regression",
+      "started_at": "2026-03-28T14:25:49Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "scratchbird-native/native-comparative-regression"
+    },
+    {
+      "engine": "upstream-firebird",
+      "suite": "native-comparative-regression",
+      "started_at": "2026-03-28T14:25:49Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "upstream-firebird/native-comparative-regression"
+    },
+    {
+      "engine": "upstream-mysql",
+      "suite": "native-comparative-regression",
+      "started_at": "2026-03-28T14:25:49Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "upstream-mysql/native-comparative-regression"
+    },
+    {
+      "engine": "upstream-postgresql",
+      "suite": "native-comparative-regression",
+      "started_at": "2026-03-28T14:25:49Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "upstream-postgresql/native-comparative-regression"
+    },
+    {
+      "engine": "scratchbird",
+      "suite": "native-v3-inet",
+      "started_at": "2026-03-28T07:07:06Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "scratchbird/native-v3-inet"
+    },
+    {
+      "engine": "ref_duckdb",
+      "suite": "optimizer-donor-compare",
+      "started_at": "2026-03-28T14:30:05Z",
+      "duration_seconds": 0.0,
+      "status": "failed",
+      "exit_code": 1,
+      "output_dir": "ref_duckdb/optimizer-donor-compare"
+    },
+    {
+      "engine": "ref_firebird",
+      "suite": "optimizer-donor-compare",
+      "started_at": "2026-03-28T14:30:05Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "ref_firebird/optimizer-donor-compare"
+    },
+    {
+      "engine": "ref_mysql",
+      "suite": "optimizer-donor-compare",
+      "started_at": "2026-03-28T14:30:05Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "ref_mysql/optimizer-donor-compare"
+    },
+    {
+      "engine": "ref_postgresql",
+      "suite": "optimizer-donor-compare",
+      "started_at": "2026-03-28T14:30:05Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "ref_postgresql/optimizer-donor-compare"
+    },
+    {
+      "engine": "scratchbird_emulated_firebird",
+      "suite": "optimizer-donor-compare",
+      "started_at": "2026-03-28T14:30:05Z",
+      "duration_seconds": 0.0,
+      "status": "failed",
+      "exit_code": 1,
+      "output_dir": "scratchbird_emulated_firebird/optimizer-donor-compare"
+    },
+    {
+      "engine": "scratchbird_emulated_mysql",
+      "suite": "optimizer-donor-compare",
+      "started_at": "2026-03-28T14:30:05Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "scratchbird_emulated_mysql/optimizer-donor-compare"
+    },
+    {
+      "engine": "scratchbird_emulated_postgresql",
+      "suite": "optimizer-donor-compare",
+      "started_at": "2026-03-28T14:30:05Z",
+      "duration_seconds": 0.0,
+      "status": "failed",
+      "exit_code": 1,
+      "output_dir": "scratchbird_emulated_postgresql/optimizer-donor-compare"
+    },
+    {
+      "engine": "scratchbird_native",
+      "suite": "optimizer-donor-compare",
+      "started_at": "2026-03-28T14:30:05Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "scratchbird_native/optimizer-donor-compare"
+    }
+  ]
+}

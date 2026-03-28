@@ -1,0 +1,2 @@
+CREATE TABLE vncr_7dd219_t1 (id INT, id2 INT);
+INSERT INTO vncr_7dd219_t1 VALUES (1, 10);

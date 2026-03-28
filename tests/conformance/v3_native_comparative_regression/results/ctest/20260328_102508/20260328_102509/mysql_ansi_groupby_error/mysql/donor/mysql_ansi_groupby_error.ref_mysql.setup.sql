@@ -1,0 +1,2 @@
+CREATE TABLE vncr_2078a4_t1 (id INT, id2 INT);
+INSERT INTO vncr_2078a4_t1 VALUES (1, 10);

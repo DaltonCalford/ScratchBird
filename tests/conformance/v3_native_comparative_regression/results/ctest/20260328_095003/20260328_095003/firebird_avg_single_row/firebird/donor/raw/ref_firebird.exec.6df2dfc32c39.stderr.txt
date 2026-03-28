@@ -1,0 +1,3 @@
+Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-object TABLE "VNCR_6BA7B3_TEST" is in use

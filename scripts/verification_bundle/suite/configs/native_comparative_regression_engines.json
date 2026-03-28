@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "defaults": {
+    "timeout_seconds": 180
+  },
+  "engines": [
+    {
+      "id": "scratchbird_native",
+      "family": "scratchbird",
+      "mode": "native",
+      "lane": "native",
+      "enabled": true,
+      "client": "sb_isql",
+      "client_candidates": [
+        "{repo_root}/ScratchBird-driver/build/tracks/p3/drivers/cli/sb_isql",
+        "{repo_root}/ScratchBird/build/src/sb_isql",
+        "{repo_root}/ScratchBird/build/src/cli/sb_isql",
+        "{repo_root}/ScratchBird-driver/build/tracks/alpha/drivers/cli/sb_isql",
+        "sb_isql"
+      ],
+      "connect": {
+        "host": "127.0.0.1",
+        "port": "16092",
+        "database": "main",
+        "user": "SysArch",
+        "password": "replaceme",
+        "mode": "local-ipc",
+        "ipc_method": "tcp",
+        "sslmode": "disable"
+      },
+      "env_overrides": {
+        "host": "SCRATCHBIRD_NATIVE_HOST",
+        "port": "SCRATCHBIRD_NATIVE_PORT",
+        "database": "SCRATCHBIRD_NATIVE_DB",
+        "user": "SCRATCHBIRD_NATIVE_USER",
+        "password": "SCRATCHBIRD_NATIVE_PASSWORD"
+      }
+    },
+    {
+      "id": "ref_firebird",
+      "family": "reference",
+      "mode": "native",
+      "engine": "firebird",
+      "lane": "firebird",
+      "enabled": true,
+      "client": "isql-fb",
+      "client_candidates": [
+        "isql-fb",
+        "isql",
+        "{repo_root}/firebird/gen/Release/firebird/bin/isql",
+        "{repo_root}/firebird/gen/Debug/firebird/bin/isql",
+        "{repo_root}/firebird/build/bin/isql"
+      ],
+      "connect": {
+        "host": "127.0.0.1",
+        "port": "3050",
+        "database": "/firebird/data/benchmark.fdb",
+        "user": "benchmark",
+        "password": "benchmark"
+      },
+      "env_overrides": {
+        "host": "SB_VERIFY_REF_FB_HOST",
+        "port": "SB_VERIFY_REF_FB_PORT",
+        "database": "SB_VERIFY_REF_FB_DB",
+        "user": "SB_VERIFY_REF_FB_USER",
+        "password": "SB_VERIFY_REF_FB_PASSWORD"
+      }
+    },
+    {
+      "id": "ref_mysql",
+      "family": "reference",
+      "mode": "native",
+      "engine": "mysql",
+      "lane": "mysql",
+      "enabled": true,
+      "client": "mysql",
+      "client_candidates": [
+        "{repo_root}/mysql-server/build_codex2/runtime_output_directory/mysql",
+        "{repo_root}/mysql-server/build_codex/runtime_output_directory/mysql",
+        "{repo_root}/mysql-server/build/runtime_output_directory/mysql",
+        "mysql"
+      ],
+      "connect": {
+        "host": "127.0.0.1",
+        "port": "3306",
+        "database": "benchmark",
+        "user": "benchmark",
+        "password": "benchmark"
+      },
+      "env_overrides": {
+        "host": "SB_VERIFY_REF_MY_HOST",
+        "port": "SB_VERIFY_REF_MY_PORT",
+        "database": "SB_VERIFY_REF_MY_DB",
+        "user": "SB_VERIFY_REF_MY_USER",
+        "password": "SB_VERIFY_REF_MY_PASSWORD"
+      }
+    },
+    {
+      "id": "ref_postgresql",
+      "family": "reference",
+      "mode": "native",
+      "engine": "postgresql",
+      "lane": "postgresql",
+      "enabled": true,
+      "client": "psql",
+      "client_candidates": [
+        "{repo_root}/postgresql/build_codex/src/bin/psql/psql",
+        "{repo_root}/postgresql/build_codex2/src/bin/psql/psql",
+        "{repo_root}/postgresql/build/src/bin/psql/psql",
+        "psql"
+      ],
+      "connect": {
+        "host": "127.0.0.1",
+        "port": "5433",
+        "database": "benchmark",
+        "user": "benchmark",
+        "password": "benchmark"
+      },
+      "env_overrides": {
+        "host": "SB_VERIFY_REF_PG_HOST",
+        "port": "SB_VERIFY_REF_PG_PORT",
+        "database": "SB_VERIFY_REF_PG_DB",
+        "user": "SB_VERIFY_REF_PG_USER",
+        "password": "SB_VERIFY_REF_PG_PASSWORD"
+      }
+    }
+  ]
+}

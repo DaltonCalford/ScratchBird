@@ -1,0 +1,41 @@
+{
+  "setup": {
+    "status": "skipped",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "",
+    "stderr": "",
+    "elapsed_ms": 0,
+    "assert_lines": [],
+    "stdout_path": "",
+    "stderr_path": ""
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "ASSERT|postgresql_insert_defaults_values|rows|4\nASSERT|postgresql_insert_defaults_values|testing_rows|3\n\n",
+    "stderr": "",
+    "elapsed_ms": 61,
+    "assert_lines": [
+      "ASSERT|postgresql_insert_defaults_values|rows|4",
+      "ASSERT|postgresql_insert_defaults_values|testing_rows|3"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095930/20260328_095931/postgresql_insert_defaults_values/postgresql/donor/raw/ref_postgresql.exec.332ebea813f1.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095930/20260328_095931/postgresql_insert_defaults_values/postgresql/donor/raw/ref_postgresql.exec.332ebea813f1.stderr.txt"
+  },
+  "teardown": {
+    "status": "skipped",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "",
+    "stderr": "",
+    "elapsed_ms": 0,
+    "assert_lines": [],
+    "stdout_path": "",
+    "stderr_path": ""
+  }
+}

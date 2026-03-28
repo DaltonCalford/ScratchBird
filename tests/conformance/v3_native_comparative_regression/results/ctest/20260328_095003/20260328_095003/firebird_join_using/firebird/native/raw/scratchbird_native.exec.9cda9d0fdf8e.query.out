@@ -1,0 +1,15 @@
+Rows affected: 0
+Rows affected: 0
+Rows affected: 1
+Rows affected: 1
+Rows affected: 1
+Rows affected: 1
++--------------------------------------------------+
+| expr1                                            |
++--------------------------------------------------+
+| ASSERT|firebird_join_using|row|benoit|somme      |
+| ASSERT|firebird_join_using|row|tom|pas de calais |
++--------------------------------------------------+
+(2 rows)
+Rows affected: 0
+Rows affected: 0

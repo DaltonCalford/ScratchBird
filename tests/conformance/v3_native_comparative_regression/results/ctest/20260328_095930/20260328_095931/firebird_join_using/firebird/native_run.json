@@ -1,0 +1,41 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\nRows affected: 0\nRows affected: 1\nRows affected: 1\nRows affected: 1\nRows affected: 1\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 3076,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095930/20260328_095931/firebird_join_using/firebird/native/raw/scratchbird_native.setup.bb5247e82f9d.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095930/20260328_095931/firebird_join_using/firebird/native/raw/scratchbird_native.setup.bb5247e82f9d.stderr.txt"
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "+---------------------------------------------+\n| expr1                                       |\n+---------------------------------------------+\n| ASSERT|firebird_join_using|row|benoit|somme |\n+---------------------------------------------+\n(1 row)\n+--------------------------------------------------+\n| expr1                                            |\n+--------------------------------------------------+\n| ASSERT|firebird_join_using|row|tom|pas de calais |\n+--------------------------------------------------+\n(1 row)\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 2582,
+    "assert_lines": [
+      "ASSERT|firebird_join_using|row|benoit|somme",
+      "ASSERT|firebird_join_using|row|tom|pas de calais"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095930/20260328_095931/firebird_join_using/firebird/native/raw/scratchbird_native.exec.b7215758b9f5.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095930/20260328_095931/firebird_join_using/firebird/native/raw/scratchbird_native.exec.b7215758b9f5.stderr.txt"
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "Rows affected: 0\nRows affected: 0\n\n\n",
+    "stderr": "",
+    "elapsed_ms": 2461,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095930/20260328_095931/firebird_join_using/firebird/native/raw/scratchbird_native.teardown.c10e2bd9b872.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_095930/20260328_095931/firebird_join_using/firebird/native/raw/scratchbird_native.teardown.c10e2bd9b872.stderr.txt"
+  }
+}
