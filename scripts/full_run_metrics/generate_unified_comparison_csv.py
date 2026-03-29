@@ -94,6 +94,14 @@ def pick_suite_json_file(output_root: Path, engine: str, suite: str) -> Path | N
     if not candidates:
         return None
 
+    candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.name != "system-info.json" and not candidate.name.endswith("-pairwise.json")
+    ]
+    if not candidates:
+        return None
+
     summary_candidates = [candidate for candidate in candidates if "summary" in candidate.name]
     if summary_candidates:
         return summary_candidates[0]

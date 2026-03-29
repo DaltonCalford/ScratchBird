@@ -544,9 +544,9 @@ class NormalizeFullRunTest(unittest.TestCase):
 
             baseline_root = root / "ScratchBird-Benchmarks" / "results"
             baseline = baseline_root / "baseline-a"
-            (baseline / "firebird" / "regression").mkdir(parents=True)
-            (baseline / "firebird" / "regression" / "regression-firebird-summary.json").write_text(
-                json.dumps({"totals": {"total": 100, "passed": 99, "failed": 1, "skipped": 0, "errors": 0}})
+            (baseline / "firebird" / "stress").mkdir(parents=True)
+            (baseline / "firebird" / "stress" / "stress_firebird_20260327_000000.json").write_text(
+                json.dumps({"summary": {"total_tests": 15, "passed": 15, "failed": 0, "errors": 0, "total_duration_ms": 1250.0}})
                 + "\n",
                 encoding="utf-8",
             )
@@ -556,16 +556,16 @@ class NormalizeFullRunTest(unittest.TestCase):
                         "run_id": "baseline-a",
                         "output_root": str(baseline),
                         "engines_requested": ["firebird"],
-                        "suites_requested": ["regression"],
+                        "suites_requested": ["stress"],
                         "suite_runs": [
                             {
                                 "engine": "firebird",
-                                "suite": "regression",
+                                "suite": "stress",
                                 "started_at": "2026-03-27T00:00:00Z",
                                 "duration_seconds": 100,
                                 "status": "passed",
                                 "exit_code": 0,
-                                "output_dir": "firebird/regression",
+                                "output_dir": "firebird/stress",
                             }
                         ],
                     }
@@ -644,8 +644,10 @@ class NormalizeFullRunTest(unittest.TestCase):
             self.assertTrue((output_root / "matrix-comparison-unified.csv").exists())
             self.assertTrue((output_root / "benchmark-baseline-comparison.csv").exists())
             self.assertTrue((output_root / "history-comparison.csv").exists())
+            self.assertTrue((output_root / "benchmark-matrix-import.json").exists())
             self.assertTrue((output_root / "scratchbird" / "public-beta" / "public-beta-scratchbird-summary.json").exists())
             self.assertTrue((output_root / "firebird" / "regression" / "regression-firebird-summary.json").exists())
+            self.assertTrue((output_root / "firebird" / "stress" / "stress_firebird_20260327_000000.json").exists())
             self.assertTrue((output_root / "upstream-mysql" / "emulation-comparison" / "emulation-comparison-upstream-mysql-summary.json").exists())
             self.assertTrue((output_root / "scratchbird-mysql" / "emulation-comparison" / "emulation-comparison-scratchbird-mysql-summary.json").exists())
             self.assertTrue((output_root / "emulation-comparison-pairwise.json").exists())
@@ -656,6 +658,7 @@ class NormalizeFullRunTest(unittest.TestCase):
             self.assertIn("## Baseline Suite Health", baseline_md)
             self.assertIn("`firebird`", baseline_md)
             self.assertIn("## Baseline Key Metrics", baseline_md)
+            self.assertNotIn("No exact `(suite, metric, engine)` overlap exists", baseline_md)
 
             pairwise = json.loads((output_root / "emulation-comparison-pairwise.json").read_text(encoding="utf-8"))
             verdicts = {item["dialect_family"]: item["verdict"] for item in pairwise["pairs"]}
@@ -681,9 +684,15 @@ class NormalizeFullRunTest(unittest.TestCase):
             )
 
             summary = json.loads((output_root / "matrix-summary.json").read_text(encoding="utf-8"))
+            with (output_root / "matrix-comparison-unified.csv").open(newline="", encoding="utf-8") as handle:
+                unified_rows = list(csv.DictReader(handle))
+            by_key = {(row["suite"], row["metric"]): row for row in unified_rows}
+            self.assertEqual(by_key[("stress", "matrix.duration_seconds")]["firebird"], "100.0")
+            self.assertEqual(by_key[("stress", "summary.passed")]["firebird"], "15")
             self.assertIn("emulation-comparison", summary["suites_requested"])
             self.assertIn("native-comparative-regression", summary["suites_requested"])
             self.assertIn("public-beta", summary["suites_requested"])
+            self.assertIn("stress", summary["suites_requested"])
             self.assertIn("scratchbird", summary["engines_requested"])
             self.assertIn("scratchbird-native", summary["engines_requested"])
             self.assertIn("firebird", summary["engines_requested"])

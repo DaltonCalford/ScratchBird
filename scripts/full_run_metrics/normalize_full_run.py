@@ -32,6 +32,10 @@ SUITE_ORDER = [
     "full-gate",
     "public-beta",
     "regression",
+    "stress",
+    "acid",
+    "engine-differential",
+    "index-comparison",
     "emulation-comparison",
     "native-comparative-regression",
     "native-v3-inet",
@@ -48,6 +52,15 @@ HISTORY_KEY_METRICS = {
     ("public-beta", "summary.total_steps"),
     ("regression", "totals.failed"),
     ("regression", "matrix.duration_seconds"),
+    ("stress", "summary.failed"),
+    ("stress", "matrix.duration_seconds"),
+    ("acid", "summary.failed"),
+    ("acid", "matrix.duration_seconds"),
+    ("engine-differential", "summary.failed"),
+    ("engine-differential", "matrix.duration_seconds"),
+    ("index-comparison", "summary.failed"),
+    ("index-comparison", "summary.score"),
+    ("index-comparison", "matrix.duration_seconds"),
     ("emulation-comparison", "summary.failed"),
     ("emulation-comparison", "summary.total"),
     ("native-comparative-regression", "summary.exec_failed"),
@@ -211,6 +224,13 @@ def latest_file(glob_root: Path, pattern: str) -> Path | None:
     if not matches:
         return None
     return matches[-1]
+
+
+def copy_tree_replace(source: Path, destination: Path) -> None:
+    ensure_dir(destination.parent)
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination)
 
 
 def parse_timestamp_name(name: str) -> float | None:
@@ -1343,6 +1363,51 @@ def resolve_baseline_summary_path(baseline_root: Path | None) -> tuple[Path | No
     return summary_path, baseline_root
 
 
+def parse_benchmark_matrix_artifacts(benchmarks_root: Path | None, output_root: Path) -> List[SuiteArtifact]:
+    summary_path, matrix_root = resolve_baseline_summary_path(benchmarks_root)
+    if summary_path is None or matrix_root is None:
+        return []
+
+    summary = load_json(summary_path)
+    suite_runs = list(summary.get("suite_runs", []))
+    if not suite_runs:
+        return []
+
+    import_metadata = {
+        "source_run_id": summary.get("run_id", ""),
+        "source_summary_json": str(summary_path),
+        "source_output_root": str(matrix_root),
+        "suite_runs_imported": len(suite_runs),
+        "suite_families_imported": sorted({str(item.get("suite", "")) for item in suite_runs if item.get("suite")}),
+    }
+    write_json(output_root / "benchmark-matrix-import.json", import_metadata)
+
+    artifacts: List[SuiteArtifact] = []
+    for item in suite_runs:
+        engine = str(item.get("engine", "")).strip()
+        suite = str(item.get("suite", "")).strip()
+        if not engine or not suite:
+            continue
+        source_dir = resolve_relative(matrix_root, str(item.get("output_dir", "")).strip())
+        if source_dir is None or not source_dir.exists():
+            continue
+        destination_dir = output_root / engine / suite
+        copy_tree_replace(source_dir, destination_dir)
+        artifacts.append(
+            SuiteArtifact(
+                engine=engine,
+                suite=suite,
+                status=str(item.get("status", "unknown")),
+                exit_code=safe_int(item.get("exit_code")) or 0,
+                started_at=str(item.get("started_at", summary.get("started_at_utc", ""))),
+                duration_seconds=safe_float(item.get("duration_seconds")) or 0.0,
+                output_dir=destination_dir,
+                summary_path=destination_dir,
+            )
+        )
+    return artifacts
+
+
 def write_baseline_comparison(
     output_root: Path,
     current_unified: Path,
@@ -1586,6 +1651,8 @@ def normalize(args: argparse.Namespace) -> Path:
         artifacts.extend(parse_native_comparative(v3_native_comparative_dir, output_root))
     artifacts.extend(parse_verification_perf(verification_root, output_root, anchor_timestamp))
     artifacts.extend(parse_optimizer_compare(verification_root, output_root, anchor_timestamp))
+    benchmarks_root = args.benchmarks_root.resolve() if args.benchmarks_root else None
+    artifacts.extend(parse_benchmark_matrix_artifacts(benchmarks_root, output_root))
 
     matrix_summary = build_matrix_summary(run_id, output_root, artifacts)
     summary_path = output_root / "matrix-summary.json"
@@ -1596,7 +1663,6 @@ def normalize(args: argparse.Namespace) -> Path:
     if not args.skip_system_info:
         write_json(output_root / "system-info.json", collect_system_info())
 
-    benchmarks_root = args.benchmarks_root.resolve() if args.benchmarks_root else None
     write_baseline_comparison(output_root, output_root / "matrix-comparison-unified.csv", benchmarks_root)
 
     history_root = (args.history_root or (repo_root / "tests" / "results" / "full_run_metrics")).resolve()

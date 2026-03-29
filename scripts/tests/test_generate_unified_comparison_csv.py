@@ -25,6 +25,7 @@ class GenerateUnifiedComparisonCsvTest(unittest.TestCase):
             root = pathlib.Path(tmp)
             (root / "scratchbird" / "full-gate").mkdir(parents=True)
             (root / "firebird" / "regression").mkdir(parents=True)
+            (root / "firebird" / "stress").mkdir(parents=True)
 
             (root / "scratchbird" / "full-gate" / "full-gate-scratchbird-summary.json").write_text(
                 json.dumps(
@@ -41,6 +42,14 @@ class GenerateUnifiedComparisonCsvTest(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
+            (root / "firebird" / "stress" / "system-info.json").write_text(
+                json.dumps({"os": {"name": "linux"}}) + "\n",
+                encoding="utf-8",
+            )
+            (root / "firebird" / "stress" / "stress_firebird_20260328_000000.json").write_text(
+                json.dumps({"summary": {"passed": 15, "failed": 0, "errors": 0}}) + "\n",
+                encoding="utf-8",
+            )
             summary_path = root / "matrix-summary.json"
             summary_path.write_text(
                 json.dumps(
@@ -48,7 +57,7 @@ class GenerateUnifiedComparisonCsvTest(unittest.TestCase):
                         "run_id": "run-1",
                         "output_root": str(root),
                         "engines_requested": ["scratchbird", "firebird"],
-                        "suites_requested": ["full-gate", "regression"],
+                        "suites_requested": ["full-gate", "regression", "stress"],
                         "suite_runs": [
                             {
                                 "engine": "scratchbird",
@@ -68,6 +77,15 @@ class GenerateUnifiedComparisonCsvTest(unittest.TestCase):
                                 "exit_code": 1,
                                 "output_dir": "firebird/regression",
                             },
+                            {
+                                "engine": "firebird",
+                                "suite": "stress",
+                                "started_at": "2026-03-28T00:02:00Z",
+                                "duration_seconds": 12,
+                                "status": "passed",
+                                "exit_code": 0,
+                                "output_dir": "firebird/stress",
+                            },
                         ],
                     }
                 )
@@ -83,6 +101,7 @@ class GenerateUnifiedComparisonCsvTest(unittest.TestCase):
             self.assertEqual(by_key[("full-gate", "summary.total_time_sec")]["scratchbird"], "321.5")
             self.assertEqual(by_key[("regression", "totals.failed")]["firebird"], "2")
             self.assertEqual(by_key[("full-gate", "matrix.status")]["scratchbird"], "passed")
+            self.assertEqual(by_key[("stress", "summary.passed")]["firebird"], "15")
 
 
 if __name__ == "__main__":
