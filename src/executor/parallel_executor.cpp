@@ -16,6 +16,10 @@
 //
 // November 25, 2025
 
+// Section 36 invariant: parallel_executor consumes bounded plan shapes chosen
+// upstream. Execution support here does not by itself prove adaptive planning,
+// broad cost-based optimization, or stable cross-version plan identity.
+
 #include "scratchbird/executor/parallel_executor.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"

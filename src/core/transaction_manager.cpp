@@ -7,6 +7,13 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
+// Section 35 invariant: transaction_manager publishes native MGA/TIP lifecycle
+// truth used by durability and restart handling. That truth remains distinct
+// from redo, undo, or write-ahead recovery folklore.
+// Section 37 invariant: transaction_manager defines transaction-visibility and
+// concurrency adjacency for metadata and schema operations, but it does not by
+// itself prove mature concurrent DDL or global metadata invalidation behavior.
+
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"

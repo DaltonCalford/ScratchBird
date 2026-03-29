@@ -14,6 +14,9 @@
  * Defines the inter-process communication protocol between the ScratchBird
  * engine and parser agents. Uses shared memory queues with socket notifications.
  */
+// Section 32 invariant: this header is the current internal IPC catalog
+// authority for the bounded engine/parser-agent contract. It is not a general
+// public extension ABI and must remain distinct from external wire contracts.
 
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"

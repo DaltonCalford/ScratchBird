@@ -9,6 +9,10 @@
  */
 #pragma once
 
+// Section 37 invariant: lock_manager declarations bound metadata-lock and
+// schema-concurrency surfaces only. They do not by themselves prove mature
+// online schema change behavior or universal metadata-coherence guarantees.
+
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/uuidv7.h"
 #include <cstdint>

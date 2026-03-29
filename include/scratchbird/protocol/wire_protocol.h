@@ -20,6 +20,9 @@
  * - Extensible for additional network/front-door surfaces
  * - Compatible with streaming large result sets
  */
+// Section 32 invariant: declared message families here are bounded native or
+// adapter-facing protocol surfaces. Declaration presence alone does not promote
+// every adjacent surface into a stable public extension contract.
 
 #include <cstdint>
 #include <array>

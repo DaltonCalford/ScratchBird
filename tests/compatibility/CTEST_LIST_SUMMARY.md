@@ -1,5 +1,9 @@
 # Compatibility CTest List Summary
 
+> Section 36 boundary note: these lane inventories and runtime estimates are
+> planning and execution evidence only. They do not certify mature cost-model,
+> cardinality, or stable-plan guarantees.
+
 Generated: 2026-03-28T07:10:04Z
 Expanded ratio: `0.35`
 Expanded max per suite: `400`

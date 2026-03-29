@@ -1,0 +1,41 @@
+{
+  "setup": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 356,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_113201/20260328_113201/firebird_join_using/firebird/donor/raw/ref_firebird.setup.c32d0610251a.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_113201/20260328_113201/firebird_join_using/firebird/donor/raw/ref_firebird.setup.c32d0610251a.stderr.txt"
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\nCONCATENATION                                              \n========================================================== \nASSERT|firebird_join_using|row|benoit|somme                \n\n\nCONCATENATION                                           \n======================================================= \nASSERT|firebird_join_using|row|tom|pas de calais        \n\n\n",
+    "stderr": "",
+    "elapsed_ms": 87,
+    "assert_lines": [
+      "ASSERT|firebird_join_using|row|benoit|somme",
+      "ASSERT|firebird_join_using|row|tom|pas de calais"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_113201/20260328_113201/firebird_join_using/firebird/donor/raw/ref_firebird.exec.1b061cc2cebf.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_113201/20260328_113201/firebird_join_using/firebird/donor/raw/ref_firebird.exec.1b061cc2cebf.stderr.txt"
+  },
+  "teardown": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "\n",
+    "stderr": "",
+    "elapsed_ms": 170,
+    "assert_lines": [],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_113201/20260328_113201/firebird_join_using/firebird/donor/raw/ref_firebird.teardown.62e7a0da578f.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_113201/20260328_113201/firebird_join_using/firebird/donor/raw/ref_firebird.teardown.62e7a0da578f.stderr.txt"
+  }
+}

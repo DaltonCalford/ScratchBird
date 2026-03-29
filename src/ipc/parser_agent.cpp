@@ -7,6 +7,10 @@
 
 #include "scratchbird/ipc/parser_agent.h"
 
+// Section 32 invariant: parser_agent owns the parser-side runtime surface in
+// the external-agent topology. That ownership does not collapse into engine
+// execution ownership or a general client-facing runtime contract.
+
 #include <cstring>
 #include <chrono>
 

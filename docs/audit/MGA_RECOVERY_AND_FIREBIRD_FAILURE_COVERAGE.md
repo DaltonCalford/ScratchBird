@@ -1,5 +1,9 @@
 # ScratchBird MGA Recovery And Firebird Failure Coverage
 
+> Section 35 boundary note: this audit note is MGA-centered recovery evidence.
+> It must not be read as proof of WAL, redo, undo, PITR, donor-log, or
+> seamless failover semantics unless a stronger owner promotes those claims.
+
 This note is the auditor entry point for ScratchBird Alpha durability and crash recovery.
 
 ## Recovery Authority

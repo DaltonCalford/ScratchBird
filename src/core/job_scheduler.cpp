@@ -9,6 +9,10 @@
  */
 #include "scratchbird/core/job_scheduler.h"
 
+// Section 32 invariant: job_scheduler owns bounded maintenance scheduling and
+// worker coordination surfaces. It is not a general replacement for service
+// orchestration, listener ownership, or client/runtime boundary definitions.
+
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"

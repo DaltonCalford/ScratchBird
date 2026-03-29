@@ -1002,6 +1002,7 @@ set_tests_properties(TransactionTruthNative PROPERTIES
 add_executable(test_engine_ipc_session_handler unit/test_engine_ipc_session_handler.cpp)
 target_link_libraries(test_engine_ipc_session_handler
     scratchbird_ipc
+    scratchbird_protocol
     scratchbird_sblr
     scratchbird_core
     GTest::gtest

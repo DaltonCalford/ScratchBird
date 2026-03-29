@@ -409,6 +409,16 @@ std::string firebirdSyntheticFieldSourceName(const std::string& kind,
     return core::IdentifierUtils::toUpper(result);
 }
 
+std::string firebirdTableFieldSourceName(const std::string& relation_name,
+                                         const std::string& field_name) {
+    return firebirdSyntheticFieldSourceName("T", relation_name, field_name);
+}
+
+std::string firebirdViewFieldSourceName(const std::string& relation_name,
+                                        const std::string& field_name) {
+    return firebirdSyntheticFieldSourceName("V", relation_name, field_name);
+}
+
 uint32_t dataTypePrecisionHint(DataType type) {
     switch (type) {
         case DataType::CHAR:
@@ -1502,12 +1512,18 @@ Status FirebirdCatalogHandler::queryRdbFields(VirtualResultSet& results, ErrorCo
             }
 
             for (const auto& column : columns) {
-                std::string field_name = toUpperCase(column.column_name);
+                const std::string field_name =
+                    firebirdTableFieldSourceName(table.table_name, column.column_name);
                 if (!field_names.insert(field_name).second) {
                     continue;
                 }
 
-                FirebirdFieldMapping mapping{};
+                const uint32_t column_precision =
+                    column.type_precision != 0 ? column.type_precision : column.max_length;
+                FirebirdFieldMapping mapping =
+                    mapFirebirdFieldType(static_cast<DataType>(column.data_type),
+                                         column_precision,
+                                         column.type_scale);
                 auto domain_it = domain_map.find(column.domain_id);
                 if (domain_it != domain_map.end()) {
                     const DomainInfo& domain = domain_it->second;
@@ -1527,11 +1543,14 @@ Status FirebirdCatalogHandler::queryRdbFields(VirtualResultSet& results, ErrorCo
                         base_type = DataType::BLOB;
                     }
 
-                    mapping = mapFirebirdFieldType(base_type, precision, scale);
-                } else {
-                    mapping = mapFirebirdFieldType(static_cast<DataType>(column.data_type),
-                                                   column.type_precision,
-                                                   column.type_scale);
+                    // Ordinary table columns are exposed through relation-scoped synthetic field
+                    // sources. Their RDB$FIELDS rows must describe the concrete projected column
+                    // shape, not a generic normalized domain fallback.
+                    if (mapping.field_type == 0 ||
+                        (column_precision == 0 && column.type_scale == 0 &&
+                         static_cast<DataType>(column.data_type) != base_type)) {
+                        mapping = mapFirebirdFieldType(base_type, precision, scale);
+                    }
                 }
 
                 const std::optional<int16_t> dimensions =
@@ -1563,15 +1582,22 @@ Status FirebirdCatalogHandler::queryRdbFields(VirtualResultSet& results, ErrorCo
 
             for (size_t i = 0; i < columns.size(); ++i) {
                 const auto& column = columns[i];
-                std::string field_name =
+                const std::string logical_field_name =
                     i < view.column_names.size() && !view.column_names[i].empty()
-                        ? toUpperCase(view.column_names[i])
-                        : toUpperCase(column.column_name);
+                        ? view.column_names[i]
+                        : column.column_name;
+                const std::string field_name =
+                    firebirdViewFieldSourceName(view.name, logical_field_name);
                 if (!field_names.insert(field_name).second) {
                     continue;
                 }
 
-                FirebirdFieldMapping mapping{};
+                const uint32_t column_precision =
+                    column.type_precision != 0 ? column.type_precision : column.max_length;
+                FirebirdFieldMapping mapping =
+                    mapFirebirdFieldType(static_cast<DataType>(column.data_type),
+                                         column_precision,
+                                         column.type_scale);
                 auto domain_it = domain_map.find(column.domain_id);
                 if (domain_it != domain_map.end()) {
                     const DomainInfo& domain = domain_it->second;
@@ -1591,11 +1617,11 @@ Status FirebirdCatalogHandler::queryRdbFields(VirtualResultSet& results, ErrorCo
                         base_type = DataType::BLOB;
                     }
 
-                    mapping = mapFirebirdFieldType(base_type, precision, scale);
-                } else {
-                    mapping = mapFirebirdFieldType(static_cast<DataType>(column.data_type),
-                                                   column.type_precision,
-                                                   column.type_scale);
+                    if (mapping.field_type == 0 ||
+                        (column_precision == 0 && column.type_scale == 0 &&
+                         static_cast<DataType>(column.data_type) != base_type)) {
+                        mapping = mapFirebirdFieldType(base_type, precision, scale);
+                    }
                 }
 
                 const std::optional<int16_t> dimensions =
@@ -1619,7 +1645,8 @@ Status FirebirdCatalogHandler::queryRdbFields(VirtualResultSet& results, ErrorCo
                 }
 
                 for (const auto& column : projected_columns) {
-                    std::string field_name = toUpperCase(column.column_name);
+                    const std::string field_name =
+                        firebirdViewFieldSourceName(view.name, column.column_name);
                     if (!field_names.insert(field_name).second) {
                         continue;
                     }
@@ -1687,7 +1714,9 @@ Status FirebirdCatalogHandler::queryRdbRelationFields(VirtualResultSet& results,
                 row.columns = {
                     {"RDB$RELATION_NAME", TypedValue::makeVarchar(table.table_name)},
                     {"RDB$FIELD_NAME", TypedValue::makeVarchar(col.column_name)},
-                    {"RDB$FIELD_SOURCE", TypedValue::makeVarchar(col.column_name)},  // Field source = column name
+                    {"RDB$FIELD_SOURCE",
+                     TypedValue::makeVarchar(
+                         firebirdTableFieldSourceName(table.table_name, col.column_name))},
                     {"RDB$FIELD_POSITION", TypedValue::makeInt64(position++)},
                     {"RDB$NULL_FLAG", col.nullable ? TypedValue() : TypedValue::makeInt64(1)},
                     {"RDB$DEFAULT_SOURCE", TypedValue()},  // NULL

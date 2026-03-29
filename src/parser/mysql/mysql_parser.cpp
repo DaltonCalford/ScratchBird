@@ -3807,7 +3807,21 @@ parser::v3::Statement* Parser::parseSetStmtV3() {
             stmt->is_default = true;
             return stmt;
         }
-        stmt->value = parseExpressionV3();
+
+        if (check(TokenType::STRING_LITERAL)) {
+            stmt->value = parseLiteralExprV3();
+        } else if (check(TokenType::IDENTIFIER) ||
+                   check(TokenType::BACKTICK_IDENTIFIER) ||
+                   isNonReservedKeyword(current_token_.type)) {
+            stmt->name = v3_string_pool_.intern(parseIdentifier());
+        } else {
+            stmt->value = parseExpressionV3();
+        }
+
+        if (matchKeyword(TokenType::KW_COLLATE)) {
+            stmt->has_collation = true;
+            stmt->collation_name = parseIdentifier();
+        }
         return stmt;
     }
 
@@ -4569,6 +4583,34 @@ parser::v3::Expression* Parser::parsePrimaryExprV3() {
         return expr;
     }
 
+    auto make_mysql_session_var_expr = [&](const std::string& session_name)
+        -> parser::v3::Expression* {
+        auto* expr = arena()->create<parser::v3::ParameterExpr>();
+        expr->is_named = true;
+        expr->name = v3_string_pool_.intern(session_name);
+        return expr;
+    };
+
+    auto parse_mysql_session_function = [&](const std::string& session_name,
+                                            const std::string& function_name)
+        -> parser::v3::Expression* {
+        consume(TokenType::LEFT_PAREN, ("Expected ( after " + function_name).c_str());
+        if (!check(TokenType::RIGHT_PAREN)) {
+            error(function_name + "() expects 0 arguments");
+        }
+        consume(TokenType::RIGHT_PAREN, ("Expected ) after " + function_name + "()").c_str());
+        return make_mysql_session_var_expr(session_name);
+    };
+
+    if (check(TokenType::KW_DATABASE) || check(TokenType::KW_SCHEMA)) {
+        const bool is_database = matchKeyword(TokenType::KW_DATABASE);
+        if (!is_database) {
+            consumeKeyword(TokenType::KW_SCHEMA, "Expected DATABASE or SCHEMA");
+        }
+        return parse_mysql_session_function(is_database ? "DATABASE" : "SCHEMA",
+                                            is_database ? "DATABASE" : "SCHEMA");
+    }
+
     if (matchKeyword(TokenType::KW_VALUES)) {
         auto* call = arena()->create<parser::v3::FunctionCallExpr>();
         call->function_path = buildPathFromQualified(v3_string_pool_, "VALUES");
@@ -4617,6 +4659,18 @@ parser::v3::Expression* Parser::parsePrimaryExprV3() {
         isNonReservedKeyword(current_token_.type)) {
         std::string first = parseIdentifier();
         if (match(TokenType::LEFT_PAREN)) {
+            std::string upper_name = first;
+            std::transform(upper_name.begin(), upper_name.end(), upper_name.begin(),
+                           [](char c) { return static_cast<char>(std::toupper(c)); });
+            if (upper_name == "VERSION" || upper_name == "DATABASE" || upper_name == "SCHEMA" ||
+                upper_name == "USER" || upper_name == "CURRENT_USER" ||
+                upper_name == "SESSION_USER" || upper_name == "SYSTEM_USER") {
+                if (!check(TokenType::RIGHT_PAREN)) {
+                    error(upper_name + "() expects 0 arguments");
+                }
+                consume(TokenType::RIGHT_PAREN, "Expected ) after MySQL session function");
+                return make_mysql_session_var_expr(upper_name);
+            }
             auto* call = arena()->create<parser::v3::FunctionCallExpr>();
             call->function_path = buildPathFromQualified(v3_string_pool_, first);
             if (match(TokenType::STAR)) {
@@ -7315,6 +7369,29 @@ void Parser::parseFunctionCall(const std::string& name) {
     std::string upper_name = name;
     std::transform(upper_name.begin(), upper_name.end(), upper_name.begin(),
                    [](char c) { return std::toupper(c); });
+
+    auto emit_mysql_session_function = [&](const std::string& session_name) {
+        consume(TokenType::RIGHT_PAREN, "Expected )");
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_VAR_LOAD));
+        emitString(session_name);
+    };
+
+    if (upper_name == "VERSION") {
+        emit_mysql_session_function("VERSION");
+        return;
+    }
+
+    if (upper_name == "DATABASE" || upper_name == "SCHEMA") {
+        emit_mysql_session_function("DATABASE");
+        return;
+    }
+
+    if (upper_name == "USER" || upper_name == "CURRENT_USER" ||
+        upper_name == "SESSION_USER" || upper_name == "SYSTEM_USER") {
+        emit_mysql_session_function("CURRENT_USER");
+        return;
+    }
 
     if (upper_name == "VALUES") {
         if (!in_on_duplicate_update_) {

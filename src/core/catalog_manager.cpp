@@ -7,6 +7,13 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
+// Section 36 invariant: catalog_manager may provide bounded metadata inputs to
+// planning, but metadata presence here does not by itself certify mature
+// cardinality estimation, cost-model completeness, or optimizer-grade stats.
+// Section 37 invariant: catalog_manager is the primary durable metadata and
+// schema-catalog ownership surface. Runtime caches and adjacent config surfaces
+// must not be mistaken for stronger ownership than this layer provides.
+
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/encryption_key_manager.h"
@@ -64925,13 +64932,16 @@ auto CatalogManager::appendTransactionLineageEventCatalogEntry(
         info.lineage_event_id = generateUuidV7();
     }
 
-    if (transaction_lineage_event_table_page_ == 0)
+    bool transaction_lineage_page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(transaction_lineage_event_table_page_,
+                                                       transaction_lineage_page_changed,
+                                                       ctx);
+    if (status != Status::OK)
     {
-        Status status = allocateCatalogPage(transaction_lineage_event_table_page_, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
+        return status;
+    }
+    if (transaction_lineage_page_changed)
+    {
         status = writeCatalogRoot(ctx);
         if (status != Status::OK)
         {
@@ -65363,16 +65373,21 @@ auto CatalogManager::appendSchemaEpochCatalogEntry(SchemaEpochCatalogInfo& info,
     {
         info.schema_epoch_uuid = generateUuidV7();
     }
-    if (schema_epoch_table_page_ == 0 || schema_epoch_catalog_rebuild_required_)
+    if (schema_epoch_catalog_rebuild_required_)
     {
-        uint32_t fresh_page_id = 0;
-        Status status = allocateCatalogPage(fresh_page_id, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
-        schema_epoch_table_page_ = fresh_page_id;
-        schema_epoch_catalog_rebuild_required_ = false;
+        schema_epoch_table_page_ = 0;
+    }
+    bool schema_epoch_page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(schema_epoch_table_page_,
+                                                       schema_epoch_page_changed,
+                                                       ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    schema_epoch_catalog_rebuild_required_ = false;
+    if (schema_epoch_page_changed)
+    {
         status = writeCatalogRoot(ctx);
         if (status != Status::OK)
         {
@@ -65408,8 +65423,7 @@ auto CatalogManager::appendSchemaEpochCatalogEntry(SchemaEpochCatalogInfo& info,
     rec.is_valid = info.is_valid ? 1 : 0;
 
     uint64_t xmin = 0;
-    Status status =
-        storeStringInToast(info.definition_manifest, xmin, rec.definition_manifest_oid, ctx);
+    status = storeStringInToast(info.definition_manifest, xmin, rec.definition_manifest_oid, ctx);
     if (status != Status::OK)
     {
         return status;
@@ -66030,13 +66044,16 @@ auto CatalogManager::appendForensicSnapshotCapsuleCatalogEntry(
         info.capsule_id = generateUuidV7();
     }
 
-    if (forensic_snapshot_capsule_table_page_ == 0)
+    bool forensic_snapshot_page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(forensic_snapshot_capsule_table_page_,
+                                                       forensic_snapshot_page_changed,
+                                                       ctx);
+    if (status != Status::OK)
     {
-        Status status = allocateCatalogPage(forensic_snapshot_capsule_table_page_, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
+        return status;
+    }
+    if (forensic_snapshot_page_changed)
+    {
         status = writeCatalogRoot(ctx);
         if (status != Status::OK)
         {
@@ -66078,10 +66095,10 @@ auto CatalogManager::appendForensicSnapshotCapsuleCatalogEntry(
     copyStringField(rec.status, info.status);
 
     uint64_t xmin = 0;
-    Status status = storeStringInToast(info.active_tx_manifest,
-                                       xmin,
-                                       rec.active_tx_manifest_oid,
-                                       ctx);
+    status = storeStringInToast(info.active_tx_manifest,
+                                xmin,
+                                rec.active_tx_manifest_oid,
+                                ctx);
     if (status != Status::OK)
     {
         return status;

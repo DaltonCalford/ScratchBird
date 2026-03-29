@@ -7,6 +7,10 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
+// Section 35 invariant: buffer_pool.cpp expresses bounded dirty-page and
+// flush-coordination behavior only. It does not certify redo-log, fuzzy
+// checkpoint, or asynchronous durability folklore.
+
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/connection_context.h"

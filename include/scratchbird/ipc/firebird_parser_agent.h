@@ -97,6 +97,7 @@ struct FBDsqlStatementState {
     bool portal_active = false;
     bool statement_prepared = false;
     bool engine_statement_prepared = false;
+    bool output_layout_authoritative = false;
 };
 
 struct FBTransactionState {
@@ -158,6 +159,8 @@ struct FBClientState {
     std::unordered_map<uint32_t, FBDsqlStatementState> dsql_statements;
     std::unordered_map<uint32_t, FBTransactionState> transactions;
     bool pending_catalog_refresh = false;
+    bool virtual_catalog_ready = false;
+    bool search_path_ready = false;
 };
 
 /**
@@ -452,6 +455,9 @@ private:
     core::Status cleanupAttachmentState(FBClientState& state,
                                        core::ErrorContext* ctx);
 
+    core::Status closeTransactionalCursorState(FBClientState& state,
+                                               core::ErrorContext* ctx);
+
     core::Status executeCompiledInternalQuery(
         FBClientState& state,
         const std::string& sql_text,
@@ -467,6 +473,8 @@ private:
                                    bool ignore_exists_error,
                                    const char* failure_message,
                                    core::ErrorContext* ctx);
+    core::Status ensureCatalogSessionReady(FBClientState& state,
+                                           core::ErrorContext* ctx);
     core::Status ensureVirtualCatalogBinding(FBClientState& state,
                                              core::ErrorContext* ctx);
     core::Status refreshCommittedCatalogState(FBClientState& state,
@@ -477,6 +485,11 @@ private:
                                   char type,
                                   const std::string& name,
                                   core::ErrorContext* ctx);
+
+    core::Status sendTransactionControlToEngine(FBClientState& state,
+                                                IPCMessageType type,
+                                                const std::string& savepoint_name,
+                                                core::ErrorContext* ctx);
 
     // Handle generation
     static uint32_t generateHandle();

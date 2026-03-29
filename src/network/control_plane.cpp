@@ -10,6 +10,9 @@
 /**
  * Control Plane Protocol Implementation
  */
+// Section 32 invariant: this file implements a bounded internal control-plane
+// seam for listener and parser or orchestration coordination. It is not a
+// general public extension ABI and must stay distinct from wire-protocol truth.
 
 #include "scratchbird/network/control_plane.h"
 

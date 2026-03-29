@@ -9,6 +9,16 @@
  */
 #pragma once
 
+// Section 32 invariant: declaration presence in catalog_manager.h can be
+// architecture-adjacent, but it must not be misread as a generic extension or
+// plugin contract unless a stronger owner explicitly promotes that boundary.
+// Section 36 invariant: metadata declarations here can be planner-adjacent,
+// but they do not by themselves prove mature statistics-driven planning or a
+// complete optimizer cost model.
+// Section 37 invariant: durable catalog ownership and metadata-root authority
+// live here, but declaration presence still does not imply global invalidation
+// coherence or mature online schema change guarantees.
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -14119,6 +14129,18 @@ public:
         auto recoveryRunCatalogPageForTesting() const -> uint32_t
         {
             return recovery_run_table_page_;
+        }
+        auto transactionLineageCatalogPageForTesting() const -> uint32_t
+        {
+            return transaction_lineage_event_table_page_;
+        }
+        auto schemaEpochCatalogPageForTesting() const -> uint32_t
+        {
+            return schema_epoch_table_page_;
+        }
+        auto forensicSnapshotCapsuleCatalogPageForTesting() const -> uint32_t
+        {
+            return forensic_snapshot_capsule_table_page_;
         }
         auto rawSchemaRecordExistsForTesting(const ID& schema_id, bool& exists,
                                              ErrorContext* ctx) -> Status;

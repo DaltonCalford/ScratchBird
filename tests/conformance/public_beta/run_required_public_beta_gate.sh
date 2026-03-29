@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# Section 35 invariant: this required gate is a bounded executable recovery or
+# durability evidence surface. It does not by itself certify universal stage
+# automation, seamless failover, or WAL-style recovery maturity.
+# Section 36 invariant: this gate can bound currently exercised planner or
+# rewrite behavior, but it does not certify a mature optimizer stack or
+# universal stable-plan identity.
+# Section 37 invariant: this gate can also bound currently exercised metadata
+# and schema behavior, but it does not certify optimizer-grade statistics
+# maturity, global metadata coherence, or universal concurrent DDL guarantees.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -4189,6 +4189,10 @@ public:
     // For SET SQL DIALECT
     uint8_t sql_dialect = 0;  // 1, 2, or 3 (0 = not set)
 
+    // For SET NAMES ... [COLLATE ...]
+    bool has_collation = false;
+    std::string collation_name;
+
     // For SET LOCAL_TIMEOUT
     uint32_t local_timeout_seconds = 0;
 };

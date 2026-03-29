@@ -13,6 +13,10 @@
 
 #include <memory>
 
+// Section 32 invariant: listener_ipc_adapter is a shared boundary between the
+// listener front door and downstream parser or engine execution surfaces. It
+// must not be treated as sole owner of either side of that handoff.
+
 namespace scratchbird::network
 {
 

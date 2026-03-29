@@ -8,7 +8,9 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -32,6 +34,14 @@ using scratchbird::server::ServerConfig;
 namespace client = scratchbird::client;
 
 namespace {
+
+std::string firebirdStoredIdentifier(std::string value) {
+    std::transform(value.begin(),
+                   value.end(),
+                   value.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+    return value;
+}
 
 class TestFirebirdAdapter : public FirebirdAdapter {
 public:
@@ -229,6 +239,96 @@ TEST_F(FirebirdAdapterBridgeTest, ExposesIndexesAndConstraintsInCatalogViews) {
         }
     }
     EXPECT_TRUE(has_view);
+}
+
+TEST_F(FirebirdAdapterBridgeTest, RelationFieldSourceIdentitiesPreservePerRelationTypes) {
+    client::Connection conn;
+    client::ConnectionConfig cc;
+    cc.database_name = config_.database_path;
+    cc.ipc_method = IPCMethod::UNIX_SOCKET;
+    cc.socket_path = config_.ipc_path;
+    cc.auto_start_server = false;
+    cc.username = "SysArch";
+    cc.password = "replaceme";
+    ASSERT_EQ(conn.connect(cc, &ctx_), Status::OK);
+
+    ASSERT_EQ(conn.execute(
+                  "CREATE TABLE IF NOT EXISTS fb_metric_int(id INT PRIMARY KEY, metric_value INT NOT NULL)",
+                  nullptr,
+                  &ctx_),
+              Status::OK);
+    ASSERT_EQ(conn.execute(
+                  "CREATE TABLE IF NOT EXISTS fb_metric_text(id INT PRIMARY KEY, metric_value VARCHAR(20) NOT NULL)",
+                  nullptr,
+                  &ctx_),
+              Status::OK);
+    conn.disconnect();
+
+    scratchbird::catalog::FirebirdCatalogHandler catalog_handler(server_->database()->catalog_manager());
+    scratchbird::core::ErrorContext catalog_ctx;
+
+    scratchbird::catalog::VirtualResultSet field_result;
+    ASSERT_EQ(catalog_handler.queryTable("", "RDB$FIELDS", "", field_result, &catalog_ctx), Status::OK)
+        << catalog_ctx.message;
+
+    scratchbird::catalog::VirtualResultSet relation_field_result;
+    ASSERT_EQ(catalog_handler.queryTable("", "RDB$RELATION_FIELDS", "", relation_field_result, &catalog_ctx), Status::OK)
+        << catalog_ctx.message;
+
+    auto find_field_row =
+        [&](const std::string& field_source_name) -> const scratchbird::catalog::VirtualRow* {
+            for (const auto& row : field_result.rows) {
+                const auto* field_name = row.getColumn("RDB$FIELD_NAME");
+                if (field_name != nullptr && field_name->toString() == field_source_name) {
+                    return &row;
+                }
+            }
+            return nullptr;
+        };
+
+    auto find_relation_field_source =
+        [&](const std::string& relation_name) -> std::string {
+            const std::string stored_relation_name = firebirdStoredIdentifier(relation_name);
+            const std::string stored_field_name = firebirdStoredIdentifier("metric_value");
+            for (const auto& row : relation_field_result.rows) {
+                const auto* rel = row.getColumn("RDB$RELATION_NAME");
+                const auto* field = row.getColumn("RDB$FIELD_NAME");
+                const auto* source = row.getColumn("RDB$FIELD_SOURCE");
+                if (rel == nullptr || field == nullptr || source == nullptr) {
+                    continue;
+                }
+                if (rel->toString() == stored_relation_name &&
+                    field->toString() == stored_field_name) {
+                    return source->toString();
+                }
+            }
+            return {};
+        };
+
+    const std::string int_field_source = find_relation_field_source("fb_metric_int");
+    const std::string text_field_source = find_relation_field_source("fb_metric_text");
+    ASSERT_FALSE(int_field_source.empty());
+    ASSERT_FALSE(text_field_source.empty());
+    EXPECT_NE(int_field_source, text_field_source);
+
+    const auto* int_field_row = find_field_row(int_field_source);
+    const auto* text_field_row = find_field_row(text_field_source);
+    ASSERT_NE(int_field_row, nullptr);
+    ASSERT_NE(text_field_row, nullptr);
+
+    const auto* int_field_type = int_field_row->getColumn("RDB$FIELD_TYPE");
+    const auto* int_field_length = int_field_row->getColumn("RDB$FIELD_LENGTH");
+    const auto* text_field_type = text_field_row->getColumn("RDB$FIELD_TYPE");
+    const auto* text_field_length = text_field_row->getColumn("RDB$FIELD_LENGTH");
+    ASSERT_NE(int_field_type, nullptr);
+    ASSERT_NE(int_field_length, nullptr);
+    ASSERT_NE(text_field_type, nullptr);
+    ASSERT_NE(text_field_length, nullptr);
+
+    EXPECT_EQ(int_field_type->getInt64(), 8);
+    EXPECT_EQ(int_field_length->getInt64(), 4);
+    EXPECT_EQ(text_field_type->getInt64(), 37);
+    EXPECT_EQ(text_field_length->getInt64(), 20);
 }
 
 }  // namespace

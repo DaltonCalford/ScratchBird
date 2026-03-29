@@ -4170,7 +4170,40 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSetShowReset(parser::v3::State
             case parser::v3::SetStmt::SetType::NAMES:
                 inst.opcode = op(Opcode::SBLR3_SET_NAMES);
                 payload["key"] = Value(std::string("NAMES"));
-                setValueStringId(s->name);
+                if (s->value)
+                {
+                    if (s->value->kind() == parser::v3::ASTKind::ColumnRefExpr)
+                    {
+                        auto* ref = static_cast<parser::v3::ColumnRefExpr*>(s->value);
+                        if (!ref->column.has_table_qualifier &&
+                            ref->column.column_name != parser::v3::StringPool::INVALID_ID)
+                        {
+                            setValueInstr(
+                                makeStringLiteral(std::string(pool_.get(ref->column.column_name))));
+                            break;
+                        }
+                    }
+                    if (s->value->kind() == parser::v3::ASTKind::LiteralExpr)
+                    {
+                        auto* lit = static_cast<parser::v3::LiteralExpr*>(s->value);
+                        if (lit->literal_type == parser::v3::LiteralType::STRING &&
+                            lit->string_value != parser::v3::StringPool::INVALID_ID)
+                        {
+                            setValueInstr(
+                                makeStringLiteral(std::string(pool_.get(lit->string_value))));
+                            break;
+                        }
+                    }
+                    payload["value"] = Value(makeInstr(emitExpression(s->value)));
+                }
+                else if (!s->is_default)
+                {
+                    setValueStringId(s->name);
+                }
+                if (s->has_collation && !s->collation_name.empty())
+                {
+                    payload["collation"] = Value(s->collation_name);
+                }
                 break;
             case parser::v3::SetStmt::SetType::LOCAL_TIMEOUT:
                 inst.opcode = op(Opcode::SBLR3_SET_LOCAL_TIMEOUT);

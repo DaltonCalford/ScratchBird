@@ -26,6 +26,7 @@
 #include "scratchbird/ipc/parser_agent.h"
 #include "scratchbird/core/types.h"
 #include <unordered_map>
+#include <unordered_set>
 #include <atomic>
 
 namespace scratchbird {
@@ -75,6 +76,7 @@ struct MySQLClientState {
     };
     std::unordered_map<uint32_t, PreparedStatement> prepared_stmts;
     uint32_t stmt_counter = 0;
+    std::unordered_set<std::string> bootstrapped_databases;
 };
 
 /**
@@ -129,7 +131,13 @@ public:
     core::Status authenticateNativePassword(MySQLClientState& state);
     core::Status authenticateCachingSha2Password(MySQLClientState& state);
     core::Status authenticateSha256Password(MySQLClientState& state);
-    core::Status ensureEngineSession(MySQLClientState& state, core::ErrorContext* ctx);
+    core::Status ensureEngineSession(MySQLClientState& state,
+                                     core::ErrorContext* ctx,
+                                     bool bootstrap_database_context = true);
+    core::Status ensureDatabaseContext(MySQLClientState& state,
+                                       const std::string& logical_database,
+                                       bool select_database,
+                                       core::ErrorContext* ctx);
     core::Status compileQueryToSblr(const MySQLClientState& state,
                                     const std::string& sql,
                                     std::vector<uint8_t>& bytecode_out,

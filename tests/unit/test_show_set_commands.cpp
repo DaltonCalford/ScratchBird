@@ -543,6 +543,7 @@ TEST_F(ShowSetCommandsTest, SetNamesParsing)
     EXPECT_TRUE(compileSucceeds("SET NAMES UTF8"));
     EXPECT_TRUE(compileSucceeds("SET NAMES ISO8859_1"));
     EXPECT_TRUE(compileSucceeds("SET NAMES WIN1252"));
+    EXPECT_TRUE(compileSucceeds("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci"));
 }
 
 
@@ -797,6 +798,24 @@ TEST_F(ShowSetCommandsTest, SetSqlDialectRequiresNumber)
 TEST_F(ShowSetCommandsTest, SetNamesRequiresCharset)
 {
     EXPECT_FALSE(compileSucceeds("SET NAMES"));
+}
+
+TEST_F(ShowSetCommandsTest, ShowDefaultTransactionIsolationUsesTransactionIsolationAlias)
+{
+    auto default_isolation = compileAndExecute("SHOW default_transaction_isolation");
+    ASSERT_TRUE(default_isolation.success()) << default_isolation.error();
+    ASSERT_TRUE(default_isolation.hasResultSet());
+
+    auto current_isolation = compileAndExecute("SHOW transaction_isolation");
+    ASSERT_TRUE(current_isolation.success()) << current_isolation.error();
+    ASSERT_TRUE(current_isolation.hasResultSet());
+
+    ASSERT_NE(default_isolation.resultSet(), nullptr);
+    ASSERT_NE(current_isolation.resultSet(), nullptr);
+    ASSERT_EQ(default_isolation.resultSet()->rowCount(), 1u);
+    ASSERT_EQ(current_isolation.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(default_isolation.resultSet()->getValue(0, 1).toString(),
+              current_isolation.resultSet()->getValue(0, 1).toString());
 }
 
 TEST_F(ShowSetCommandsTest, SetLocalTimeoutRequiresNumber)

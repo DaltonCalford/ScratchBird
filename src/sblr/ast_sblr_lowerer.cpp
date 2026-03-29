@@ -4089,7 +4089,40 @@ scratchbird::sblr::v3::Instruction AstSblrLowerer::emitSetShowReset(parser::v3::
             case parser::v3::SetStmt::SetType::NAMES:
                 inst.opcode = op(Opcode::SBLR3_SET_NAMES);
                 payload["key"] = Value(std::string("NAMES"));
-                setValueStringId(s->name);
+                if (s->value)
+                {
+                    if (s->value->kind() == parser::v3::ASTKind::ColumnRefExpr)
+                    {
+                        auto* ref = static_cast<parser::v3::ColumnRefExpr*>(s->value);
+                        if (!ref->column.has_table_qualifier &&
+                            ref->column.column_name != parser::v3::StringPool::INVALID_ID)
+                        {
+                            setValueInstr(
+                                makeStringLiteral(std::string(pool_.get(ref->column.column_name))));
+                            break;
+                        }
+                    }
+                    if (s->value->kind() == parser::v3::ASTKind::LiteralExpr)
+                    {
+                        auto* lit = static_cast<parser::v3::LiteralExpr*>(s->value);
+                        if (lit->literal_type == parser::v3::LiteralType::STRING &&
+                            lit->string_value != parser::v3::StringPool::INVALID_ID)
+                        {
+                            setValueInstr(
+                                makeStringLiteral(std::string(pool_.get(lit->string_value))));
+                            break;
+                        }
+                    }
+                    payload["value"] = Value(makeInstr(emitExpression(s->value)));
+                }
+                else if (!s->is_default)
+                {
+                    setValueStringId(s->name);
+                }
+                if (s->has_collation && !s->collation_name.empty())
+                {
+                    payload["collation"] = Value(s->collation_name);
+                }
                 break;
             case parser::v3::SetStmt::SetType::LOCAL_TIMEOUT:
                 inst.opcode = op(Opcode::SBLR3_SET_LOCAL_TIMEOUT);
@@ -6559,6 +6592,42 @@ TypeSpec AstSblrLowerer::buildTypeSpec(const parser::v3::TypeName& type) {
         {"TSTZRANGE", Opcode::SBLR3_TYPE_TSTZRANGE},
     };
 
+    auto appendBuiltinTypePayload = [&](TypeSpec& target) {
+        switch (static_cast<Opcode>(target.type_opcode)) {
+            case Opcode::SBLR3_TYPE_CHAR:
+            case Opcode::SBLR3_TYPE_VARCHAR:
+            case Opcode::SBLR3_TYPE_BINARY:
+            case Opcode::SBLR3_TYPE_VARBINARY:
+                if (type.precision.has_value()) {
+                    appendLE32(static_cast<uint32_t>(*type.precision), target.type_payload);
+                }
+                break;
+            case Opcode::SBLR3_TYPE_DECIMAL:
+                if (type.precision.has_value()) {
+                    appendLE32(static_cast<uint32_t>(*type.precision), target.type_payload);
+                    appendLE32(static_cast<uint32_t>(type.scale.value_or(0)),
+                               target.type_payload);
+                }
+                break;
+            case Opcode::SBLR3_TYPE_BIT:
+                if (type.precision.has_value()) {
+                    appendLE16(static_cast<uint16_t>(*type.precision), target.type_payload);
+                }
+                break;
+            case Opcode::SBLR3_TYPE_TIME:
+            case Opcode::SBLR3_TYPE_TIMESTAMP:
+            case Opcode::SBLR3_TYPE_TIME_TZ:
+            case Opcode::SBLR3_TYPE_TIMESTAMP_TZ:
+            case Opcode::SBLR3_TYPE_DATETIME:
+                if (type.scale.has_value()) {
+                    target.type_payload.push_back(static_cast<uint8_t>(*type.scale));
+                }
+                break;
+            default:
+                break;
+        }
+    };
+
     TypeSpec spec;
     if (upper == "AGGREGATEFUNCTION" || upper == "SIMPLEAGGREGATEFUNCTION") {
         std::string signature = type_signature();
@@ -6610,6 +6679,9 @@ TypeSpec AstSblrLowerer::buildTypeSpec(const parser::v3::TypeName& type) {
                 spec.type_opcode = op(Opcode::SBLR3_TYPE_DOMAIN);
                 spec.type_payload.assign(signature.begin(), signature.end());
             }
+        }
+        if (spec.type_payload.empty()) {
+            appendBuiltinTypePayload(spec);
         }
     }
 

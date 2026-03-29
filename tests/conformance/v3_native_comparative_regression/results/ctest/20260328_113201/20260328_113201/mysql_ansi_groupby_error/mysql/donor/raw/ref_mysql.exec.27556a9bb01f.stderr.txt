@@ -1,0 +1,1 @@
+ERROR 1055 (42000) at line 2: Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'benchmark.vncr_ef6509_t1.id' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by

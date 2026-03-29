@@ -27,6 +27,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/proc_array.h"
+#include "scratchbird/protocol/adapters/mysql_adapter.h"
 #include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
@@ -129,6 +130,22 @@ private:
     bool bind_complete_called_ = false;
 };
 
+class TestMySqlCompileAdapter : public protocol::MySqlAdapter {
+public:
+    explicit TestMySqlCompileAdapter(const protocol::ProtocolAdapterConfig& config)
+        : protocol::MySqlAdapter(config) {}
+
+    using protocol::MySqlAdapter::compileQuery;
+
+    void setLogicalDatabaseForTest(const std::string& logical_db) {
+        database_name_ = logical_db;
+    }
+
+    void setUsernameForTest(const std::string& username) {
+        username_ = username;
+    }
+};
+
 // ============================================================================
 // Test Fixture
 // ============================================================================
@@ -204,6 +221,7 @@ protected:
 
         ensureSessionUserExists("test_user");
         ensureSessionUserExists("test_user2");
+        ensureSessionUserExists("root", true);
         ensureSessionUserExists("SYSDBA", true);
 
         handler_ = std::make_unique<TestableEngineIPCSessionHandler>(db_.get());
@@ -247,6 +265,29 @@ protected:
             return {};
         }
         return result.bytecode();
+    }
+
+    std::vector<uint8_t> compileMySqlSql(const std::string& sql,
+                                         const std::string& logical_database,
+                                         const std::string& username) {
+        protocol::ProtocolAdapterConfig config;
+        config.database_path = db_file_->path();
+        config.auto_create_db = false;
+
+        TestMySqlCompileAdapter adapter(config);
+        adapter.setSharedDatabase(db_.get());
+        adapter.setLogicalDatabaseForTest(logical_database);
+        adapter.setUsernameForTest(username);
+
+        std::vector<uint8_t> bytecode;
+        std::string error;
+        const auto status = adapter.compileQuery(sql, bytecode, error);
+        if (status != core::Status::OK) {
+            ADD_FAILURE() << "Failed to compile MySQL SQL for IPC boundary test: "
+                          << error << " | sql=" << sql;
+            return {};
+        }
+        return bytecode;
     }
 
     core::Status executeCompiledQuery(uint32_t session_id,
@@ -435,6 +476,54 @@ TEST_F(EngineIPCSessionHandlerTest, onCompiledQuery_PostgresqlSessionSeedsShowSe
     handler_->onDetach(4, &ctx);
 }
 
+TEST_F(EngineIPCSessionHandlerTest, onCompiledQuery_MySqlSessionExecutesSetNames) {
+    ASSERT_EQ(attachSession(5, "mysql_parser", "compat_mysql", "root"), core::Status::OK);
+    handler_->reset();
+
+    const auto bytecode = compileMySqlSql("SET NAMES utf8mb4", "compat_mysql", "root");
+    ASSERT_FALSE(bytecode.empty());
+
+    core::ErrorContext ctx;
+    auto status = handler_->onCompiledQuery(5, bytecode, "SET NAMES utf8mb4", &ctx);
+    EXPECT_EQ(status, core::Status::OK) << ctx.message;
+    EXPECT_TRUE(handler_->lastSqlState().empty()) << handler_->lastError();
+    EXPECT_EQ(handler_->lastCommandTag(), "OK");
+    EXPECT_EQ(handler_->lastRowsAffected(), 0u);
+
+    handler_->onDetach(5, &ctx);
+}
+
+TEST_F(EngineIPCSessionHandlerTest, onCompiledQuery_MySqlSessionExecutesVersionAndDatabaseFunctions) {
+    ASSERT_EQ(attachSession(6, "mysql_parser", "compat_mysql", "root"), core::Status::OK);
+    handler_->reset();
+
+    {
+        const auto version_bytecode =
+            compileMySqlSql("SELECT VERSION()", "compat_mysql", "root");
+        ASSERT_FALSE(version_bytecode.empty());
+
+        core::ErrorContext ctx;
+        auto status = handler_->onCompiledQuery(6, version_bytecode, "SELECT VERSION()", &ctx);
+        EXPECT_EQ(status, core::Status::OK) << ctx.message;
+        EXPECT_TRUE(handler_->lastSqlState().empty()) << handler_->lastError();
+    }
+
+    {
+        handler_->reset();
+        const auto database_bytecode =
+            compileMySqlSql("SELECT DATABASE()", "compat_mysql", "root");
+        ASSERT_FALSE(database_bytecode.empty());
+
+        core::ErrorContext ctx;
+        auto status = handler_->onCompiledQuery(6, database_bytecode, "SELECT DATABASE()", &ctx);
+        EXPECT_EQ(status, core::Status::OK) << ctx.message;
+        EXPECT_TRUE(handler_->lastSqlState().empty()) << handler_->lastError();
+    }
+
+    core::ErrorContext ctx;
+    handler_->onDetach(6, &ctx);
+}
+
 TEST_F(EngineIPCSessionHandlerTest, onCompiledQuery_SelectEmptyResult) {
     // Setup
     {
@@ -534,6 +623,7 @@ TEST_F(EngineIPCSessionHandlerTest, onBegin_Basic) {
     core::ErrorContext ctx;
     auto status = handler_->onBegin(1, &ctx);
     EXPECT_EQ(status, core::Status::OK);
+    EXPECT_TRUE(handler_->lastError().empty());
 }
 
 TEST_F(EngineIPCSessionHandlerTest, onCommit_Basic) {
@@ -547,12 +637,14 @@ TEST_F(EngineIPCSessionHandlerTest, onCommit_Basic) {
     core::ErrorContext ctx;
     auto status = handler_->onCommit(1, &ctx);
     EXPECT_EQ(status, core::Status::OK);
+    EXPECT_TRUE(handler_->lastError().empty());
 }
 
 TEST_F(EngineIPCSessionHandlerTest, onCommit_ImplicitTransactionAfterAttach) {
     core::ErrorContext ctx;
     auto status = handler_->onCommit(1, &ctx);
     EXPECT_EQ(status, core::Status::OK);
+    EXPECT_TRUE(handler_->lastError().empty());
 }
 
 TEST_F(EngineIPCSessionHandlerTest, onRollback_Basic) {
@@ -566,6 +658,7 @@ TEST_F(EngineIPCSessionHandlerTest, onRollback_Basic) {
     core::ErrorContext ctx;
     auto status = handler_->onRollback(1, &ctx);
     EXPECT_EQ(status, core::Status::OK);
+    EXPECT_TRUE(handler_->lastError().empty());
 }
 
 TEST_F(EngineIPCSessionHandlerTest, onSavepoint_Basic) {
@@ -594,6 +687,7 @@ TEST_F(EngineIPCSessionHandlerTest, Transaction_CommitPersistsData) {
         handler_->onBegin(1, &ctx);
         executeCompiledQuery(1, "INSERT INTO txn_test VALUES (1)", &ctx);
         handler_->onCommit(1, &ctx);
+        EXPECT_TRUE(handler_->lastError().empty()) << handler_->lastError();
     }
 
     // Verify data persists
@@ -620,6 +714,7 @@ TEST_F(EngineIPCSessionHandlerTest, Transaction_RollbackDiscardsData) {
         handler_->onBegin(1, &ctx);
         executeCompiledQuery(1, "INSERT INTO rollback_test VALUES (999)", &ctx);
         handler_->onRollback(1, &ctx);
+        EXPECT_TRUE(handler_->lastError().empty()) << handler_->lastError();
     }
 
     // Verify only first row exists

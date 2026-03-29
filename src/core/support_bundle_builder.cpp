@@ -1,5 +1,9 @@
 #include "scratchbird/core/support_bundle_builder.h"
 
+// Section 35 invariant: support bundles expose retained evidence and incident
+// visibility. They are observational surfaces only and do not themselves prove
+// automatic repair or seamless failover behavior.
+
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/secure_diagnostics.h"
 #include "scratchbird/core/sweep_manager.h"

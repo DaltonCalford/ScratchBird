@@ -12,6 +12,9 @@
  *
  * Engine-side session state and request execution glue.
  */
+// Section 32 invariant: server_session is the engine-session ownership
+// boundary. It should not be used to infer listener-front-door ownership,
+// parser ownership, or universal public protocol guarantees.
 
 #include "scratchbird/server/server_session.h"
 #include "scratchbird/sblr/executor.h"

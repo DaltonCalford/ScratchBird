@@ -7,6 +7,10 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
+// Section 37 invariant: this test anchors bounded virtual-catalog and
+// metadata-lock visibility behavior only. It is not proof of global metadata
+// coherence or fully mature concurrent DDL semantics.
+
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <string>

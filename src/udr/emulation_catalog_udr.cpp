@@ -19,7 +19,6 @@
 
 namespace scratchbird::catalog
 {
-
     auto EmulationViewGenerator::compileEmulatedViewQuery(
         const ID &schema_id,
         const std::string &schema_path,
@@ -65,7 +64,6 @@ namespace scratchbird::catalog
         bytecode_out = result.bytecode();
         return Status::OK;
     }
-
 } // namespace scratchbird::catalog
 
 namespace scratchbird::udr

@@ -12,6 +12,9 @@
  * Implements INI file parsing, environment variable support, and command-line overrides
  * Phase 1: Foundation Infrastructure
  */
+// Section 37 invariant: configuration metadata here is a runtime and bootstrap
+// surface only. It must not be misread as durable schema-catalog ownership or
+// as proof of core metadata visibility semantics.
 
 #include "scratchbird/core/config.h"
 #include <fstream>

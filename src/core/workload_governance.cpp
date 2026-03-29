@@ -9,6 +9,10 @@
  */
 #include "scratchbird/core/workload_governance.h"
 
+// Section 32 invariant: workload_governance owns bounded runtime governance
+// and admission policy surfaces. It is adjacent to orchestration and execution
+// but does not replace their primary ownership boundaries.
+
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
 

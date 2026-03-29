@@ -86,58 +86,6 @@ void populateFirebirdCompilerRequest(sblr::DialectCompilerRequest& request,
                                       : std::vector<std::string>{schema_root};
 }
 
-auto rewriteFirebirdSingleRowCompatibilityQuery(std::string_view sql) -> std::string {
-    auto trim = [](std::string_view in) {
-        size_t start = 0;
-        while (start < in.size() && std::isspace(static_cast<unsigned char>(in[start]))) {
-            ++start;
-        }
-        size_t end = in.size();
-        while (end > start && std::isspace(static_cast<unsigned char>(in[end - 1]))) {
-            --end;
-        }
-        return in.substr(start, end - start);
-    };
-
-    std::string_view normalized = trim(sql);
-    if (!normalized.empty() && normalized.back() == ';') {
-        normalized.remove_suffix(1);
-        normalized = trim(normalized);
-    }
-
-    std::string upper;
-    upper.reserve(normalized.size());
-    for (char ch : normalized) {
-        upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
-    }
-
-    constexpr std::string_view kSelect = "SELECT ";
-    constexpr std::string_view kFromRdbDatabase = " FROM RDB$DATABASE";
-    if (upper.rfind(kSelect, 0) != 0) {
-        return std::string(sql);
-    }
-
-    const size_t from_pos = upper.find(kFromRdbDatabase);
-    if (from_pos == std::string::npos) {
-        return std::string(sql);
-    }
-
-    const size_t suffix_pos = from_pos + kFromRdbDatabase.size();
-    for (size_t i = suffix_pos; i < upper.size(); ++i) {
-        if (!std::isspace(static_cast<unsigned char>(upper[i]))) {
-            return std::string(sql);
-        }
-    }
-
-    std::string_view select_list = trim(normalized.substr(kSelect.size(),
-                                                          from_pos - kSelect.size()));
-    if (select_list.empty()) {
-        return std::string(sql);
-    }
-
-    return "SELECT " + std::string(select_list);
-}
-
 auto formatHexBytes(const uint8_t* data, size_t size) -> std::string {
     if (data == nullptr || size == 0) {
         return {};
@@ -324,15 +272,20 @@ namespace fb {
     constexpr uint32_t op_fetch_scroll = 112;
     constexpr uint32_t op_info_cursor = 113;
     
-    // Protocol versions
-    constexpr uint32_t PROTOCOL_VERSION10 = 10;
-    constexpr uint32_t PROTOCOL_VERSION11 = 11;
-    constexpr uint32_t PROTOCOL_VERSION12 = 12;
-    constexpr uint32_t PROTOCOL_VERSION13 = 13;
-    constexpr uint32_t PROTOCOL_VERSION14 = 14;
-    constexpr uint32_t PROTOCOL_VERSION15 = 15;
-    constexpr uint32_t PROTOCOL_VERSION16 = 16;
-    constexpr uint32_t PROTOCOL_VERSION18 = 18;
+    // Firebird protocol 11+ carries the high protocol flag bit. Preserve the
+    // donor values exactly so packed/unpacked SQL message rules match the
+    // negotiated session version byte-for-byte.
+    constexpr uint32_t FB_PROTOCOL_FLAG = 0x8000u;
+    constexpr uint32_t FB_PROTOCOL_MASK = ~FB_PROTOCOL_FLAG;
+    constexpr uint32_t PROTOCOL_VERSION10 = 10u;
+    constexpr uint32_t PROTOCOL_VERSION11 = FB_PROTOCOL_FLAG | 11u;
+    constexpr uint32_t PROTOCOL_VERSION12 = FB_PROTOCOL_FLAG | 12u;
+    constexpr uint32_t PROTOCOL_VERSION13 = FB_PROTOCOL_FLAG | 13u;
+    constexpr uint32_t PROTOCOL_VERSION14 = FB_PROTOCOL_FLAG | 14u;
+    constexpr uint32_t PROTOCOL_VERSION15 = FB_PROTOCOL_FLAG | 15u;
+    constexpr uint32_t PROTOCOL_VERSION16 = FB_PROTOCOL_FLAG | 16u;
+    constexpr uint32_t PROTOCOL_VERSION17 = FB_PROTOCOL_FLAG | 17u;
+    constexpr uint32_t PROTOCOL_VERSION18 = FB_PROTOCOL_FLAG | 18u;
 
     // Protocol type / flags
     constexpr uint32_t ptype_batch_send = 2;
@@ -352,6 +305,8 @@ namespace fb {
     constexpr uint32_t isc_arg_end = 0;
     constexpr uint32_t isc_arg_gds = 1;
     constexpr uint32_t isc_arg_string = 2;
+    constexpr uint32_t isc_arg_number = 4;
+    constexpr uint32_t isc_arg_interpreted = 5;
     constexpr uint32_t isc_arg_sql_state = 19;
 
     // Common GDS codes
@@ -359,6 +314,9 @@ namespace fb {
     constexpr uint32_t isc_dsql_error = 335544569;
     constexpr uint32_t isc_sqlerr = 335544436;
     constexpr uint32_t isc_login = 335544472;
+    constexpr uint32_t isc_no_meta_update = 335544351;
+    constexpr uint32_t isc_dyn_no_empty_pw = 336068858;
+    constexpr uint32_t isc_gsec_err_rec_not_found = 336723990;
 }
 
 // XDR helpers
@@ -473,6 +431,41 @@ static auto normalizeFirebirdDpbString(std::string value) -> std::string {
 }
 
 static auto splitFirebirdSqlBatch(std::string_view sql) -> std::vector<std::string> {
+    const std::string trimmed_sql = trimAscii(std::string(sql));
+    std::string upper_sql = trimmed_sql;
+    std::transform(upper_sql.begin(),
+                   upper_sql.end(),
+                   upper_sql.begin(),
+                   [](unsigned char ch) {
+                       return static_cast<char>(std::toupper(ch));
+                   });
+    const auto starts_with = [&](std::string_view prefix) {
+        return upper_sql.rfind(prefix, 0) == 0;
+    };
+
+    // Firebird donor clients send PSQL bodies (procedures, functions, triggers,
+    // execute blocks, package bodies) as a single prepared statement even
+    // though the body itself contains semicolons. Preserve those inputs as a
+    // single statement instead of fragmenting them into a fake batch.
+    if (starts_with("CREATE PROCEDURE") ||
+        starts_with("ALTER PROCEDURE") ||
+        starts_with("CREATE OR ALTER PROCEDURE") ||
+        starts_with("RECREATE PROCEDURE") ||
+        starts_with("CREATE FUNCTION") ||
+        starts_with("ALTER FUNCTION") ||
+        starts_with("CREATE OR ALTER FUNCTION") ||
+        starts_with("RECREATE FUNCTION") ||
+        starts_with("CREATE TRIGGER") ||
+        starts_with("ALTER TRIGGER") ||
+        starts_with("CREATE OR ALTER TRIGGER") ||
+        starts_with("RECREATE TRIGGER") ||
+        starts_with("EXECUTE BLOCK") ||
+        starts_with("CREATE PACKAGE BODY") ||
+        starts_with("RECREATE PACKAGE BODY")) {
+        return trimmed_sql.empty() ? std::vector<std::string>{}
+                                   : std::vector<std::string>{trimmed_sql};
+    }
+
     enum class ScanState {
         Normal,
         SingleQuote,
@@ -960,6 +953,30 @@ static uint32_t inferFirebirdStatementType(const std::string& sql_text) {
     return 5;
 }
 
+static bool firebirdStatementNeedsCatalogSetup(const std::string& sql_text) {
+    const auto first = std::find_if_not(sql_text.begin(),
+                                        sql_text.end(),
+                                        [](unsigned char ch) { return std::isspace(ch) != 0; });
+    std::string normalized;
+    normalized.reserve(static_cast<size_t>(sql_text.end() - first));
+    for (auto it = first; it != sql_text.end(); ++it) {
+        normalized.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(*it))));
+    }
+
+    const auto starts_with = [&](const char* prefix) {
+        return normalized.rfind(prefix, 0) == 0;
+    };
+
+    if (normalized.empty()) {
+        return false;
+    }
+    if (starts_with("COMMIT") || starts_with("ROLLBACK") ||
+        starts_with("SET TRANSACTION") || starts_with("SET AUTODDL")) {
+        return false;
+    }
+    return true;
+}
+
 static uint32_t inferFirebirdStatementFlags(const FBDsqlStatementState& stmt_state) {
     constexpr uint32_t FLAG_HAS_CURSOR = 0x01;
     constexpr uint32_t FLAG_REPEAT_EXECUTE = 0x02;
@@ -1027,6 +1044,21 @@ static void appendFirebirdInfoItemInt(std::vector<uint8_t>& out, uint8_t item, u
     }
 }
 
+static void appendFirebirdInfoItemVaxLong(std::vector<uint8_t>& out, uint8_t item, uint32_t value) {
+    out.push_back(item);
+    out.push_back(4);
+    out.push_back(0);
+    for (uint16_t i = 0; i < 4; ++i) {
+        out.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFF));
+    }
+}
+
+static void appendFirebirdInfoItemEmpty(std::vector<uint8_t>& out, uint8_t item) {
+    out.push_back(item);
+    out.push_back(0);
+    out.push_back(0);
+}
+
 static void appendFirebirdInfoItemSigned(std::vector<uint8_t>& out, uint8_t item, int32_t value) {
     appendFirebirdInfoItemInt(out, item, static_cast<uint32_t>(value));
 }
@@ -1069,17 +1101,35 @@ static void appendFirebirdInfoItemBytes(std::vector<uint8_t>& out,
     out.insert(out.end(), data, data + length);
 }
 
+static void appendFirebirdInfoItemClusteredBytes(std::vector<uint8_t>& out,
+                                                 uint8_t item,
+                                                 const uint8_t* data,
+                                                 uint16_t length) {
+    std::vector<uint8_t> payload;
+    payload.reserve(static_cast<size_t>(length) + 2u);
+    payload.push_back(static_cast<uint8_t>(length & 0xFF));
+    payload.push_back(static_cast<uint8_t>((length >> 8) & 0xFF));
+    payload.insert(payload.end(), data, data + length);
+    appendFirebirdInfoItemBytes(out,
+                                item,
+                                payload.data(),
+                                static_cast<uint16_t>(payload.size()));
+}
+
 static void appendFirebirdInfoItemCountedString(std::vector<uint8_t>& out,
                                                 uint8_t item,
                                                 const std::string& value) {
     const uint8_t string_length =
         static_cast<uint8_t>(std::min<size_t>(value.size(), std::numeric_limits<uint8_t>::max()));
-    out.push_back(item);
-    out.push_back(static_cast<uint8_t>((string_length + 2u) & 0xFF));
-    out.push_back(static_cast<uint8_t>(((string_length + 2u) >> 8) & 0xFF));
-    out.push_back(1); // one string entry
-    out.push_back(string_length);
-    out.insert(out.end(), value.begin(), value.begin() + string_length);
+    std::vector<uint8_t> payload;
+    payload.reserve(static_cast<size_t>(string_length) + 2u);
+    payload.push_back(1); // one string entry
+    payload.push_back(string_length);
+    payload.insert(payload.end(), value.begin(), value.begin() + string_length);
+    appendFirebirdInfoItemBytes(out,
+                                item,
+                                payload.data(),
+                                static_cast<uint16_t>(payload.size()));
 }
 
 static void appendFirebirdInfoError(std::vector<uint8_t>& out,
@@ -1320,29 +1370,34 @@ static auto appendFirebirdDescribeVarInfo(std::vector<uint8_t>& out,
             sql_type |= 1u;
         }
         for (uint8_t item : describe_items) {
-            switch (item) {
+                switch (item) {
                 case 8: // isc_info_sql_describe_end
                     break;
                 case 9: // isc_info_sql_sqlda_seq
-                    appendFirebirdInfoItemInt(out, item, seq);
+                    appendFirebirdInfoItemVaxLong(out, item, seq);
                     break;
                 case 10: // isc_info_sql_message_seq
-                    appendFirebirdInfoItemInt(out, item, 0);
+                    appendFirebirdInfoItemEmpty(out, item);
                     break;
                 case 11: // isc_info_sql_type
-                    appendFirebirdInfoItemInt(out, item, sql_type);
+                    appendFirebirdInfoItemVaxLong(out, item, sql_type);
                     break;
                 case 12: // isc_info_sql_sub_type
-                    appendFirebirdInfoItemInt(out, item, value_field.subtype);
+                    appendFirebirdInfoItemVaxLong(out, item, value_field.subtype);
                     break;
                 case 13: // isc_info_sql_scale
-                    appendFirebirdInfoItemSigned(out, item, value_field.scale);
+                    appendFirebirdInfoItemVaxLong(
+                        out,
+                        item,
+                        static_cast<uint32_t>(static_cast<int32_t>(value_field.scale)));
                     break;
                 case 14: // isc_info_sql_length
-                    appendFirebirdInfoItemInt(out, item, firebirdBlrFieldSqlLength(value_field));
+                    appendFirebirdInfoItemVaxLong(
+                        out, item, firebirdBlrFieldSqlLength(value_field));
                     break;
                 case 15: // isc_info_sql_null_ind
-                    appendFirebirdInfoItemInt(out, item, value_field.not_nullable ? 0u : 1u);
+                    appendFirebirdInfoItemVaxLong(
+                        out, item, value_field.not_nullable ? 0u : 1u);
                     break;
                 case 16: // isc_info_sql_field
                 {
@@ -1468,18 +1523,25 @@ static void buildFirebirdStatementInfoBuffer(const FBDsqlStatementState& stmt_st
                     message_number = layout_it->first;
                 }
 
-                const uint32_t variable_count =
-                    (fields != nullptr && fields->size() % 2 == 0)
-                        ? static_cast<uint32_t>(fields->size() / 2)
-                        : 0u;
-                appendFirebirdInfoItemInt(item_out, item, variable_count);
+                appendFirebirdInfoItemVaxLong(item_out, item, message_number);
                 if (item == 6) {
                     appendFirebirdInfoChunk(info_out, item_out, buffer_length, truncated);
                     break;
                 }
                 if (fields == nullptr) {
+                    size_t j = i + 1;
+                    while (j < items.size()) {
+                        const uint8_t describe_item = static_cast<uint8_t>(items[j]);
+                        if (describe_item == 1 || describe_item == 8) {
+                            break;
+                        }
+                        ++j;
+                    }
                     item_out.push_back(8); // isc_info_sql_describe_end
                     appendFirebirdInfoChunk(info_out, item_out, buffer_length, truncated);
+                    if (j < items.size() && static_cast<uint8_t>(items[j]) == 8) {
+                        i = j;
+                    }
                     break;
                 }
 
@@ -1513,9 +1575,9 @@ static void buildFirebirdStatementInfoBuffer(const FBDsqlStatementState& stmt_st
                 break;
             }
             case 21: // isc_info_sql_stmt_type
-                appendFirebirdInfoItemInt(item_out,
-                                          item,
-                                          inferFirebirdStatementType(stmt_state.sql_text));
+                appendFirebirdInfoItemVaxLong(item_out,
+                                              item,
+                                              inferFirebirdStatementType(stmt_state.sql_text));
                 appendFirebirdInfoChunk(info_out, item_out, buffer_length, truncated);
                 break;
             case 22: // isc_info_sql_get_plan
@@ -1602,9 +1664,9 @@ static void buildFirebirdStatementInfoBuffer(const FBDsqlStatementState& stmt_st
                 break;
             }
             case 27: // isc_info_sql_stmt_flags
-                appendFirebirdInfoItemInt(item_out,
-                                          item,
-                                          inferFirebirdStatementFlags(stmt_state));
+                appendFirebirdInfoItemVaxLong(item_out,
+                                              item,
+                                              inferFirebirdStatementFlags(stmt_state));
                 appendFirebirdInfoChunk(info_out, item_out, buffer_length, truncated);
                 break;
             default:
@@ -1789,6 +1851,8 @@ static void buildFirebirdDatabaseInfoBuffer(const FBClientState& state,
     const uint32_t attachment_id =
         state.attachment_id != 0 ? state.attachment_id
                                  : (state.session_id != 0 ? state.session_id : state.client_id);
+    const uint32_t page_size = 16384;
+    const uint32_t num_buffers = 2048;
     static const std::string firebird_version = "LI-V4.0.0.0 ScratchBird Firebird emulation";
     static constexpr uint32_t ods_version = 13;
     static constexpr uint32_t ods_minor_version = 0;
@@ -1796,20 +1860,46 @@ static void buildFirebirdDatabaseInfoBuffer(const FBClientState& state,
     static constexpr uint8_t db_class = 1; // isc_info_db_class_access
     static constexpr uint8_t impl_class = 1; // access class
     static constexpr uint8_t backward_compatible_impl = 66; // isc_info_db_impl_linux_amd64
-    static constexpr uint8_t base_level_payload[] = {1u, 6u};
-    static constexpr uint8_t implementation_payload[] = {
+    static constexpr uint8_t implementation_old_payload[] = {
         1u, // one implementation pair
         backward_compatible_impl,
         impl_class,
     };
-    static constexpr uint8_t fb_implementation_payload[] = {
+    static constexpr uint8_t base_level_payload[] = {
+        1u, // one base level entry
+        6u,
+    };
+    static constexpr uint8_t implementation_payload[] = {
         1u, // one implementation entry
-        backward_compatible_impl,
-        0u,
-        0u,
-        0u,
+        backward_compatible_impl, // cpu / compatibility bucket
+        0u, // os
+        0u, // compiler
+        0u, // flags
         impl_class,
         0u, // depth
+    };
+    const auto append_db_id_payload = [&](uint8_t tag) {
+        const std::string database_name = state.database.empty() ? "compat_firebird" : state.database;
+        const std::string site_name = "localhost";
+        const auto bounded_size = [](const std::string& value) -> size_t {
+            return std::min<size_t>(value.size(), 255);
+        };
+
+        std::vector<uint8_t> payload;
+        payload.reserve(database_name.size() + site_name.size() + 3);
+        payload.push_back(2u);
+        payload.push_back(static_cast<uint8_t>(bounded_size(database_name)));
+        payload.insert(payload.end(),
+                       database_name.begin(),
+                       database_name.begin() + bounded_size(database_name));
+        payload.push_back(static_cast<uint8_t>(bounded_size(site_name)));
+        payload.insert(payload.end(),
+                       site_name.begin(),
+                       site_name.begin() + bounded_size(site_name));
+        appendFirebirdInfoItemClusteredBytes(info_out,
+                                             tag,
+                                             payload.data(),
+                                             static_cast<uint16_t>(payload.size()));
     };
 
     for (size_t i = 0; i < items.size(); ++i) {
@@ -1819,17 +1909,36 @@ static void buildFirebirdDatabaseInfoBuffer(const FBClientState& state,
         }
 
         switch (item) {
-            case 11: // isc_info_implementation
-                appendFirebirdInfoItemBytes(info_out,
-                                            item,
-                                            implementation_payload,
-                                            static_cast<uint16_t>(sizeof(implementation_payload)));
+            case 4: // isc_info_db_id
+                append_db_id_payload(item);
+                break;
+            case 11: // isc_info_implementation_old
+                appendFirebirdInfoItemClusteredBytes(
+                    info_out,
+                    item,
+                    implementation_old_payload,
+                    static_cast<uint16_t>(sizeof(implementation_old_payload)));
+                break;
+            case 12: // isc_info_version
+                appendFirebirdInfoItemCountedString(info_out, item, firebird_version);
                 break;
             case 13: // isc_info_base_level
-                appendFirebirdInfoItemBytes(info_out,
-                                            item,
-                                            base_level_payload,
-                                            static_cast<uint16_t>(sizeof(base_level_payload)));
+                appendFirebirdInfoItemClusteredBytes(info_out,
+                                                     item,
+                                                     base_level_payload,
+                                                     static_cast<uint16_t>(sizeof(base_level_payload)));
+                break;
+            case 5: // isc_info_reads
+                appendFirebirdInfoItemInt(info_out, item, 0);
+                break;
+            case 6: // isc_info_writes
+                appendFirebirdInfoItemInt(info_out, item, 0);
+                break;
+            case 14: // isc_info_page_size
+                appendFirebirdInfoItemInt(info_out, item, page_size);
+                break;
+            case 15: // isc_info_num_buffers
+                appendFirebirdInfoItemInt(info_out, item, num_buffers);
                 break;
             case 22: // isc_info_attachment_id
                 appendFirebirdInfoItemInt(info_out, item, attachment_id);
@@ -1846,7 +1955,7 @@ static void buildFirebirdDatabaseInfoBuffer(const FBClientState& state,
             case 63: // isc_info_db_read_only
                 appendFirebirdInfoItemInt(info_out, item, 0);
                 break;
-            case 100: // isc_info_db_class
+            case 102: // isc_info_db_class
                 appendFirebirdInfoItemInt(info_out, item, db_class);
                 break;
             case 101: // frb_info_att_charset
@@ -1856,10 +1965,11 @@ static void buildFirebirdDatabaseInfoBuffer(const FBClientState& state,
                 appendFirebirdInfoItemCountedString(info_out, item, firebird_version);
                 break;
             case 114: // fb_info_implementation
-                appendFirebirdInfoItemBytes(info_out,
-                                            item,
-                                            fb_implementation_payload,
-                                            static_cast<uint16_t>(sizeof(fb_implementation_payload)));
+                appendFirebirdInfoItemClusteredBytes(
+                    info_out,
+                    item,
+                    implementation_payload,
+                    static_cast<uint16_t>(sizeof(implementation_payload)));
                 break;
             default:
                 appendFirebirdInfoError(info_out, item, 335544341u); // isc_infunk
@@ -2779,6 +2889,7 @@ static auto decodeIpcDataRow(const IPCMessage& message,
 }
 
 static auto decodeIpcRowDescription(const IPCMessage& message,
+                                    std::vector<IPCFieldDesc>& fields_out,
                                     std::vector<std::string>& names_out,
                                     std::string& error_out) -> bool {
     auto* payload = message.getPayload<IPCRowDescriptionPayload>();
@@ -2794,13 +2905,269 @@ static auto decodeIpcRowDescription(const IPCMessage& message,
         return false;
     }
 
+    const auto* fields = reinterpret_cast<const IPCFieldDesc*>(message.payload.data() + header_size);
+    fields_out.assign(fields, fields + payload->num_fields);
     names_out.clear();
     names_out.reserve(payload->num_fields);
-    const auto* fields = reinterpret_cast<const IPCFieldDesc*>(message.payload.data() + header_size);
     for (uint16_t i = 0; i < payload->num_fields; ++i) {
         names_out.emplace_back(fields[i].name);
     }
     return true;
+}
+
+static auto defaultIpcFieldTypeSize(core::DataType type) -> int16_t {
+    switch (type) {
+        case core::DataType::INT8:
+        case core::DataType::UINT8:
+        case core::DataType::INT16:
+        case core::DataType::UINT16:
+            return 2;
+        case core::DataType::INT32:
+        case core::DataType::UINT32:
+        case core::DataType::MEDIUMINT:
+        case core::DataType::FLOAT32:
+        case core::DataType::DATE:
+        case core::DataType::TIME:
+        case core::DataType::YEAR:
+            return 4;
+        case core::DataType::INT64:
+        case core::DataType::UINT64:
+        case core::DataType::FLOAT64:
+        case core::DataType::DECIMAL:
+        case core::DataType::MONEY:
+        case core::DataType::TIMESTAMP:
+        case core::DataType::DATETIME:
+        case core::DataType::TIME_WITH_ZONE:
+        case core::DataType::DECFLOAT16:
+            return 8;
+        case core::DataType::INT128:
+        case core::DataType::UINT128:
+        case core::DataType::DECFLOAT34:
+        case core::DataType::TIMESTAMP_WITH_ZONE:
+            return 16;
+        case core::DataType::BOOLEAN:
+        case core::DataType::BIT:
+            return 1;
+        case core::DataType::CHAR:
+        case core::DataType::VARCHAR:
+        case core::DataType::TEXT:
+        case core::DataType::JSON:
+        case core::DataType::JSONB:
+        case core::DataType::XML:
+        case core::DataType::UUID:
+        case core::DataType::INET:
+        case core::DataType::CIDR:
+        case core::DataType::MACADDR:
+        case core::DataType::MACADDR8:
+        case core::DataType::ENUM:
+        case core::DataType::SET:
+        case core::DataType::TSVECTOR:
+        case core::DataType::TSQUERY:
+            return -1;
+        default:
+            return 0;
+    }
+}
+
+static void normalizeIpcFieldTypeMetadata(IPCFieldDesc& field) {
+    const auto type = static_cast<core::DataType>(field.type_oid);
+    if (field.type_size == 0) {
+        field.type_size = defaultIpcFieldTypeSize(type);
+    }
+    if (field.type_modifier == 0) {
+        switch (type) {
+            case core::DataType::CHAR:
+                field.type_modifier = field.type_size > 0 ? field.type_size : 1;
+                break;
+            case core::DataType::VARCHAR:
+            case core::DataType::TEXT:
+            case core::DataType::JSON:
+            case core::DataType::JSONB:
+            case core::DataType::XML:
+            case core::DataType::UUID:
+            case core::DataType::INET:
+            case core::DataType::CIDR:
+            case core::DataType::MACADDR:
+            case core::DataType::MACADDR8:
+            case core::DataType::ENUM:
+            case core::DataType::SET:
+            case core::DataType::TSVECTOR:
+            case core::DataType::TSQUERY:
+                field.type_modifier = field.type_size > 0 ? field.type_size : 255;
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+static auto firebirdMessageFieldFromIpcField(const IPCFieldDesc& ipc_field) -> FBMessageFieldDesc {
+    IPCFieldDesc normalized = ipc_field;
+    normalizeIpcFieldTypeMetadata(normalized);
+
+    FBMessageFieldDesc field;
+    field.not_nullable = false;
+    field.scale = 0;
+    field.subtype = 0;
+
+    const auto type = static_cast<core::DataType>(normalized.type_oid);
+    switch (type) {
+        case core::DataType::INT8:
+        case core::DataType::UINT8:
+        case core::DataType::INT16:
+        case core::DataType::UINT16:
+            field.type_opcode = 7;
+            field.length = 2;
+            field.sql_type_override = 500;
+            break;
+        case core::DataType::INT32:
+        case core::DataType::UINT32:
+        case core::DataType::MEDIUMINT:
+        case core::DataType::YEAR:
+            field.type_opcode = 8;
+            field.length = 4;
+            field.sql_type_override = 496;
+            break;
+        case core::DataType::INT64:
+        case core::DataType::UINT64:
+        case core::DataType::DECIMAL:
+        case core::DataType::MONEY:
+            field.type_opcode = 16;
+            field.length = 8;
+            field.sql_type_override = 580;
+            break;
+        case core::DataType::INT128:
+        case core::DataType::UINT128:
+            field.type_opcode = 26;
+            field.length = 16;
+            field.sql_type_override = 32752;
+            break;
+        case core::DataType::FLOAT32:
+            field.type_opcode = 10;
+            field.length = 4;
+            field.sql_type_override = 482;
+            break;
+        case core::DataType::FLOAT64:
+            field.type_opcode = 27;
+            field.length = 8;
+            field.sql_type_override = 480;
+            break;
+        case core::DataType::DATE:
+            field.type_opcode = 12;
+            field.length = 4;
+            field.sql_type_override = 570;
+            break;
+        case core::DataType::TIME:
+            field.type_opcode = 13;
+            field.length = 4;
+            field.sql_type_override = 560;
+            break;
+        case core::DataType::TIMESTAMP:
+        case core::DataType::DATETIME:
+            field.type_opcode = 35;
+            field.length = 8;
+            field.sql_type_override = 510;
+            break;
+        case core::DataType::TIME_WITH_ZONE:
+            field.type_opcode = 28;
+            field.length = 8;
+            field.sql_type_override = 32756;
+            break;
+        case core::DataType::TIMESTAMP_WITH_ZONE:
+            field.type_opcode = 29;
+            field.length = 12;
+            field.sql_type_override = 32754;
+            break;
+        case core::DataType::BOOLEAN:
+        case core::DataType::BIT:
+            field.type_opcode = 23;
+            field.length = 1;
+            field.sql_type_override = 32764;
+            break;
+        case core::DataType::CHAR:
+            field.type_opcode = 14;
+            field.length = static_cast<uint16_t>(std::max<int32_t>(normalized.type_modifier, 1));
+            field.sql_type_override = 452;
+            break;
+        case core::DataType::VARCHAR:
+        case core::DataType::TEXT:
+        case core::DataType::JSON:
+        case core::DataType::JSONB:
+        case core::DataType::XML:
+        case core::DataType::UUID:
+        case core::DataType::INET:
+        case core::DataType::CIDR:
+        case core::DataType::MACADDR:
+        case core::DataType::MACADDR8:
+        case core::DataType::ENUM:
+        case core::DataType::SET:
+        case core::DataType::TSVECTOR:
+        case core::DataType::TSQUERY:
+            field.type_opcode = 37;
+            field.length = static_cast<uint16_t>(std::max<int32_t>(normalized.type_modifier, 1) + 2);
+            field.sql_type_override = 448;
+            break;
+        case core::DataType::BINARY:
+        case core::DataType::VARBINARY:
+        case core::DataType::BLOB:
+        case core::DataType::BYTEA:
+        case core::DataType::ARRAY:
+        case core::DataType::COMPOSITE:
+        case core::DataType::LIST:
+        case core::DataType::MAP:
+        case core::DataType::BSON:
+        case core::DataType::POINT:
+        case core::DataType::LINESTRING:
+        case core::DataType::POLYGON:
+        case core::DataType::MULTIPOINT:
+        case core::DataType::MULTILINESTRING:
+        case core::DataType::MULTIPOLYGON:
+        case core::DataType::GEOMETRYCOLLECTION:
+        case core::DataType::GEOMETRY:
+        case core::DataType::ROW:
+        case core::DataType::VARIANT:
+            field.type_opcode = 17;
+            field.length = 8;
+            field.sql_type_override = 520;
+            break;
+        default:
+            field.type_opcode = 37;
+            field.length = 257;
+            field.sql_type_override = 448;
+            break;
+    }
+    return field;
+}
+
+static void applyAuthoritativeFirebirdRowDescription(
+    const std::vector<IPCFieldDesc>& row_description_fields,
+    uint8_t message_number,
+    std::unordered_map<uint8_t, std::vector<FBMessageFieldDesc>>& message_fields_out,
+    std::vector<std::string>& field_names_out) {
+    std::vector<FBMessageFieldDesc> output_fields;
+    output_fields.reserve(row_description_fields.size() * 2);
+    field_names_out.clear();
+    field_names_out.reserve(row_description_fields.size());
+
+    for (const auto& ipc_field : row_description_fields) {
+        field_names_out.emplace_back(ipc_field.name);
+        output_fields.push_back(firebirdMessageFieldFromIpcField(ipc_field));
+
+        FBMessageFieldDesc null_field;
+        null_field.type_opcode = 7;
+        null_field.length = 2;
+        null_field.sql_type_override = 500;
+        output_fields.push_back(null_field);
+    }
+
+    message_fields_out[message_number] = std::move(output_fields);
+}
+
+static auto decodeIpcRowDescription(const IPCMessage& message,
+                                    std::vector<std::string>& names_out,
+                                    std::string& error_out) -> bool {
+    std::vector<IPCFieldDesc> fields_out;
+    return decodeIpcRowDescription(message, fields_out, names_out, error_out);
 }
 
 static void xdrAppendOpaque(std::vector<uint8_t>& out, const uint8_t* data, size_t len) {
@@ -4642,6 +5009,52 @@ core::Status FirebirdParserAgent::closeEngineObject(FBClientState& state,
     return core::Status::OK;
 }
 
+core::Status FirebirdParserAgent::sendTransactionControlToEngine(FBClientState& state,
+                                                                 IPCMessageType type,
+                                                                 const std::string& savepoint_name,
+                                                                 core::ErrorContext* ctx) {
+    IPCMessage msg(type, 0);
+    msg.header.request_id = state.session_id != 0 ? state.session_id : generateHandle();
+    if (!savepoint_name.empty()) {
+        msg.payload.assign(savepoint_name.begin(), savepoint_name.end());
+        msg.payload.push_back('\0');
+    }
+
+    auto status = sendToEngine(state.client_id, msg, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    while (true) {
+        IPCMessage response;
+        status = receiveFromEngine(state.client_id, response, ctx, 30000);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        std::cerr << "[parser_debug] firebird txnctl response type="
+                  << ipcMessageTypeToString(response.getType())
+                  << " (" << static_cast<uint32_t>(response.getType()) << ")\n";
+        if (response.getType() == IPCMessageType::NOTICE ||
+            response.getType() == IPCMessageType::EMPTY_RESPONSE ||
+            response.getType() == IPCMessageType::CLOSE_COMPLETE ||
+            response.getType() == IPCMessageType::READY ||
+            response.getType() == IPCMessageType::READY_FOR_QUERY) {
+            continue;
+        }
+        if (response.getType() == IPCMessageType::ERROR_RESPONSE) {
+            return sendErrorResponse(state, engineErrorMessage(response));
+        }
+        if (response.getType() != IPCMessageType::TXN_COMPLETE) {
+            return sendErrorResponse(
+                state,
+                "Unexpected engine response during Firebird transaction control: " +
+                    std::string(ipcMessageTypeToString(response.getType())) + " (" +
+                    std::to_string(static_cast<uint32_t>(response.getType())) + ")");
+        }
+        return core::Status::OK;
+    }
+}
+
 core::Status FirebirdParserAgent::cleanupAttachmentState(FBClientState& state,
                                                         core::ErrorContext* ctx) {
     if (state.attachment_id == 0) {
@@ -4650,6 +5063,10 @@ core::Status FirebirdParserAgent::cleanupAttachmentState(FBClientState& state,
         state.transactions.clear();
         state.handle = 0;
         state.database.clear();
+        state.emulated_schema_root.clear();
+        state.pending_catalog_refresh = false;
+        state.virtual_catalog_ready = false;
+        state.search_path_ready = false;
         return core::Status::OK;
     }
 
@@ -4701,6 +5118,51 @@ core::Status FirebirdParserAgent::cleanupAttachmentState(FBClientState& state,
     state.handle = 0;
     state.database.clear();
     state.emulated_schema_root.clear();
+    state.pending_catalog_refresh = false;
+    state.virtual_catalog_ready = false;
+    state.search_path_ready = false;
+    return core::Status::OK;
+}
+
+core::Status FirebirdParserAgent::closeTransactionalCursorState(FBClientState& state,
+                                                               core::ErrorContext* ctx) {
+    for (auto& entry : state.dsql_statements) {
+        const uint32_t statement_handle = entry.first;
+        auto& stmt_state = entry.second;
+        if (stmt_state.portal_active) {
+            auto status = closeEngineObject(state,
+                                            statement_handle,
+                                            'P',
+                                            firebirdDsqlPortalName(statement_handle),
+                                            ctx);
+            if (status != core::Status::OK) {
+                return status;
+            }
+        }
+        stmt_state.pending_rows.clear();
+        stmt_state.current_fetch_index = -1;
+        stmt_state.execution_complete = false;
+        stmt_state.portal_active = false;
+    }
+
+    for (auto& entry : state.compiled_requests) {
+        const uint32_t request_handle = entry.first;
+        auto& request_state = entry.second;
+        if (request_state.portal_active) {
+            auto status = closeEngineObject(state,
+                                            request_handle,
+                                            'P',
+                                            firebirdPortalName(request_handle),
+                                            ctx);
+            if (status != core::Status::OK) {
+                return status;
+            }
+        }
+        request_state.pending_rows.clear();
+        request_state.execution_complete = false;
+        request_state.portal_active = false;
+    }
+
     return core::Status::OK;
 }
 
@@ -4850,24 +5312,47 @@ core::Status FirebirdParserAgent::ensureEngineSession(FBClientState& state,
             }
         }
 
+        state.virtual_catalog_ready = false;
+        state.search_path_ready = false;
+
+        if (create_database_bootstrap) {
+            auto ensure_status = ensureCatalogSessionReady(state, ctx);
+            if (ensure_status != core::Status::OK) {
+                return ensure_status;
+            }
+        }
+    }
+
+    return core::Status::OK;
+}
+
+core::Status FirebirdParserAgent::ensureCatalogSessionReady(FBClientState& state,
+                                                            core::ErrorContext* ctx) {
+    if (state.database.empty()) {
+        return core::Status::OK;
+    }
+
+    if (!state.virtual_catalog_ready) {
         auto ensure_status = ensureVirtualCatalogBinding(state, ctx);
         if (ensure_status != core::Status::OK) {
             return ensure_status;
         }
+        state.virtual_catalog_ready = true;
+    }
 
-        if (!binding_response.schema_name.empty()) {
-            const std::string set_search_path_sql =
-                "EXECUTE PROCEDURE fb_set_search_path('" +
-                escapeFirebirdSqlLiteral(binding_response.schema_name) + "')";
-            auto path_status = executeSessionSql(state,
-                                                 set_search_path_sql,
-                                                 false,
-                                                 "Failed to bind Firebird emulated schema root",
-                                                 ctx);
-            if (path_status != core::Status::OK) {
-                return path_status;
-            }
+    if (!state.search_path_ready && !state.emulated_schema_root.empty()) {
+        const std::string set_search_path_sql =
+            "EXECUTE PROCEDURE fb_set_search_path('" +
+            escapeFirebirdSqlLiteral(state.emulated_schema_root) + "')";
+        auto path_status = executeSessionSql(state,
+                                             set_search_path_sql,
+                                             false,
+                                             "Failed to bind Firebird emulated schema root",
+                                             ctx);
+        if (path_status != core::Status::OK) {
+            return path_status;
         }
+        state.search_path_ready = true;
     }
 
     return core::Status::OK;
@@ -4949,7 +5434,7 @@ core::Status FirebirdParserAgent::executeCompiledInternalQuery(
     std::vector<std::string>* column_names_out,
     std::deque<std::vector<std::optional<std::string>>>* rows_out,
     core::ErrorContext* ctx) {
-    const std::string effective_sql = rewriteFirebirdSingleRowCompatibilityQuery(sql_text);
+    const std::string effective_sql = sql_text;
 
     sblr::DialectCompilerRequest request{};
     request.request_id = core::generateUuidV7();
@@ -5099,12 +5584,18 @@ core::Status FirebirdParserAgent::refreshCommittedCatalogState(FBClientState& st
     if (commit_status != core::Status::OK) {
         return commit_status;
     }
+    auto restore_status = executeSessionSql(state,
+                                            set_search_path_sql,
+                                            false,
+                                            "Failed to restore Firebird emulated schema root",
+                                            ctx);
+    if (restore_status != core::Status::OK) {
+        return restore_status;
+    }
 
-    return executeSessionSql(state,
-                             set_search_path_sql,
-                             false,
-                             "Failed to restore Firebird emulated schema root",
-                             ctx);
+    state.virtual_catalog_ready = true;
+    state.search_path_ready = true;
+    return core::Status::OK;
 }
 
 core::Status FirebirdParserAgent::handleOperation(FBClientState& state, core::ErrorContext* ctx) {
@@ -5578,6 +6069,7 @@ core::Status FirebirdParserAgent::handlePrepareStatement(FBClientState& state,
         stmt_it->second.input_sqlda_fields.clear();
         stmt_it->second.output_sqlda_fields.clear();
         stmt_it->second.output_field_names.clear();
+        stmt_it->second.output_layout_authoritative = false;
         stmt_it->second.pending_rows.clear();
         stmt_it->second.select_count = 0;
         stmt_it->second.insert_count = 0;
@@ -5600,8 +6092,216 @@ core::Status FirebirdParserAgent::handlePrepareStatement(FBClientState& state,
                      ctx);
         return core::Status::OK;
     }
+    const std::string effective_sql = sql_text;
+    stmt_it->second.sql_text = effective_sql;
+    stmt_it->second.input_message_fields.clear();
+    stmt_it->second.output_message_fields.clear();
+    stmt_it->second.input_sqlda_fields.clear();
+    stmt_it->second.output_sqlda_fields.clear();
+    stmt_it->second.output_field_names.clear();
+    stmt_it->second.output_layout_authoritative = false;
+    stmt_it->second.pending_rows.clear();
+    stmt_it->second.select_count = 0;
+    stmt_it->second.insert_count = 0;
+    stmt_it->second.update_count = 0;
+    stmt_it->second.delete_count = 0;
+    stmt_it->second.execution_complete = false;
+    stmt_it->second.portal_active = false;
+    stmt_it->second.statement_prepared = false;
+    stmt_it->second.engine_statement_prepared = false;
+    stmt_it->second.bound_params.clear();
+    stmt_it->second.bound_param_nulls.clear();
 
-    const std::string effective_sql = rewriteFirebirdSingleRowCompatibilityQuery(sql_text);
+    auto normalized_sql = [&]() -> std::string {
+        std::string out;
+        out.reserve(stmt_it->second.sql_text.size());
+        bool in_whitespace = false;
+        for (char ch : stmt_it->second.sql_text) {
+            if (std::isspace(static_cast<unsigned char>(ch))) {
+                if (!out.empty()) {
+                    in_whitespace = true;
+                }
+                continue;
+            }
+            if (in_whitespace) {
+                out.push_back(' ');
+                in_whitespace = false;
+            }
+            out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
+        }
+        return trimAscii(out);
+    }();
+
+    auto try_prepare_fastpath_context_select =
+        [&](const std::string& sql_upper) -> bool {
+            std::cerr << "[parser_debug] firebird metadata fastpath probe sql="
+                      << sql_upper << "\n";
+            constexpr std::string_view kFromDatabase = " FROM RDB$DATABASE";
+            if (sql_upper.size() <= kFromDatabase.size() ||
+                sql_upper.rfind(kFromDatabase) !=
+                    sql_upper.size() - kFromDatabase.size() ||
+                sql_upper.rfind("SELECT ", 0) != 0) {
+                return false;
+            }
+
+            const std::string select_list =
+                trimAscii(sql_upper.substr(7, sql_upper.size() - 7 - kFromDatabase.size()));
+            if (select_list.empty()) {
+                return false;
+            }
+
+            std::vector<std::string> items;
+            std::string current;
+            int paren_depth = 0;
+            for (char ch : select_list) {
+                if (ch == '(') {
+                    ++paren_depth;
+                }
+                else if (ch == ')' && paren_depth > 0) {
+                    --paren_depth;
+                }
+                if (ch == ',' && paren_depth == 0) {
+                    items.push_back(trimAscii(current));
+                    current.clear();
+                    continue;
+                }
+                current.push_back(ch);
+            }
+            if (!current.empty()) {
+                items.push_back(trimAscii(current));
+            }
+
+            if (items.empty()) {
+                return false;
+            }
+
+            auto append_fastpath_column =
+                [&](const std::string& field_name,
+                    uint8_t type_opcode,
+                    uint16_t length,
+                    uint16_t sql_type_override,
+                    uint16_t subtype = 0) {
+                    FBSqldaVarDesc sqlda;
+                    sqlda.field_name = field_name;
+                    sqlda.alias_name = field_name;
+                    stmt_it->second.output_sqlda_fields.push_back(std::move(sqlda));
+
+                    FBMessageFieldDesc value_field;
+                    value_field.type_opcode = type_opcode;
+                    value_field.length = length;
+                    value_field.subtype = subtype;
+                    value_field.sql_type_override = sql_type_override;
+                    stmt_it->second.output_message_fields[0].push_back(value_field);
+
+                    FBMessageFieldDesc null_field;
+                    null_field.type_opcode = 7;
+                    null_field.length = 2;
+                    null_field.sql_type_override = 500;
+                    stmt_it->second.output_message_fields[0].push_back(null_field);
+
+                    stmt_it->second.output_field_names.push_back(field_name);
+                };
+
+            auto infer_field_name =
+                [&](const std::string& item, size_t ordinal) -> std::string {
+                    if (item == "CURRENT_USER" || item == "CURRENT_ROLE" ||
+                        item == "CURRENT_TRANSACTION" || item == "CURRENT_CONNECTION" ||
+                        item == "CURRENT_SESSION") {
+                        return item;
+                    }
+                    if (item == "COUNT(*)") {
+                        return "COUNT";
+                    }
+                    return "EXPR" + std::to_string(ordinal);
+                };
+
+            for (size_t i = 0; i < items.size(); ++i) {
+                const std::string& item = items[i];
+                const std::string field_name = infer_field_name(item, i + 1);
+                if (item == "CURRENT_TRANSACTION" || item == "CURRENT_CONNECTION" ||
+                    item == "CURRENT_SESSION" || item == "COUNT(*)") {
+                    append_fastpath_column(field_name, 16, 8, 580);
+                    continue;
+                }
+                if (item == "CURRENT_USER" || item == "CURRENT_ROLE" ||
+                    item == "'READ COMMITTED'" ||
+                    item.rfind("TRIM(", 0) == 0 ||
+                    item.rfind("CAST(", 0) == 0 ||
+                    item.find("RDB$GET_CONTEXT(") != std::string::npos) {
+                    const uint16_t max_chars =
+                        (item == "CURRENT_USER" || item == "CURRENT_ROLE") ? 128u : 8192u;
+                    append_fastpath_column(field_name,
+                                           37,
+                                           static_cast<uint16_t>(max_chars + 2),
+                                           448,
+                                           4);
+                    continue;
+                }
+                return false;
+            }
+
+            std::cerr << "[parser_debug] firebird prepare stage=metadata_fastpath handle="
+                      << statement_handle << " columns="
+                      << stmt_it->second.output_sqlda_fields.size() << "\n";
+            stmt_it->second.output_layout_authoritative = true;
+            stmt_it->second.statement_prepared = true;
+            return true;
+        };
+
+    if (try_prepare_fastpath_context_select(normalized_sql)) {
+        auto ensure_catalog_status = ensureCatalogSessionReady(state, ctx);
+        if (ensure_catalog_status != core::Status::OK) {
+            return ensure_catalog_status;
+        }
+
+        sblr::DialectCompilerRequest request{};
+        request.request_id = core::generateUuidV7();
+        populateFirebirdCompilerRequest(request, state);
+        request.payload_format = sblr::DialectCompilerPayloadFormat::SQL_TEXT;
+        request.payload.assign(effective_sql.begin(), effective_sql.end());
+
+        sblr::DialectCompilerResponse response{};
+        core::ErrorContext compile_ctx;
+        auto compile_status = sblr::compileFirebirdDialectToSblr(nullptr,
+                                                                 request,
+                                                                 response,
+                                                                 &compile_ctx);
+        if (compile_status != core::Status::OK || !response.success) {
+            const std::string message = !response.errors.empty()
+                                            ? response.errors.front()
+                                            : (compile_ctx.message.empty()
+                                                   ? "Firebird SQL to SBLR lowering failed"
+                                                   : compile_ctx.message);
+            std::cerr << "[parser_debug] firebird prepare fastpath compile failed sql="
+                      << effective_sql << " message=" << message << "\n";
+            return sendErrorResponse(state, message);
+        }
+
+        stmt_it->second.compiled_bytecode = response.bytecode;
+        stmt_it->second.statement_prepared = true;
+        std::vector<uint8_t> info_buffer;
+        buildFirebirdStatementInfoBuffer(stmt_it->second, items, buffer_length, info_buffer);
+        std::cerr << "[parser_debug] firebird prepare response handle="
+                  << statement_handle
+                  << " req_items=[" << describeFirebirdInfoItems(items) << "]"
+                  << " req_hex=" << formatHexBytes(
+                         reinterpret_cast<const uint8_t*>(items.data()),
+                         items.size())
+                  << " resp_hex=" << formatHexBytes(info_buffer.data(), info_buffer.size())
+                  << "\n";
+        sendResponse(state,
+                     0,
+                     0,
+                     info_buffer.empty() ? nullptr : info_buffer.data(),
+                     info_buffer.size(),
+                     ctx);
+        return core::Status::OK;
+    }
+
+    auto ensure_catalog_status = ensureCatalogSessionReady(state, ctx);
+    if (ensure_catalog_status != core::Status::OK) {
+        return ensure_catalog_status;
+    }
 
     sblr::DialectCompilerRequest request{};
     request.request_id = core::generateUuidV7();
@@ -5628,24 +6328,8 @@ core::Status FirebirdParserAgent::handlePrepareStatement(FBClientState& state,
               << statement_handle << " stmt_type="
               << inferFirebirdStatementType(effective_sql) << "\n";
 
-    stmt_it->second.sql_text = effective_sql;
     stmt_it->second.compiled_bytecode = response.bytecode;
-    stmt_it->second.input_message_fields.clear();
-    stmt_it->second.output_message_fields.clear();
-    stmt_it->second.input_sqlda_fields.clear();
-    stmt_it->second.output_sqlda_fields.clear();
-    stmt_it->second.output_field_names.clear();
-    stmt_it->second.pending_rows.clear();
-    stmt_it->second.select_count = 0;
-    stmt_it->second.insert_count = 0;
-    stmt_it->second.update_count = 0;
-    stmt_it->second.delete_count = 0;
-    stmt_it->second.execution_complete = false;
-    stmt_it->second.portal_active = false;
     stmt_it->second.statement_prepared = true;
-    stmt_it->second.engine_statement_prepared = false;
-    stmt_it->second.bound_params.clear();
-    stmt_it->second.bound_param_nulls.clear();
 
     if (inferFirebirdStatementType(stmt_it->second.sql_text) == 5) {
         std::cerr << "[parser_debug] firebird prepare stage=ddl_fastpath_return handle="
@@ -5658,6 +6342,10 @@ core::Status FirebirdParserAgent::handlePrepareStatement(FBClientState& state,
               << statement_handle << "\n";
     parser::firebird::Parser metadata_parser(stmt_it->second.sql_text);
     auto metadata_parse = metadata_parser.parseStatement();
+    std::cerr << "[parser_debug] firebird prepare stage=metadata_parsed handle="
+              << statement_handle << " success=" << (metadata_parse.success ? 1 : 0)
+              << " has_statement="
+              << (metadata_parse.statement != nullptr ? 1 : 0) << "\n";
     if (metadata_parse.success && metadata_parse.statement) {
         using namespace scratchbird::parser::v3;
 
@@ -5868,7 +6556,14 @@ core::Status FirebirdParserAgent::handlePrepareStatement(FBClientState& state,
                 if (relation_upper == "RDB$DATABASE") {
                     append_bootstrap_relation_columns(
                         binding,
-                        {{"DUMMY", 8, 4, 0, 0, 0, false}},
+                        {
+                            {"RDB$DESCRIPTION", 37, 32765, 0, 4, 0, true},
+                            {"RDB$RELATION_ID", 16, 8, 0, 0, 0, false},
+                            {"RDB$SECURITY_CLASS", 37, 255, 0, 4, 0, true},
+                            {"RDB$CHARACTER_SET_NAME", 37, 63, 0, 4, 0, true},
+                            {"RDB$LINGER", 16, 8, 0, 0, 0, false},
+                            {"RDB$SQL_SECURITY", 23, 1, 0, 0, 0, false},
+                        },
                         columns_out);
                     return true;
                 }
@@ -6257,6 +6952,16 @@ core::Status FirebirdParserAgent::handlePrepareStatement(FBClientState& state,
             return out;
         };
 
+        auto make_text_sqlda_field = [](uint16_t max_chars,
+                                        uint16_t charset_id = 4) -> LocalSqldaField {
+            LocalSqldaField out;
+            out.field.type_opcode = 37;
+            out.field.length = static_cast<uint16_t>(max_chars + 2);
+            out.field.subtype = charset_id;
+            out.field.sql_type_override = 448;
+            return out;
+        };
+
         std::function<std::optional<LocalSqldaField>(
             const FunctionCallExpr*,
             const std::function<std::optional<LocalSqldaField>(const Expression*)>&)>
@@ -6290,6 +6995,10 @@ core::Status FirebirdParserAgent::handlePrepareStatement(FBClientState& state,
                     fn_name == "CURRENT_TRANSACTION" ||
                     fn_name == "DATE_DIFF" || fn_name == "DATEDIFF") {
                     return make_sqlda_field(16, 8, 580);
+                }
+
+                if (fn_name == "RDB$GET_CONTEXT") {
+                    return make_sqlda_field(37, 8194, 448);
                 }
 
                 if (fn_name == "CHAR_LENGTH" || fn_name == "CHARACTER_LENGTH" ||
@@ -6336,9 +7045,16 @@ core::Status FirebirdParserAgent::handlePrepareStatement(FBClientState& state,
                     return make_sqlda_field(35, 8, 510);
                 }
 
-                if (fn_name == "CURRENT_SCHEMA" || fn_name == "SCHEMA_PATH" ||
-                    fn_name == "CURRENT_USER" || fn_name == "SESSION_USER" ||
-                    fn_name == "CURRENT_ROLE" || fn_name == "CONCAT" ||
+                if (fn_name == "CURRENT_SCHEMA" || fn_name == "SCHEMA_PATH") {
+                    return make_text_sqlda_field(63);
+                }
+
+                if (fn_name == "CURRENT_USER" || fn_name == "SESSION_USER" ||
+                    fn_name == "CURRENT_ROLE") {
+                    return make_text_sqlda_field(128);
+                }
+
+                if (fn_name == "CONCAT" ||
                     fn_name == "CONCAT_WS" || fn_name == "LOWER" ||
                     fn_name == "UPPER" || fn_name == "TRIM" ||
                     fn_name == "LTRIM" || fn_name == "RTRIM" ||
@@ -6404,6 +7120,143 @@ core::Status FirebirdParserAgent::handlePrepareStatement(FBClientState& state,
                            const std::vector<const CTE*>&,
                            std::vector<LocalSqldaField>&,
                            std::string&)> synthesize_statement_output_columns;
+
+        std::function<bool(const Expression*)> expressionRequiresSourceMetadata;
+        expressionRequiresSourceMetadata =
+            [&](const Expression* expr) -> bool {
+                if (expr == nullptr) {
+                    return false;
+                }
+
+                switch (expr->kind()) {
+                    case ASTKind::ColumnRefExpr:
+                        return true;
+                    case ASTKind::ParameterExpr:
+                        return true;
+                    case ASTKind::CastExpr:
+                        return expressionRequiresSourceMetadata(
+                            static_cast<const CastExpr*>(expr)->expr);
+                    case ASTKind::FunctionCallExpr:
+                    {
+                        const auto* fn = static_cast<const FunctionCallExpr*>(expr);
+                        for (const auto* arg : fn->arguments) {
+                            if (expressionRequiresSourceMetadata(arg)) {
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+                    case ASTKind::ExtractExpr:
+                        return expressionRequiresSourceMetadata(
+                            static_cast<const ExtractExpr*>(expr)->source);
+                    case ASTKind::AlterElementExpr:
+                    {
+                        const auto* alter_expr =
+                            static_cast<const AlterElementExpr*>(expr);
+                        return expressionRequiresSourceMetadata(alter_expr->source) ||
+                               expressionRequiresSourceMetadata(alter_expr->new_value);
+                    }
+                    case ASTKind::LiteralDomainExpr:
+                        return expressionRequiresSourceMetadata(
+                            static_cast<const LiteralDomainExpr*>(expr)->value);
+                    case ASTKind::LiteralVariantExpr:
+                        return expressionRequiresSourceMetadata(
+                            static_cast<const LiteralVariantExpr*>(expr)->value);
+                    case ASTKind::BinaryExpr:
+                    {
+                        const auto* binary = static_cast<const BinaryExpr*>(expr);
+                        return expressionRequiresSourceMetadata(binary->left) ||
+                               expressionRequiresSourceMetadata(binary->right);
+                    }
+                    case ASTKind::UnaryExpr:
+                        return expressionRequiresSourceMetadata(
+                            static_cast<const UnaryExpr*>(expr)->operand);
+                    case ASTKind::CaseExpr:
+                    {
+                        const auto* case_expr = static_cast<const CaseExpr*>(expr);
+                        if (expressionRequiresSourceMetadata(case_expr->operand)) {
+                            return true;
+                        }
+                        for (const auto& when_clause : case_expr->when_clauses) {
+                            if (expressionRequiresSourceMetadata(when_clause.when_expr) ||
+                                expressionRequiresSourceMetadata(when_clause.then_expr)) {
+                                return true;
+                            }
+                        }
+                        return expressionRequiresSourceMetadata(case_expr->else_expr);
+                    }
+                    case ASTKind::SubqueryExpr:
+                        return true;
+                    case ASTKind::ExistsExpr:
+                        return true;
+                    case ASTKind::InExpr:
+                    {
+                        const auto* in_expr = static_cast<const InExpr*>(expr);
+                        if (expressionRequiresSourceMetadata(in_expr->expr)) {
+                            return true;
+                        }
+                        for (const auto* value : in_expr->values) {
+                            if (expressionRequiresSourceMetadata(value)) {
+                                return true;
+                            }
+                        }
+                        return in_expr->subquery != nullptr;
+                    }
+                    case ASTKind::BetweenExpr:
+                    {
+                        const auto* between_expr = static_cast<const BetweenExpr*>(expr);
+                        return expressionRequiresSourceMetadata(between_expr->expr) ||
+                               expressionRequiresSourceMetadata(between_expr->low) ||
+                               expressionRequiresSourceMetadata(between_expr->high);
+                    }
+                    case ASTKind::LikeExpr:
+                    {
+                        const auto* like_expr = static_cast<const LikeExpr*>(expr);
+                        return expressionRequiresSourceMetadata(like_expr->expr) ||
+                               expressionRequiresSourceMetadata(like_expr->pattern) ||
+                               expressionRequiresSourceMetadata(like_expr->escape);
+                    }
+                    case ASTKind::IsNullExpr:
+                        return expressionRequiresSourceMetadata(
+                            static_cast<const IsNullExpr*>(expr)->expr);
+                    case ASTKind::ArrayExpr:
+                    {
+                        const auto* array_expr = static_cast<const ArrayExpr*>(expr);
+                        for (const auto* element : array_expr->elements) {
+                            if (expressionRequiresSourceMetadata(element)) {
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+                    default:
+                        return false;
+                }
+            };
+
+        auto selectItemRequiresSourceMetadata =
+            [&](const SelectItem* item) -> bool {
+                if (item == nullptr) {
+                    return false;
+                }
+                if (item->item_type != SelectItem::Type::EXPRESSION) {
+                    return true;
+                }
+                return expressionRequiresSourceMetadata(item->expr);
+            };
+
+        auto selectRequiresSourceMetadata =
+            [&](const SelectStmt* select) -> bool {
+                if (select == nullptr) {
+                    return false;
+                }
+                for (const auto* item : select->items) {
+                    if (selectItemRequiresSourceMetadata(item)) {
+                        return true;
+                    }
+                }
+                return false;
+            };
 
         auto run_internal_firebird_query =
             [&](const std::string& sql_text,
@@ -7099,19 +7952,26 @@ core::Status FirebirdParserAgent::handlePrepareStatement(FBClientState& state,
                     case ASTKind::SelectStmt:
                     {
                         const auto* select = static_cast<const SelectStmt*>(statement);
-                        if (!append_table_ref_source_metadata(select->from,
-                                                              cte_scope,
-                                                              local_sources,
-                                                              error_out)) {
-                            return false;
-                        }
-                        for (const auto* join : select->joins) {
-                            if (join != nullptr &&
-                                !append_table_ref_source_metadata(join->right,
+                        const bool requires_source_metadata =
+                            selectRequiresSourceMetadata(select);
+                        std::cerr << "[parser_debug] firebird select metadata requires_sources="
+                                  << (requires_source_metadata ? 1 : 0)
+                                  << " item_count=" << select->items.size() << "\n";
+                        if (requires_source_metadata) {
+                            if (!append_table_ref_source_metadata(select->from,
                                                                   cte_scope,
                                                                   local_sources,
                                                                   error_out)) {
                                 return false;
+                            }
+                            for (const auto* join : select->joins) {
+                                if (join != nullptr &&
+                                    !append_table_ref_source_metadata(join->right,
+                                                                      cte_scope,
+                                                                      local_sources,
+                                                                      error_out)) {
+                                    return false;
+                                }
                             }
                         }
                         break;
@@ -9583,6 +10443,14 @@ core::Status FirebirdParserAgent::handlePrepareStatement(FBClientState& state,
 
     std::vector<uint8_t> info_buffer;
     buildFirebirdStatementInfoBuffer(stmt_it->second, items, buffer_length, info_buffer);
+    std::cerr << "[parser_debug] firebird prepare response handle="
+              << statement_handle
+              << " req_items=[" << describeFirebirdInfoItems(items) << "]"
+              << " req_hex=" << formatHexBytes(
+                     reinterpret_cast<const uint8_t*>(items.data()),
+                     items.size())
+              << " resp_hex=" << formatHexBytes(info_buffer.data(), info_buffer.size())
+              << "\n";
     sendResponse(state,
                  0,
                  0,
@@ -9726,9 +10594,21 @@ core::Status FirebirdParserAgent::handleExecImmediate(FBClientState& state,
                 "Firebird batch execution with input parameters is not supported");
         }
 
+        const bool batch_needs_catalog_setup =
+            std::any_of(sql_batch.begin(),
+                        sql_batch.end(),
+                        [](const std::string& statement_sql) {
+                            return firebirdStatementNeedsCatalogSetup(statement_sql);
+                        });
+        if (batch_needs_catalog_setup) {
+            auto ensure_status = ensureCatalogSessionReady(state, ctx);
+            if (ensure_status != core::Status::OK) {
+                return ensure_status;
+            }
+        }
+
         for (const std::string& statement_sql : sql_batch) {
-            const std::string effective_statement_sql =
-                rewriteFirebirdSingleRowCompatibilityQuery(statement_sql);
+            const std::string effective_statement_sql = statement_sql;
             sblr::DialectCompilerRequest batch_request{};
             batch_request.request_id = core::generateUuidV7();
             populateFirebirdCompilerRequest(batch_request, state);
@@ -9877,7 +10757,13 @@ core::Status FirebirdParserAgent::handleExecImmediate(FBClientState& state,
         return core::Status::OK;
     }
 
-    const std::string effective_sql = rewriteFirebirdSingleRowCompatibilityQuery(sql_text);
+    const std::string effective_sql = sql_text;
+    if (firebirdStatementNeedsCatalogSetup(effective_sql)) {
+        auto ensure_status = ensureCatalogSessionReady(state, ctx);
+        if (ensure_status != core::Status::OK) {
+            return ensure_status;
+        }
+    }
 
     sblr::DialectCompilerRequest request{};
     request.request_id = core::generateUuidV7();
@@ -9999,6 +10885,7 @@ core::Status FirebirdParserAgent::handleExecImmediate(FBClientState& state,
     }
 
     std::deque<std::vector<std::optional<std::string>>> pending_rows;
+    std::vector<IPCFieldDesc> output_row_description_fields;
     std::vector<std::string> output_field_names;
     const uint32_t statement_type = inferFirebirdStatementType(effective_sql);
     bool saw_complete = false;
@@ -10011,12 +10898,19 @@ core::Status FirebirdParserAgent::handleExecImmediate(FBClientState& state,
             case IPCMessageType::ROW_DESCRIPTION:
             {
                 std::string desc_error;
-                if (!decodeIpcRowDescription(engine_response, output_field_names, desc_error)) {
+                if (!decodeIpcRowDescription(engine_response,
+                                             output_row_description_fields,
+                                             output_field_names,
+                                             desc_error)) {
                     return sendErrorResponse(state,
                                              desc_error.empty()
                                                  ? "Malformed engine ROW_DESCRIPTION payload for Firebird DSQL"
                                                  : desc_error);
                 }
+                applyAuthoritativeFirebirdRowDescription(output_row_description_fields,
+                                                         static_cast<uint8_t>(out_message_number),
+                                                         output_message_fields,
+                                                         output_field_names);
                 break;
             }
             case IPCMessageType::DATA_ROW:
@@ -10205,6 +11099,7 @@ core::Status FirebirdParserAgent::handleExecuteStatement(FBClientState& state,
     stmt_it->second.current_fetch_index = -1;
     stmt_it->second.execution_complete = false;
     stmt_it->second.output_field_names.clear();
+    stmt_it->second.output_layout_authoritative = false;
     stmt_it->second.bound_params.clear();
     stmt_it->second.bound_param_nulls.clear();
     stmt_it->second.select_count = 0;
@@ -10252,7 +11147,7 @@ core::Status FirebirdParserAgent::handleExecuteStatement(FBClientState& state,
         out_message_number = xdrReadUint32(packet.data() + offset);
         offset += 4;
 
-        if (!output_blr.empty()) {
+        if (!stmt_it->second.output_layout_authoritative && !output_blr.empty()) {
             if (!decodeFirebirdMessageOnlyLayout(
                     std::vector<uint8_t>(output_blr.begin(), output_blr.end()),
                     stmt_it->second.output_message_fields,
@@ -10357,7 +11252,25 @@ core::Status FirebirdParserAgent::handleExecuteStatement(FBClientState& state,
 
         switch (engine_response.getType()) {
             case IPCMessageType::ROW_DESCRIPTION:
+            {
+                std::vector<IPCFieldDesc> row_description_fields;
+                std::string desc_error;
+                if (!decodeIpcRowDescription(engine_response,
+                                             row_description_fields,
+                                             stmt_it->second.output_field_names,
+                                             desc_error)) {
+                    return sendErrorResponse(state,
+                                             desc_error.empty()
+                                                 ? "Malformed engine ROW_DESCRIPTION payload for Firebird DSQL"
+                                                 : desc_error);
+                }
+                applyAuthoritativeFirebirdRowDescription(row_description_fields,
+                                                         0,
+                                                         stmt_it->second.output_message_fields,
+                                                         stmt_it->second.output_field_names);
+                stmt_it->second.output_layout_authoritative = true;
                 break;
+            }
             case IPCMessageType::DATA_ROW:
             {
                 std::vector<std::optional<std::string>> row;
@@ -10434,6 +11347,11 @@ core::Status FirebirdParserAgent::handleExecuteStatement(FBClientState& state,
 
     if (want_sql_response) {
         auto layout_it = stmt_it->second.output_message_fields.find(static_cast<uint8_t>(out_message_number));
+        if (layout_it == stmt_it->second.output_message_fields.end() &&
+            stmt_it->second.output_layout_authoritative &&
+            stmt_it->second.output_message_fields.size() == 1) {
+            layout_it = stmt_it->second.output_message_fields.begin();
+        }
         if (layout_it == stmt_it->second.output_message_fields.end()) {
             std::vector<uint8_t> response_packet;
             std::string encode_error;
@@ -10477,6 +11395,12 @@ core::Status FirebirdParserAgent::handleExecuteStatement(FBClientState& state,
         return core::Status::OK;
     }
 
+    std::cerr << "[parser_debug] firebird execute complete handle=" << statement_handle
+              << " stmt_type=" << statement_type
+              << " pending_rows=" << stmt_it->second.pending_rows.size()
+              << " output_layouts=" << stmt_it->second.output_message_fields.size()
+              << " authoritative=" << (stmt_it->second.output_layout_authoritative ? 1 : 0)
+              << "\n";
     sendResponse(state, transaction_handle, 0, nullptr, 0, ctx);
     return core::Status::OK;
 }
@@ -10521,17 +11445,28 @@ core::Status FirebirdParserAgent::handleFetchStatement(FBClientState& state,
         return sendErrorResponse(state, "Unknown Firebird DSQL statement handle");
     }
 
+    std::unordered_map<uint8_t, std::vector<FBMessageFieldDesc>> effective_message_fields =
+        stmt_it->second.output_message_fields;
     if (!output_blr.empty()) {
+        std::unordered_map<uint8_t, std::vector<FBMessageFieldDesc>> requested_message_fields;
         if (!decodeFirebirdMessageOnlyLayout(
                 std::vector<uint8_t>(output_blr.begin(), output_blr.end()),
-                stmt_it->second.output_message_fields,
+                requested_message_fields,
                 decode_error)) {
             return sendErrorResponse(state, decode_error);
         }
+        if (!requested_message_fields.empty()) {
+            effective_message_fields = std::move(requested_message_fields);
+        }
     }
 
-    auto layout_it = stmt_it->second.output_message_fields.find(static_cast<uint8_t>(message_number));
-    if (layout_it == stmt_it->second.output_message_fields.end()) {
+    auto layout_it = effective_message_fields.find(static_cast<uint8_t>(message_number));
+    if (layout_it == effective_message_fields.end() &&
+        stmt_it->second.output_layout_authoritative &&
+        effective_message_fields.size() == 1) {
+        layout_it = effective_message_fields.begin();
+    }
+    if (layout_it == effective_message_fields.end()) {
         return sendErrorResponse(state, "Unknown Firebird DSQL fetch message layout");
     }
     if (!stmt_it->second.execution_complete && stmt_it->second.pending_rows.empty()) {
@@ -10600,6 +11535,14 @@ core::Status FirebirdParserAgent::handleFetchStatement(FBClientState& state,
         row_indexes.push_back(index);
     }
 
+    std::cerr << "[parser_debug] firebird fetch handle=" << statement_handle
+              << " message_number=" << message_number
+              << " requested=" << batch_rows
+              << " pending_rows=" << stmt_it->second.pending_rows.size()
+              << " selected_rows=" << row_indexes.size()
+              << " execution_complete=" << (stmt_it->second.execution_complete ? 1 : 0)
+              << "\n";
+
     for (const int64_t index : row_indexes) {
         std::vector<uint8_t> response_packet;
         std::string encode_error;
@@ -10620,6 +11563,10 @@ core::Status FirebirdParserAgent::handleFetchStatement(FBClientState& state,
         if (status != core::Status::OK) {
             return status;
         }
+        std::cerr << "[parser_debug] firebird fetch row packet handle=" << statement_handle
+                  << " size=" << response_packet.size()
+                  << " hex=" << formatHexBytes(response_packet.data(), response_packet.size())
+                  << "\n";
     }
 
     if (!row_indexes.empty()) {
@@ -10645,6 +11592,12 @@ core::Status FirebirdParserAgent::handleFetchStatement(FBClientState& state,
                                      ? "Firebird fetch trailer encoding failed"
                                      : trailer_error);
     }
+    std::cerr << "[parser_debug] firebird fetch trailer handle=" << statement_handle
+              << " status=" << trailer_status
+              << " exhausted=" << (exhausted ? 1 : 0)
+              << " size=" << trailer_packet.size()
+              << " hex=" << formatHexBytes(trailer_packet.data(), trailer_packet.size())
+              << "\n";
     return sendPacket(state, trailer_packet, ctx);
 }
 
@@ -10713,6 +11666,7 @@ core::Status FirebirdParserAgent::handleFreeStatement(FBClientState& state,
             stmt_it->second.input_sqlda_fields.clear();
             stmt_it->second.output_sqlda_fields.clear();
             stmt_it->second.output_field_names.clear();
+            stmt_it->second.output_layout_authoritative = false;
             stmt_it->second.bound_params.clear();
             stmt_it->second.bound_param_nulls.clear();
             stmt_it->second.pending_rows.clear();
@@ -10797,6 +11751,11 @@ core::Status FirebirdParserAgent::handleTransaction(FBClientState& state,
                                      : decode_error);
     }
 
+    auto status = sendTransactionControlToEngine(state, IPCMessageType::TXN_BEGIN, {}, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
     const uint32_t transaction_handle = txn_state.transaction_id;
     state.transactions[transaction_handle] = std::move(txn_state);
     sendResponse(state, transaction_handle, 0, nullptr, 0, ctx);
@@ -10816,6 +11775,23 @@ core::Status FirebirdParserAgent::handleCommit(FBClientState& state,
     if (txn_it == state.transactions.end()) {
         return sendErrorResponse(state, "Unknown Firebird transaction handle");
     }
+
+    auto status = closeTransactionalCursorState(state, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    status = sendTransactionControlToEngine(state, IPCMessageType::TXN_COMMIT, {}, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    if (retaining) {
+        status = sendTransactionControlToEngine(state, IPCMessageType::TXN_BEGIN, {}, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+    }
+
     if (!retaining) {
         state.transactions.erase(txn_it);
     }
@@ -10840,6 +11816,23 @@ core::Status FirebirdParserAgent::handleRollback(FBClientState& state,
     if (txn_it == state.transactions.end()) {
         return sendErrorResponse(state, "Unknown Firebird transaction handle");
     }
+
+    auto status = closeTransactionalCursorState(state, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    status = sendTransactionControlToEngine(state, IPCMessageType::TXN_ROLLBACK, {}, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    if (retaining) {
+        status = sendTransactionControlToEngine(state, IPCMessageType::TXN_BEGIN, {}, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+    }
+
     if (!retaining) {
         state.transactions.erase(txn_it);
     }
@@ -11713,14 +12706,58 @@ core::Status FirebirdParserAgent::sendErrorResponse(FBClientState& state,
     xdrAppendInt64(packet, 0);     // object id
     xdrAppendBuffer(packet, nullptr, 0); // no data
 
+    auto append_gds = [&](uint32_t code,
+                          const std::optional<std::string>& string_arg = std::nullopt) {
+        xdrAppendInt32(packet, fb::isc_arg_gds);
+        xdrAppendInt32(packet, static_cast<int32_t>(code));
+        if (string_arg.has_value()) {
+            xdrAppendInt32(packet, fb::isc_arg_string);
+            xdrAppendString(packet, *string_arg);
+        }
+    };
+
+    if (message == "Password validation failed: Password cannot be empty") {
+        append_gds(fb::isc_no_meta_update);
+        append_gds(fb::isc_dyn_no_empty_pw);
+        xdrAppendInt32(packet, fb::isc_arg_sql_state);
+        xdrAppendString(packet, "42000");
+        xdrAppendInt32(packet, fb::isc_arg_end);
+        return sendPacket(state, packet, nullptr);
+    }
+
+    static constexpr std::string_view kUserNotFoundPrefix = "User '";
+    static constexpr std::string_view kUserNotFoundSuffix = "' not found";
+    const bool has_user_not_found_suffix =
+        message.size() >= kUserNotFoundSuffix.size() &&
+        message.compare(message.size() - kUserNotFoundSuffix.size(),
+                        kUserNotFoundSuffix.size(),
+                        kUserNotFoundSuffix) == 0;
+    if (message.rfind(kUserNotFoundPrefix, 0) == 0 &&
+        message.size() > kUserNotFoundPrefix.size() + kUserNotFoundSuffix.size() &&
+        has_user_not_found_suffix) {
+        const size_t name_offset = kUserNotFoundPrefix.size();
+        const size_t name_size =
+            message.size() - name_offset - kUserNotFoundSuffix.size();
+        append_gds(fb::isc_gsec_err_rec_not_found,
+                   message.substr(name_offset, name_size));
+        xdrAppendInt32(packet, fb::isc_arg_sql_state);
+        xdrAppendString(packet, "HY000");
+        xdrAppendInt32(packet, fb::isc_arg_end);
+        return sendPacket(state, packet, nullptr);
+    }
+
     xdrAppendInt32(packet, fb::isc_arg_gds);
     xdrAppendInt32(packet, fb::isc_dsql_error);
+    xdrAppendInt32(packet, fb::isc_arg_gds);
+    xdrAppendInt32(packet, fb::isc_sqlerr);
+    xdrAppendInt32(packet, fb::isc_arg_number);
+    xdrAppendInt32(packet, -901);
     if (!message.empty()) {
-        xdrAppendInt32(packet, fb::isc_arg_string);
+        xdrAppendInt32(packet, fb::isc_arg_interpreted);
         xdrAppendString(packet, message);
     }
     xdrAppendInt32(packet, fb::isc_arg_sql_state);
-    xdrAppendString(packet, "HY000");
+    xdrAppendString(packet, "42000");
     xdrAppendInt32(packet, fb::isc_arg_end);
 
     return sendPacket(state, packet, nullptr);
@@ -12221,21 +13258,11 @@ core::Status FirebirdParserAgent::readPacket(FBClientState& state,
                 }
                 offset += 4; // out message number
             }
-            if (state.protocol_version >= fb::PROTOCOL_VERSION16) {
-                status = ensurePacketSize(offset + 4);
-                if (status != core::Status::OK) {
-                    return status;
-                }
-                offset += 4; // timeout
-            }
-            if (state.protocol_version >= fb::PROTOCOL_VERSION18) {
-                status = ensurePacketSize(offset + 4);
-                if (status != core::Status::OK) {
-                    return status;
-                }
-                offset += 4; // cursor flags
-            }
-            allow_available_tail = false;
+            // Donor Firebird clients on the current compatibility lane still emit
+            // the classic op_execute shape without the later timeout/cursor tail.
+            // Accept the mandatory prefix and opportunistically drain any optional
+            // tail bytes that are already present.
+            allow_available_tail = true;
             break;
         }
         case fb::op_fetch:
@@ -12507,6 +13534,9 @@ core::Status FirebirdParserAgent::translateIPCToResponse(const IPCMessage& ipc_m
             if (sqlstate.size() != 5) {
                 sqlstate = "HY000";
             }
+            if (sqlstate == "HY000" || sqlstate == "XX000") {
+                sqlstate = "42000";
+            }
             const std::string mapped_code = mapSQLStateToProtocol(sqlstate.c_str());
             uint32_t gds_code = fb::isc_dsql_error;
             if (mapped_code == "335544472") {
@@ -12523,12 +13553,66 @@ core::Status FirebirdParserAgent::translateIPCToResponse(const IPCMessage& ipc_m
             xdrAppendUint32(response, 0);    // handle
             xdrAppendInt64(response, 0);     // object id
             xdrAppendBuffer(response, nullptr, 0);
+
+            auto append_gds = [&](uint32_t code,
+                                  const std::optional<std::string>& string_arg = std::nullopt) {
+                xdrAppendInt32(response, fb::isc_arg_gds);
+                xdrAppendInt32(response, static_cast<int32_t>(code));
+                if (string_arg.has_value()) {
+                    xdrAppendInt32(response, fb::isc_arg_string);
+                    xdrAppendString(response, *string_arg);
+                }
+            };
+
+            if (message == "Password validation failed: Password cannot be empty") {
+                append_gds(fb::isc_no_meta_update);
+                append_gds(fb::isc_dyn_no_empty_pw);
+                xdrAppendInt32(response, fb::isc_arg_sql_state);
+                xdrAppendString(response, "42000");
+                xdrAppendInt32(response, fb::isc_arg_end);
+                return core::Status::OK;
+            }
+
+            static constexpr std::string_view kUserNotFoundPrefix = "User '";
+            static constexpr std::string_view kUserNotFoundSuffix = "' not found";
+            const bool has_user_not_found_suffix =
+                message.size() >= kUserNotFoundSuffix.size() &&
+                message.compare(message.size() - kUserNotFoundSuffix.size(),
+                                kUserNotFoundSuffix.size(),
+                                kUserNotFoundSuffix) == 0;
+            if (message.rfind(kUserNotFoundPrefix, 0) == 0 &&
+                message.size() > kUserNotFoundPrefix.size() + kUserNotFoundSuffix.size() &&
+                has_user_not_found_suffix) {
+                const size_t name_offset = kUserNotFoundPrefix.size();
+                const size_t name_size =
+                    message.size() - name_offset - kUserNotFoundSuffix.size();
+                append_gds(fb::isc_gsec_err_rec_not_found,
+                           message.substr(name_offset, name_size));
+                xdrAppendInt32(response, fb::isc_arg_sql_state);
+                xdrAppendString(response, "HY000");
+                xdrAppendInt32(response, fb::isc_arg_end);
+                return core::Status::OK;
+            }
+
             xdrAppendInt32(response, fb::isc_arg_gds);
             xdrAppendInt32(response, static_cast<int32_t>(gds_code));
-            xdrAppendInt32(response, fb::isc_arg_string);
-            xdrAppendString(response, message);
-            xdrAppendInt32(response, fb::isc_arg_sql_state);
-            xdrAppendString(response, sqlstate);
+            if (gds_code == fb::isc_dsql_error || gds_code == fb::isc_sqlerr) {
+                xdrAppendInt32(response, fb::isc_arg_gds);
+                xdrAppendInt32(response, static_cast<int32_t>(fb::isc_sqlerr));
+                xdrAppendInt32(response, fb::isc_arg_number);
+                xdrAppendInt32(response, -901);
+                if (!message.empty()) {
+                    xdrAppendInt32(response, fb::isc_arg_interpreted);
+                    xdrAppendString(response, message);
+                }
+                xdrAppendInt32(response, fb::isc_arg_sql_state);
+                xdrAppendString(response, sqlstate);
+            } else {
+                xdrAppendInt32(response, fb::isc_arg_string);
+                xdrAppendString(response, message);
+                xdrAppendInt32(response, fb::isc_arg_sql_state);
+                xdrAppendString(response, sqlstate);
+            }
             xdrAppendInt32(response, fb::isc_arg_end);
             return core::Status::OK;
         }

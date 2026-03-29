@@ -41,6 +41,7 @@
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <limits>
 #include <utility>
 
 
@@ -391,6 +392,315 @@ static std::string normalizeMysqlProbeSql(const std::string& sql) {
         ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
     }
     return trimmed;
+}
+
+static const char* syntheticMysqlCompileOs() {
+#ifdef _WIN32
+    return "Win64";
+#elif defined(__APPLE__)
+    return "macOS";
+#elif defined(__linux__)
+    return "Linux";
+#else
+    return "Unknown";
+#endif
+}
+
+static const char* syntheticMysqlCompileMachine() {
+#if defined(__x86_64__) || defined(_M_X64)
+    return "x86_64";
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    return "aarch64";
+#elif defined(__i386__) || defined(_M_IX86)
+    return "x86";
+#else
+    return "unknown";
+#endif
+}
+
+static std::string upperAsciiCopy(std::string value) {
+    std::transform(value.begin(),
+                   value.end(),
+                   value.begin(),
+                   [](unsigned char ch) {
+                       return static_cast<char>(std::toupper(ch));
+                   });
+    return value;
+}
+
+static auto makeSyntheticFieldDesc(const std::string& name,
+                                   core::DataType type) -> IPCFieldDesc {
+    IPCFieldDesc field{};
+    std::strncpy(field.name, name.c_str(), sizeof(field.name) - 1);
+    field.name[sizeof(field.name) - 1] = '\0';
+    field.type_oid = static_cast<uint16_t>(type);
+    field.type_size = -1;
+    field.type_modifier = 0;
+    field.format = 0;
+    return field;
+}
+
+static bool tryExtractQuotedMysqlLiteral(std::string_view input, std::string& value_out) {
+    const std::string trimmed = trimAscii(std::string(input));
+    if (trimmed.size() < 2) {
+        return false;
+    }
+    const char quote = trimmed.front();
+    if ((quote != '\'' && quote != '"') || trimmed.back() != quote) {
+        return false;
+    }
+    value_out.assign(trimmed.substr(1, trimmed.size() - 2));
+    return true;
+}
+
+static bool tryParseShowVariablesLikeQuery(const std::string& sql,
+                                           std::string& variable_out) {
+    std::string trimmed = trimAscii(trimTrailingNulls(sql));
+    while (!trimmed.empty() && trimmed.back() == ';') {
+        trimmed.pop_back();
+        trimmed = trimAscii(trimmed);
+    }
+
+    const std::string upper = upperAsciiCopy(trimmed);
+    static const std::array<std::string, 3> kPrefixes = {
+        "SHOW VARIABLES LIKE ",
+        "SHOW SESSION VARIABLES LIKE ",
+        "SHOW GLOBAL VARIABLES LIKE "
+    };
+
+    for (const auto& prefix : kPrefixes) {
+        if (upper.rfind(prefix, 0) != 0 || trimmed.size() < prefix.size()) {
+            continue;
+        }
+        const std::string suffix = trimAscii(trimmed.substr(prefix.size()));
+        return tryExtractQuotedMysqlLiteral(suffix, variable_out);
+    }
+
+    return false;
+}
+
+static bool tryParseSelectAtAtVariable(const std::string& sql,
+                                       std::string& variable_out,
+                                       std::string& field_name_out) {
+    std::string trimmed = trimAscii(trimTrailingNulls(sql));
+    while (!trimmed.empty() && trimmed.back() == ';') {
+        trimmed.pop_back();
+        trimmed = trimAscii(trimmed);
+    }
+
+    const std::string upper = upperAsciiCopy(trimmed);
+    if (upper.rfind("SELECT @@", 0) != 0 || trimmed.size() <= 8) {
+        return false;
+    }
+
+    std::string expr = trimAscii(trimmed.substr(8));
+    if (expr.empty() || expr.find(',') != std::string::npos ||
+        expr.find('(') != std::string::npos || expr.find(')') != std::string::npos ||
+        expr.find(' ') != std::string::npos) {
+        return false;
+    }
+
+    std::string normalized = upperAsciiCopy(expr);
+    if (normalized.rfind("SESSION.", 0) == 0) {
+        expr = expr.substr(8);
+    } else if (normalized.rfind("GLOBAL.", 0) == 0) {
+        expr = expr.substr(7);
+    }
+
+    if (expr.empty()) {
+        return false;
+    }
+
+    variable_out = expr;
+    field_name_out = "@@" + expr;
+    return true;
+}
+
+static bool tryLookupSyntheticMysqlVariable(std::string variable_name,
+                                            std::string& value_out) {
+    variable_name = upperAsciiCopy(trimAscii(std::move(variable_name)));
+    if (!variable_name.empty() && variable_name.front() == '@') {
+        variable_name.erase(variable_name.begin());
+    }
+    if (!variable_name.empty() && variable_name.front() == '@') {
+        variable_name.erase(variable_name.begin());
+    }
+    if (variable_name.rfind("SESSION.", 0) == 0) {
+        variable_name = variable_name.substr(8);
+    } else if (variable_name.rfind("GLOBAL.", 0) == 0) {
+        variable_name = variable_name.substr(7);
+    }
+
+    if (variable_name == "TRANSACTION_ISOLATION" ||
+        variable_name == "DEFAULT_TRANSACTION_ISOLATION" ||
+        variable_name == "TX_ISOLATION") {
+        value_out = "REPEATABLE-READ";
+        return true;
+    }
+    if (variable_name == "VERSION_COMMENT") {
+        value_out = "ScratchBird MySQL emulation";
+        return true;
+    }
+    if (variable_name == "VERSION") {
+        value_out = "8.0.32-ScratchBird";
+        return true;
+    }
+    if (variable_name == "VERSION_COMPILE_OS") {
+        value_out = syntheticMysqlCompileOs();
+        return true;
+    }
+    if (variable_name == "VERSION_COMPILE_MACHINE") {
+        value_out = syntheticMysqlCompileMachine();
+        return true;
+    }
+    if (variable_name == "CHARACTER_SET_CLIENT" ||
+        variable_name == "CHARACTER_SET_CONNECTION" ||
+        variable_name == "CHARACTER_SET_RESULTS") {
+        value_out = "utf8mb4";
+        return true;
+    }
+    if (variable_name == "COLLATION_CONNECTION") {
+        value_out = "utf8mb4_general_ci";
+        return true;
+    }
+    if (variable_name == "OPTIMIZER_SWITCH") {
+        value_out = "index_merge=on";
+        return true;
+    }
+    if (variable_name == "SQL_MODE") {
+        value_out.clear();
+        return true;
+    }
+
+    return false;
+}
+
+static bool isIntegralLiteral(const std::string& value) {
+    if (value.empty()) {
+        return false;
+    }
+    size_t offset = 0;
+    if (value[offset] == '+' || value[offset] == '-') {
+        ++offset;
+    }
+    if (offset >= value.size()) {
+        return false;
+    }
+    for (; offset < value.size(); ++offset) {
+        if (!std::isdigit(static_cast<unsigned char>(value[offset]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool isFloatingLiteral(const std::string& value) {
+    if (value.empty()) {
+        return false;
+    }
+    bool saw_digit = false;
+    bool saw_decimal = false;
+    bool saw_exp = false;
+    size_t offset = 0;
+    if (value[offset] == '+' || value[offset] == '-') {
+        ++offset;
+    }
+    for (; offset < value.size(); ++offset) {
+        const char ch = value[offset];
+        if (std::isdigit(static_cast<unsigned char>(ch))) {
+            saw_digit = true;
+            continue;
+        }
+        if (ch == '.' && !saw_decimal && !saw_exp) {
+            saw_decimal = true;
+            continue;
+        }
+        if ((ch == 'e' || ch == 'E') && !saw_exp && saw_digit) {
+            saw_exp = true;
+            saw_digit = false;
+            if (offset + 1 < value.size() &&
+                (value[offset + 1] == '+' || value[offset + 1] == '-')) {
+                ++offset;
+            }
+            continue;
+        }
+        return false;
+    }
+    return saw_digit && (saw_decimal || saw_exp);
+}
+
+static void refineExpressionFieldTypes(const std::string& sql,
+                                       std::vector<IPCFieldDesc>& fields,
+                                       const std::vector<std::vector<std::optional<std::string>>>& rows) {
+    if (fields.empty() || rows.empty()) {
+        return;
+    }
+
+    const std::string sql_upper = upperAsciiCopy(sql);
+    const bool force_count_bigint = sql_upper.find("COUNT(") != std::string::npos;
+    const bool force_fractional_numeric = sql_upper.find("SUM(") != std::string::npos ||
+                                          sql_upper.find("AVG(") != std::string::npos;
+
+    for (size_t col = 0; col < fields.size(); ++col) {
+        IPCFieldDesc& field = fields[col];
+        const auto current_type = static_cast<core::DataType>(field.type_oid);
+        const bool string_like_type =
+            current_type == core::DataType::UNKNOWN ||
+            current_type == core::DataType::TEXT ||
+            current_type == core::DataType::VARCHAR ||
+            current_type == core::DataType::BLOB ||
+            current_type == core::DataType::NULL_TYPE;
+        if (!string_like_type || field.table_oid != 0) {
+            continue;
+        }
+
+        bool saw_value = false;
+        bool all_integral = true;
+        bool all_numeric = true;
+        bool any_fractional = false;
+        bool fits_int32 = true;
+        for (const auto& row : rows) {
+            if (col >= row.size() || !row[col].has_value()) {
+                continue;
+            }
+            const std::string& value = *row[col];
+            saw_value = true;
+            if (isIntegralLiteral(value)) {
+                try {
+                    const long long parsed = std::stoll(value);
+                    if (parsed < std::numeric_limits<int32_t>::min() ||
+                        parsed > std::numeric_limits<int32_t>::max()) {
+                        fits_int32 = false;
+                    }
+                } catch (...) {
+                    fits_int32 = false;
+                }
+                continue;
+            }
+            all_integral = false;
+            if (isFloatingLiteral(value)) {
+                any_fractional = true;
+                continue;
+            }
+            all_numeric = false;
+            break;
+        }
+
+        if (!saw_value || !all_numeric) {
+            continue;
+        }
+
+        core::DataType inferred = core::DataType::VARCHAR;
+        if (force_count_bigint) {
+            inferred = core::DataType::BIGINT;
+        } else if (force_fractional_numeric || any_fractional) {
+            inferred = core::DataType::DOUBLE;
+        } else if (all_integral) {
+            inferred = fits_int32 ? core::DataType::INTEGER : core::DataType::BIGINT;
+        }
+
+        field.type_oid = static_cast<uint16_t>(inferred);
+    }
 }
 
 static std::vector<IPCFieldDesc> decodeRowDescriptionFields(const IPCMessage& ipc_msg) {
@@ -752,6 +1062,25 @@ static bool extractUseDatabaseFromSql(const std::string& sql, std::string& datab
     return !database_out.empty();
 }
 
+static bool shouldBootstrapMySqlDatabaseContext(const std::string& database) {
+    const std::string normalized = trimAscii(trimTrailingNulls(database));
+    if (normalized.empty()) {
+        return false;
+    }
+
+    std::string upper;
+    upper.reserve(normalized.size());
+    for (char ch : normalized) {
+        upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
+    }
+
+    return upper != "MAIN" &&
+           upper != "MYSQL" &&
+           upper != "INFORMATION_SCHEMA" &&
+           upper != "PERFORMANCE_SCHEMA" &&
+           upper != "SYS";
+}
+
 // ============================================================================
 // MySQLParserAgent Implementation
 // ============================================================================
@@ -1017,9 +1346,13 @@ core::Status MySQLParserAgent::authenticateSha256Password(MySQLClientState& stat
 }
 
 core::Status MySQLParserAgent::ensureEngineSession(MySQLClientState& state,
-                                                   core::ErrorContext* ctx) {
+                                                   core::ErrorContext* ctx,
+                                                   bool bootstrap_database_context) {
     if (state.session_id != 0) {
-        return core::Status::OK;
+        if (!bootstrap_database_context) {
+            return core::Status::OK;
+        }
+        return ensureDatabaseContext(state, trimTrailingNulls(state.database), true, ctx);
     }
 
     std::string engine_database = trimTrailingNulls(state.database);
@@ -1103,6 +1436,12 @@ core::Status MySQLParserAgent::ensureEngineSession(MySQLClientState& state,
     }
 
     state.session_id = ready->session_id;
+    if (bootstrap_database_context) {
+        status = ensureDatabaseContext(state, engine_database, true, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+    }
     std::cerr << "[parser_debug] mysql ensureEngineSession ready session_id="
               << state.session_id
               << " engine_db=" << engine_database
@@ -1117,6 +1456,94 @@ core::Status MySQLParserAgent::ensureEngineSession(MySQLClientState& state,
             it->second->user = engine_user;
         }
     }
+    return core::Status::OK;
+}
+
+core::Status MySQLParserAgent::ensureDatabaseContext(MySQLClientState& state,
+                                                     const std::string& logical_database,
+                                                     bool select_database,
+                                                     core::ErrorContext* ctx) {
+    const std::string database = trimTrailingNulls(logical_database);
+    if (!shouldBootstrapMySqlDatabaseContext(database)) {
+        return core::Status::OK;
+    }
+
+    auto dispatch_sql = [&](const std::string& sql) -> core::Status {
+        std::vector<uint8_t> bytecode;
+        std::string compile_error;
+        auto status = compileQueryToSblr(state, sql, bytecode, compile_error);
+        if (status != core::Status::OK) {
+            if (ctx && ctx->message.empty()) {
+                ctx->set(status,
+                         compile_error.empty()
+                             ? "Failed to compile MySQL database bootstrap query"
+                             : compile_error.c_str(),
+                         __FILE__, __LINE__, __func__);
+            }
+            return status;
+        }
+
+        status = sendCompiledQueryToEngine(state.client_id,
+                                           state.request_id++,
+                                           bytecode,
+                                           sql,
+                                           ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+
+        while (true) {
+            IPCMessage response;
+            status = receiveFromEngine(state.client_id, response, ctx, 30000);
+            if (status != core::Status::OK) {
+                return status;
+            }
+
+            switch (response.getType()) {
+                case IPCMessageType::COMMAND_COMPLETE:
+                    return core::Status::OK;
+
+                case IPCMessageType::ERROR_RESPONSE: {
+                    const auto* payload = response.getPayload<IPCErrorPayload>();
+                    const std::string message =
+                        (payload && payload->message[0] != '\0')
+                            ? std::string(payload->message)
+                            : "MySQL database bootstrap query failed";
+                    if (ctx) {
+                        ctx->set(core::Status::INVALID_ARGUMENT,
+                                 message.c_str(),
+                                 __FILE__, __LINE__, __func__);
+                        if (payload) {
+                            ctx->setSQLState(payload->sqlstate);
+                        }
+                    }
+                    return core::Status::INVALID_ARGUMENT;
+                }
+
+                default:
+                    break;
+            }
+        }
+    };
+
+    if (state.bootstrapped_databases.find(database) == state.bootstrapped_databases.end()) {
+        const std::string create_sql =
+            "CREATE DATABASE IF NOT EXISTS `" + escapeBackticks(database) + "`";
+        auto status = dispatch_sql(create_sql);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        state.bootstrapped_databases.insert(database);
+    }
+
+    if (select_database) {
+        const std::string use_sql = "USE `" + escapeBackticks(database) + "`";
+        auto status = dispatch_sql(use_sql);
+        if (status != core::Status::OK) {
+            return status;
+        }
+    }
+
     return core::Status::OK;
 }
 
@@ -1465,9 +1892,58 @@ core::Status MySQLParserAgent::handleQuery(MySQLClientState& state,
         return core::Status::OK;
     };
 
+    std::string synthetic_variable;
+    if (tryParseShowVariablesLikeQuery(sql, synthetic_variable)) {
+        auto status = ensureEngineSession(state, ctx, false);
+        if (status != core::Status::OK) {
+            return surfaceEngineFailure("Failed to initialize MySQL parser engine session");
+        }
+        std::string variable_value;
+        if (tryLookupSyntheticMysqlVariable(synthetic_variable, variable_value)) {
+            const std::vector<IPCFieldDesc> fields = {
+                makeSyntheticFieldDesc("Variable_name", core::DataType::VARCHAR),
+                makeSyntheticFieldDesc("Value", core::DataType::VARCHAR)
+            };
+            const std::vector<std::vector<std::optional<std::string>>> rows = {{
+                std::optional<std::string>(synthetic_variable),
+                std::optional<std::string>(variable_value)
+            }};
+            sendResultSet(state, fields, rows);
+            return core::Status::OK;
+        }
+    }
+
+    std::string select_variable;
+    std::string select_field_name;
+    if (tryParseSelectAtAtVariable(sql, select_variable, select_field_name)) {
+        auto status = ensureEngineSession(state, ctx, false);
+        if (status != core::Status::OK) {
+            return surfaceEngineFailure("Failed to initialize MySQL parser engine session");
+        }
+        std::string variable_value;
+        if (tryLookupSyntheticMysqlVariable(select_variable, variable_value)) {
+            const std::vector<IPCFieldDesc> fields = {
+                makeSyntheticFieldDesc(select_field_name, core::DataType::VARCHAR)
+            };
+            const std::vector<std::vector<std::optional<std::string>>> rows = {{
+                std::optional<std::string>(variable_value)
+            }};
+            sendResultSet(state, fields, rows);
+            return core::Status::OK;
+        }
+    }
+
     auto status = ensureEngineSession(state, ctx);
     if (status != core::Status::OK) {
         return surfaceEngineFailure("Failed to initialize MySQL parser engine session");
+    }
+
+    std::string requested_database;
+    if (extractUseDatabaseFromSql(sql, requested_database)) {
+        status = ensureDatabaseContext(state, requested_database, false, ctx);
+        if (status != core::Status::OK) {
+            return surfaceEngineFailure("Failed to bootstrap MySQL emulated database context");
+        }
     }
 
     std::vector<uint8_t> bytecode;
@@ -1540,6 +2016,7 @@ core::Status MySQLParserAgent::handleQuery(MySQLClientState& state,
             case IPCMessageType::COMMAND_COMPLETE: {
                 const auto* payload = response.getPayload<IPCCommandCompletePayload>();
                 if (!fields.empty()) {
+                    refineExpressionFieldTypes(sql, fields, rows);
                     sendResultSet(state, fields, rows);
                 } else {
                     const uint64_t affected_rows = payload ? payload->rows_affected : 0;

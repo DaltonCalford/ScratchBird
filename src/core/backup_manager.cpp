@@ -16,6 +16,10 @@
 //
 // November 25, 2025
 
+// Section 35 invariant: backup_manager validates backup and restore boundaries
+// after native durability truth exists. Backup catalog or export surfaces do
+// not promote WAL, redo, or PITR semantics into current recovery authority.
+
 #include "scratchbird/core/backup_manager.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/connection_context.h"

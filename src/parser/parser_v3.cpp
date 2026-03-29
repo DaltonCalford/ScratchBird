@@ -12,6 +12,9 @@
  *
  * See: include/scratchbird/parser/parser_v3.h
  */
+// Section 36 invariant: parser_v3 is a parse and normalization surface. It is
+// parser-adjacent to rewrite and planning, but it does not by itself prove a
+// broad logical rewrite catalog or mature optimizer stack.
 
 #include "scratchbird/parser/parser_v3.h"
 #include "scratchbird/core/catalog_manager.h"

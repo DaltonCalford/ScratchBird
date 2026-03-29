@@ -7,6 +7,10 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
+// Section 35 invariant: restore validation rehearsals anchor bounded restore
+// legality and validation behavior. They do not imply PITR or donor-log
+// recovery semantics.
+
 #include <gtest/gtest.h>
 
 #include <atomic>

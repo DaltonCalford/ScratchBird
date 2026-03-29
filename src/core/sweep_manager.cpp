@@ -7,6 +7,10 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
+// Section 35 invariant: sweep_manager may degrade, halt, or export derivative
+// evidence under incident conditions, but it does not provide write-ahead redo
+// recovery or invisible corruption repair semantics.
+
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/transaction_manager.h"

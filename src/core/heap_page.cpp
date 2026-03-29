@@ -7,6 +7,10 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
+// Section 35 invariant: heap_page.cpp enforces bounded prune and reclaim
+// sequencing. Detection or classification here does not imply silent repair,
+// redo replay, or universal salvage behavior.
+
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/ondisk.h"

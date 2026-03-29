@@ -1,0 +1,40 @@
+{
+  "setup": {
+    "status": "skipped",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "",
+    "stderr": "",
+    "elapsed_ms": 0,
+    "assert_lines": [],
+    "stdout_path": "",
+    "stderr_path": ""
+  },
+  "exec": {
+    "status": "ok",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "ASSERT|mysql_ansi_concat_operator|value|AB\n\n",
+    "stderr": "",
+    "elapsed_ms": 36,
+    "assert_lines": [
+      "ASSERT|mysql_ansi_concat_operator|value|AB"
+    ],
+    "stdout_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_113201/20260328_113201/mysql_ansi_concat_operator/mysql/donor/raw/ref_mysql.exec.f9de13edf5e8.stdout.txt",
+    "stderr_path": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_113201/20260328_113201/mysql_ansi_concat_operator/mysql/donor/raw/ref_mysql.exec.f9de13edf5e8.stderr.txt"
+  },
+  "teardown": {
+    "status": "skipped",
+    "returncode": 0,
+    "sqlstate": "00000",
+    "message": "",
+    "stdout": "",
+    "stderr": "",
+    "elapsed_ms": 0,
+    "assert_lines": [],
+    "stdout_path": "",
+    "stderr_path": ""
+  }
+}

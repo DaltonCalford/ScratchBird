@@ -292,6 +292,27 @@ namespace scratchbird
                 return type == OT::SCHEMA || type == OT::TABLE;
             }
 
+            static bool isRemoteEmulatedSchema(const core::CatalogManager::SchemaInfo& schema_info)
+            {
+                return schema_info.schema_type ==
+                       core::CatalogManager::SchemaType::REMOTE_EMULATED;
+            }
+
+            static bool isRemoteEmulatedTable(core::CatalogManager* catalog,
+                                              const core::CatalogManager::TableInfo& table_info)
+            {
+                if (catalog == nullptr)
+                {
+                    return false;
+                }
+
+                core::CatalogManager::SchemaInfo schema_info;
+                core::ErrorContext schema_ctx;
+                return catalog->getSchema(table_info.schema_id, schema_info, &schema_ctx) ==
+                           core::Status::OK &&
+                       isRemoteEmulatedSchema(schema_info);
+            }
+
             static std::string classifyTransactionalDdl(const std::string& sql,
                                                         bool delete_operation)
             {
@@ -22454,7 +22475,8 @@ namespace scratchbird
                     }
                 }
 
-                if (!checkPermission(load_table_id,
+                if (!isRemoteEmulatedTable(db_->catalog_manager(), load_table_info) &&
+                    !checkPermission(load_table_id,
                                      core::CatalogManager::PermissionObjectType::TABLE,
                                      static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT)))
                 {
@@ -24599,7 +24621,8 @@ namespace scratchbird
                     }
                 }
 
-                if (!checkPermission(load_table_id,
+                if (!isRemoteEmulatedTable(db_->catalog_manager(), load_table_info) &&
+                    !checkPermission(load_table_id,
                                      core::CatalogManager::PermissionObjectType::TABLE,
                                      static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT)))
                 {
@@ -30743,7 +30766,9 @@ namespace scratchbird
                 }
 
                 // Check SELECT permission on table (skip for emulated schemas)
-                bool skip_permission_check = current_schema_set_;
+                bool skip_permission_check = current_schema_set_ ||
+                                             isRemoteEmulatedTable(db_->catalog_manager(),
+                                                                   table_info);
                 bool has_table_select = skip_permission_check || checkPermission(
                     table_info.table_id,
                     core::CatalogManager::PermissionObjectType::TABLE,
@@ -31151,7 +31176,8 @@ namespace scratchbird
                         }
                     }
 
-                    if (!checkPermission(table_id,
+                    if (!isRemoteEmulatedTable(db_->catalog_manager(), table_info) &&
+                        !checkPermission(table_id,
                                          core::CatalogManager::PermissionObjectType::TABLE,
                                          static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT)))
                     {
@@ -47885,6 +47911,62 @@ namespace scratchbird
                                                            : Value::makeVarchar(schema_path);
                             }
 
+                            if (function_upper == "RDB$GET_CONTEXT")
+                            {
+                                auto trim_ws = [](const std::string& text) -> std::string {
+                                    const size_t first = text.find_first_not_of(" \t\r\n");
+                                    if (first == std::string::npos)
+                                    {
+                                        return "";
+                                    }
+                                    const size_t last = text.find_last_not_of(" \t\r\n");
+                                    return text.substr(first, last - first + 1);
+                                };
+
+                                auto firebird_isolation_level_text = [&]() -> std::string {
+                                    if (!conn_ctx_)
+                                    {
+                                        return "READ COMMITTED";
+                                    }
+
+                                    switch (conn_ctx_->getIsolationLevel())
+                                    {
+                                        case core::IsolationLevel::SNAPSHOT_TABLE_STABILITY:
+                                            return "SNAPSHOT TABLE STABILITY";
+                                        case core::IsolationLevel::SNAPSHOT:
+                                            return "SNAPSHOT";
+                                        case core::IsolationLevel::READ_COMMITTED_READ_CONSISTENCY:
+                                            return "READ COMMITTED READ CONSISTENCY";
+                                        case core::IsolationLevel::READ_COMMITTED:
+                                        default:
+                                            if (conn_ctx_->getReadCommittedMode() ==
+                                                core::ReadCommittedMode::READ_CONSISTENCY)
+                                            {
+                                                return "READ COMMITTED READ CONSISTENCY";
+                                            }
+                                            return "READ COMMITTED";
+                                    }
+                                };
+
+                                if (args.size() != 2 || args[0].isNull() || args[1].isNull())
+                                {
+                                    return Value::makeNull();
+                                }
+
+                                const std::string namespace_upper =
+                                    core::IdentifierUtils::toUpper(trim_ws(args[0].toString()));
+                                const std::string variable_upper =
+                                    core::IdentifierUtils::toUpper(trim_ws(args[1].toString()));
+
+                                if (namespace_upper == "SYSTEM" &&
+                                    variable_upper == "ISOLATION_LEVEL")
+                                {
+                                    return Value::makeVarchar(firebird_isolation_level_text());
+                                }
+
+                                return Value::makeNull();
+                            }
+
                             if (function_upper == "PG_GET_OBJECT_ADDRESS")
                             {
                                 auto trim_ws = [](const std::string& text) -> std::string {
@@ -58314,7 +58396,9 @@ namespace scratchbird
                     bool has_table_select = true;
                     std::vector<std::string> accessible_columns;
                     const auto& user_id = getCurrentUserID();
-                    bool skip_perm_check = (user_id == core::ID{});
+                    bool skip_perm_check = (user_id == core::ID{}) ||
+                                           isRemoteEmulatedTable(db_->catalog_manager(),
+                                                                 table_info);
 
                     if (!skip_perm_check)
                     {
@@ -58970,7 +59054,28 @@ namespace scratchbird
                         scratchbird::sblr::v3::Instruction val_inst;
                         if (getInstrFromValue(it_value->second, val_inst))
                         {
-                            v = evalExpr(val_inst);
+                            const auto val_opcode =
+                                static_cast<scratchbird::sblr::v3::Opcode>(val_inst.opcode);
+                            if (val_opcode == scratchbird::sblr::v3::Opcode::SBLR3_LITERAL_STRING)
+                            {
+                                if (auto payload_obj = std::get_if<
+                                        scratchbird::sblr::v3::Value::Object>(
+                                        &val_inst.payload.data))
+                                {
+                                    auto it_literal = payload_obj->find("value");
+                                    if (it_literal != payload_obj->end())
+                                    {
+                                        if (auto s = std::get_if<std::string>(&it_literal->second.data))
+                                        {
+                                            v = Value::makeVarchar(*s);
+                                        }
+                                    }
+                                }
+                            }
+                            if (v.isNull())
+                            {
+                                v = evalExpr(val_inst);
+                            }
                         }
                         else
                         {
@@ -59014,6 +59119,163 @@ namespace scratchbird
                             return ExecutionResult("SET AUTOCOMMIT expects boolean value");
                         }
                         conn_ctx_->setAutocommitMode(enabled);
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_SQL_DIALECT: {
+                        if (!conn_ctx_)
+                        {
+                            return ExecutionResult("No connection context available");
+                        }
+                        auto it_value = payload.find("value");
+                        if (it_value == payload.end() || it_value->second.isNull())
+                        {
+                            return ExecutionResult("SET SQL DIALECT requires a value");
+                        }
+                        Value v = Value::makeNull();
+                        scratchbird::sblr::v3::Instruction val_inst;
+                        if (getInstrFromValue(it_value->second, val_inst))
+                        {
+                            v = evalExpr(val_inst);
+                        }
+                        else
+                        {
+                            const auto &raw = it_value->second.data;
+                            if (auto i = std::get_if<int64_t>(&raw))
+                            {
+                                v = Value::makeInt64(*i);
+                            }
+                            else if (auto u = std::get_if<uint64_t>(&raw))
+                            {
+                                v = Value::makeUInt64(*u);
+                            }
+                            else
+                            {
+                                return ExecutionResult("SET SQL DIALECT expects integer value");
+                            }
+                        }
+                        if (v.isNull() || !isNumericType(v.type()))
+                        {
+                            return ExecutionResult("SET SQL DIALECT expects integer value");
+                        }
+                        auto dialect = static_cast<uint8_t>(v.toInt64());
+                        if (dialect < 1 || dialect > 3)
+                        {
+                            return ExecutionResult("Invalid SQL dialect: " + std::to_string(dialect));
+                        }
+                        conn_ctx_->set_sql_dialect(dialect);
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_NAMES: {
+                        if (!conn_ctx_)
+                        {
+                            return ExecutionResult("No connection context available");
+                        }
+                        auto it_value = payload.find("value");
+                        if (it_value == payload.end() || it_value->second.isNull())
+                        {
+                            return ExecutionResult("SET NAMES requires a character set");
+                        }
+                        Value v = Value::makeNull();
+                        scratchbird::sblr::v3::Instruction val_inst;
+                        if (getInstrFromValue(it_value->second, val_inst))
+                        {
+                            v = evalExpr(val_inst);
+                        }
+                        else
+                        {
+                            const auto &raw = it_value->second.data;
+                            if (auto s = std::get_if<std::string>(&raw))
+                            {
+                                v = Value::makeVarchar(*s);
+                            }
+                            else
+                            {
+                                return ExecutionResult("SET NAMES requires a character set");
+                            }
+                        }
+                        if (v.isNull())
+                        {
+                            return ExecutionResult("SET NAMES requires a character set");
+                        }
+                        std::string charset_name;
+                        switch (v.type())
+                        {
+                            case core::DataType::VARCHAR:
+                            case core::DataType::CHAR:
+                            case core::DataType::TEXT:
+                                charset_name = v.toString();
+                                break;
+                            default:
+                                return ExecutionResult("SET NAMES requires a character set");
+                        }
+                        if (charset_name.empty())
+                        {
+                            return ExecutionResult("SET NAMES requires a character set");
+                        }
+                        if (!db_ || !db_->catalog_manager())
+                        {
+                            return ExecutionResult("Catalog manager not available");
+                        }
+                        core::CatalogManager::CharsetInfo charset_info;
+                        core::ErrorContext ctx;
+                        auto status = db_->catalog_manager()->getCharsetByName(charset_name, charset_info, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult("Unknown character set: " + charset_name);
+                        }
+                        std::string collation_name;
+                        if (getString(payload, "collation", collation_name) && !collation_name.empty())
+                        {
+                            core::CatalogManager::CollationCatalogInfo coll_info;
+                            core::ErrorContext coll_ctx;
+                            auto coll_status =
+                                db_->catalog_manager()->getCollationByName(collation_name, coll_info, &coll_ctx);
+                            if (coll_status != core::Status::OK)
+                            {
+                                return ExecutionResult("Unknown collation: " + collation_name);
+                            }
+                        }
+                        conn_ctx_->set_charset(charset_info.name);
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_LOCAL_TIMEOUT: {
+                        if (!conn_ctx_)
+                        {
+                            return ExecutionResult("No connection context available");
+                        }
+                        auto it_value = payload.find("value");
+                        if (it_value == payload.end() || it_value->second.isNull())
+                        {
+                            return ExecutionResult("SET LOCAL TIMEOUT requires a value");
+                        }
+                        Value v = Value::makeNull();
+                        scratchbird::sblr::v3::Instruction val_inst;
+                        if (getInstrFromValue(it_value->second, val_inst))
+                        {
+                            v = evalExpr(val_inst);
+                        }
+                        else
+                        {
+                            const auto &raw = it_value->second.data;
+                            if (auto i = std::get_if<int64_t>(&raw))
+                            {
+                                v = Value::makeInt64(*i);
+                            }
+                            else if (auto u = std::get_if<uint64_t>(&raw))
+                            {
+                                v = Value::makeUInt64(*u);
+                            }
+                            else
+                            {
+                                return ExecutionResult("SET LOCAL TIMEOUT expects integer value");
+                            }
+                        }
+                        if (v.isNull() || !isNumericType(v.type()))
+                        {
+                            return ExecutionResult("SET LOCAL TIMEOUT expects integer value");
+                        }
+                        conn_ctx_->set_statement_timeout_local(
+                            static_cast<uint32_t>(std::max<int64_t>(0, v.toInt64())));
                         return ExecutionResult();
                     }
                     case scratchbird::sblr::v3::Opcode::SBLR3_SET_ROLE: {
@@ -63847,10 +64109,12 @@ namespace scratchbird
                             !isEffectiveSuperuser() &&
                             !isZeroUuid(base_table.info.table_id))
                         {
-                            bool has_table_select = checkPermission(
-                                base_table.info.table_id,
-                                core::CatalogManager::PermissionObjectType::TABLE,
-                                static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+                            bool has_table_select =
+                                isRemoteEmulatedTable(db_->catalog_manager(), base_table.info) ||
+                                checkPermission(
+                                    base_table.info.table_id,
+                                    core::CatalogManager::PermissionObjectType::TABLE,
+                                    static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
                             if (!has_table_select)
                             {
                                 core::ErrorContext perm_ctx;
@@ -92606,6 +92870,9 @@ namespace scratchbird
                         return ExecutionResult();
                     }
                     case scratchbird::sblr::v3::Opcode::SBLR3_SET_AUTOCOMMIT:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_SQL_DIALECT:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_NAMES:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_LOCAL_TIMEOUT:
                     case scratchbird::sblr::v3::Opcode::SBLR3_SET_ROLE:
                     case scratchbird::sblr::v3::Opcode::SBLR3_SET_SESSION_AUTH:
                         return executeSessionControlOpcode(
@@ -106165,7 +106432,8 @@ namespace scratchbird
             {
                 value = resolve_timezone();
             }
-            else if (normalized == "TRANSACTION_ISOLATION")
+            else if (normalized == "TRANSACTION_ISOLATION" ||
+                     normalized == "DEFAULT_TRANSACTION_ISOLATION")
             {
                 core::IsolationLevel level = conn_ctx_
                     ? conn_ctx_->getIsolationLevel()
@@ -107365,6 +107633,32 @@ namespace scratchbird
                     {
                         return true;
                     }
+
+                    if (required_privilege == core::CatalogManager::PERM_SELECT)
+                    {
+                        core::CatalogManager::SchemaInfo schema_info;
+                        core::ErrorContext schema_ctx;
+                        if (db_->catalog_manager()->getSchema(table_info.schema_id,
+                                                             schema_info,
+                                                             &schema_ctx) == core::Status::OK)
+                        {
+                            const bool firebird_emulation_schema =
+                                schema_info.schema_type ==
+                                    core::CatalogManager::SchemaType::REMOTE_EMULATED &&
+                                (schema_info.full_path.find("emulated.firebird") !=
+                                     std::string::npos ||
+                                 schema_info.full_path.find("emulation.firebird") !=
+                                     std::string::npos);
+                            const bool firebird_system_relation =
+                                table_info.table_name.rfind("RDB$", 0) == 0 ||
+                                table_info.table_name.rfind("MON$", 0) == 0 ||
+                                table_info.table_name.rfind("SEC$", 0) == 0;
+                            if (firebird_emulation_schema && firebird_system_relation)
+                            {
+                                return true;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -107446,6 +107740,32 @@ namespace scratchbird
                         table_info.temp_data_scope != core::CatalogManager::TempDataScope::NONE)
                     {
                         return true;
+                    }
+
+                    if (required_privilege == core::CatalogManager::PERM_SELECT)
+                    {
+                        core::CatalogManager::SchemaInfo schema_info;
+                        core::ErrorContext schema_ctx;
+                        if (db_->catalog_manager()->getSchema(table_info.schema_id,
+                                                             schema_info,
+                                                             &schema_ctx) == core::Status::OK)
+                        {
+                            const bool firebird_emulation_schema =
+                                schema_info.schema_type ==
+                                    core::CatalogManager::SchemaType::REMOTE_EMULATED &&
+                                (schema_info.full_path.find("emulated.firebird") !=
+                                     std::string::npos ||
+                                 schema_info.full_path.find("emulation.firebird") !=
+                                     std::string::npos);
+                            const bool firebird_system_relation =
+                                table_info.table_name.rfind("RDB$", 0) == 0 ||
+                                table_info.table_name.rfind("MON$", 0) == 0 ||
+                                table_info.table_name.rfind("SEC$", 0) == 0;
+                            if (firebird_emulation_schema && firebird_system_relation)
+                            {
+                                return true;
+                            }
+                        }
                     }
                 }
             }
@@ -119623,7 +119943,9 @@ namespace scratchbird
                 bool has_table_select = true;
                 std::vector<std::string> accessible_columns;
                 const auto& user_id = getCurrentUserID();
-                bool skip_perm_check = (user_id == core::ID{});
+                bool skip_perm_check = (user_id == core::ID{}) ||
+                                       isRemoteEmulatedTable(db_->catalog_manager(),
+                                                             table_info);
 
                 if (!skip_perm_check)
                 {

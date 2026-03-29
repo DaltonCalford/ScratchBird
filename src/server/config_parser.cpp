@@ -12,6 +12,9 @@
  *
  * Service/runtime configuration parser implementation.
  */
+// Section 37 invariant: config_parser is a configuration ingestion surface. It
+// is adjacent to metadata policy and topology handling, but it does not own the
+// durable schema catalog or current metadata invalidation truth.
 
 #include "scratchbird/server/config_parser.h"
 

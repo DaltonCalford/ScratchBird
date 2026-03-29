@@ -1,5 +1,9 @@
 #include <gtest/gtest.h>
 
+// Section 35 invariant: this test anchors bounded MGA restart and incident
+// behavior only. It is not proof of universal replay-log or auto-repair
+// recovery semantics.
+
 #include <cerrno>
 #include <algorithm>
 #include <atomic>

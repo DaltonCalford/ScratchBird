@@ -9,6 +9,10 @@
  */
 #pragma once
 
+// Section 35 invariant: durable correctness is anchored in native on-page
+// state, legal page formats, and restart-safe metadata. These definitions are
+// not evidence of WAL, redo, undo, or PITR recovery semantics.
+
 #include <cstdint>
 #include <cstddef>
 #include <cstring>

@@ -7,6 +7,13 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
+// Section 35 invariant: database.cpp is a primary authority for native startup
+// legality, recovery classification, and persistence coordination. It must not
+// be read as evidence of WAL-style replay or donor-log failover machinery.
+// Section 37 invariant: database.cpp is adjacent to bootstrap materialization
+// and catalog-root ownership, but it is not the primary owner of durable schema
+// metadata beyond those bounded bootstrap and startup surfaces.
+
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/page_manager.h"

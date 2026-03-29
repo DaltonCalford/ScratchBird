@@ -1721,6 +1721,54 @@ TEST_F(ExecutorTransactionPayloadTest, WritebackIncidentHistoryTracksOpenCloseAn
     EXPECT_NE(incident_rows.front().writeback_incident_uuid, first_incident_id);
 }
 
+TEST_F(ExecutorTransactionPayloadTest,
+       LateBoundTransactionHistoryRootsStayStandaloneAcrossCommitPaths) {
+    ErrorContext ctx;
+    auto* catalog = db_.catalog_manager();
+    ASSERT_NE(catalog, nullptr);
+
+    auto execute_sql = [&](const std::string& sql) {
+        auto compiled = compile(sql);
+        ASSERT_TRUE(compiled.success()) << joinErrors(compiled.errors());
+        auto result = executor_->execute(compiled.bytecode());
+        ASSERT_TRUE(result.success()) << result.error();
+    };
+
+    auto expect_standalone_runtime_root = [&](uint32_t page_id, const char* label) {
+        ASSERT_NE(page_id, 0u) << label;
+        bool is_overflow_target = false;
+        ErrorContext page_ctx;
+        ASSERT_EQ(catalog->catalogPageIsOverflowTarget(page_id, is_overflow_target, &page_ctx),
+                  Status::OK)
+            << label << ": " << page_ctx.message;
+        EXPECT_FALSE(is_overflow_target) << label;
+    };
+
+    execute_sql("CREATE TABLE tx_history_guard (id INT PRIMARY KEY, val INT)");
+    ASSERT_EQ(conn_->commit(&ctx), Status::OK) << ctx.message;
+
+    execute_sql("INSERT INTO tx_history_guard(id, val) VALUES (1, 10)");
+    ASSERT_EQ(conn_->commit(&ctx), Status::OK) << ctx.message;
+
+    expect_standalone_runtime_root(catalog->transactionLineageCatalogPageForTesting(),
+                                   "transaction_lineage_event");
+    expect_standalone_runtime_root(catalog->schemaEpochCatalogPageForTesting(),
+                                   "schema_epoch");
+    expect_standalone_runtime_root(catalog->forensicSnapshotCapsuleCatalogPageForTesting(),
+                                   "forensic_snapshot_capsule");
+
+    reopenDatabase();
+    catalog = db_.catalog_manager();
+    ASSERT_NE(catalog, nullptr);
+
+    expect_standalone_runtime_root(catalog->transactionLineageCatalogPageForTesting(),
+                                   "transaction_lineage_event(reopen)");
+    expect_standalone_runtime_root(catalog->schemaEpochCatalogPageForTesting(),
+                                   "schema_epoch(reopen)");
+    expect_standalone_runtime_root(catalog->forensicSnapshotCapsuleCatalogPageForTesting(),
+                                   "forensic_snapshot_capsule(reopen)");
+}
+
 TEST_F(ExecutorTransactionPayloadTest, DirtyRestartPersistsRecoveryIncidentHistory) {
     closeDatabase();
 

@@ -257,6 +257,71 @@ TEST_F(MySQLQueryCompilerTest, ShowVariablesLikeVersionCommentCompilesAndExecute
     ASSERT_TRUE(remote_execute_result.hasResultSet());
 }
 
+TEST_F(MySQLQueryCompilerTest, SetNamesExecutesWithMySqlCharsetIdentifierValue) {
+    auto result = compileAndExecute("SET NAMES utf8mb4");
+    ASSERT_TRUE(result.success()) << result.error();
+
+    std::string charset = conn_ctx_->charset();
+    std::transform(charset.begin(),
+                   charset.end(),
+                   charset.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+    EXPECT_EQ(charset, "UTF8MB4");
+}
+
+TEST_F(MySQLQueryCompilerTest, SetNamesExecutesFromDbLessCompilerBytecode) {
+    sblr::MySQLQueryCompiler compiler(nullptr);
+    auto compile_result = compiler.compile("SET NAMES utf8mb4");
+    ASSERT_TRUE(compile_result.success()) << compile_result.errors().front();
+
+    auto execute_result = executor_->execute(compile_result.bytecode());
+    ASSERT_TRUE(execute_result.success()) << execute_result.error();
+
+    std::string charset = conn_ctx_->charset();
+    std::transform(charset.begin(),
+                   charset.end(),
+                   charset.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+    EXPECT_EQ(charset, "UTF8MB4");
+}
+
+TEST_F(MySQLQueryCompilerTest, SetNamesWithCollationUsesExplicitCharsetIdentifier) {
+    auto result = compileAndExecute("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci");
+    ASSERT_TRUE(result.success()) << result.error();
+
+    std::string charset = conn_ctx_->charset();
+    std::transform(charset.begin(),
+                   charset.end(),
+                   charset.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+    EXPECT_EQ(charset, "UTF8MB4");
+}
+
+TEST_F(MySQLQueryCompilerTest, VersionAndDatabaseFunctionsUseMySqlSessionSurface) {
+    conn_ctx_->setSessionVariable("VERSION", "8.0.36-ScratchBird");
+    conn_ctx_->setSessionVariable("DATABASE", "compat_mysql");
+
+    sblr::MySQLQueryCompiler compiler(nullptr);
+
+    auto version_compile = compiler.compile("SELECT VERSION()");
+    ASSERT_TRUE(version_compile.success()) << version_compile.errors().front();
+
+    auto version_result = executor_->execute(version_compile.bytecode());
+    ASSERT_TRUE(version_result.success()) << version_result.error();
+    ASSERT_TRUE(version_result.hasResultSet());
+    ASSERT_EQ(version_result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(version_result.resultSet()->getValue(0, 0).toString(), "8.0.36-ScratchBird");
+
+    auto database_compile = compiler.compile("SELECT DATABASE()");
+    ASSERT_TRUE(database_compile.success()) << database_compile.errors().front();
+
+    auto database_result = executor_->execute(database_compile.bytecode());
+    ASSERT_TRUE(database_result.success()) << database_result.error();
+    ASSERT_TRUE(database_result.hasResultSet());
+    ASSERT_EQ(database_result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(database_result.resultSet()->getValue(0, 0).toString(), "compat_mysql");
+}
+
 TEST_F(MySQLQueryCompilerTest, CreateUserSupportsIdentifiedWithPluginSyntax) {
     auto create_result = compileAndExecute(
         "CREATE USER 'plugin_user'@'localhost' IDENTIFIED WITH 'sha256_password'");

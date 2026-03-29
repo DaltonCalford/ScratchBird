@@ -163,8 +163,8 @@ namespace fb {
     constexpr uint32_t op_compile = 22;
     constexpr uint32_t op_start = 23;
     constexpr uint32_t op_start_and_receive = 24;
-    constexpr uint32_t op_receive = 25;
-    constexpr uint32_t op_send = 26;
+    constexpr uint32_t op_send = 25;
+    constexpr uint32_t op_receive = 26;
     constexpr uint32_t op_unwind = 27;
     constexpr uint32_t op_release = 28;
     
@@ -173,23 +173,23 @@ namespace fb {
     constexpr uint32_t op_commit = 30;
     constexpr uint32_t op_rollback = 31;
     constexpr uint32_t op_prepare = 32;
-    constexpr uint32_t op_commit_retaining = 64;
-    constexpr uint32_t op_rollback_retaining = 65;
+    constexpr uint32_t op_commit_retaining = 50;
+    constexpr uint32_t op_rollback_retaining = 86;
     
     // Information
-    constexpr uint32_t op_info_database = 42;
-    constexpr uint32_t op_info_request = 43;
-    constexpr uint32_t op_info_transaction = 44;
-    constexpr uint32_t op_info_blob = 45;
+    constexpr uint32_t op_info_database = 40;
+    constexpr uint32_t op_info_request = 41;
+    constexpr uint32_t op_info_transaction = 42;
+    constexpr uint32_t op_info_blob = 43;
     
     // BLOB
-    constexpr uint32_t op_open_blob = 48;
-    constexpr uint32_t op_create_blob = 49;
-    constexpr uint32_t op_get_segment = 50;
-    constexpr uint32_t op_put_segment = 51;
-    constexpr uint32_t op_cancel_blob = 52;
-    constexpr uint32_t op_close_blob = 53;
-    constexpr uint32_t op_batch_segments = 54;
+    constexpr uint32_t op_create_blob = 34;
+    constexpr uint32_t op_open_blob = 35;
+    constexpr uint32_t op_get_segment = 36;
+    constexpr uint32_t op_put_segment = 37;
+    constexpr uint32_t op_cancel_blob = 38;
+    constexpr uint32_t op_close_blob = 39;
+    constexpr uint32_t op_batch_segments = 44;
     
     // Wire encryption
     constexpr uint32_t op_crypt = 66;

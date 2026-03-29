@@ -1,0 +1,3 @@
+CREATE TABLE vncr_f804aa_test(id INTEGER NOT NULL);
+INSERT INTO vncr_f804aa_test VALUES (5);
+COMMIT;

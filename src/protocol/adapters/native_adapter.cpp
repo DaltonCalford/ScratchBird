@@ -12,6 +12,9 @@
  *
  * ScratchBird-native front-door implementation.
  */
+// Section 32 invariant: native_adapter is a bounded adapter seam for the
+// ScratchBird-native front door. It is not evidence of a universal plugin
+// model, nor does unsupported-surface presence widen the public contract.
 
 #include "scratchbird/protocol/adapters/native_adapter.h"
 #include "scratchbird/client/sql_helpers.h"

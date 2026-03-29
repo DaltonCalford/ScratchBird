@@ -9,6 +9,10 @@
  */
 #pragma once
 
+// Section 35 invariant: heap_page contracts contribute page legality and
+// reclaim boundaries for containment work, but they do not by themselves imply
+// invisible repair or unrestricted online salvage guarantees.
+
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/uuidv7.h"

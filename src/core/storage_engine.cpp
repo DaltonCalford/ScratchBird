@@ -7,6 +7,10 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
+// Section 35 invariant: storage_engine participates in bounded reclaim and
+// containment decisions, but it does not widen durability truth beyond native
+// MGA/state-based recovery and explicit incident handling.
+
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/decimal.h"
 #include "scratchbird/core/plain_value_reader.h"

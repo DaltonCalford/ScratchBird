@@ -43,6 +43,9 @@ namespace scratchbird::core
      * to track allocated/free pages. Each bit represents one page:
      * 0 = free, 1 = allocated
      */
+    // Section 35 invariant: PageManager publishes page-allocation and
+    // persistence-coordination state only. It is not a replay engine and must
+    // not be used to imply WAL-backed recovery semantics.
     class PageManager
     {
     public:

@@ -1,5 +1,9 @@
 # ScratchBird Compatibility Testing
 
+> Section 36 boundary note: compatibility coverage here is bounded behavioral
+> evidence. It must not be read as proof of mature logical rewrite breadth,
+> adaptive planning, or stable plan identity across versions and environments.
+
 This directory contains comprehensive SQL compatibility tests from three major database systems, converted for use with ScratchBird's multi-database emulation capability.
 
 ## Overview

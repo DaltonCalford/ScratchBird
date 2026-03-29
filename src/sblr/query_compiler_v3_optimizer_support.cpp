@@ -1,5 +1,10 @@
 #include "scratchbird/sblr/query_compiler_v3_optimizer_support.h"
 
+// Section 36 invariant: this file is a bounded plan-shaping and planner-support
+// surface. Named transformations and strategy choices here must not be widened
+// into claims of a mature multi-phase optimizer, broad decorrelation, or
+// statistics-complete cost-model behavior without stronger proof.
+
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/uuidv7.h"

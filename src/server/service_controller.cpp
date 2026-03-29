@@ -12,6 +12,11 @@
  *
  * Service-controller implementation for engine and front-door orchestration.
  */
+// Section 32 invariant: service_controller owns bounded startup and
+// orchestration decisions for managed front-door processes. That ownership does
+// not collapse listener, engine-session, or client-tool boundaries.
+// Section 37 invariant: service_controller may consume metadata-adjacent reload
+// or topology surfaces, but it does not own durable schema catalog truth.
 
 #include "scratchbird/server/service_controller.h"
 #include "scratchbird/version.h"

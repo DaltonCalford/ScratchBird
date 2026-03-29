@@ -17,6 +17,9 @@
  * engine; the deployed IPC contract is intentionally parserless on the engine
  * side.
  */
+// Section 32 invariant: this file is the engine-side execution bridge for the
+// parser-agent topology. It owns engine-session execution only and does not
+// absorb listener negotiation, parser ownership, or public protocol ownership.
 
 #include "scratchbird/ipc/engine_ipc_session_handler.h"
 #include "scratchbird/sblr/executor.h"
@@ -100,6 +103,73 @@ const char* postgresqlServerVersion() {
     return "15.4 (ScratchBird 1.0)";
 }
 
+void applyIpcFieldTypeMetadata(IPCFieldDesc& field, core::DataType type) {
+    switch (type) {
+        case core::DataType::INT8:
+        case core::DataType::UINT8:
+        case core::DataType::INT16:
+        case core::DataType::UINT16:
+            field.type_size = 2;
+            break;
+        case core::DataType::INT32:
+        case core::DataType::UINT32:
+        case core::DataType::MEDIUMINT:
+        case core::DataType::FLOAT32:
+        case core::DataType::DATE:
+        case core::DataType::TIME:
+        case core::DataType::YEAR:
+            field.type_size = 4;
+            break;
+        case core::DataType::INT64:
+        case core::DataType::UINT64:
+        case core::DataType::FLOAT64:
+        case core::DataType::DECIMAL:
+        case core::DataType::MONEY:
+        case core::DataType::TIMESTAMP:
+        case core::DataType::DATETIME:
+        case core::DataType::TIME_WITH_ZONE:
+        case core::DataType::DECFLOAT16:
+            field.type_size = 8;
+            break;
+        case core::DataType::INT128:
+        case core::DataType::UINT128:
+        case core::DataType::DECFLOAT34:
+            field.type_size = 16;
+            break;
+        case core::DataType::TIMESTAMP_WITH_ZONE:
+            field.type_size = 12;
+            break;
+        case core::DataType::BOOLEAN:
+        case core::DataType::BIT:
+            field.type_size = 1;
+            break;
+        case core::DataType::CHAR:
+            field.type_size = -1;
+            field.type_modifier = 1;
+            break;
+        case core::DataType::VARCHAR:
+        case core::DataType::TEXT:
+        case core::DataType::JSON:
+        case core::DataType::JSONB:
+        case core::DataType::XML:
+        case core::DataType::UUID:
+        case core::DataType::INET:
+        case core::DataType::CIDR:
+        case core::DataType::MACADDR:
+        case core::DataType::MACADDR8:
+        case core::DataType::ENUM:
+        case core::DataType::SET:
+        case core::DataType::TSVECTOR:
+        case core::DataType::TSQUERY:
+            field.type_size = -1;
+            field.type_modifier = 255;
+            break;
+        default:
+            field.type_size = 0;
+            break;
+    }
+}
+
 void seedDialectSessionVariables(core::ConnectionContext* conn_ctx,
                                  const std::string& dialect_tag) {
     if (conn_ctx == nullptr) {
@@ -117,6 +187,9 @@ void seedDialectSessionVariables(core::ConnectionContext* conn_ctx,
         conn_ctx->setSessionVariable("COLLATION_CONNECTION", "utf8mb4_general_ci");
         conn_ctx->setSessionVariable("OPTIMIZER_SWITCH", "index_merge=on");
         conn_ctx->setSessionVariable("SQL_MODE", "");
+        conn_ctx->setSessionVariable("TRANSACTION_ISOLATION", "REPEATABLE-READ");
+        conn_ctx->setSessionVariable("DEFAULT_TRANSACTION_ISOLATION", "REPEATABLE-READ");
+        conn_ctx->setSessionVariable("TX_ISOLATION", "REPEATABLE-READ");
     } else if (dialect_tag == "postgresql") {
         conn_ctx->setSessionVariable("SERVER_VERSION", postgresqlServerVersion());
         conn_ctx->setSessionVariable("SERVER_ENCODING", "UTF8");
@@ -125,6 +198,29 @@ void seedDialectSessionVariables(core::ConnectionContext* conn_ctx,
         conn_ctx->setSessionVariable("TIMEZONE", "UTC");
         conn_ctx->setSessionVariable("INTEGER_DATETIMES", "on");
         conn_ctx->setSessionVariable("STANDARD_CONFORMING_STRINGS", "on");
+    }
+}
+
+void seedDialectSessionIdentity(core::ConnectionContext* conn_ctx,
+                                const std::string& dialect_tag,
+                                const std::string& database_name,
+                                const std::string& username) {
+    if (conn_ctx == nullptr) {
+        return;
+    }
+
+    if (dialect_tag == "mysql") {
+        const std::string effective_database =
+            database_name.empty() ? "compat_mysql" : database_name;
+        const std::string effective_user =
+            username.empty() ? "root" : username;
+        const std::string qualified_user = effective_user + "@localhost";
+        conn_ctx->setSessionVariable("DATABASE", effective_database);
+        conn_ctx->setSessionVariable("SCHEMA", effective_database);
+        conn_ctx->setSessionVariable("CURRENT_USER", qualified_user);
+        conn_ctx->setSessionVariable("USER", qualified_user);
+        conn_ctx->setSessionVariable("SESSION_USER", qualified_user);
+        conn_ctx->setSessionVariable("SYSTEM_USER", qualified_user);
     }
 }
 
@@ -578,6 +674,11 @@ core::Status EngineIPCSessionHandler::onAttach(uint32_t session_id,
                                                const IPCStartupPayload& startup,
                                                core::ErrorContext* ctx) {
     std::unique_lock<std::shared_mutex> lock(sessions_mutex_);
+    std::cerr << "[ipc_debug] onAttach begin session=" << session_id
+              << " db=" << boundedString(startup.database, sizeof(startup.database))
+              << " user=" << boundedString(startup.user, sizeof(startup.user))
+              << " app=" << boundedString(startup.application, sizeof(startup.application))
+              << "\n";
     
     if (sessions_.find(session_id) != sessions_.end()) {
         if (ctx) {
@@ -601,6 +702,9 @@ core::Status EngineIPCSessionHandler::onAttach(uint32_t session_id,
     const std::string emulation_mode = emulationModeForDialectTag(dialect_tag);
 
     auto connect_status = database_->connect(session->conn_ctx, ctx);
+    std::cerr << "[ipc_debug] onAttach post-connect session=" << session_id
+              << " status=" << static_cast<uint32_t>(connect_status)
+              << " ctx=" << (ctx ? ctx->message : std::string()) << "\n";
     if (connect_status != core::Status::OK || !session->conn_ctx) {
         if (ctx && ctx->message.empty()) {
             ctx->set(connect_status != core::Status::OK ? connect_status
@@ -618,6 +722,8 @@ core::Status EngineIPCSessionHandler::onAttach(uint32_t session_id,
         session->conn_ctx->setSessionVariable("APPLICATION_NAME", application);
     }
     seedDialectSessionVariables(session->conn_ctx.get(), dialect_tag);
+    seedDialectSessionIdentity(
+        session->conn_ctx.get(), dialect_tag, session->database_name, session->username);
 
     auto* catalog = database_->catalog_manager();
     if (session->username.empty()) {
@@ -640,6 +746,10 @@ core::Status EngineIPCSessionHandler::onAttach(uint32_t session_id,
     core::CatalogManager::UserInfo user_info;
     core::ErrorContext user_ctx;
     auto user_status = catalog->getUserByName(session->username, user_info, &user_ctx);
+    std::cerr << "[ipc_debug] onAttach getUserByName session=" << session_id
+              << " user=" << session->username
+              << " status=" << static_cast<uint32_t>(user_status)
+              << " ctx=" << user_ctx.message << "\n";
     if (user_status != core::Status::OK) {
         std::string message = user_ctx.message.empty()
                                   ? "IPC attach user not found: " + session->username
@@ -671,6 +781,11 @@ core::Status EngineIPCSessionHandler::onAttach(uint32_t session_id,
                                                  emulation_mode,
                                                  session_info,
                                                  &session_ctx);
+    std::cerr << "[ipc_debug] onAttach createSession session=" << session_id
+              << " user=" << session->username
+              << " emulation=" << emulation_mode
+              << " status=" << static_cast<uint32_t>(session_status)
+              << " ctx=" << session_ctx.message << "\n";
     if (session_status != core::Status::OK) {
         const std::string message =
             session_ctx.message.empty() ? "Failed to create IPC catalog session"
@@ -715,6 +830,7 @@ core::Status EngineIPCSessionHandler::onAttach(uint32_t session_id,
     session->executor->setConnectionContext(session->conn_ctx.get());
     
     sessions_[session_id] = std::move(session);
+    std::cerr << "[ipc_debug] onAttach complete session=" << session_id << "\n";
     
     return core::Status::OK;
 }
@@ -848,6 +964,7 @@ core::Status EngineIPCSessionHandler::onCompiledQuery(uint32_t session_id,
             std::strncpy(field.name, rs->columnName(i).c_str(), sizeof(field.name) - 1);
             field.name[sizeof(field.name) - 1] = '\0';
             field.type_oid = static_cast<uint32_t>(rs->columnType(i));
+            applyIpcFieldTypeMetadata(field, rs->columnType(i));
             fields.push_back(field);
         }
 
@@ -1112,6 +1229,7 @@ core::Status EngineIPCSessionHandler::onExecute(uint32_t session_id,
                 std::strncpy(field.name, rs->columnName(i).c_str(), sizeof(field.name) - 1);
                 field.name[sizeof(field.name) - 1] = '\0';
                 field.type_oid = static_cast<uint32_t>(rs->columnType(i));
+                applyIpcFieldTypeMetadata(field, rs->columnType(i));
                 fields.push_back(field);
             }
             
@@ -1221,21 +1339,21 @@ core::Status EngineIPCSessionHandler::onBegin(uint32_t session_id,
         }
         return core::Status::NOT_FOUND;
     }
-    
+
+    if (!session->conn_ctx) {
+        return sendError(session_id, "XX000", "Connection context not available");
+    }
+
+    if (session->conn_ctx) {
+        session->conn_ctx->setAutocommitSuspended(true);
+    }
+
+    syncSessionTransactionState(session->conn_ctx.get(),
+                                session->in_transaction,
+                                session->autocommit);
     session->in_transaction = true;
     session->autocommit = false;
-    
-    // Execute BEGIN in engine
-    // TODO: Add sblr::Opcode::BEGIN to bytecode system
-    // std::vector<uint8_t> begin_bytecode = {static_cast<uint8_t>(sblr::Opcode::BEGIN)};
-    // auto result = session->executor->execute(begin_bytecode);
-    auto result = sblr::ExecutionResult(); // Placeholder until BEGIN opcode is added
-    
-    if (!result.success()) {
-        return sendError(session_id, "XX000", result.error());
-    }
-    
-    return sendTxnComplete(session_id);
+    return core::Status::OK;
 }
 
 core::Status EngineIPCSessionHandler::onCommit(uint32_t session_id,
@@ -1248,25 +1366,35 @@ core::Status EngineIPCSessionHandler::onCommit(uint32_t session_id,
         }
         return core::Status::NOT_FOUND;
     }
-    
+
+    if (!session->conn_ctx) {
+        return sendError(session_id, "XX000", "Connection context not available");
+    }
+
+    syncSessionTransactionState(session->conn_ctx.get(),
+                                session->in_transaction,
+                                session->autocommit);
     if (!session->in_transaction) {
         return sendError(session_id, "25P01", "No active transaction");
     }
-    
-    // Execute COMMIT in engine
-    std::vector<uint8_t> commit_bytecode = {static_cast<uint8_t>(sblr::Opcode::COMMIT)};
+
     ConnectionContextGuard ctx_guard(session->conn_ctx.get());
-    auto result = session->executor->execute(commit_bytecode);
-    
-    if (!result.success()) {
-        return sendError(session_id, "XX000", result.error());
+    auto status = session->conn_ctx->commit(ctx);
+    if (status != core::Status::OK) {
+        const std::string message =
+            (ctx != nullptr && !ctx->message.empty()) ? ctx->message : "Commit failed";
+        return sendError(session_id, "XX000", message);
+    }
+
+    if (session->conn_ctx) {
+        session->conn_ctx->setAutocommitSuspended(false);
     }
 
     syncSessionTransactionState(session->conn_ctx.get(),
                                 session->in_transaction,
                                 session->autocommit);
     
-    return sendTxnComplete(session_id);
+    return core::Status::OK;
 }
 
 core::Status EngineIPCSessionHandler::onRollback(uint32_t session_id,
@@ -1279,25 +1407,35 @@ core::Status EngineIPCSessionHandler::onRollback(uint32_t session_id,
         }
         return core::Status::NOT_FOUND;
     }
-    
+
+    if (!session->conn_ctx) {
+        return sendError(session_id, "XX000", "Connection context not available");
+    }
+
+    syncSessionTransactionState(session->conn_ctx.get(),
+                                session->in_transaction,
+                                session->autocommit);
     if (!session->in_transaction) {
         return sendError(session_id, "25P01", "No active transaction");
     }
-    
-    // Execute ROLLBACK in engine
-    std::vector<uint8_t> rollback_bytecode = {static_cast<uint8_t>(sblr::Opcode::ROLLBACK)};
+
     ConnectionContextGuard ctx_guard(session->conn_ctx.get());
-    auto result = session->executor->execute(rollback_bytecode);
-    
-    if (!result.success()) {
-        return sendError(session_id, "XX000", result.error());
+    auto status = session->conn_ctx->rollback(ctx);
+    if (status != core::Status::OK) {
+        const std::string message =
+            (ctx != nullptr && !ctx->message.empty()) ? ctx->message : "Rollback failed";
+        return sendError(session_id, "XX000", message);
+    }
+
+    if (session->conn_ctx) {
+        session->conn_ctx->setAutocommitSuspended(false);
     }
 
     syncSessionTransactionState(session->conn_ctx.get(),
                                 session->in_transaction,
                                 session->autocommit);
     
-    return sendTxnComplete(session_id);
+    return core::Status::OK;
 }
 
 core::Status EngineIPCSessionHandler::onSavepoint(uint32_t session_id,
@@ -1312,21 +1450,19 @@ core::Status EngineIPCSessionHandler::onSavepoint(uint32_t session_id,
         return core::Status::NOT_FOUND;
     }
     
-    if (!session->in_transaction) {
+    if (!session->in_transaction || session->conn_ctx == nullptr) {
         return sendError(session_id, "25P01", "No active transaction");
     }
-    
-    // Create savepoint bytecode
-    // TODO: Add sblr::Opcode::SAVEPOINT to bytecode system
-    (void)name; // Suppress unused warning until SAVEPOINT is implemented
-    
-    // Stub: Savepoint not yet implemented in SBLR
-    // auto result = session->executor->execute(sp_bytecode);
-    // if (!result.success()) {
-    //     return sendError(session_id, "XX000", result.error());
-    // }
-    
-    return sendError(session_id, "0A000", "SAVEPOINT not yet implemented");
+
+    ConnectionContextGuard ctx_guard(session->conn_ctx.get());
+    const core::Status status = session->conn_ctx->createSavepoint(name, ctx);
+    if (status != core::Status::OK) {
+        const std::string message =
+            (ctx && !ctx->message.empty()) ? ctx->message : "Failed to create savepoint";
+        return sendError(session_id, "XX000", message);
+    }
+
+    return core::Status::OK;
 }
 
 // ============================================================================

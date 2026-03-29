@@ -9,9 +9,14 @@
 #include "scratchbird/ipc/unix_socket_channel.h"
 #include "scratchbird/ipc/copy_flow_control.h"
 
+// Section 32 invariant: ipc_server is a bounded runtime seam for negotiated
+// engine-side IPC. It should not be read as listener ownership, public
+// protocol ownership, or evidence of a stable external extension contract.
+
 #include <cstring>
 #include <chrono>
 #include <algorithm>
+#include <iostream>
 
 #if defined(__linux__) || defined(__APPLE__)
 #include <sys/socket.h>
@@ -25,6 +30,33 @@
 
 namespace scratchbird {
 namespace ipc {
+
+namespace {
+
+const char* sqlstateForStatus(core::Status status) {
+    switch (status) {
+        case core::Status::LOCK_TIMEOUT:
+            return "55P03";
+        case core::Status::DEADLOCK:
+            return "40P01";
+        case core::Status::PERMISSION_DENIED:
+            return "42501";
+        case core::Status::NOT_FOUND:
+        case core::Status::UNDEFINED_OBJECT:
+        case core::Status::UNDEFINED_TABLE:
+        case core::Status::UNDEFINED_COLUMN:
+            return "42704";
+        case core::Status::INVALID_ARGUMENT:
+        case core::Status::SYNTAX_ERROR:
+            return "42601";
+        case core::Status::CONNECTION_FAILURE:
+            return "08006";
+        default:
+            return "XX000";
+    }
+}
+
+}
 
 // ============================================================================
 // IPCServerConfig Implementation
@@ -236,6 +268,23 @@ core::Status IPCSession::handleStartup(const IPCMessage& msg, core::ErrorContext
     auto status = handler_->onAttach(id_, *payload, ctx);
     if (status != core::Status::OK) {
         state_ = SessionState::INITIALIZING;
+        const std::string message =
+            (ctx && !ctx->message.empty()) ? ctx->message : "IPC session startup failed";
+        core::ErrorContext error_ctx;
+        auto send_status = handler_->sendError(id_, sqlstateForStatus(status), message);
+        auto flush_status = flushOutboundMessages(&error_ctx);
+        std::cerr << "[ipc_debug] startup failed session=" << id_
+                  << " status=" << static_cast<uint32_t>(status)
+                  << " message=" << message
+                  << " send_status=" << static_cast<uint32_t>(send_status)
+                  << " flush_status=" << static_cast<uint32_t>(flush_status)
+                  << "\n";
+        if (send_status != core::Status::OK) {
+            return send_status;
+        }
+        if (flush_status != core::Status::OK) {
+            return flush_status;
+        }
         return status;
     }
     
@@ -966,7 +1015,14 @@ void IPCServer::workerLoop(IPCWorker* worker) {
             if (it != sessions_.end()) {
                 session_lock.unlock();
                 core::ErrorContext ctx;
-                it->second->handleMessage(queued.message, &ctx);
+                auto status = it->second->handleMessage(queued.message, &ctx);
+                if (status != core::Status::OK) {
+                    std::cerr << "[ipc_debug] handleMessage failed session="
+                              << queued.session_id
+                              << " type=" << static_cast<uint32_t>(queued.message.getType())
+                              << " status=" << static_cast<uint32_t>(status)
+                              << " message=" << ctx.message << "\n";
+                }
             }
         }
     }

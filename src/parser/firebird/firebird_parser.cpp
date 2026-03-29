@@ -187,12 +187,19 @@ bool Parser::isExpressionStart() const {
         case TokenType::KW_CASE:
         case TokenType::KW_CAST:
         case TokenType::KW_EXISTS:
+        case TokenType::KW_TRIM:
+        case TokenType::KW_DATEADD:
+        case TokenType::KW_IIF:
+        case TokenType::KW_RDB_GET_CONTEXT:
+        case TokenType::KW_EXTRACT:
         case TokenType::KW_NULL:
         case TokenType::KW_TRUE:
         case TokenType::KW_FALSE:
         case TokenType::KW_CURRENT_DATE:
         case TokenType::KW_CURRENT_TIME:
         case TokenType::KW_CURRENT_TIMESTAMP:
+        case TokenType::KW_LOCALTIME:
+        case TokenType::KW_LOCALTIMESTAMP:
         case TokenType::KW_CURRENT_USER:
         case TokenType::KW_CURRENT_ROLE:
         case TokenType::KW_CURRENT_CONNECTION:
@@ -1245,6 +1252,12 @@ Expression* Parser::parsePrimaryExpression() {
         path.components.push_back(string_pool_.intern("DATEADD"));
         return parseFunctionCall(path);
     }
+    if (checkKeyword(TokenType::KW_TRIM)) {
+        advance();
+        ast::SchemaPath path;
+        path.components.push_back(string_pool_.intern("TRIM"));
+        return parseFunctionCall(path);
+    }
     if (checkKeyword(TokenType::KW_IIF)) {
         advance();
         return parseIifExpression();
@@ -1412,9 +1425,11 @@ Expression* Parser::parseFunctionCall(const ast::SchemaPath& name) {
 
             // Check for * (COUNT(*))
             if (match(TokenType::STAR)) {
-                // For COUNT(*), add a special marker expression
+                // Lower COUNT(*) as COUNT(1) so the shared V3 aggregate path
+                // treats it as row-count semantics instead of COUNT(NULL).
                 auto* star_expr = allocate<ast::LiteralExpr>();
-                star_expr->literal_type = ast::LiteralType::NULL_VALUE;
+                star_expr->literal_type = ast::LiteralType::INTEGER;
+                star_expr->int_value = 1;
                 expr->arguments.push_back(star_expr);
             } else {
                 expr->arguments.push_back(parseExpression());
@@ -2312,11 +2327,21 @@ Statement* Parser::parseCreateMappingStatement() {
 }
 
 Statement* Parser::parseCreateUserStatement() {
-    const bool if_not_exists = parseOptionalIfNotExists();
+    (void) parseOptionalIfNotExists();
 
-    auto* stmt = makeExecuteProcedureCall("fb_create_user");
-    stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
-    stmt->arguments.push_back(makeBooleanLiteralExpr(if_not_exists));
+    auto* stmt = allocate<ast::CreateUserStmt>();
+    stmt->user_name = parseIdentifier();
+
+    if (matchKeyword(TokenType::KW_PASSWORD)) {
+        if (!check(TokenType::STRING_LITERAL) && !check(TokenType::Q_STRING_LITERAL)) {
+            error("Expected string literal after PASSWORD");
+        } else {
+            stmt->has_password = true;
+            stmt->password = internFromLexer(current_token_.value.string_id);
+            advance();
+        }
+    }
+
     skipRemainingStatementTokens();
     return stmt;
 }
@@ -2440,8 +2465,23 @@ Statement* Parser::parseAlterExternalFunctionStatement() {
 }
 
 Statement* Parser::parseAlterUserStatement() {
-    auto* stmt = makeExecuteProcedureCall("fb_alter_user");
-    stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+    auto* stmt = allocate<ast::AlterUserStmt>();
+    stmt->user_name = parseIdentifier();
+
+    if (matchKeyword(TokenType::KW_SET)) {
+        // Firebird accepts optional SET before ALTER USER options.
+    }
+
+    if (matchKeyword(TokenType::KW_PASSWORD)) {
+        if (!check(TokenType::STRING_LITERAL) && !check(TokenType::Q_STRING_LITERAL)) {
+            error("Expected string literal after PASSWORD");
+        } else {
+            stmt->has_password = true;
+            stmt->password = internFromLexer(current_token_.value.string_id);
+            advance();
+        }
+    }
+
     skipRemainingStatementTokens();
     return stmt;
 }
@@ -2609,9 +2649,9 @@ Statement* Parser::parseDropMappingStatement(bool if_exists) {
 }
 
 Statement* Parser::parseDropUserStatement(bool if_exists) {
-    auto* stmt = makeExecuteProcedureCall("fb_drop_user");
-    stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
-    stmt->arguments.push_back(makeBooleanLiteralExpr(if_exists));
+    auto* stmt = allocate<ast::DropUserStmt>();
+    stmt->if_exists = if_exists;
+    stmt->users.push_back(parseSchemaPath());
     skipRemainingStatementTokens();
     return stmt;
 }

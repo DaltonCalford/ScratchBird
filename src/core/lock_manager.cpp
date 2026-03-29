@@ -7,6 +7,10 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
+// Section 37 invariant: lock_manager.cpp expresses bounded lock, wait-history,
+// deadlock, and metadata-visibility behavior. It must not be read as proof of
+// universal concurrent DDL maturity or cluster-wide invalidation coherence.
+
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"

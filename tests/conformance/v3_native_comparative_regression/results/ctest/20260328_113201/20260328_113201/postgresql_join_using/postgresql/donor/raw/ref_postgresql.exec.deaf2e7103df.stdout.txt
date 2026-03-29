@@ -1,0 +1,3 @@
+ASSERT|postgresql_join_using|row|1
+ASSERT|postgresql_join_using|row|2
+ASSERT|postgresql_join_using|row|3

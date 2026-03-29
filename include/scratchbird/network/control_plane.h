@@ -12,6 +12,9 @@
  *
  * Defines message framing and a minimal control-plane server scaffold.
  */
+// Section 32 invariant: declarations in this header define a bounded internal
+// management surface. Presence here does not promote these message families
+// into a general public plugin or wire-protocol stability contract.
 
 #pragma once
 

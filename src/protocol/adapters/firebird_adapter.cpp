@@ -1304,6 +1304,12 @@ core::Status FirebirdAdapter::sendProtocolError(network::Connection* conn,
 }
 
 core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx) {
+    if (firebird_schema_id_ != core::ID{} && !firebird_schema_name_.empty()) {
+        applyFirebirdSessionSchemaContext(ctx);
+        clearErrorContextSuccess(ctx);
+        return core::Status::OK;
+    }
+
     std::string schema_binding = database_name_;
     if (schema_binding.empty()) {
         schema_binding = config_.default_database;
@@ -3088,6 +3094,9 @@ core::Status FirebirdAdapter::handleInfoDatabase(network::Connection* conn) {
     std::vector<uint8_t> items = readBuffer(current_packet_.data(), offset, current_packet_.size());
 
     std::vector<uint8_t> info;
+    auto* db = engineDatabase();
+    const uint32_t page_size = db ? db->page_size() : 16384u;
+    const uint32_t num_buffers = 2048u;
     auto append_len = [&](uint16_t len) {
         // Info clumplet length is VAX order (little-endian uint16).
         info.push_back(static_cast<uint8_t>(len & 0xFF));
@@ -3111,6 +3120,32 @@ core::Status FirebirdAdapter::handleInfoDatabase(network::Connection* conn) {
         append_len(static_cast<uint16_t>(payload.size()));
         info.insert(info.end(), payload.begin(), payload.end());
     };
+    auto append_db_id_item = [&]() {
+        const std::string database_name =
+            database_name_.empty()
+                ? (config_.default_database.empty() ? "compat_firebird" : config_.default_database)
+                : database_name_;
+        const std::string site_name = "localhost";
+        const auto bounded_size = [](const std::string& value) -> size_t {
+            return std::min<size_t>(value.size(), 255);
+        };
+
+        std::vector<uint8_t> payload;
+        payload.reserve(database_name.size() + site_name.size() + 3);
+        payload.push_back(2u);
+        payload.push_back(static_cast<uint8_t>(bounded_size(database_name)));
+        payload.insert(payload.end(),
+                       database_name.begin(),
+                       database_name.begin() + bounded_size(database_name));
+        payload.push_back(static_cast<uint8_t>(bounded_size(site_name)));
+        payload.insert(payload.end(),
+                       site_name.begin(),
+                       site_name.begin() + bounded_size(site_name));
+
+        info.push_back(4);  // isc_info_db_id
+        append_len(static_cast<uint16_t>(payload.size()));
+        info.insert(info.end(), payload.begin(), payload.end());
+    };
     auto append_firebird_version_item = [&](const std::string& version) {
         info.push_back(103);  // isc_info_firebird_version
         const uint16_t payload_len = static_cast<uint16_t>(2 + version.size());
@@ -3125,6 +3160,15 @@ core::Status FirebirdAdapter::handleInfoDatabase(network::Connection* conn) {
             break;
         }
         switch (item) {
+            case 4:  // isc_info_db_id
+                append_db_id_item();
+                break;
+            case 5:  // isc_info_reads
+                append_int_item(item, 0);
+                break;
+            case 6:  // isc_info_writes
+                append_int_item(item, 0);
+                break;
             case 11:  // isc_info_implementation
                 // Payload format: count(1), implementation_code(1), implementation_class(1).
                 // Use class=1 (classic legacy class bucket) and code=0 (generic/unknown).
@@ -3137,6 +3181,12 @@ core::Status FirebirdAdapter::handleInfoDatabase(network::Connection* conn) {
                 // Historical base level value used by Firebird for modern versions.
                 append_raw_item(item, {1, 6});
                 break;
+            case 14:  // isc_info_page_size
+                append_int_item(item, page_size);
+                break;
+            case 15:  // isc_info_num_buffers
+                append_int_item(item, num_buffers);
+                break;
             case 32:  // isc_info_ods_version
                 append_int_item(item, 13);
                 break;
@@ -3145,6 +3195,9 @@ core::Status FirebirdAdapter::handleInfoDatabase(network::Connection* conn) {
                 break;
             case 62:  // isc_info_db_sql_dialect
                 append_int_item(item, sql_dialect_ == 0 ? 3 : sql_dialect_);
+                break;
+            case 102: // isc_info_db_class
+                append_int_item(item, 1);
                 break;
             case 101: // frb_info_att_charset
                 append_int_item(item, 4);  // UTF8

@@ -43,7 +43,7 @@ static FieldType literalFieldType(std::string_view suffix) {
 }
 
 const SchemaDef* lookupSchema(std::string_view name) {
-    if (name == "SCHEMA_EMPTY") {
+    if (name == "SCHEMA_EMPTY" || name == "SCHEMA_PSQL_SUSPEND") {
         static const SchemaDef empty_schema{"SCHEMA_EMPTY", {}};
         return &empty_schema;
     }

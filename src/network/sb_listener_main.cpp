@@ -14,6 +14,9 @@
  * They accept client sockets, perform process-level control-plane work, and
  * hand connections off to protocol-specific parser agents.
  */
+// Section 32 invariant: listener binaries are front-door runtime surfaces.
+// They do not absorb engine-session ownership, client-tool ownership, or
+// stable public-extension ownership beyond the bounded listener contract.
 
 #include <atomic>
 #include <array>

@@ -53,6 +53,9 @@ namespace scratchbird::core
      * Clock Sweep provides better eviction decisions than pure LRU with O(1) complexity.
      * Thread-safe with mutex protection.
      */
+    // Section 35 invariant: buffer_pool participates in dirty-state and
+    // flush-coordination only. It does not own recovery truth and must not be
+    // used to infer WAL checkpoint semantics.
     class BufferPool
     {
     public:

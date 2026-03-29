@@ -1,5 +1,19 @@
 # ScratchBird Test Guide
 
+> Section 35 boundary note: the maintained test surfaces here provide bounded
+> durability, recovery, and reliability evidence. They are not by themselves a
+> universal certification of WAL-style recovery or seamless failover behavior.
+>
+> Section 36 boundary note: the maintained test surfaces here also bound
+> rewrite and planner claims. They are not by themselves proof of a mature
+> multi-phase optimizer, adaptive replanning, or stable cross-version plan
+> identity.
+>
+> Section 37 boundary note: the maintained test surfaces here bound current
+> statistics, metadata, and schema behavior only. They do not by themselves
+> certify optimizer-grade statistics maturity, global metadata coherence, or
+> mature concurrent DDL behavior.
+
 ## Core Regression
 
 Run all registered tests:

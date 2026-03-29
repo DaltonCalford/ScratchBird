@@ -13,6 +13,9 @@
  * Canonical ScratchBird wire/message framing implementation used by native
  * clients, protocol adapters, and local IPC-facing protocol surfaces.
  */
+// Section 32 invariant: this file is codec and framing authority for the
+// bounded native protocol subset. It does not by itself certify broader public
+// extension, replay, or fabric-adjacent surface maturity.
 
 #include "scratchbird/protocol/wire_protocol.h"
 #include "scratchbird/protocol/sbwp_protocol.h"

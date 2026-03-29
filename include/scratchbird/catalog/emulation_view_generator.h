@@ -404,7 +404,8 @@ private:
         TEXT,
         SMALLINT,
         INTEGER,
-        BIGINT
+        BIGINT,
+        BOOLEAN
     };
 
     struct FirebirdSeedRelationSpec {
@@ -464,8 +465,26 @@ private:
                 return 8;
             case FirebirdSeedFieldKind::BIGINT:
                 return 16;
+            case FirebirdSeedFieldKind::BOOLEAN:
+                return 23;
         }
         return 37;
+    }
+
+    static int firebirdSeedFieldLogicalLength(FirebirdSeedFieldKind kind, int declared_length) {
+        switch (kind) {
+            case FirebirdSeedFieldKind::TEXT:
+                return declared_length;
+            case FirebirdSeedFieldKind::SMALLINT:
+                return 2;
+            case FirebirdSeedFieldKind::INTEGER:
+                return 4;
+            case FirebirdSeedFieldKind::BIGINT:
+                return 8;
+            case FirebirdSeedFieldKind::BOOLEAN:
+                return 1;
+        }
+        return declared_length;
     }
 
     static std::string quoteFirebirdAliasIdentifiers(std::string sql) {
@@ -584,7 +603,20 @@ private:
     }
 
     static std::string buildFirebirdSingleRowSource() {
-        return " FROM sys.schemas WHERE schema_name = {schema_path}";
+        return " FROM (SELECT MIN(schema_id) AS SB_EMU_SCHEMA_ID FROM sys.schemas) "
+               "AS SB_EMU_SINGLETON";
+    }
+
+    static std::string buildFirebirdDatabaseViewQuery() {
+        return R"SQL(
+                SELECT
+                    CAST(NULL AS TEXT) AS RDB$DESCRIPTION,
+                    CAST(0 AS BIGINT) AS RDB$RELATION_ID,
+                    CAST(NULL AS TEXT) AS RDB$SECURITY_CLASS,
+                    CAST('UTF8' AS TEXT) AS RDB$CHARACTER_SET_NAME,
+                    CAST(0 AS BIGINT) AS RDB$LINGER,
+                    CAST(FALSE AS BOOLEAN) AS RDB$SQL_SECURITY
+            )SQL" + buildFirebirdSingleRowSource();
     }
 
     static std::string buildFirebirdRelationsViewSourcePrototype() {
@@ -705,6 +737,12 @@ private:
 
     static std::string buildFirebirdFieldsViewQuery() {
         static const FirebirdSeedRelationFieldSpec kSeedFields[] = {
+            {"RDB$DATABASE", "RDB$DESCRIPTION", FirebirdSeedFieldKind::TEXT, 32765, 0, false, true, 4, true, 0, false, 0},
+            {"RDB$DATABASE", "RDB$RELATION_ID", FirebirdSeedFieldKind::BIGINT, 8, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$DATABASE", "RDB$SECURITY_CLASS", FirebirdSeedFieldKind::TEXT, 255, 0, false, true, 4, true, 0, false, 0},
+            {"RDB$DATABASE", "RDB$CHARACTER_SET_NAME", FirebirdSeedFieldKind::TEXT, 63, 0, false, true, 4, true, 0, false, 0},
+            {"RDB$DATABASE", "RDB$LINGER", FirebirdSeedFieldKind::BIGINT, 8, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$DATABASE", "RDB$SQL_SECURITY", FirebirdSeedFieldKind::BOOLEAN, 1, 0, false, false, 0, false, 0, false, 0},
             {"RDB$RELATIONS", "RDB$RELATION_NAME", FirebirdSeedFieldKind::TEXT, 255, 0, true, true, 4, true, 0, false, 0},
             {"RDB$RELATIONS", "RDB$VIEW_SOURCE", FirebirdSeedFieldKind::TEXT, 32765, 0, false, true, 4, true, 0, false, 0},
             {"RDB$RELATIONS", "RDB$OWNER_NAME", FirebirdSeedFieldKind::TEXT, 255, 0, false, true, 4, true, 0, false, 0},
@@ -928,6 +966,7 @@ private:
 
             const auto& field = kSeedFields[i];
             const int field_type = firebirdSeedFieldTypeCode(field.kind);
+            const int field_length = firebirdSeedFieldLogicalLength(field.kind, field.field_length);
             const int character_length =
                 field.kind == FirebirdSeedFieldKind::TEXT ? field.field_length : 0;
 
@@ -942,7 +981,7 @@ private:
                      << "CAST(NULL AS TEXT) AS RDB$COMPUTED_SOURCE, "
                      << "CAST(NULL AS TEXT) AS RDB$DEFAULT_VALUE, "
                      << "CAST(NULL AS TEXT) AS RDB$DEFAULT_SOURCE, "
-                     << "CAST(" << field.field_length << " AS INTEGER) AS RDB$FIELD_LENGTH, "
+                     << "CAST(" << field_length << " AS INTEGER) AS RDB$FIELD_LENGTH, "
                      << "CAST(" << field.field_scale << " AS INTEGER) AS RDB$FIELD_SCALE, "
                      << "CAST(" << field_type << " AS SMALLINT) AS RDB$FIELD_TYPE, "
                      << "CAST(0 AS SMALLINT) AS RDB$FIELD_SUB_TYPE, "
@@ -989,6 +1028,12 @@ private:
 
     static std::string buildFirebirdRelationFieldsViewQuery() {
         static const FirebirdSeedRelationFieldSpec kSeedFields[] = {
+            {"RDB$DATABASE", "RDB$DESCRIPTION", FirebirdSeedFieldKind::TEXT, 32765, 0, false, true, 4, true, 0, false, 0},
+            {"RDB$DATABASE", "RDB$RELATION_ID", FirebirdSeedFieldKind::BIGINT, 8, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$DATABASE", "RDB$SECURITY_CLASS", FirebirdSeedFieldKind::TEXT, 255, 0, false, true, 4, true, 0, false, 0},
+            {"RDB$DATABASE", "RDB$CHARACTER_SET_NAME", FirebirdSeedFieldKind::TEXT, 63, 0, false, true, 4, true, 0, false, 0},
+            {"RDB$DATABASE", "RDB$LINGER", FirebirdSeedFieldKind::BIGINT, 8, 0, false, false, 0, false, 0, false, 0},
+            {"RDB$DATABASE", "RDB$SQL_SECURITY", FirebirdSeedFieldKind::BOOLEAN, 1, 0, false, false, 0, false, 0, false, 0},
             {"RDB$RELATIONS", "RDB$RELATION_NAME", FirebirdSeedFieldKind::TEXT, 255, 0, true, true, 4, true, 0, false, 0},
             {"RDB$RELATIONS", "RDB$VIEW_SOURCE", FirebirdSeedFieldKind::TEXT, 32765, 0, false, true, 4, true, 0, false, 0},
             {"RDB$RELATIONS", "RDB$OWNER_NAME", FirebirdSeedFieldKind::TEXT, 255, 0, false, true, 4, true, 0, false, 0},
@@ -1093,10 +1138,12 @@ private:
 
         views.push_back({
             "RDB$DATABASE",
-            std::string("SELECT 1 AS DUMMY") + buildFirebirdSingleRowSource(),
-            {"DUMMY"},
-            {DataType::INT32},
-            "Single-row Firebird compatibility relation"
+            buildFirebirdDatabaseViewQuery(),
+            {"RDB$DESCRIPTION", "RDB$RELATION_ID", "RDB$SECURITY_CLASS",
+             "RDB$CHARACTER_SET_NAME", "RDB$LINGER", "RDB$SQL_SECURITY"},
+            {DataType::VARCHAR, DataType::INT64, DataType::VARCHAR,
+             DataType::VARCHAR, DataType::INT64, DataType::BOOLEAN},
+            "Single-row Firebird compatibility relation backed by the emulated catalog"
         });
 
         // RDB$RELATIONS - Tables

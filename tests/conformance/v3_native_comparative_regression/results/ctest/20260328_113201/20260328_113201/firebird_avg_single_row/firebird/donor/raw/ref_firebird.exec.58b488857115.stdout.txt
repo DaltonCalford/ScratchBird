@@ -1,0 +1,5 @@
+
+CONCATENATION                                             
+========================================================= 
+ASSERT|firebird_avg_single_row|value|5                    
+
