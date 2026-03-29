@@ -1,2 +1,0 @@
-build_rc=0
-ctest_rc=0

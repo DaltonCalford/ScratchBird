@@ -1,5 +1,0 @@
-run_dir=tests/results/full_gate/20260322T224116Z
-configure_log=tests/results/full_gate/20260322T224116Z/configure.log
-build_log=tests/results/full_gate/20260322T224116Z/build.log
-ctest_log=tests/results/full_gate/20260322T224116Z/ctest.log
-ctest_rc=8

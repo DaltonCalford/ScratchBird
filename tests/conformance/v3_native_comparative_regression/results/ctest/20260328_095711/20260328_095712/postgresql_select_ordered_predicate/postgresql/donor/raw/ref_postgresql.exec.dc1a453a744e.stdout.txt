@@ -1,3 +1,0 @@
-ASSERT|postgresql_select_ordered_predicate|row|1
-ASSERT|postgresql_select_ordered_predicate|row|5
-ASSERT|postgresql_select_ordered_predicate|row|9

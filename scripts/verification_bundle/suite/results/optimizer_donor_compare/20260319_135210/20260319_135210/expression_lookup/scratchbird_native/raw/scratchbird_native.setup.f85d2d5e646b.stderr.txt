@@ -1,2 +1,0 @@
-Error: Expected ')' after column list
-Stopping due to error (SET BAIL is ON)

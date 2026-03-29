@@ -1,1 +1,0 @@
-ERROR 1064 (42000) at line 1: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'AS with_alias FROM vncr_81e22b_t1' at line 1

@@ -1,3 +1,0 @@
-# using postmaster on 127.0.0.1, port 16432
-ok 1         - test_setup                              23621 ms
-# parallel group (20 tests):  text int2 varchar char oid int4 txid uuid name regproc pg_lsn boolean money float8 float4 int8 rangetypes

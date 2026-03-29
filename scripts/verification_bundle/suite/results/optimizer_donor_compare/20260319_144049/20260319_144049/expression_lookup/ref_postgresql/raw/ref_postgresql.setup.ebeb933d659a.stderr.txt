@@ -1,1 +1,0 @@
-psql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/expression_lookup.setup.sql:1: NOTICE:  table "avp_expression_lookup" does not exist, skipping

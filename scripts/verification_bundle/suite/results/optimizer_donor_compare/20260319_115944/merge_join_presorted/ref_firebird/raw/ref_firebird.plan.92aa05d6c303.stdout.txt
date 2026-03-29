@@ -1,9 +1,0 @@
-
-PLAN SORT (JOIN (A NATURAL, B INDEX (RDB$PRIMARY4)))
-
-           K PAYLOAD                          PAYLOAD                          
-============ ================================ ================================ 
-          10 m10a                             m10b                             
-          20 m20a                             m20b                             
-          30 m30a                             m30b                             
-

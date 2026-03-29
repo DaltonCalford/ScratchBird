@@ -1,5 +1,0 @@
-Limit  (cost=0.47..0.92 rows=4 width=8)
-  ->  Incremental Sort  (cost=0.47..77.29 rows=690 width=8)
-        Sort Key: k, id
-        Presorted Key: k
-        ->  Index Scan using idx_avp_ordered_limit_topk_k on avp_ordered_limit_topk  (cost=0.15..58.50 rows=690 width=8)

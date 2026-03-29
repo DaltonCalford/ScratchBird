@@ -1,9 +1,0 @@
-Statement failed, SQLSTATE = 08006
-Error reading data from the connection.
-After line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.plan.sql
-Statement failed, SQLSTATE = 08006
-Error writing data to the connection.
-After line 3 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.plan.sql
-Statement failed, SQLSTATE = 08006
-Error writing data to the connection.
-After line 3 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/ordered_limit_topk.plan.sql

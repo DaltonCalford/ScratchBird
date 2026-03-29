@@ -1,5 +1,0 @@
-Catalog Error: Table with name avp_expression_lookup does not exist!
-Did you mean "pg_description"?
-
-LINE 1: EXPLAIN SELECT id, payload FROM avp_expression_lookup WHERE LOWER(name) = 'charlie';
-                                        ^

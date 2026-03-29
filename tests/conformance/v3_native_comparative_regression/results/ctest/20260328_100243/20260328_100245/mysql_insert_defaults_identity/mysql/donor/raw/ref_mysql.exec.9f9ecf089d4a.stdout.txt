@@ -1,3 +1,0 @@
-ASSERT|mysql_insert_defaults_identity|rows|3
-ASSERT|mysql_insert_defaults_identity|hello_rows|2
-ASSERT|mysql_insert_defaults_identity|explicit_id|1

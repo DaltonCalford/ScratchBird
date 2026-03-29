@@ -1,2 +1,0 @@
-psql: error: connection to server at "127.0.0.1", port 16432 failed: FATAL:  Connection closed by peer
-password retrieved from file "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260303_194029/upstream/pgpass"

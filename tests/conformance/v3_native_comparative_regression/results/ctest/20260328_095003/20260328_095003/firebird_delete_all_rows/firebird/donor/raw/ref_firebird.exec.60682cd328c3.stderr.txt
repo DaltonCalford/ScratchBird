@@ -1,3 +1,0 @@
-Statement failed, SQLSTATE = 42000
-unsuccessful metadata update
--object TABLE "VNCR_95B0DB_TB" is in use

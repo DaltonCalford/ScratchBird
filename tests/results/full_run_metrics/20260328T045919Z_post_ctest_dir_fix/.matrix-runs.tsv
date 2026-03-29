@@ -1,7 +1,0 @@
-scratchbird|full-gate|2026-03-28T12:28:22Z|8298.71|0|passed|scratchbird/full-gate
-scratchbird|public-beta|2026-03-28T12:28:22Z|0.0|0|passed|scratchbird/public-beta
-firebird|regression|2026-03-28T07:10:14Z|0.0|0|passed|firebird/regression
-mysql|regression|2026-03-28T07:02:31Z|0.0|0|passed|mysql/regression
-postgresql|regression|2026-03-28T06:52:06Z|0.0|0|passed|postgresql/regression
-scratchbird|regression|2026-03-28T07:03:42Z|0.0|0|passed|scratchbird/regression
-scratchbird|native-v3-inet|2026-03-28T07:07:06Z|0.0|0|passed|scratchbird/native-v3-inet

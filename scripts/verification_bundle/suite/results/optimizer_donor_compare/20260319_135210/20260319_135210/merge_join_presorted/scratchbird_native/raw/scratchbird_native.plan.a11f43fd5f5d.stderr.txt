@@ -1,2 +1,0 @@
-Error: V3 EXPLAIN plan payload invalid
-Stopping due to error (SET BAIL is ON)

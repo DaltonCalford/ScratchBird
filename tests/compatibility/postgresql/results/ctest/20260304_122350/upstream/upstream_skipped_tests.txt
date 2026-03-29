@@ -1,7 +1,0 @@
-generated_utc=2026-03-04T17:23:50Z
-schedule=/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/repos/postgres/src/test/regress/parallel_schedule
-filtered_schedule=/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260304_122350/upstream/parallel_schedule.filtered
-selected_count=5
-executed_count=4
-skipped_count=1
-cluster|Deferred: ScratchBird CLUSTER functionality is not implemented yet (scheduled for next toolset).

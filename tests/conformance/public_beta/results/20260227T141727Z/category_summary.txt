@@ -1,6 +1,0 @@
-CATEGORY_SUMMARY|wire_protocol|7|0
-CATEGORY_SUMMARY|transaction_semantics|4|1
-CATEGORY_SUMMARY|security_enforcement|7|1
-CATEGORY_SUMMARY|end_to_end_sql|1|1
-CATEGORY_SUMMARY|modal_nosql|9|0
-CATEGORY_SUMMARY|cluster_infra|10|0

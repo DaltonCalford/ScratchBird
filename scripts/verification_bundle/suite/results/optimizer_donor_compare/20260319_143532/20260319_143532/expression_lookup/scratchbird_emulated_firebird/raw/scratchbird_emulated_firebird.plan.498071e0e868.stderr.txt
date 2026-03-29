@@ -1,3 +1,0 @@
-Statement failed, SQLSTATE = 08001
-unavailable database
-After line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/expression_lookup.plan.sql

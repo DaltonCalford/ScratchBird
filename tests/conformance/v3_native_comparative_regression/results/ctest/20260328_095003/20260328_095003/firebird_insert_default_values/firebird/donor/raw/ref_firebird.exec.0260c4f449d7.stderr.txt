@@ -1,3 +1,0 @@
-Statement failed, SQLSTATE = 42000
-unsuccessful metadata update
--object TABLE "VNCR_43FEC2_EMPLOYEE" is in use

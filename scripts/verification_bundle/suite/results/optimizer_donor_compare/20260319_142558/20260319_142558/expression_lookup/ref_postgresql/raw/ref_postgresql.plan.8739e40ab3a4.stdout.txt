@@ -1,4 +1,0 @@
-Bitmap Heap Scan on avp_expression_lookup  (cost=4.16..9.51 rows=2 width=86)
-  Recheck Cond: (lower((name)::text) = 'charlie'::text)
-  ->  Bitmap Index Scan on idx_avp_expression_lookup_lower_name  (cost=0.00..4.16 rows=2 width=0)
-        Index Cond: (lower((name)::text) = 'charlie'::text)

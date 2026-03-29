@@ -1,2 +1,0 @@
-1	SIMPLE	a	NULL	ALL	PRIMARY,idx_avp_merge_join_presorted_k	NULL	NULL	NULL	6	100.00	Using temporary; Using filesort
-1	SIMPLE	b	NULL	ALL	PRIMARY,idx_avp_merge_join_presorted_k	NULL	NULL	NULL	6	16.67	Range checked for each record (index map: 0x3)

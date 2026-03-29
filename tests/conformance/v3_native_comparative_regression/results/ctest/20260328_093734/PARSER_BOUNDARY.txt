@@ -1,5 +1,0 @@
-parser_core=v3
-parser_mode=native_core
-protocol_surface=sbwp_native
-statement_path=static_native_v3_comparative_corpus
-translation_mode=frozen_on_disk_namespace_substitution_only

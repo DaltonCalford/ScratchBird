@@ -1,1 +1,0 @@
-CREATE TABLE vncr_77b322_test(id INTEGER);

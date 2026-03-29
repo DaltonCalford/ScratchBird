@@ -1,1 +1,0 @@
-1	SIMPLE	avp_expression_lookup	NULL	ref	idx_avp_expression_lookup_lower_name	idx_avp_expression_lookup_lower_name	131	const	2	100.00	NULL

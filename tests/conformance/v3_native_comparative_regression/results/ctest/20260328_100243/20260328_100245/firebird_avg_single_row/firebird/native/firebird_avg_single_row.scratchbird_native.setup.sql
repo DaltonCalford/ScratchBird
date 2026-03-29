@@ -1,2 +1,0 @@
-CREATE TABLE vncr_2f8a54_test(id INTEGER NOT NULL);
-INSERT INTO vncr_2f8a54_test VALUES (5);

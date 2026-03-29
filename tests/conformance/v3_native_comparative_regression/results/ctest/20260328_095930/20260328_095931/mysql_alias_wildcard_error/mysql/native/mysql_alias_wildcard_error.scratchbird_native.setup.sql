@@ -1,2 +1,0 @@
-CREATE TABLE vncr_de04f7_t1 (a INTEGER, b INTEGER, c INTEGER);
-INSERT INTO vncr_de04f7_t1 VALUES (1, 2, 3);

@@ -1,2 +1,0 @@
-CREATE TABLE vncr_3876e9_t1 (id INT, id2 INT);
-INSERT INTO vncr_3876e9_t1 VALUES (1, 10);

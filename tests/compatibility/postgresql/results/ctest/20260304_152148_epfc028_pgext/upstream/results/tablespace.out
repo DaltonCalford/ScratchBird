@@ -1,1 +1,0 @@
-psql: error: connection to server at "127.0.0.1", port 16432 failed: FATAL:  Database switch denied by manager binding context

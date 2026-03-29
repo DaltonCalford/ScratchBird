@@ -1,1 +1,0 @@
-DROP TABLE vncr_a86175_tb;

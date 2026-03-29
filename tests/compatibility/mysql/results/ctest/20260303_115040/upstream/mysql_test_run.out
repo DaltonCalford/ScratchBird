@@ -1,4 +1,0 @@
-Logging: mysql-test-run.pl  --suite=main --force --retry=0 --parallel=1 --client-bindir=/home/dcalford/CliWork/ScratchBird/../mysql-server/build_codex2/runtime_output_directory --extern host=127.0.0.1 --extern port=16306 --extern user=root --extern password=RootCompat_1!
-mysql: [Warning] Using a password on the command line interface can be insecure.
-ERROR 2013 (HY000): Lost connection to MySQL server during query
-mysql-test-run: *** ERROR: Could not connect to extern server using command: '/home/dcalford/CliWork/ScratchBird/../mysql-server/build_codex2/runtime_output_directory/mysql --no-defaults --user=root --host=127.0.0.1 --password=RootCompat_1! --user=root --port=16306 --silent --database=mysql --execute="SHOW GLOBAL VARIABLES"'

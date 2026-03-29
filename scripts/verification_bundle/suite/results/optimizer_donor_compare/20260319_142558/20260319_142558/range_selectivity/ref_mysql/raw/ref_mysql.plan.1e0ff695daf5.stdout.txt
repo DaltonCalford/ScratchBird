@@ -1,1 +1,0 @@
-1	SIMPLE	avp_range_selectivity	NULL	range	idx_avp_range_selectivity_k	idx_avp_range_selectivity_k	4	NULL	11	100.00	Using where; Using index

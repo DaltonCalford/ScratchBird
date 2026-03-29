@@ -1,1 +1,0 @@
-psql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/ordered_limit_topk.setup.sql:1: NOTICE:  table "avp_ordered_limit_topk" does not exist, skipping

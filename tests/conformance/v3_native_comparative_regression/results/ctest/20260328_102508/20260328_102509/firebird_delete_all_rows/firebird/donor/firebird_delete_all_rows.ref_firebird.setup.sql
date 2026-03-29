@@ -1,2 +1,0 @@
-CREATE TABLE vncr_b9426f_tb(id INT);
-INSERT INTO vncr_b9426f_tb VALUES (10);

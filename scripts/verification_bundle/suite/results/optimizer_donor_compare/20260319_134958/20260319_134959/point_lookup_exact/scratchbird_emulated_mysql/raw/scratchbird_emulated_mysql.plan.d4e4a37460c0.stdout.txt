@@ -1,1 +1,0 @@
-1	SIMPLE	avp_point_lookup_exact	NULL	ref	idx_avp_point_lookup_exact_k	idx_avp_point_lookup_exact_k	NULL	NULL	10	100.00	ScratchBird scan_family=BTREE_EQ_SCAN; capability=EXACT_RECHECK; lookup=SECONDARY_ROW_FETCH

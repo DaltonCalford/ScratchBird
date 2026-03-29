@@ -1,3 +1,0 @@
-Statement failed, SQLSTATE = 42000
-Dynamic SQL Error
-After line 1 in file /home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/firebird/merge_join_presorted.plan.sql

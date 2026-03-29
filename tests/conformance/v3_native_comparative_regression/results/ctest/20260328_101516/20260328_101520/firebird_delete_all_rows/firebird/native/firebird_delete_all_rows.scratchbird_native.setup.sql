@@ -1,2 +1,0 @@
-CREATE TABLE vncr_347db6_tb(id INTEGER);
-INSERT INTO vncr_347db6_tb VALUES (10);

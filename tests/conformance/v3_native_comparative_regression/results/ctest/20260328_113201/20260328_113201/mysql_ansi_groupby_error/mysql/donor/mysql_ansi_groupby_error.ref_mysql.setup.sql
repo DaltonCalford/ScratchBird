@@ -1,2 +1,0 @@
-CREATE TABLE vncr_ef6509_t1 (id INT, id2 INT);
-INSERT INTO vncr_ef6509_t1 VALUES (1, 10);

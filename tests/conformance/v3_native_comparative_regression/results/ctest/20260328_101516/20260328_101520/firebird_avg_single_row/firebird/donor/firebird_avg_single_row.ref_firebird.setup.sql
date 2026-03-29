@@ -1,3 +1,0 @@
-CREATE TABLE vncr_00bc42_test(id INTEGER NOT NULL);
-INSERT INTO vncr_00bc42_test VALUES (5);
-COMMIT;

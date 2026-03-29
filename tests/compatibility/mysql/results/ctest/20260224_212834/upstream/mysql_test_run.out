@@ -1,6 +1,0 @@
-Logging: mysql-test-run.pl  --suite=main --force --retry=0 --parallel=1 --client-bindir=/home/dcalford/CliWork/ScratchBird/../mysql-server/build_codex2/runtime_output_directory --extern host=127.0.0.1 --extern port=3306 --extern user=root --do-test=^select$
-MySQL Version 9.6.0
-Checking supported features
-Using suite(s): main
-Collecting tests
-No tests found, terminating

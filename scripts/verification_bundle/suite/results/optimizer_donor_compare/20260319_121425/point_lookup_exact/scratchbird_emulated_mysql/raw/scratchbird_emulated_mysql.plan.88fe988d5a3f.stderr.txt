@@ -1,1 +1,0 @@
-ERROR 5002 (HY000) at line 1: V3 EXPLAIN plan payload invalid

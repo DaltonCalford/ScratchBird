@@ -1,1 +1,0 @@
-SELECT 'ASSERT|mysql_ansi_concat_operator|value|' || 'AB';

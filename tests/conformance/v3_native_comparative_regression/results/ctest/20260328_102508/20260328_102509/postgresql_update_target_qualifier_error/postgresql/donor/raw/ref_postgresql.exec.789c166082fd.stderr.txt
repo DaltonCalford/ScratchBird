@@ -1,3 +1,0 @@
-psql:/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_comparative_regression/results/ctest/20260328_102508/20260328_102509/postgresql_update_target_qualifier_error/postgresql/donor/postgresql_update_target_qualifier_error.ref_postgresql.exec.sql:3: ERROR:  column "t" of relation "vncr_8f4d0d_update_test" does not exist
-LINE 2:    SET t.b = t.b + 10
-               ^

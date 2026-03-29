@@ -1,1 +1,0 @@
-psql:/home/dcalford/CliWork/ScratchBird/scripts/verification_bundle/suite/cases/optimizer/sql/postgresql/point_lookup_exact.exec.sql:3: ERROR:  Parse error at line 1, column 94: Expected expression

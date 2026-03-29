@@ -1,1 +1,0 @@
-DROP TABLE vncr_52d314_t1;

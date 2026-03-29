@@ -1,7 +1,0 @@
-
-PLAN (AVP_POINT_LOOKUP_EXACT INDEX (IDX_AVP_POINT_LOOKUP_EXACT_K))
-
-PAYLOAD                          
-================================ 
-p073                             
-

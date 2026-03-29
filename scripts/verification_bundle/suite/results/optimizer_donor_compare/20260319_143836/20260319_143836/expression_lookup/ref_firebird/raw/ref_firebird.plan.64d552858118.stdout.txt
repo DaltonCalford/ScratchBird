@@ -1,8 +1,0 @@
-
-PLAN (AVP_EXPRESSION_LOOKUP NATURAL)
-
-          ID PAYLOAD                          
-============ ================================ 
-           3 charlie-a                        
-           4 charlie-b                        
-
