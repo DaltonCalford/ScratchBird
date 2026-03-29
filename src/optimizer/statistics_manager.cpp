@@ -15,6 +15,18 @@
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/table_stats_manager.h"
+#include "scratchbird/core/btree.h"
+#include "scratchbird/core/hash_index.h"
+#include "scratchbird/core/bitmap_index.h"
+#include "scratchbird/core/brin_index.h"
+#include "scratchbird/core/gist_index.h"
+#include "scratchbird/core/gin_index.h"
+#include "scratchbird/core/spgist_index.h"
+#include "scratchbird/core/hnsw_index.h"
+#include "scratchbird/core/columnstore.h"
+#include "scratchbird/core/lsm_tree_index.h"
+#include "scratchbird/core/rtree.h"
+#include "scratchbird/core/inverted_index.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/plain_value_reader.h"
 #include "scratchbird/core/debug.h"
@@ -131,21 +143,534 @@ namespace scratchbird::optimizer
         {
             case IndexType::BTREE: return "BTREE";
             case IndexType::HASH: return "HASH";
-            case IndexType::BRIN: return "BRIN";
-            case IndexType::LSM: return "LSM";
+            case IndexType::HNSW: return "HNSW";
+            case IndexType::FULLTEXT: return "FULLTEXT";
             case IndexType::GIN: return "GIN";
             case IndexType::GIST: return "GIST";
-            case IndexType::SPGIST: return "SPGIST";
+            case IndexType::BRIN: return "BRIN";
             case IndexType::RTREE: return "RTREE";
-            case IndexType::FULLTEXT: return "FULLTEXT";
-            case IndexType::INVERTED: return "INVERTED";
-            case IndexType::NGRAM: return "NGRAM";
-            case IndexType::VECTOR_FLAT: return "VECTOR_FLAT";
-            case IndexType::HNSW: return "HNSW";
+            case IndexType::SPGIST: return "SPGIST";
+            case IndexType::BITMAP: return "BITMAP";
+            case IndexType::COLUMNSTORE: return "COLUMNSTORE";
+            case IndexType::LSM: return "LSM";
             case IndexType::IVF: return "IVF";
-            case IndexType::BLOOM: return "BLOOM";
             case IndexType::ZONEMAP: return "ZONEMAP";
+            case IndexType::ART: return "ART";
+            case IndexType::BLOOM: return "BLOOM";
+            case IndexType::VECTOR_FLAT: return "VECTOR_FLAT";
+            case IndexType::VECTOR_BIN_FLAT: return "VECTOR_BIN_FLAT";
+            case IndexType::IVF_FLAT: return "IVF_FLAT";
+            case IndexType::BIN_IVF_FLAT: return "BIN_IVF_FLAT";
+            case IndexType::IVF_PQ: return "IVF_PQ";
+            case IndexType::IVF_SQ8: return "IVF_SQ8";
+            case IndexType::IVF_SQ8_HYBRID: return "IVF_SQ8_HYBRID";
+            case IndexType::RHNSW_PQ: return "RHNSW_PQ";
+            case IndexType::RHNSW_SQ: return "RHNSW_SQ";
+            case IndexType::ANNOY: return "ANNOY";
+            case IndexType::NSG: return "NSG";
+            case IndexType::DISKANN: return "DISKANN";
+            case IndexType::SCANN: return "SCANN";
+            case IndexType::GPU_CAGRA: return "GPU_CAGRA";
+            case IndexType::MINHASH_LSH: return "MINHASH_LSH";
+            case IndexType::SPARSE_INVERTED: return "SPARSE_INVERTED";
+            case IndexType::SPARSE_WAND: return "SPARSE_WAND";
+            case IndexType::TRIE: return "TRIE";
+            case IndexType::INVERTED: return "INVERTED";
+            case IndexType::STL_SORT: return "STL_SORT";
+            case IndexType::NGRAM: return "NGRAM";
+            case IndexType::MONGODB_2D: return "MONGODB_2D";
+            case IndexType::MONGODB_2DSPHERE: return "MONGODB_2DSPHERE";
+            case IndexType::MONGODB_2DSPHERE_BUCKET: return "MONGODB_2DSPHERE_BUCKET";
+            case IndexType::MONGODB_GEO_HAYSTACK: return "MONGODB_GEO_HAYSTACK";
+            case IndexType::MONGODB_WILDCARD: return "MONGODB_WILDCARD";
+            case IndexType::MONGODB_ENCRYPTED_RANGE: return "MONGODB_ENCRYPTED_RANGE";
+            case IndexType::NEO4J_LOOKUP: return "NEO4J_LOOKUP";
+            case IndexType::NEO4J_TEXT: return "NEO4J_TEXT";
+            case IndexType::NEO4J_RANGE: return "NEO4J_RANGE";
+            case IndexType::NEO4J_POINT: return "NEO4J_POINT";
+            case IndexType::NEO4J_VECTOR: return "NEO4J_VECTOR";
+            case IndexType::CASSANDRA_SASI: return "CASSANDRA_SASI";
+            case IndexType::CASSANDRA_SAI: return "CASSANDRA_SAI";
+            case IndexType::REDIS_STRING: return "REDIS_STRING";
+            case IndexType::REDIS_HASH: return "REDIS_HASH";
+            case IndexType::REDIS_LIST: return "REDIS_LIST";
+            case IndexType::REDIS_SET: return "REDIS_SET";
+            case IndexType::REDIS_ZSET: return "REDIS_ZSET";
+            case IndexType::REDIS_STREAM: return "REDIS_STREAM";
+            case IndexType::REDIS_BITMAP: return "REDIS_BITMAP";
+            case IndexType::REDIS_HLL: return "REDIS_HLL";
+            case IndexType::REDIS_GEO: return "REDIS_GEO";
             default: return std::to_string(static_cast<uint32_t>(index_type));
+        }
+    }
+
+    auto runtimeIndexFamilyName(core::CatalogManager::IndexType index_type) -> const char *
+    {
+        using IndexType = core::CatalogManager::IndexType;
+        switch (index_type)
+        {
+            case IndexType::BTREE:
+            case IndexType::STL_SORT:
+            case IndexType::ART:
+            case IndexType::MONGODB_GEO_HAYSTACK:
+            case IndexType::NEO4J_RANGE:
+            case IndexType::NEO4J_POINT:
+            case IndexType::REDIS_LIST:
+            case IndexType::REDIS_ZSET:
+            case IndexType::REDIS_STREAM:
+                return "BTREE";
+            case IndexType::HASH:
+            case IndexType::REDIS_STRING:
+            case IndexType::REDIS_HASH:
+            case IndexType::REDIS_SET:
+            case IndexType::REDIS_HLL:
+                return "HASH";
+            case IndexType::RTREE:
+            case IndexType::MONGODB_2D:
+            case IndexType::MONGODB_2DSPHERE:
+            case IndexType::MONGODB_2DSPHERE_BUCKET:
+            case IndexType::REDIS_GEO:
+                return "RTREE";
+            case IndexType::BITMAP:
+            case IndexType::NEO4J_LOOKUP:
+            case IndexType::REDIS_BITMAP:
+                return "BITMAP";
+            case IndexType::GIN:
+                return "GIN";
+            case IndexType::GIST:
+                return "GIST";
+            case IndexType::BRIN:
+            case IndexType::ZONEMAP:
+            case IndexType::BLOOM:
+                return "BRIN";
+            case IndexType::SPGIST:
+                return "SPGIST";
+            case IndexType::HNSW:
+            case IndexType::IVF:
+            case IndexType::VECTOR_FLAT:
+            case IndexType::VECTOR_BIN_FLAT:
+            case IndexType::IVF_FLAT:
+            case IndexType::BIN_IVF_FLAT:
+            case IndexType::IVF_PQ:
+            case IndexType::IVF_SQ8:
+            case IndexType::IVF_SQ8_HYBRID:
+            case IndexType::RHNSW_PQ:
+            case IndexType::RHNSW_SQ:
+            case IndexType::ANNOY:
+            case IndexType::NSG:
+            case IndexType::DISKANN:
+            case IndexType::SCANN:
+            case IndexType::GPU_CAGRA:
+            case IndexType::NEO4J_VECTOR:
+                return "HNSW";
+            case IndexType::FULLTEXT:
+            case IndexType::INVERTED:
+            case IndexType::MONGODB_WILDCARD:
+            case IndexType::MONGODB_ENCRYPTED_RANGE:
+            case IndexType::NEO4J_TEXT:
+            case IndexType::CASSANDRA_SASI:
+            case IndexType::CASSANDRA_SAI:
+            case IndexType::TRIE:
+            case IndexType::NGRAM:
+            case IndexType::SPARSE_INVERTED:
+            case IndexType::SPARSE_WAND:
+            case IndexType::MINHASH_LSH:
+                return "INVERTED";
+            case IndexType::COLUMNSTORE:
+                return "COLUMNSTORE";
+            case IndexType::LSM:
+                return "LSM";
+            default:
+                return "UNKNOWN";
+        }
+    }
+
+    auto isAliasSurface(core::CatalogManager::IndexType index_type) -> bool
+    {
+        using IndexType = core::CatalogManager::IndexType;
+        switch (index_type)
+        {
+            case IndexType::BTREE:
+            case IndexType::HASH:
+            case IndexType::HNSW:
+            case IndexType::FULLTEXT:
+            case IndexType::GIN:
+            case IndexType::GIST:
+            case IndexType::BRIN:
+            case IndexType::RTREE:
+            case IndexType::SPGIST:
+            case IndexType::BITMAP:
+            case IndexType::COLUMNSTORE:
+            case IndexType::LSM:
+            case IndexType::IVF:
+            case IndexType::VECTOR_FLAT:
+            case IndexType::VECTOR_BIN_FLAT:
+            case IndexType::IVF_FLAT:
+            case IndexType::BIN_IVF_FLAT:
+            case IndexType::IVF_PQ:
+            case IndexType::IVF_SQ8:
+            case IndexType::IVF_SQ8_HYBRID:
+            case IndexType::RHNSW_PQ:
+            case IndexType::RHNSW_SQ:
+            case IndexType::ANNOY:
+            case IndexType::NSG:
+            case IndexType::DISKANN:
+            case IndexType::SCANN:
+            case IndexType::GPU_CAGRA:
+            case IndexType::INVERTED:
+            case IndexType::TRIE:
+            case IndexType::NGRAM:
+            case IndexType::SPARSE_INVERTED:
+            case IndexType::SPARSE_WAND:
+            case IndexType::MINHASH_LSH:
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    auto runtimeFamilyHasNativeMetrics(core::CatalogManager::IndexType index_type) -> bool
+    {
+        using IndexType = core::CatalogManager::IndexType;
+        switch (index_type)
+        {
+            case IndexType::BTREE:
+            case IndexType::STL_SORT:
+            case IndexType::ART:
+            case IndexType::MONGODB_GEO_HAYSTACK:
+            case IndexType::NEO4J_RANGE:
+            case IndexType::NEO4J_POINT:
+            case IndexType::REDIS_LIST:
+            case IndexType::REDIS_ZSET:
+            case IndexType::REDIS_STREAM:
+            case IndexType::HASH:
+            case IndexType::REDIS_STRING:
+            case IndexType::REDIS_HASH:
+            case IndexType::REDIS_SET:
+            case IndexType::REDIS_HLL:
+            case IndexType::FULLTEXT:
+            case IndexType::GIST:
+            case IndexType::BITMAP:
+            case IndexType::NEO4J_LOOKUP:
+            case IndexType::REDIS_BITMAP:
+            case IndexType::GIN:
+            case IndexType::BRIN:
+            case IndexType::ZONEMAP:
+            case IndexType::BLOOM:
+            case IndexType::SPGIST:
+            case IndexType::RTREE:
+            case IndexType::MONGODB_2D:
+            case IndexType::MONGODB_2DSPHERE:
+            case IndexType::MONGODB_2DSPHERE_BUCKET:
+            case IndexType::REDIS_GEO:
+            case IndexType::HNSW:
+            case IndexType::IVF:
+            case IndexType::VECTOR_FLAT:
+            case IndexType::VECTOR_BIN_FLAT:
+            case IndexType::IVF_FLAT:
+            case IndexType::BIN_IVF_FLAT:
+            case IndexType::IVF_PQ:
+            case IndexType::IVF_SQ8:
+            case IndexType::IVF_SQ8_HYBRID:
+            case IndexType::RHNSW_PQ:
+            case IndexType::RHNSW_SQ:
+            case IndexType::ANNOY:
+            case IndexType::NSG:
+            case IndexType::DISKANN:
+            case IndexType::SCANN:
+            case IndexType::GPU_CAGRA:
+            case IndexType::NEO4J_VECTOR:
+            case IndexType::INVERTED:
+            case IndexType::MONGODB_WILDCARD:
+            case IndexType::MONGODB_ENCRYPTED_RANGE:
+            case IndexType::NEO4J_TEXT:
+            case IndexType::CASSANDRA_SASI:
+            case IndexType::CASSANDRA_SAI:
+            case IndexType::TRIE:
+            case IndexType::NGRAM:
+            case IndexType::SPARSE_INVERTED:
+            case IndexType::SPARSE_WAND:
+            case IndexType::MINHASH_LSH:
+            case IndexType::COLUMNSTORE:
+            case IndexType::LSM:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    auto indexMetricsNativeMode(core::CatalogManager::IndexType index_type) -> const char *
+    {
+        const bool alias_surface = isAliasSurface(index_type);
+        if (runtimeFamilyHasNativeMetrics(index_type))
+        {
+            return alias_surface ? "routed_family_native" : "family_native";
+        }
+        return alias_surface ? "routed_derived_heuristic" : "derived_heuristic";
+    }
+
+    auto indexMetricsSemanticContractState(core::CatalogManager::IndexType index_type) -> const char *
+    {
+        if (isAliasSurface(index_type))
+        {
+            return "alias_surface_routed";
+        }
+        if (runtimeFamilyHasNativeMetrics(index_type))
+        {
+            return "current_runtime_family";
+        }
+        return "current_runtime_with_heuristic_metrics";
+    }
+
+    auto collectNativeIndexFamilyMetrics(core::CatalogManager *catalog,
+                                         const core::CatalogManager::IndexInfo &index_info)
+        -> nlohmann::json
+    {
+        if (catalog == nullptr)
+        {
+            return nlohmann::json::object();
+        }
+
+        core::CatalogManager::IndexType actual_type = index_info.index_type;
+        void *index_ptr = catalog->getIndexPtr(index_info.index_id, &actual_type);
+        if (index_ptr == nullptr)
+        {
+            return nlohmann::json::object();
+        }
+
+        core::ErrorContext local_ctx;
+        using IndexType = core::CatalogManager::IndexType;
+
+        switch (actual_type)
+        {
+            case IndexType::BTREE:
+            case IndexType::STL_SORT:
+            case IndexType::ART:
+            case IndexType::MONGODB_GEO_HAYSTACK:
+            case IndexType::NEO4J_RANGE:
+            case IndexType::NEO4J_POINT:
+            case IndexType::REDIS_LIST:
+            case IndexType::REDIS_ZSET:
+            case IndexType::REDIS_STREAM:
+            {
+                auto *btree = static_cast<core::BTree *>(index_ptr);
+                const auto &stats = btree->getIndexInfo();
+                return {
+                    {"native_family", "BTREE"},
+                    {"height", stats.idx_height},
+                    {"tuple_count", stats.idx_tuple_count},
+                    {"page_count", stats.idx_page_count},
+                    {"deleted_count", stats.idx_deleted_count}
+                };
+            }
+            case IndexType::HASH:
+            case IndexType::REDIS_STRING:
+            case IndexType::REDIS_HASH:
+            case IndexType::REDIS_SET:
+            case IndexType::REDIS_HLL:
+            {
+                auto *hash = static_cast<core::HashIndex *>(index_ptr);
+                auto stats = hash->getStatistics(&local_ctx);
+                return {
+                    {"native_family", "HASH"},
+                    {"num_tuples", stats.num_tuples},
+                    {"num_deleted", stats.num_deleted},
+                    {"global_depth", stats.global_depth},
+                    {"num_buckets", stats.num_buckets},
+                    {"num_overflow_pages", stats.num_overflow_pages},
+                    {"avg_entries_per_bucket", stats.avg_entries_per_bucket},
+                    {"load_factor", stats.load_factor}
+                };
+            }
+            case IndexType::BITMAP:
+            case IndexType::NEO4J_LOOKUP:
+            case IndexType::REDIS_BITMAP:
+            {
+                auto *bitmap = static_cast<core::BitmapIndex *>(index_ptr);
+                auto stats = bitmap->getStatistics(&local_ctx);
+                return {
+                    {"native_family", "BITMAP"},
+                    {"num_distinct_values", stats.num_distinct_values},
+                    {"total_tuples", stats.total_tuples},
+                    {"total_pages", stats.total_pages},
+                    {"avg_cardinality", stats.avg_cardinality},
+                    {"compression_ratio", stats.compression_ratio}
+                };
+            }
+            case IndexType::BRIN:
+            case IndexType::ZONEMAP:
+            case IndexType::BLOOM:
+            {
+                auto *brin = static_cast<core::BrinIndex *>(index_ptr);
+                core::BrinIndex::BrinStats stats{};
+                if (brin->getStats(&stats, &local_ctx) != core::Status::OK)
+                {
+                    return nlohmann::json::object();
+                }
+                return {
+                    {"native_family", "BRIN"},
+                    {"total_ranges", stats.total_ranges},
+                    {"deleted_ranges", stats.deleted_ranges},
+                    {"total_pages", stats.total_pages},
+                    {"blocks_covered", stats.blocks_covered},
+                    {"avg_range_selectivity", stats.avg_range_selectivity}
+                };
+            }
+            case IndexType::GIN:
+            {
+                auto *gin = static_cast<core::GinIndex *>(index_ptr);
+                auto stats = gin->getStatistics(&local_ctx);
+                return {
+                    {"native_family", "GIN"},
+                    {"num_keys", stats.num_keys},
+                    {"num_tuples", stats.num_tuples},
+                    {"pending_list_count", stats.pending_list_count},
+                    {"keys_tree_height", stats.keys_tree_height},
+                    {"avg_tids_per_key", stats.avg_tids_per_key},
+                    {"num_posting_trees", stats.num_posting_trees},
+                    {"num_posting_lists", stats.num_posting_lists}
+                };
+            }
+            case IndexType::GIST:
+            {
+                auto *gist = static_cast<core::GiSTIndex *>(index_ptr);
+                return {
+                    {"native_family", "GIST"},
+                    {"height", gist->getHeight()},
+                    {"entry_count", gist->getEntryCount()},
+                    {"deleted_count", gist->getDeadEntryCount()}
+                };
+            }
+            case IndexType::SPGIST:
+            {
+                auto *spgist = static_cast<core::SPGiSTIndex *>(index_ptr);
+                auto stats = spgist->getStats();
+                return {
+                    {"native_family", "SPGIST"},
+                    {"total_entries", stats.total_entries},
+                    {"deleted_entries", stats.deleted_entries},
+                    {"max_depth", stats.max_depth},
+                    {"avg_leaf_density", stats.avg_leaf_density}
+                };
+            }
+            case IndexType::RTREE:
+            case IndexType::MONGODB_2D:
+            case IndexType::MONGODB_2DSPHERE:
+            case IndexType::MONGODB_2DSPHERE_BUCKET:
+            case IndexType::REDIS_GEO:
+            {
+                auto *rtree = static_cast<core::RTree *>(index_ptr);
+                return {
+                    {"native_family", "RTREE"},
+                    {"height", rtree->getHeight()},
+                    {"total_entries", rtree->getTotalEntries()},
+                    {"deleted_entries", rtree->getDeletedEntries()}
+                };
+            }
+            case IndexType::HNSW:
+            case IndexType::IVF:
+            case IndexType::VECTOR_FLAT:
+            case IndexType::VECTOR_BIN_FLAT:
+            case IndexType::IVF_FLAT:
+            case IndexType::BIN_IVF_FLAT:
+            case IndexType::IVF_PQ:
+            case IndexType::IVF_SQ8:
+            case IndexType::IVF_SQ8_HYBRID:
+            case IndexType::RHNSW_PQ:
+            case IndexType::RHNSW_SQ:
+            case IndexType::ANNOY:
+            case IndexType::NSG:
+            case IndexType::DISKANN:
+            case IndexType::SCANN:
+            case IndexType::GPU_CAGRA:
+            case IndexType::NEO4J_VECTOR:
+            {
+                auto *hnsw = static_cast<core::HnswIndex *>(index_ptr);
+                core::HnswIndex::HnswStats stats{};
+                if (hnsw->getStats(&stats, &local_ctx) != core::Status::OK)
+                {
+                    return nlohmann::json::object();
+                }
+                return {
+                    {"native_family", "HNSW"},
+                    {"total_nodes", stats.total_nodes},
+                    {"deleted_nodes", stats.deleted_nodes},
+                    {"total_pages", stats.total_pages},
+                    {"max_layer", stats.max_layer},
+                    {"avg_connections", stats.avg_connections},
+                    {"avg_path_length", stats.avg_path_length}
+                };
+            }
+            case IndexType::COLUMNSTORE:
+            {
+                auto *columnstore = static_cast<core::ColumnstoreIndex *>(index_ptr);
+                core::ColumnstoreIndex::ColumnstoreStats stats{};
+                if (columnstore->getStats(&stats, &local_ctx) != core::Status::OK)
+                {
+                    return nlohmann::json::object();
+                }
+                return {
+                    {"native_family", "COLUMNSTORE"},
+                    {"total_segments", stats.total_segments},
+                    {"total_rows", stats.total_rows},
+                    {"compressed_bytes", stats.compressed_bytes},
+                    {"uncompressed_bytes", stats.uncompressed_bytes},
+                    {"compression_ratio", stats.compression_ratio},
+                    {"null_count", stats.null_count}
+                };
+            }
+            case IndexType::LSM:
+            {
+                auto *lsm = static_cast<core::LSMTreeIndex *>(index_ptr);
+                core::Statistics stats{};
+                if (lsm->getStatistics(&stats, &local_ctx) != core::Status::OK)
+                {
+                    return nlohmann::json::object();
+                }
+                return {
+                    {"native_family", "LSM"},
+                    {"active_memtable_entries", stats.active_memtable_entries},
+                    {"active_memtable_size", stats.active_memtable_size},
+                    {"immutable_memtable_entries", stats.immutable_memtable_entries},
+                    {"immutable_memtable_size", stats.immutable_memtable_size},
+                    {"level0_sstables", stats.level0_sstables},
+                    {"level1_sstables", stats.level1_sstables},
+                    {"level2_sstables", stats.level2_sstables},
+                    {"level3_sstables", stats.level3_sstables},
+                    {"total_sstables", stats.level0_sstables + stats.level1_sstables +
+                                           stats.level2_sstables + stats.level3_sstables},
+                    {"total_size_bytes", stats.total_size_bytes}
+                };
+            }
+            case IndexType::FULLTEXT:
+            case IndexType::INVERTED:
+            case IndexType::MONGODB_WILDCARD:
+            case IndexType::MONGODB_ENCRYPTED_RANGE:
+            case IndexType::NEO4J_TEXT:
+            case IndexType::CASSANDRA_SASI:
+            case IndexType::CASSANDRA_SAI:
+            case IndexType::TRIE:
+            case IndexType::NGRAM:
+            case IndexType::SPARSE_INVERTED:
+            case IndexType::SPARSE_WAND:
+            case IndexType::MINHASH_LSH:
+            {
+                auto *inverted = static_cast<core::InvertedIndex *>(index_ptr);
+                auto stats = inverted->getStatistics(&local_ctx);
+                return {
+                    {"native_family", "INVERTED"},
+                    {"num_segments", stats.num_segments},
+                    {"total_documents", stats.total_documents},
+                    {"total_terms", stats.total_terms},
+                    {"total_tokens", stats.total_tokens},
+                    {"avg_doc_length", stats.avg_doc_length},
+                    {"total_queries", stats.total_queries},
+                    {"avg_query_time_us", stats.avg_query_time_us},
+                    {"last_merge_time", stats.last_merge_time}
+                };
+            }
+            default:
+                return nlohmann::json::object();
         }
     }
 
@@ -1707,10 +2232,20 @@ namespace scratchbird::optimizer
                                            have_health ? &health : nullptr,
                                            true,
                                            sample_rate);
-        const IndexMetricsQueryabilityState queryability_state =
+        IndexMetricsQueryabilityState queryability_state =
             effectiveMetricsQueryability(lowering,
                                          have_health ? &health : nullptr,
                                          confidence_class);
+        const bool alias_surface = isAliasSurface(index_info.index_type);
+        if (alias_surface &&
+            queryability_state == IndexMetricsQueryabilityState::QUERYABLE)
+        {
+            queryability_state = IndexMetricsQueryabilityState::LIMITED;
+        }
+        const char *runtime_family = runtimeIndexFamilyName(index_info.index_type);
+        const char *native_metrics_mode = indexMetricsNativeMode(index_info.index_type);
+        const char *semantic_contract_state =
+            indexMetricsSemanticContractState(index_info.index_type);
 
         IndexFamilyMetricsPacket packet;
         packet.index_id = index_id;
@@ -1752,7 +2287,12 @@ namespace scratchbird::optimizer
         nlohmann::json envelope = {
             {"index_uuid", index_id.toString()},
             {"physical_family", packet.physical_family},
+            {"runtime_family", runtime_family},
             {"planner_family", packet.planner_family},
+            {"alias_surface", alias_surface},
+            {"native_metrics_mode", native_metrics_mode},
+            {"semantic_contract_state", semantic_contract_state},
+            {"requires_fail_closed_stronger_semantics", alias_surface},
             {"queryability_state", indexMetricsQueryabilityStateName(packet.queryability_state)},
             {"metrics_last_refresh_xid", packet.metrics_last_refresh_xid},
             {"metrics_confidence_class", indexMetricsConfidenceClassName(packet.metrics_confidence_class)},
@@ -1960,6 +2500,13 @@ namespace scratchbird::optimizer
                 break;
         }
 
+        nlohmann::json native_family_metrics =
+            collectNativeIndexFamilyMetrics(catalog_, index_info);
+        if (!native_family_metrics.empty())
+        {
+            family_metrics["native_runtime_metrics"] = std::move(native_family_metrics);
+        }
+
         packet.family_metrics_payload =
             nlohmann::json{
                 {"shared_metrics_envelope", envelope},
@@ -2081,10 +2628,20 @@ namespace scratchbird::optimizer
                                            have_health ? &health : nullptr,
                                            false,
                                            0.0f);
-        const IndexMetricsQueryabilityState queryability_state =
+        IndexMetricsQueryabilityState queryability_state =
             effectiveMetricsQueryability(lowering,
                                          have_health ? &health : nullptr,
                                          confidence_class);
+        const bool alias_surface = isAliasSurface(index_info.index_type);
+        if (alias_surface &&
+            queryability_state == IndexMetricsQueryabilityState::QUERYABLE)
+        {
+            queryability_state = IndexMetricsQueryabilityState::LIMITED;
+        }
+        const char *runtime_family = runtimeIndexFamilyName(index_info.index_type);
+        const char *native_metrics_mode = indexMetricsNativeMode(index_info.index_type);
+        const char *semantic_contract_state =
+            indexMetricsSemanticContractState(index_info.index_type);
 
         IndexFamilyMetricsPacket packet = have_existing_packet
             ? existing_packet
@@ -2140,7 +2697,12 @@ namespace scratchbird::optimizer
         payload["shared_metrics_envelope"] = {
             {"index_uuid", index_id.toString()},
             {"physical_family", packet.physical_family},
+            {"runtime_family", runtime_family},
             {"planner_family", packet.planner_family},
+            {"alias_surface", alias_surface},
+            {"native_metrics_mode", native_metrics_mode},
+            {"semantic_contract_state", semantic_contract_state},
+            {"requires_fail_closed_stronger_semantics", alias_surface},
             {"queryability_state", indexMetricsQueryabilityStateName(packet.queryability_state)},
             {"metrics_last_refresh_xid", packet.metrics_last_refresh_xid},
             {"metrics_confidence_class", indexMetricsConfidenceClassName(packet.metrics_confidence_class)},
@@ -2162,6 +2724,13 @@ namespace scratchbird::optimizer
         if (!payload.contains("family_metrics"))
         {
             payload["family_metrics"] = nlohmann::json::object();
+        }
+        nlohmann::json native_family_metrics =
+            collectNativeIndexFamilyMetrics(catalog_, index_info);
+        if (!native_family_metrics.empty())
+        {
+            payload["family_metrics"]["native_runtime_metrics"] =
+                std::move(native_family_metrics);
         }
         packet.family_metrics_payload = payload.dump();
 

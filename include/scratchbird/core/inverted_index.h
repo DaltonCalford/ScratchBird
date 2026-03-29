@@ -216,6 +216,18 @@ inline uint32_t maxDocStatsPerPage(uint32_t page_size)
 class InvertedIndex : public IndexGCInterface
 {
 public:
+    struct Statistics
+    {
+        uint32_t num_segments = 0;
+        uint64_t total_documents = 0;
+        uint64_t total_terms = 0;
+        uint64_t total_tokens = 0;
+        uint32_t avg_doc_length = 0;
+        uint64_t total_queries = 0;
+        uint64_t avg_query_time_us = 0;
+        uint64_t last_merge_time = 0;
+    };
+
     InvertedIndex(Database* db,
                   const ID& index_uuid,
                   const ID& table_uuid,
@@ -253,6 +265,8 @@ public:
                   uint64_t current_xid,
                   std::vector<TID>* results,
                   ErrorContext* ctx = nullptr);
+
+    Statistics getStatistics(ErrorContext* ctx = nullptr) const;
 
     Status removeDeadEntries(const std::vector<TID>& dead_tids,
                              uint64_t* entries_removed_out = nullptr,

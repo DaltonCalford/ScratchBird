@@ -18,8 +18,10 @@
 
 #include "scratchbird/protocol/adapters/native_adapter.h"
 #include "scratchbird/client/sql_helpers.h"
+#include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/lsm_compression.h"
+#include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/parser/v3_compiler.h"
 #include "scratchbird/parser/parser_v3.h"
@@ -90,6 +92,57 @@ uint32_t getProcessId() {
 #else
     return static_cast<uint32_t>(::getpid());
 #endif
+}
+
+std::string derivativeBackpressureClassForStats(
+    const core::SweepStatistics& stats) {
+    if (stats.wal_after_backlog_depth == 0 &&
+        stats.wal_after_export_failures == 0) {
+        return "NONE";
+    }
+    return "OBSERVE_ONLY";
+}
+
+struct ShadowFilespaceStatusSummary {
+    size_t total_members = 0;
+    size_t ready_members = 0;
+    std::string state = "NONE";
+};
+
+ShadowFilespaceStatusSummary summarizeShadowFilespaces(const core::Database& database) {
+    ShadowFilespaceStatusSummary summary;
+    std::vector<core::Database::ShadowFilespaceSnapshot> shadows;
+    if (database.listShadowFilespaces(shadows, nullptr) != core::Status::OK) {
+        return summary;
+    }
+
+    summary.total_members = shadows.size();
+    if (shadows.empty()) {
+        return summary;
+    }
+
+    bool all_ready = true;
+    bool any_promoted = false;
+    for (const auto& shadow : shadows) {
+        const bool ready = shadow.active || shadow.promoted;
+        if (ready) {
+            ++summary.ready_members;
+        } else {
+            all_ready = false;
+        }
+        if (shadow.promoted) {
+            any_promoted = true;
+        }
+    }
+
+    if (any_promoted) {
+        summary.state = "PROMOTED";
+    } else if (all_ready) {
+        summary.state = "ACTIVE";
+    } else {
+        summary.state = "DEGRADED";
+    }
+    return summary;
 }
 
 bool buildSingleInstructionContainer(const scratchbird::sblr::v3::Instruction& root,
@@ -3793,6 +3846,7 @@ void NativeAdapter::sendCapabilityStatus(network::Connection* conn) {
     const uint64_t feature_mask = serverFeatureMask();
     const uint64_t profile_mask = feature_mask & sbwp::kFeatureProfileMask;
     const auto enabled_profiles = sbwp::enabledProfilesFromFeatureMask(feature_mask);
+    const core::Database* database = engineDatabase();
 
     std::ostringstream profile_join;
     for (size_t i = 0; i < enabled_profiles.size(); ++i) {
@@ -3807,6 +3861,44 @@ void NativeAdapter::sendCapabilityStatus(network::Connection* conn) {
     sendParameterStatus(conn, "profile_capability_mask", std::to_string(profile_mask));
     sendParameterStatus(conn, "profile_count", std::to_string(enabled_profiles.size()));
     sendParameterStatus(conn, "profile_bundle_set", profile_join.str());
+
+    if (database == nullptr) {
+        return;
+    }
+
+    sendParameterStatus(conn,
+                        "startup_quarantine_active",
+                        database->startup_quarantine_active() ? "true" : "false");
+
+    if (const core::SweepManager* sweep = database->sweep_manager(); sweep != nullptr) {
+        const auto stats = sweep->getStatistics();
+        sendParameterStatus(conn,
+                            "derivative_backpressure_class",
+                            derivativeBackpressureClassForStats(stats));
+        sendParameterStatus(conn,
+                            "wal_after_backlog_depth",
+                            std::to_string(stats.wal_after_backlog_depth));
+        sendParameterStatus(conn,
+                            "wal_after_export_failures",
+                            std::to_string(stats.wal_after_export_failures));
+        sendParameterStatus(conn,
+                            "last_wal_after_segments_emitted",
+                            std::to_string(stats.last_wal_after_segments_emitted));
+    }
+
+    const auto shadow_summary = summarizeShadowFilespaces(*database);
+    sendParameterStatus(conn,
+                        "shadow_filespace_count",
+                        std::to_string(shadow_summary.total_members));
+    sendParameterStatus(conn,
+                        "shadow_group_ready_members",
+                        std::to_string(shadow_summary.ready_members));
+    sendParameterStatus(conn,
+                        "shadow_group_required_members",
+                        std::to_string(shadow_summary.total_members));
+    sendParameterStatus(conn,
+                        "shadow_group_state",
+                        shadow_summary.state);
 }
 
 uint64_t NativeAdapter::serverFeatureMask() const {

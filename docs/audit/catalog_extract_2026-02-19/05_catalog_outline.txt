@@ -341,11 +341,11 @@ sys.information [o] (SCHEMA)
 sys.information [s]
 sys.jobs [o] (SCHEMA)
 sys.jobs [s]
-sys.sb_toast_019d32d5-da56-758a-995c-c8d21a7d0972 [o] (TABLE)
-sys.sb_toast_019d32d5-da56-758a-995c-c8d21a7d0972.chunk_data [o] (COLUMN)
-sys.sb_toast_019d32d5-da56-758a-995c-c8d21a7d0972.chunk_id [o] (COLUMN)
-sys.sb_toast_019d32d5-da56-758a-995c-c8d21a7d0972.chunk_seq [o] (COLUMN)
-sys.sb_toast_019d32d5-da56-758a-995c-c8d21a7d0972.sb_toast_019d32d5-da56-758a-995c-c8d21a7d0972_idx [o] (INDEX)
+sys.sb_toast_019d3778-98c6-71ef-8ac1-251a55acaee7 [o] (TABLE)
+sys.sb_toast_019d3778-98c6-71ef-8ac1-251a55acaee7.chunk_data [o] (COLUMN)
+sys.sb_toast_019d3778-98c6-71ef-8ac1-251a55acaee7.chunk_id [o] (COLUMN)
+sys.sb_toast_019d3778-98c6-71ef-8ac1-251a55acaee7.chunk_seq [o] (COLUMN)
+sys.sb_toast_019d3778-98c6-71ef-8ac1-251a55acaee7.sb_toast_019d3778-98c6-71ef-8ac1-251a55acaee7_idx [o] (INDEX)
 sys.schema [o] (SCHEMA)
 sys.schema [s]
 sys.security [o] (SCHEMA)

@@ -528,6 +528,26 @@ Status InvertedIndex::loadMeta(SBInvertedIndexMetaPage* meta_out, ErrorContext* 
     return Status::OK;
 }
 
+InvertedIndex::Statistics InvertedIndex::getStatistics(ErrorContext* ctx) const
+{
+    Statistics stats{};
+    SBInvertedIndexMetaPage meta{};
+    if (loadMeta(&meta, ctx) != Status::OK)
+    {
+        return stats;
+    }
+
+    stats.num_segments = meta.ii_num_segments;
+    stats.total_documents = meta.ii_total_documents;
+    stats.total_terms = meta.ii_total_terms;
+    stats.total_tokens = meta.ii_total_tokens;
+    stats.avg_doc_length = meta.ii_avg_doc_length;
+    stats.total_queries = meta.ii_total_queries;
+    stats.avg_query_time_us = meta.ii_avg_query_time_us;
+    stats.last_merge_time = meta.ii_last_merge_time;
+    return stats;
+}
+
 Status InvertedIndex::loadSegmentMeta(uint32_t segment_id,
                                       GPID* seg_gpid_out,
                                       SBInvertedIndexSegmentMeta* seg_out,
