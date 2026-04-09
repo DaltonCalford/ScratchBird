@@ -267,6 +267,8 @@ namespace scratchbird::core
             uint64_t reclaimed_version_count = 0;
             uint64_t reclaimed_bytes = 0;
             uint64_t index_backlog_count = 0;
+            uint64_t index_backlog_pages = 0;
+            uint64_t index_backlog_bytes = 0;
             SweepProgressStage stage = SweepProgressStage::NONE;
             bool cursor_checksum_valid = false;
         };

@@ -802,8 +802,19 @@ namespace scratchbird::optimizer
                                   ResolvedPredicateKind predicate_kind,
                                   const std::string &operator_name,
                                   IndexInfo &index_out,
-                                  PlannerFamilyLoweringResult &lowering_out) -> bool
+                                  PlannerFamilyLoweringResult &lowering_out,
+                                  std::vector<IndexInfo> *matched_indexes_out = nullptr)
+            -> bool
         {
+            struct IndexMatchCandidate
+            {
+                IndexInfo index;
+                PlannerFamilyLoweringResult lowering;
+                int score = std::numeric_limits<int>::min();
+                double recheck_ratio = std::numeric_limits<double>::infinity();
+                double coverage_fraction = -1.0;
+                double correlation = -1.0;
+            };
             auto exactness_rank =
                 [](AccessPathExactnessClass exactness_class) -> int {
                     switch (exactness_class)
@@ -839,11 +850,7 @@ namespace scratchbird::optimizer
                     }
                 };
 
-            bool found = false;
-            int best_score = std::numeric_limits<int>::min();
-            double best_recheck_ratio = std::numeric_limits<double>::infinity();
-            double best_coverage_fraction = -1.0;
-            double best_correlation = -1.0;
+            std::vector<IndexMatchCandidate> candidates;
 
             for (const auto &index : relation.indexes)
             {
@@ -908,37 +915,56 @@ namespace scratchbird::optimizer
                     const double candidate_correlation =
                         have_metrics ? std::abs(metrics_packet.correlation) : 0.0;
 
-                    const bool better_candidate =
-                        !found ||
-                        candidate_score > best_score ||
-                        (candidate_score == best_score &&
-                         candidate_recheck_ratio < best_recheck_ratio) ||
-                        (candidate_score == best_score &&
-                         candidate_recheck_ratio == best_recheck_ratio &&
-                         candidate_coverage_fraction > best_coverage_fraction) ||
-                        (candidate_score == best_score &&
-                         candidate_recheck_ratio == best_recheck_ratio &&
-                         candidate_coverage_fraction == best_coverage_fraction &&
-                         candidate_correlation > best_correlation) ||
-                        (candidate_score == best_score &&
-                         candidate_recheck_ratio == best_recheck_ratio &&
-                         candidate_coverage_fraction == best_coverage_fraction &&
-                         candidate_correlation == best_correlation &&
-                         index.index_name < index_out.index_name);
-                    if (!better_candidate)
-                    {
-                        continue;
-                    }
-
-                    found = true;
-                    best_score = candidate_score;
-                    best_recheck_ratio = candidate_recheck_ratio;
-                    best_coverage_fraction = candidate_coverage_fraction;
-                    best_correlation = candidate_correlation;
-                    index_out = index;
+                    candidates.push_back(IndexMatchCandidate{
+                        index,
+                        lowering_out,
+                        candidate_score,
+                        candidate_recheck_ratio,
+                        candidate_coverage_fraction,
+                        candidate_correlation});
                 }
             }
-            return found;
+            if (candidates.empty())
+            {
+                return false;
+            }
+
+            std::sort(candidates.begin(),
+                      candidates.end(),
+                      [](const IndexMatchCandidate &left,
+                         const IndexMatchCandidate &right) {
+                          if (left.score != right.score)
+                          {
+                              return left.score > right.score;
+                          }
+                          if (left.recheck_ratio != right.recheck_ratio)
+                          {
+                              return left.recheck_ratio < right.recheck_ratio;
+                          }
+                          if (left.coverage_fraction != right.coverage_fraction)
+                          {
+                              return left.coverage_fraction >
+                                     right.coverage_fraction;
+                          }
+                          if (left.correlation != right.correlation)
+                          {
+                              return left.correlation > right.correlation;
+                          }
+                          return left.index.index_name < right.index.index_name;
+                      });
+
+            index_out = candidates.front().index;
+            lowering_out = candidates.front().lowering;
+            if (matched_indexes_out != nullptr)
+            {
+                matched_indexes_out->clear();
+                matched_indexes_out->reserve(candidates.size());
+                for (const auto &candidate : candidates)
+                {
+                    matched_indexes_out->push_back(candidate.index);
+                }
+            }
+            return true;
         }
 
         auto extractSimplePredicate(const parser::v3::Expression *expr,
@@ -1010,6 +1036,7 @@ namespace scratchbird::optimizer
                 predicate_out.predicate_text = expressionToString(expr, pool);
                 predicate_out.expression = expr;
                 IndexInfo matched_index;
+                std::vector<IndexInfo> matched_indexes;
                 PlannerFamilyLoweringResult lowering;
                 if (chooseIndexForColumn(relations[*relation_index],
                                          catalog,
@@ -1018,10 +1045,12 @@ namespace scratchbird::optimizer
                                          kind,
                                          predicate_out.operator_name,
                                          matched_index,
-                                         lowering))
+                                         lowering,
+                                         &matched_indexes))
                 {
                     predicate_out.has_index_match = true;
                     predicate_out.matched_index = matched_index;
+                    predicate_out.matched_indexes = std::move(matched_indexes);
                     predicate_out.matched_family = lowering.family;
                     predicate_out.matched_path_name = lowering.path_name;
                 }
@@ -1075,6 +1104,7 @@ namespace scratchbird::optimizer
                 predicate_out.predicate_text = expressionToString(expr, pool);
                 predicate_out.expression = expr;
                 IndexInfo matched_index;
+                std::vector<IndexInfo> matched_indexes;
                 PlannerFamilyLoweringResult lowering;
                 if (chooseIndexForColumn(relations[*relation_index],
                                          catalog,
@@ -1083,10 +1113,12 @@ namespace scratchbird::optimizer
                                          ResolvedPredicateKind::LIKE_PREFIX,
                                          predicate_out.operator_name,
                                          matched_index,
-                                         lowering))
+                                         lowering,
+                                         &matched_indexes))
                 {
                     predicate_out.has_index_match = true;
                     predicate_out.matched_index = matched_index;
+                    predicate_out.matched_indexes = std::move(matched_indexes);
                     predicate_out.matched_family = lowering.family;
                     predicate_out.matched_path_name = lowering.path_name;
                 }

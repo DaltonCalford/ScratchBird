@@ -1,0 +1,123 @@
+{
+  "metadata": {
+    "source_result_dir": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_inet/results/ctest/20260401_005531",
+    "manifest": {
+      "run_id": "20260401_005531",
+      "engine": "scratchbird_native",
+      "protocol_surface": "sbwp_native",
+      "parser_core": "v3",
+      "parser_mode": "native_core",
+      "execution_mode": "inet_tcp_listener",
+      "isql_binary": "/home/dcalford/CliWork/ScratchBird-driver/build/tracks/p3/drivers/cli/sb_isql",
+      "ctest_list_file": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_inet/config/v3_native_inet_list.txt",
+      "listed_tests": 23,
+      "status": "passed",
+      "failure_count": 0,
+      "results_dir": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_inet/results/ctest/20260401_005531",
+      "host": "127.0.0.1",
+      "port": "16092",
+      "database": "main",
+      "username": "SysArch",
+      "timestamp_utc": "2026-04-01T04:59:13Z"
+    }
+  },
+  "summary": {
+    "total_cases": 23,
+    "passed": 20,
+    "failed": 3
+  },
+  "results": [
+    {
+      "case_name": "01_insert_variants",
+      "result": "PASS"
+    },
+    {
+      "case_name": "02_alter_update_merge",
+      "result": "PASS"
+    },
+    {
+      "case_name": "03_delete_truncate",
+      "result": "PASS"
+    },
+    {
+      "case_name": "04_foreign_key",
+      "result": "PASS"
+    },
+    {
+      "case_name": "05_index_predicate",
+      "result": "PASS"
+    },
+    {
+      "case_name": "06_select_join_cte",
+      "result": "PASS"
+    },
+    {
+      "case_name": "07_transactions_savepoint",
+      "result": "PASS"
+    },
+    {
+      "case_name": "08_routines_trigger",
+      "result": "PASS"
+    },
+    {
+      "case_name": "09_security_default_access_public",
+      "result": "PASS"
+    },
+    {
+      "case_name": "10_security_ownership_alter_owner",
+      "result": "PASS"
+    },
+    {
+      "case_name": "11_security_grants_dml_execute_view",
+      "result": "PASS"
+    },
+    {
+      "case_name": "12_security_show_visibility",
+      "result": "PASS"
+    },
+    {
+      "case_name": "13_security_row_level_security",
+      "result": "PASS"
+    },
+    {
+      "case_name": "14_security_column_level",
+      "result": "PASS"
+    },
+    {
+      "case_name": "15_security_domain_masking",
+      "result": "PASS"
+    },
+    {
+      "case_name": "16_modal_surfaces",
+      "result": "PASS"
+    },
+    {
+      "case_name": "17_parser_misc_show_set",
+      "result": "PASS"
+    },
+    {
+      "case_name": "18_dtype_surface_smoke",
+      "result": "PASS"
+    },
+    {
+      "case_name": "93_canonical_redis_runtime",
+      "result": "PASS"
+    },
+    {
+      "case_name": "94_canonical_search_runtime",
+      "result": "PASS"
+    },
+    {
+      "case_name": "90_deprecated_alias_filter_doc",
+      "result": "PASS(expected_failure)"
+    },
+    {
+      "case_name": "91_deprecated_alias_ann",
+      "result": "PASS(expected_failure)"
+    },
+    {
+      "case_name": "92_deprecated_engine_aliases",
+      "result": "PASS(expected_failure)"
+    }
+  ]
+}

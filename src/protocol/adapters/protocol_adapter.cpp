@@ -31,8 +31,10 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <fstream>
 #include <iomanip>
 #include <limits>
+#include <mutex>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -47,6 +49,85 @@ namespace scratchbird {
 namespace protocol {
 
 namespace {
+std::string leadingStatementKeywordUpper(const std::string& sql) {
+    size_t pos = 0;
+    while (pos < sql.size() &&
+           std::isspace(static_cast<unsigned char>(sql[pos])) != 0) {
+        ++pos;
+    }
+
+    size_t end = pos;
+    while (end < sql.size() &&
+           std::isalpha(static_cast<unsigned char>(sql[end])) != 0) {
+        ++end;
+    }
+
+    std::string keyword = sql.substr(pos, end - pos);
+    std::transform(keyword.begin(), keyword.end(), keyword.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+    return keyword;
+}
+
+bool statementSupportsOptimizerParameterSpecialization(const std::string& sql) {
+    const std::string keyword = leadingStatementKeywordUpper(sql);
+    if (keyword.empty()) {
+        return false;
+    }
+
+    static const std::unordered_set<std::string> kGenericOnlyKeywords = {
+        "INSERT",   "UPDATE",   "DELETE",  "MERGE",   "UPSERT",  "REPLACE",
+        "CREATE",   "ALTER",    "DROP",    "TRUNCATE","GRANT",   "REVOKE",
+        "SET",      "BEGIN",    "COMMIT",  "ROLLBACK","SAVEPOINT","RELEASE",
+        "CALL",     "EXECUTE",  "DECLARE", "DO",      "COPY",
+    };
+
+    return kGenericOnlyKeywords.find(keyword) == kGenericOnlyKeywords.end();
+}
+
+#if defined(SCRATCHBIRD_ENABLE_PREPARED_TRACE) && SCRATCHBIRD_ENABLE_PREPARED_TRACE
+bool preparedTraceEnabled() {
+    const char* value = std::getenv("SCRATCHBIRD_PREPARED_TRACE");
+    if (value == nullptr || value[0] == '\0') {
+        return false;
+    }
+
+    return std::strcmp(value, "0") != 0 &&
+           std::strcmp(value, "false") != 0 &&
+           std::strcmp(value, "FALSE") != 0;
+}
+
+const char* preparedTraceFilePath() {
+    const char* path = std::getenv("SCRATCHBIRD_PREPARED_TRACE_FILE");
+    if (path == nullptr || path[0] == '\0') {
+        return "/tmp/scratchbird_prepared_trace.log";
+    }
+    return path;
+}
+
+void appendPreparedTraceLine(const std::string& line) {
+    static std::mutex trace_mutex;
+    std::lock_guard<std::mutex> guard(trace_mutex);
+
+    std::ofstream out(preparedTraceFilePath(), std::ios::app);
+    if (!out.is_open()) {
+        return;
+    }
+
+    out << line << '\n';
+}
+#else
+bool preparedTraceEnabled() {
+    return false;
+}
+
+const char* preparedTraceFilePath() {
+    return "";
+}
+
+void appendPreparedTraceLine(const std::string&) {
+}
+#endif
+
 struct ConnectionContextGuard {
     core::ConnectionContext* previous = nullptr;
     bool changed = false;
@@ -822,6 +903,10 @@ core::Status ProtocolAdapter::executeQuery(const QueryContext& query, ResultCont
 core::Status ProtocolAdapter::prepareStatement(const std::string& name,
                                                const std::string& query,
                                                std::vector<int32_t>& param_types) {
+    const bool trace_enabled = preparedTraceEnabled();
+    const auto trace_start = std::chrono::steady_clock::now();
+    double compile_ms = 0.0;
+    double register_ms = 0.0;
     auto param_count = countParameterPlaceholders(query);
     param_types.assign(param_count, 0);
 
@@ -843,6 +928,7 @@ core::Status ProtocolAdapter::prepareStatement(const std::string& name,
         core::IdentifierUtils::toUpper(
             std::string(dialectTagForProtocol(getProtocolType())));
     if (dialect == "SCRATCHBIRD") {
+        const auto compile_start = std::chrono::steady_clock::now();
         status = compileScratchBirdQuery(engineDatabase(),
                                          connection_ctx_.get(),
                                          query,
@@ -851,8 +937,15 @@ core::Status ProtocolAdapter::prepareStatement(const std::string& name,
                                          bytecode,
                                          compile_error,
                                          &compile_result);
+        compile_ms = std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - compile_start)
+                         .count();
     } else {
+        const auto compile_start = std::chrono::steady_clock::now();
         status = compileQuery(query, bytecode, compile_error);
+        compile_ms = std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - compile_start)
+                         .count();
     }
     if (status != core::Status::OK) {
         return status;
@@ -860,21 +953,42 @@ core::Status ProtocolAdapter::prepareStatement(const std::string& name,
 
     if (connection_ctx_) {
         std::vector<uint16_t> param_types_u16(param_count, 0);
+        const auto register_start = std::chrono::steady_clock::now();
         status = connection_ctx_->prepareStatement(name, query, bytecode, param_types_u16, &ctx);
+        register_ms = std::chrono::duration<double, std::milli>(
+                          std::chrono::steady_clock::now() - register_start)
+                          .count();
         if (status != core::Status::OK) {
             return status;
         }
 
         if (dialect == "SCRATCHBIRD") {
-            if (auto* prepared = connection_ctx_->getPreparedStatement(name)) {
-                prepared->optimizer_generic_plan_hash =
-                    compile_result.planProfile().runtime_plan_hash;
-                prepared->optimizer_plan_mode =
-                    core::ConnectionContext::PreparedStatement::OptimizerPlanMode::AUTO;
+            auto seed_status = connection_ctx_->seedPreparedStatementOptimizerProfile(
+                name,
+                compile_result.planProfile().runtime_plan_hash,
+                &ctx);
+            if (seed_status != core::Status::OK) {
+                return seed_status;
             }
         }
     } else {
         prepared_statements_[name] = query;
+    }
+
+    if (trace_enabled) {
+        const double total_ms = std::chrono::duration<double, std::milli>(
+                                    std::chrono::steady_clock::now() - trace_start)
+                                    .count();
+        std::ostringstream trace_line;
+        trace_line << std::fixed << std::setprecision(3)
+                   << "PREPARED TRACE phase=prepare"
+                   << " keyword=" << leadingStatementKeywordUpper(query)
+                   << " name=" << (name.empty() ? "<unnamed>" : name)
+                   << " param_count=" << param_count
+                   << " compile_ms=" << compile_ms
+                   << " register_ms=" << register_ms
+                   << " total_ms=" << total_ms;
+        appendPreparedTraceLine(trace_line.str());
     }
 
     return core::Status::OK;
@@ -884,6 +998,11 @@ core::Status ProtocolAdapter::executePrepared(const std::string& name,
                                                const QueryContext& params,
                                                ResultContext& result) {
     try {
+        const bool trace_enabled = preparedTraceEnabled();
+        const auto trace_start = std::chrono::steady_clock::now();
+        double custom_compile_ms = 0.0;
+        double bytecode_exec_ms = 0.0;
+        double fallback_query_ms = 0.0;
         core::ScratchBirdMetrics& metrics = core::ScratchBirdMetrics::getInstance();
         metrics.initialize();
 
@@ -909,79 +1028,36 @@ core::Status ProtocolAdapter::executePrepared(const std::string& name,
                 QueryContext ctx = params;
                 ctx.query = prepared->sql_text;
                 std::vector<uint8_t> selected_bytecode = prepared->bytecode;
+                core::ConnectionContext::PreparedExecutionSelection selection;
                 const std::string dialect =
                     core::IdentifierUtils::toUpper(
                         std::string(dialectTagForProtocol(getProtocolType())));
-                if (dialect == "SCRATCHBIRD" && !params.parameter_values.empty()) {
-                    const auto bindings = buildOptimizerParameterBindings(params.parameter_values,
-                                                                          params.parameter_nulls);
-                    const std::string parameter_signature =
-                        buildOptimizerParameterSignature(bindings);
-
-                    if (prepared->optimizer_plan_mode !=
-                        core::ConnectionContext::PreparedStatement::OptimizerPlanMode::GENERIC) {
-                        auto mapped_bucket =
-                            prepared->optimizer_parameter_signature_to_bucket.find(
-                                parameter_signature);
-                        if (mapped_bucket !=
-                            prepared->optimizer_parameter_signature_to_bucket.end()) {
-                            auto cached_variant =
-                                prepared->optimizer_bucketed_bytecode.find(
-                                    mapped_bucket->second);
-                            if (cached_variant !=
-                                prepared->optimizer_bucketed_bytecode.end()) {
-                                selected_bytecode = cached_variant->second;
-                            }
-                        } else {
-                            std::string compile_error;
-                            sblr::QueryCompilerV3::CompileResult compiled;
-                            auto compile_status = compileScratchBirdQuery(
-                                engineDatabase(),
-                                connection_ctx_.get(),
-                                prepared->sql_text,
-                                &bindings,
-                                sblr::detail::QueryCompilerV3PlanProfileMode::CUSTOM,
-                                selected_bytecode,
-                                compile_error,
-                                &compiled);
-                            if (compile_status != core::Status::OK) {
-                                result.has_error = true;
-                                result.error_code =
-                                    static_cast<uint32_t>(compile_status);
-                                result.sqlstate = "42000";
-                                result.error_message =
-                                    compile_error.empty() ? "Compilation failed"
-                                                          : compile_error;
-                                return core::Status::OK;
-                            }
-
-                            const auto& profile = compiled.planProfile();
-                            prepared->optimizer_parameter_signature_to_bucket
-                                [parameter_signature] = profile.signature;
-                            prepared->optimizer_bucketed_bytecode[profile.signature] =
-                                selected_bytecode;
-                            if (!profile.runtime_plan_hash.empty()) {
-                                prepared->optimizer_bucket_plan_hash[profile.signature] =
-                                    profile.runtime_plan_hash;
-                            }
-                            ++prepared->optimizer_custom_sample_count;
-
-                            if (prepared->optimizer_bucket_plan_hash.size() >= 2) {
-                                prepared->optimizer_plan_mode =
-                                    core::ConnectionContext::PreparedStatement::OptimizerPlanMode::
-                                        CUSTOM_BUCKETED;
-                            } else if (prepared->optimizer_custom_sample_count >= 3 &&
-                                       !prepared->optimizer_generic_plan_hash.empty() &&
-                                       prepared->optimizer_bucket_plan_hash.size() == 1 &&
-                                       prepared->optimizer_bucket_plan_hash.begin()->second ==
-                                           prepared->optimizer_generic_plan_hash) {
-                                prepared->optimizer_plan_mode =
-                                    core::ConnectionContext::PreparedStatement::OptimizerPlanMode::
-                                        GENERIC;
-                                selected_bytecode = prepared->bytecode;
-                            }
-                        }
+                if (dialect == "SCRATCHBIRD") {
+                    core::ErrorContext selection_ctx;
+                    const auto selection_start = std::chrono::steady_clock::now();
+                    auto selection_status =
+                        connection_ctx_->resolvePreparedStatementExecutionPlan(
+                            name,
+                            params.parameter_values,
+                            params.parameter_nulls,
+                            selection,
+                            &selection_ctx);
+                    custom_compile_ms += std::chrono::duration<double, std::milli>(
+                                             std::chrono::steady_clock::now() -
+                                             selection_start)
+                                             .count();
+                    if (selection_status != core::Status::OK) {
+                        result.has_error = true;
+                        result.error_code =
+                            static_cast<uint32_t>(selection_status);
+                        result.sqlstate = "42000";
+                        result.error_message =
+                            selection_ctx.message.empty()
+                                ? "Prepared execution plan resolution failed"
+                                : selection_ctx.message;
+                        return core::Status::OK;
                     }
+                    selected_bytecode = selection.bytecode;
                 }
 
                 struct ParameterGuard {
@@ -1001,9 +1077,40 @@ core::Status ProtocolAdapter::executePrepared(const std::string& name,
                     }
                 } param_guard(executor_.get(), ctx);
 
+                const auto execute_start = std::chrono::steady_clock::now();
                 auto status =
                     executeBytecode(ctx.query, selected_bytecode, result, nullptr);
+                bytecode_exec_ms += std::chrono::duration<double, std::milli>(
+                                        std::chrono::steady_clock::now() - execute_start)
+                                        .count();
                 connection_ctx_->recordStatementExecution(name);
+                if (trace_enabled) {
+                    std::ostringstream trace_line;
+                    trace_line << std::fixed << std::setprecision(3)
+                               << "PREPARED TRACE phase=execute"
+                               << " name=" << (name.empty() ? "<unnamed>" : name)
+                               << " keyword=" << leadingStatementKeywordUpper(ctx.query)
+                               << " param_count=" << params.parameter_values.size()
+                               << " plan_mode="
+                               << static_cast<int>(prepared->optimizer_plan_mode)
+                               << " bundle_hit="
+                               << (selection.bundle_hit ? 1 : 0)
+                               << " bundle_rebuilt="
+                               << (selection.bundle_rebuilt ? 1 : 0)
+                               << " used_generic_bundle="
+                               << (selection.used_generic_bytecode ? 1 : 0)
+                               << " bucket_signature="
+                               << (selection.bucket_signature.empty()
+                                       ? "<generic>"
+                                       : selection.bucket_signature)
+                               << " custom_compile_ms=" << custom_compile_ms
+                               << " bytecode_exec_ms=" << bytecode_exec_ms
+                               << " total_ms="
+                               << std::chrono::duration<double, std::milli>(
+                                      std::chrono::steady_clock::now() - trace_start)
+                                      .count();
+                    appendPreparedTraceLine(trace_line.str());
+                }
                 return status;
             }
             if (metrics.statement_cache_misses_total) {
@@ -1015,7 +1122,26 @@ core::Status ProtocolAdapter::executePrepared(const std::string& name,
         if (it != prepared_statements_.end()) {
             QueryContext ctx = params;
             ctx.query = it->second;
-            return executeQuery(ctx, result);
+            const auto execute_start = std::chrono::steady_clock::now();
+            auto status = executeQuery(ctx, result);
+            fallback_query_ms += std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now() - execute_start)
+                                     .count();
+            if (trace_enabled) {
+                std::ostringstream trace_line;
+                trace_line << std::fixed << std::setprecision(3)
+                           << "PREPARED TRACE phase=execute_fallback"
+                           << " name=" << (name.empty() ? "<unnamed>" : name)
+                           << " keyword=" << leadingStatementKeywordUpper(ctx.query)
+                           << " param_count=" << params.parameter_values.size()
+                           << " fallback_query_ms=" << fallback_query_ms
+                           << " total_ms="
+                           << std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() - trace_start)
+                                  .count();
+                appendPreparedTraceLine(trace_line.str());
+            }
+            return status;
         }
 
         result.has_error = true;

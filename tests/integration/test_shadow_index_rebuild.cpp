@@ -26,6 +26,7 @@
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/types.h"
 #include "test_helpers.h"
+#include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <iostream>
@@ -100,6 +101,23 @@ protected:
                                         index_id_out, false, CatalogManager::IndexType::BTREE,
                                         0, nullptr);
         ASSERT_EQ(status, Status::OK);
+    }
+
+    void reopenDatabase()
+    {
+        if (db_)
+        {
+            db_->close();
+            db_.reset();
+        }
+
+        db_ = std::make_unique<Database>();
+        ErrorContext ctx;
+        Status status = db_->open(test_db_path_, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to reopen database: " << ctx.message;
+
+        catalog_ = db_->catalog_manager();
+        ASSERT_NE(catalog_, nullptr);
     }
 
     std::unique_ptr<Database> db_;
@@ -185,6 +203,110 @@ TEST_F(ShadowIndexRebuildTest, ShadowPromotion)
 
     EXPECT_EQ(original_info.state, static_cast<uint8_t>(CatalogManager::IndexState::RETIRED));
     EXPECT_GT(original_info.retired_xid, 0); // Now has retired_xid
+}
+
+TEST_F(ShadowIndexRebuildTest, PublishesDurableIndexBuildCatalogState)
+{
+    ID table_id, original_index_id;
+    createTestTableWithIndex(table_id, original_index_id);
+
+    CatalogManager::IndexInfo original_info;
+    Status status = catalog_->getIndex(original_index_id, original_info, nullptr);
+    ASSERT_EQ(status, Status::OK);
+
+    ID shadow_index_id;
+    status = catalog_->createShadowIndex(original_index_id, shadow_index_id, nullptr);
+    ASSERT_EQ(status, Status::OK);
+
+    ASSERT_NE(catalog_->indexBuildPlanTablePage(), 0u);
+    ASSERT_NE(catalog_->indexBuildEventTablePage(), 0u);
+    ASSERT_NE(catalog_->indexBuildProgressTablePage(), 0u);
+    ASSERT_NE(catalog_->indexBuildCutoverGuardTablePage(), 0u);
+
+    const uint32_t plan_page_id = catalog_->indexBuildPlanTablePage();
+    const uint32_t event_page_id = catalog_->indexBuildEventTablePage();
+    const uint32_t progress_page_id = catalog_->indexBuildProgressTablePage();
+    const uint32_t guard_page_id = catalog_->indexBuildCutoverGuardTablePage();
+
+    ErrorContext ctx;
+    std::vector<CatalogManager::IndexBuildPlanCatalogInfo> plans;
+    ASSERT_EQ(catalog_->listIndexBuildPlanCatalogEntries(plans, &ctx), Status::OK) << ctx.message;
+
+    auto plan_it = std::find_if(
+        plans.begin(),
+        plans.end(),
+        [&](const CatalogManager::IndexBuildPlanCatalogInfo& plan) {
+            return plan.logical_index_id == original_info.logical_index_id &&
+                   plan.shadow_index_uuid == shadow_index_id;
+        });
+    ASSERT_NE(plan_it, plans.end());
+    EXPECT_EQ(plan_it->build_reason, "REBUILD");
+    EXPECT_EQ(plan_it->build_state, "BUILDING");
+
+    std::vector<CatalogManager::IndexBuildEventCatalogInfo> events;
+    ASSERT_EQ(catalog_->listIndexBuildEventCatalogEntries(plan_it->index_build_plan_uuid, events, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events[0].phase_to, "DRAFTED");
+    EXPECT_EQ(events[1].phase_from, "DRAFTED");
+    EXPECT_EQ(events[1].phase_to, "BUILDING");
+
+    CatalogManager::IndexBuildProgressCatalogInfo progress{};
+    ASSERT_EQ(catalog_->getIndexBuildProgressCatalogEntry(plan_it->index_build_plan_uuid, progress, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(progress.restart_disposition, "RESUME");
+    EXPECT_EQ(progress.rows_scanned, 0u);
+    EXPECT_EQ(progress.rows_applied, 0u);
+
+    CatalogManager::IndexBuildCutoverGuardCatalogInfo guard{};
+    ASSERT_EQ(catalog_->getIndexBuildCutoverGuardCatalogEntry(plan_it->index_build_plan_uuid, guard, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(guard.guard_state, "BLOCKED");
+    EXPECT_FALSE(guard.side_log_drained);
+
+    ASSERT_EQ(db_->sync(&ctx), Status::OK) << ctx.message;
+    reopenDatabase();
+
+    EXPECT_EQ(catalog_->indexBuildPlanTablePage(), plan_page_id);
+    EXPECT_EQ(catalog_->indexBuildEventTablePage(), event_page_id);
+    EXPECT_EQ(catalog_->indexBuildProgressTablePage(), progress_page_id);
+    EXPECT_EQ(catalog_->indexBuildCutoverGuardTablePage(), guard_page_id);
+
+    CatalogManager::IndexBuildPlanCatalogInfo reopened_plan{};
+    ASSERT_EQ(catalog_->getIndexBuildPlanCatalogEntry(plan_it->index_build_plan_uuid, reopened_plan, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(reopened_plan.build_state, "BUILDING");
+    EXPECT_EQ(reopened_plan.shadow_index_uuid, shadow_index_id);
+
+    status = catalog_->promoteShadowIndex(shadow_index_id, nullptr);
+    ASSERT_EQ(status, Status::OK);
+
+    CatalogManager::IndexBuildPlanCatalogInfo published_plan{};
+    ASSERT_EQ(catalog_->getIndexBuildPlanCatalogEntry(plan_it->index_build_plan_uuid, published_plan, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(published_plan.build_state, "PUBLISHED");
+
+    events.clear();
+    ASSERT_EQ(catalog_->listIndexBuildEventCatalogEntries(plan_it->index_build_plan_uuid, events, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(events.size(), 4u);
+    EXPECT_EQ(events[2].phase_from, "BUILDING");
+    EXPECT_EQ(events[2].phase_to, "CUTOVER_PENDING");
+    EXPECT_EQ(events[3].phase_from, "CUTOVER_PENDING");
+    EXPECT_EQ(events[3].phase_to, "PUBLISHED");
+
+    guard = {};
+    ASSERT_EQ(catalog_->getIndexBuildCutoverGuardCatalogEntry(plan_it->index_build_plan_uuid, guard, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(guard.guard_state, "READY");
+    EXPECT_TRUE(guard.side_log_drained);
 }
 
 /**

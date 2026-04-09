@@ -1,0 +1,4 @@
+scenario,expected_behavior,evidence,status,notes
+fresh_db_create,cluster fields initialized to zero identity,DatabaseClusterIdentityTest.DefaultsToStandaloneIdentity,pass,Standalone default preserved
+set_and_restart,cluster identity persisted across reopen,DatabaseClusterIdentityTest.PersistsClusterIdentityAcrossRestart,pass,Page-0 checksum updated on write
+tail_extension_tolerance,header tail extension remains readable with page checksum validation,Code review + validate_header behavior,pass,No strict struct-size lower-bound rejection in open path

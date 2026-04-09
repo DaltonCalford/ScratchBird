@@ -1,0 +1,20 @@
+# Master Tracker
+
+| Ticket | Title | Status | Depends On | Primary Evidence |
+| --- | --- | --- | --- | --- |
+| `CPG-10-001` | Scope freeze and reference-layout bootstrap | completed | none | `README.md` |
+| `CPG-10-002` | Research transparent at-rest encryption and rekey | completed | `CPG-10-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `CPG-10-003` | Draft Beta 2 transparent at-rest encryption canon | completed | `CPG-10-002` | `docs/specifications/19_Security_Model/BETA2_TRANSPARENT_AT_REST_ENCRYPTION_AND_REKEY_MODEL.md` |
+| `CPG-10-004` | Research protected-query encryption and enclaves | completed | `CPG-10-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `CPG-10-005` | Draft Beta 2 protected-query encryption canon | completed | `CPG-10-004` | `docs/specifications/19_Security_Model/BETA2_PROTECTED_QUERY_ENCRYPTION_AND_ENCLAVE_EXECUTION_MODEL.md` |
+| `CPG-10-006` | Research HA / DR / PITR / clustered failover | completed | `CPG-10-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `CPG-10-007` | Draft Beta 2 HA / DR / PITR / failover canon | completed | `CPG-10-006` | `docs/specifications/25_Runtime_Modes/BETA2_CLUSTER_HA_DR_AND_FAILOVER_MODEL.md` |
+| `CPG-10-008` | Research hard multi-tenant isolation and QoS | completed | `CPG-10-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `CPG-10-009` | Draft Beta 2 hard multi-tenant isolation canon | completed | `CPG-10-008` | `docs/specifications/38_Workload_Governance_and_Parallelism/BETA2_HARD_MULTI_TENANT_ISOLATION_QUOTA_AND_QOS_MODEL.md` |
+| `CPG-10-010` | Research archive tier / ILM / legal hold / replay | completed | `CPG-10-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `CPG-10-011` | Draft Beta 2 archive tier / ILM canon | completed | `CPG-10-010` | `docs/specifications/10_GC_and_Sweep/BETA2_ARCHIVE_TIER_ILM_AND_LEGAL_HOLD_MODEL.md` |
+| `CPG-10-012` | Research production workload capture and replay | completed | `CPG-10-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `CPG-10-013` | Draft Beta 2 workload capture and replay canon | completed | `CPG-10-012` | `docs/specifications/31_Conformance_Performance_and_Reliability_Gates/BETA2_PRODUCTION_WORKLOAD_CAPTURE_REPLAY_AND_REHEARSAL_MODEL.md` |
+| `CPG-10-014` | Research open table formats and object-store tables | completed | `CPG-10-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `CPG-10-015` | Draft Beta 2 open table format canon | completed | `CPG-10-014` | `docs/specifications/39_Backup_Restore_and_Bulk_Data_Paths/BETA2_OPEN_TABLE_FORMAT_AND_OBJECT_STORE_TABLE_MODEL.md` |
+| `CPG-10-016` | Final sync, inventory update, and closeout | completed | `CPG-10-003|CPG-10-005|CPG-10-007|CPG-10-009|CPG-10-011|CPG-10-013|CPG-10-015` | `gates/CPG-10-016_CLOSEOUT_SUMMARY.md` |

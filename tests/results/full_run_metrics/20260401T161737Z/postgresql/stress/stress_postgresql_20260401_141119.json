@@ -1,0 +1,214 @@
+{
+  "metadata": {
+    "engine": "postgresql",
+    "dialect": "postgresql",
+    "host": "localhost",
+    "port": 5433,
+    "database": "benchmark",
+    "timestamp": "20260401_141119"
+  },
+  "data_loading": [
+    {
+      "table_name": "customers",
+      "row_count": 10000,
+      "duration_ms": 2474.3130207061768,
+      "rows_per_second": 4041.5258361878437,
+      "status": "success"
+    },
+    {
+      "table_name": "products",
+      "row_count": 5000,
+      "duration_ms": 1170.1750755310059,
+      "rows_per_second": 4272.864893939981,
+      "status": "success"
+    },
+    {
+      "table_name": "orders",
+      "row_count": 50000,
+      "duration_ms": 13013.668298721313,
+      "rows_per_second": 3842.1142180881357,
+      "status": "success"
+    },
+    {
+      "table_name": "order_items",
+      "row_count": 200000,
+      "duration_ms": 62152.29058265686,
+      "rows_per_second": 3217.902319046766,
+      "status": "success"
+    }
+  ],
+  "test_results": [
+    {
+      "test_name": "inner_join_simple",
+      "description": "Simple INNER JOIN between orders and customers",
+      "status": "passed",
+      "duration_ms": 81.83407783508301,
+      "rows_returned": 50000,
+      "rows_affected": 0,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n            SELECT o.order_id, o.order_date, c.first_name, c.last_name, c.email\n            FROM orders o\n            INNER JOIN customers c ON o.customer_id = c.customer_id\n        "
+    },
+    {
+      "test_name": "inner_join_large_result",
+      "description": "INNER JOIN returning millions of rows",
+      "status": "passed",
+      "duration_ms": 638.2758617401123,
+      "rows_returned": 200000,
+      "rows_affected": 0,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n            SELECT oi.*, o.order_date, o.status, c.first_name, c.last_name\n            FROM order_items oi\n            INNER JOIN orders o ON oi.order_id = o.order_id\n            INNER JOIN customers"
+    },
+    {
+      "test_name": "inner_join_multiple_conditions",
+      "description": "INNER JOIN with additional WHERE conditions",
+      "status": "passed",
+      "duration_ms": 6.1397552490234375,
+      "rows_returned": 0,
+      "rows_affected": 0,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n                SELECT o.order_id, o.total_amount, c.country_code\n                FROM orders o\n                INNER JOIN customers c ON o.customer_id = c.customer_id\n                WHERE o.order_d"
+    },
+    {
+      "test_name": "left_join_all_customers",
+      "description": "LEFT JOIN to find all customers and their orders",
+      "status": "passed",
+      "duration_ms": 45.64952850341797,
+      "rows_returned": 10000,
+      "rows_affected": 0,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n            SELECT c.customer_id, c.first_name || ' ' || c.last_name as full_name,\n                   COUNT(o.order_id) as order_count,\n                   COALESCE(SUM(o.total_amount), 0) as total_sp"
+    },
+    {
+      "test_name": "four_table_join",
+      "description": "JOIN all four tables together",
+      "status": "passed",
+      "duration_ms": 4.823923110961914,
+      "rows_returned": 0,
+      "rows_affected": 0,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n            SELECT \n                c.customer_id, c.first_name, c.last_name,\n                o.order_id, o.order_date, o.total_amount,\n                oi.quantity, oi.unit_price,\n                p.p"
+    },
+    {
+      "test_name": "self_join_same_country",
+      "description": "SELF JOIN to find customer pairs in same country",
+      "status": "passed",
+      "duration_ms": 11.467456817626953,
+      "rows_returned": 10000,
+      "rows_affected": 0,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n                SELECT \n                    c1.customer_id as customer1_id, \n                    c1.first_name as customer1_name,\n                    c2.customer_id as customer2_id,\n                 "
+    },
+    {
+      "test_name": "aggregation_daily_sales",
+      "description": "Aggregation with date truncation",
+      "status": "passed",
+      "duration_ms": 548.3608245849609,
+      "rows_returned": 2372,
+      "rows_affected": 0,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n            SELECT \n                DATE_TRUNC('month', o.order_date) as month,\n                p.category,\n                COUNT(DISTINCT o.order_id) as total_orders,\n                SUM(oi.quantity"
+    },
+    {
+      "test_name": "window_function_ranking",
+      "description": "JOIN with window functions for rankings",
+      "status": "passed",
+      "duration_ms": 5.545139312744141,
+      "rows_returned": 0,
+      "rows_affected": 0,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n            SELECT \n                c.customer_id,\n                c.first_name,\n                o.order_id,\n                o.total_amount,\n                RANK() OVER (PARTITION BY c.customer_id OR"
+    },
+    {
+      "test_name": "multi_dimensional_agg",
+      "description": "Multi-dimensional aggregation (OLAP-style)",
+      "status": "passed",
+      "duration_ms": 1136.3844871520996,
+      "rows_returned": 36453,
+      "rows_affected": 0,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n            SELECT \n                EXTRACT(YEAR FROM o.order_date) as order_year,\n                EXTRACT(MONTH FROM o.order_date) as order_month,\n                c.country_code,\n                p.c"
+    },
+    {
+      "test_name": "bulk_insert_select",
+      "description": "INSERT by selecting from large table",
+      "status": "passed",
+      "duration_ms": 175.45580863952637,
+      "rows_returned": 0,
+      "rows_affected": 100000,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n                INSERT INTO bulk_insert_test (id, data, metric_value)\n                SELECT \n                    seq as id,\n                    'Data_' || CAST(seq AS VARCHAR(20)) as data,\n         "
+    },
+    {
+      "test_name": "bulk_update_with_case",
+      "description": "Bulk UPDATE with CASE expressions",
+      "status": "passed",
+      "duration_ms": 103.81746292114258,
+      "rows_returned": 0,
+      "rows_affected": 19954,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n            UPDATE order_items\n            SET discount_pct = CASE\n                WHEN quantity >= 50 THEN 20.0\n                WHEN quantity >= 20 THEN 15.0\n                WHEN quantity >= 10 THEN"
+    },
+    {
+      "test_name": "bulk_update_with_join",
+      "description": "UPDATE using subquery (JOIN alternative)",
+      "status": "passed",
+      "duration_ms": 136.21926307678223,
+      "rows_returned": 0,
+      "rows_affected": 36102,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n                UPDATE orders\n                SET total_amount = total_amount * 0.95\n                WHERE customer_id IN (\n                    SELECT customer_id \n                    FROM customers "
+    },
+    {
+      "test_name": "agg_full_table_scan",
+      "description": "Full table aggregation",
+      "status": "passed",
+      "duration_ms": 69.62847709655762,
+      "rows_returned": 5,
+      "rows_affected": 0,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n                SELECT \n                    p.category,\n                    COUNT(*) as item_count,\n                    SUM(oi.quantity) as total_qty,\n                    AVG(oi.unit_price) as avg_pr"
+    },
+    {
+      "test_name": "agg_distinct_counts",
+      "description": "Count distinct values across large dataset",
+      "status": "passed",
+      "duration_ms": 456.4692974090576,
+      "rows_returned": 1,
+      "rows_affected": 0,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n                SELECT \n                    COUNT(DISTINCT c.customer_id) as unique_customers,\n                    COUNT(DISTINCT o.order_id) as unique_orders,\n                    COUNT(DISTINCT p.pr"
+    },
+    {
+      "test_name": "nested_subquery_agg",
+      "description": "Nested aggregation with subqueries",
+      "status": "passed",
+      "duration_ms": 93.09601783752441,
+      "rows_returned": 44,
+      "rows_affected": 0,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n            SELECT \n                country_stats.country_code,\n                country_stats.customer_count,\n                country_stats.total_revenue,\n                (SELECT AVG(country_revenue)"
+    }
+  ],
+  "summary": {
+    "total_tests": 15,
+    "passed": 15,
+    "failed": 0,
+    "errors": 0,
+    "total_duration_ms": 3513.167381286621
+  }
+}

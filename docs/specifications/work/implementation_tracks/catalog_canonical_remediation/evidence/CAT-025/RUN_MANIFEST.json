@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-025",
+  "status": "completed",
+  "started_at": "2026-02-14T17:35:13Z",
+  "finished_at": "2026-02-14T17:50:00Z",
+  "owner": "codex",
+  "notes": "CAT-025 complete: scheduler extension catalog families implemented with canonical root/bootstrap/backfill wiring, deterministic CRUD constraints, and focused contract/bootstrap gate tests passing."
+}

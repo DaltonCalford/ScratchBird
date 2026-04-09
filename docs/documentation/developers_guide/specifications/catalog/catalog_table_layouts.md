@@ -468,8 +468,8 @@ struct CatalogRootPage {
 
 ### References
 
-- `local_work/docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_INVENTORY.md`
-- `local_work/docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_CORE_OBJECTS.md`
+- `docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_INVENTORY.md`
+- `docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_CORE_OBJECTS.md`
 
 ### Changelog
 

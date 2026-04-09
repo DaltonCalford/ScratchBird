@@ -253,14 +253,15 @@ namespace scratchbird::core
     }
 
     HeapPage::HeapPage(uint8_t *page_data, uint32_t page_size)
-        : page_data_(page_data), page_size_(page_size), toast_mgr_(nullptr), db_(nullptr)
+        : page_data_(page_data), page_size_(page_size), toast_mgr_(nullptr), db_(nullptr),
+          page_tablespace_id_(PRIMARY_TABLESPACE_ID)
     {
     }
 
     HeapPage::HeapPage(uint8_t *page_data, uint32_t page_size, ToastManager *toast_mgr,
-                       Database *db, const ID &table_id)
+                       Database *db, const ID &table_id, uint16_t page_tablespace_id)
         : page_data_(page_data), page_size_(page_size), toast_mgr_(toast_mgr), db_(db),
-          table_id_(table_id)
+          table_id_(table_id), page_tablespace_id_(page_tablespace_id)
     {
     }
 
@@ -510,7 +511,7 @@ namespace scratchbird::core
         tuple_hdr->back_version_slot = 0;
         // ctid will be set after we know the final item_id
         // Convert page_id to GPID (tablespace 0 for now)
-        GPID page_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(header()->page_id));
+        GPID page_gpid = makeGPID(page_tablespace_id_, static_cast<uint64_t>(header()->page_id));
         tuple_hdr->setTID(page_gpid, item_id);
         if (tuple_hdr->infomask == 0)
         {
@@ -1195,7 +1196,7 @@ namespace scratchbird::core
         tuple_hdr->session_id = session_id;
         tuple_hdr->back_version_gpid = back_version_gpid;
         tuple_hdr->back_version_slot = back_version_slot;
-        tuple_hdr->setTID(makeGPID(PRIMARY_TABLESPACE_ID,
+        tuple_hdr->setTID(makeGPID(page_tablespace_id_,
                                    static_cast<uint64_t>(header()->page_id)),
                           item_id);
 
@@ -1415,7 +1416,7 @@ namespace scratchbird::core
                                             primary_length,
                                             *source_old_hdr,
                                             xmax,
-                                            makeGPID(PRIMARY_TABLESPACE_ID,
+                                            makeGPID(page_tablespace_id_,
                                                      static_cast<uint64_t>(header()->page_id)),
                                             old_item_id,
                                             false,
@@ -1440,7 +1441,7 @@ namespace scratchbird::core
                                          final_new_tuple_data,
                                          final_new_tuple_size,
                                          new_xmin,
-                                         makeGPID(PRIMARY_TABLESPACE_ID,
+                                         makeGPID(page_tablespace_id_,
                                                   static_cast<uint64_t>(header()->page_id)),
                                          back_version_item_id,
                                          normalizeSessionId(db_, table_id_,
@@ -1539,7 +1540,7 @@ namespace scratchbird::core
         ItemPointer *items = getItemArray();
         ItemPointer *item_ptr = &items[item_id];
         auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + item_ptr->offset);
-        tuple_hdr->setTID(makeGPID(PRIMARY_TABLESPACE_ID,
+        tuple_hdr->setTID(makeGPID(page_tablespace_id_,
                                    static_cast<uint64_t>(header()->page_id)),
                           item_id);
 
@@ -1579,7 +1580,7 @@ namespace scratchbird::core
         // Start with the PRIMARY tuple (newest version at stable item_id)
         const uint32_t primary_page_id = header()->page_id;
         const GPID primary_gpid =
-            makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(primary_page_id));
+            makeGPID(page_tablespace_id_, static_cast<uint64_t>(primary_page_id));
         uint16_t current_item_id = item_id;
         GPID current_gpid = primary_gpid;
 
@@ -1927,7 +1928,7 @@ namespace scratchbird::core
         ItemPointer *items = getItemArray();
         const uint16_t item_count = getItemCount();
         const GPID current_gpid =
-            makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(header()->page_id));
+            makeGPID(page_tablespace_id_, static_cast<uint64_t>(header()->page_id));
 
         auto noteAnomaly = [&](VersionChainAnomalyClass anomaly_class,
                                VersionChainAnomalyCode anomaly_code,

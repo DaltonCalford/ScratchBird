@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-032",
+  "phase": "PH3",
+  "title": "Implement immutable audit stream and tamper evidence chain",
+  "status": "pending",
+  "owner": "security-platform",
+  "estimate_days": 5,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

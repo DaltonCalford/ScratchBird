@@ -1,0 +1,4 @@
+gate_id,focus,required_tickets,required_evidence
+B1-02-GATE-01,specification_sufficiency,B1-02-001,"updated canonical specs|gap register updates|audit matrix updates"
+B1-02-GATE-02,implementation_lane,"B1-02-002|B1-02-003|B1-02-004","assigned code and spec changes|updated audit anchors"
+B1-02-GATE-03,release_and_closeout,"B1-02-005|B1-02-006","gate artifacts|benchmark artifacts|move-ready package"

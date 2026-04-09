@@ -1,0 +1,4 @@
+spec_clause,implementation,evidence,status
+Index page walker must validate each page and return deterministic aggregate status,src/core/index_page_diagnostics.cpp (walkPages),INDEX_PAGE_WALK_CONFORMANCE_RESULTS.md,pass
+Walker must continue across mixed-validity page sets and report per-page outcomes,src/core/index_page_diagnostics.cpp (walkPages entry accumulation),INDEX_PAGE_WALK_CONFORMANCE_RESULTS.md,pass
+Conformance tests must include all-valid and mixed-corruption walks,tests/unit/test_index_page_walk_conformance.cpp,TEST_RESULTS.md,pass

@@ -1,0 +1,8 @@
+case_id,index_family,required_check,expected_result,error_code
+T18-CS-001,BTREE,insert_update_delete_range_scan_split_merge_correctness,pass,
+T18-CS-002,BTREE,prefix_compression_reconstruction_and_high_key_sibling_traversal,pass,
+T18-CS-003,HASH,bucket_selection_overflow_split_and_collision_handling,pass,
+T18-CS-004,GIN,pending_list_insert_flush_and_posting_promotion,pass,
+T18-CS-005,GIST,opclass_functions_consistent_union_penalty_picksplit,pass,
+T18-CS-006,SPGIST,allTheSame_and_picksplit_correctness,pass,
+T18-CS-007,BRIN,range_summary_pruning_and_autosummarize_thresholds,pass,

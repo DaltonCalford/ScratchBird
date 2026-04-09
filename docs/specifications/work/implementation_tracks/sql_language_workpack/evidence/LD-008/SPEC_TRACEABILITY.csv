@@ -1,0 +1,5 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,PARAM-BIND-RULES,LD-008/PARAM_BINDING_AUDIT.csv,PASS,Positional and named parameter normalization and failures covered
+13_Operator_Model_and_Coercion/CAST_MATRIX.md,13_Operator_Model_and_Coercion,CAST-VALIDITY,LD-008/TYPE_COERCION_CASES.csv,PASS,Explicit and implicit cast allow/deny behavior covered
+13_Operator_Model_and_Coercion/IMPLICIT_COERCION_RULES.md,13_Operator_Model_and_Coercion,IMPLICIT-COERCION,LD-008/TYPE_COERCION_CASES.csv,PASS,Native implicit operator coercion paths covered
+21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,DML-BIND-ERRORS,LD-008/PARAM_BINDING_AUDIT.csv,PASS,Unknown relation/column/ambiguous/system-column errors represented

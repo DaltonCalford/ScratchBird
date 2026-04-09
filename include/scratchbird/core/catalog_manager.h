@@ -31,6 +31,7 @@
 #include <cstring>  // for std::memcpy
 #include <array>
 #include "scratchbird/core/status.h"
+#include "scratchbird/core/config.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
@@ -636,6 +637,7 @@ public:
             bool name_is_delimited = false;    // True if name was double-quoted (case-sensitive)
             uint16_t ordinal = 0;        // Column position in table
             uint16_t data_type = 0;      // Type code
+            uint16_t physical_data_type = 0; // On-disk tuple encoding type (0 = same as data_type)
             uint32_t type_precision = 0; // For DECIMAL, VECTOR dimensions, VARCHAR length
             uint32_t type_scale = 0;     // For DECIMAL scale
             uint32_t max_length = 0;     // Legacy field, use type_precision instead
@@ -762,13 +764,24 @@ public:
             uint16_t tablespace_id = 0;    // Internal numeric tablespace ID
             ID tablespace_uuid{};          // Catalog UUID for tablespace (SBDB$KEY_TABLESPACE)
             IndexType index_type = IndexType::BTREE;
+            std::string physical_family;   // Canonical admitted family identity
+            std::string planner_family;    // Optimizer metrics/costing family substrate
+            std::string family_mode;       // DIRECT, SHARED_RUNTIME, QUERY_ALIAS, etc.
+            uint16_t format_version = 1;
+            std::string alias_origin;      // Non-empty only when created through an alias surface
+            uint16_t family_options_version = 1;
+            std::string lifecycle_model;   // Canonical lifecycle identity
+            optimizer::IndexFamilyMetricsType metrics_type =
+                optimizer::IndexFamilyMetricsType::UNKNOWN;
+            uint16_t metrics_version = 1;
+            std::string queryability_state; // BUILDING, QUERYABLE, RETIRING, FAILED, etc.
             bool is_unique = false;
             std::vector<ID> column_ids;
             std::vector<ID> include_column_ids;
             ID index_params_oid{}; // TOAST reference for index parameters - IMPLEMENTED
             uint64_t created_time = 0;
-            uint32_t collation_id = 101; // Default: utf8_general_ci (binary comparison)
-                                         // Collation-aware comparisons are handled by CharsetManager
+            uint32_t collation_id = 100; // Default: utf8_bin (binary comparison)
+                                         // Textual indexes may override this explicitly.
 
             // R-tree specific parameters (Phase 2 Task 9.2)
             uint32_t rtree_max_entries = 50; // Maximum entries per R-tree node (M parameter)
@@ -4039,6 +4052,22 @@ public:
             UPDATE = 2
         };
 
+        enum class IndexPageDeltaOp : uint8_t
+        {
+            INSERT = 0,
+            DELETE = 1,
+            UPDATE_SAME_KEY = 2,
+            UPDATE_KEY_CHANGE = 3
+        };
+
+        enum class IndexPageDeltaMergeState : uint8_t
+        {
+            PENDING = 0,
+            MERGING = 1,
+            MERGED = 2,
+            FAILED_FENCE = 3
+        };
+
         enum class IndexHealthStatus : uint8_t
         {
             HEALTHY = 0,
@@ -4540,6 +4569,27 @@ public:
             uint64_t created_time = 0;
         };
 
+        struct IndexPageDeltaCatalogInfo
+        {
+            ID page_delta_id;
+            ID index_id;
+            ID target_locality_key_id;
+            IndexPageDeltaOp delta_op = IndexPageDeltaOp::INSERT;
+            ID logical_row_uuid;
+            uint64_t old_tid_gpid = 0;
+            uint16_t old_tid_slot = 0;
+            bool has_old_tid = false;
+            uint64_t new_tid_gpid = 0;
+            uint16_t new_tid_slot = 0;
+            bool has_new_tid = false;
+            ID normalized_key_id;
+            ID normalized_old_key_id;
+            uint64_t created_xid = 0;
+            IndexPageDeltaMergeState merge_state = IndexPageDeltaMergeState::PENDING;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+        };
+
         struct IndexStatsCatalogInfo
         {
             ID index_id;
@@ -4636,6 +4686,13 @@ public:
             uint32_t in_memory_errors = 0;
             uint64_t pages_scanned = 0;
             uint64_t bytes_scanned = 0;
+            uint64_t cleanup_backlog_count = 0;
+            uint64_t cleanup_backlog_pages = 0;
+            uint64_t cleanup_backlog_bytes = 0;
+            uint64_t cleanup_sweep_generation = 0;
+            uint64_t cleanup_checkpoint_generation = 0;
+            uint64_t cleanup_last_published_time = 0;
+            bool cleanup_repair_required = false;
             bool is_valid = true;
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
@@ -4812,6 +4869,213 @@ public:
             bool is_valid = true;
         };
 
+        struct SchemaChangePlanCatalogInfo
+        {
+            ID schema_change_plan_uuid;
+            ID object_uuid;
+            std::string object_type;
+            std::string requested_operation;
+            std::string change_class;
+            ID requested_by_uuid;
+            uint64_t requested_at = 0;
+            std::string phase_state;
+            uint64_t baseline_schema_epoch = 0;
+            bool has_expanded_schema_epoch = false;
+            uint64_t expanded_schema_epoch = 0;
+            bool has_cutover_schema_epoch = false;
+            uint64_t cutover_schema_epoch = 0;
+            std::string rollback_class;
+            std::string refusal_reason_code;
+            bool has_refusal_detail_uuid = false;
+            ID refusal_detail_uuid;
+            bool is_valid = true;
+        };
+
+        struct SchemaChangeEventCatalogInfo
+        {
+            ID schema_change_event_uuid;
+            ID schema_change_plan_uuid;
+            uint64_t event_seq = 0;
+            bool has_phase_from = false;
+            std::string phase_from;
+            std::string phase_to;
+            std::string event_state;
+            std::string event_code;
+            bool has_event_detail_uuid = false;
+            ID event_detail_uuid;
+            uint64_t event_time = 0;
+            bool is_valid = true;
+        };
+
+        struct SchemaChangeBackfillProgressCatalogInfo
+        {
+            ID schema_change_backfill_progress_uuid;
+            ID schema_change_plan_uuid;
+            uint64_t worker_generation = 0;
+            uint64_t scanned_row_count = 0;
+            uint64_t written_row_count = 0;
+            uint64_t validated_row_count = 0;
+            bool has_last_resume_row_uuid = false;
+            ID last_resume_row_uuid;
+            bool has_last_resume_key_json = false;
+            std::string last_resume_key_json;
+            bool partial_chunk_rewind_required = false;
+            std::string restart_disposition;
+            bool has_last_heartbeat_at = false;
+            uint64_t last_heartbeat_at = 0;
+            bool is_valid = true;
+        };
+
+        struct SchemaChangeCutoverGuardCatalogInfo
+        {
+            ID schema_change_cutover_guard_uuid;
+            ID schema_change_plan_uuid;
+            uint64_t expected_pre_cutover_schema_epoch = 0;
+            uint64_t validation_manifest_hash = 0;
+            bool dependency_refresh_complete = false;
+            bool has_expected_security_epoch = false;
+            uint64_t expected_security_epoch = 0;
+            std::string guard_state;
+            uint64_t checked_at = 0;
+            bool is_valid = true;
+        };
+
+        struct IndexBuildPlanCatalogInfo
+        {
+            ID index_build_plan_uuid;
+            ID logical_index_id;
+            std::string build_reason;
+            std::string build_state;
+            ID shadow_index_uuid;
+            uint64_t baseline_schema_epoch = 0;
+            uint64_t build_snapshot_xid = 0;
+            bool has_resume_anchor_row_uuid = false;
+            ID resume_anchor_row_uuid;
+            bool has_resume_payload_json = false;
+            std::string resume_payload_json;
+            bool is_valid = true;
+        };
+
+        struct IndexBuildEventCatalogInfo
+        {
+            ID index_build_event_uuid;
+            ID index_build_plan_uuid;
+            uint64_t event_seq = 0;
+            bool has_phase_from = false;
+            std::string phase_from;
+            std::string phase_to;
+            std::string event_code;
+            uint64_t event_time = 0;
+            bool is_valid = true;
+        };
+
+        struct IndexBuildProgressCatalogInfo
+        {
+            ID index_build_progress_uuid;
+            ID index_build_plan_uuid;
+            uint64_t rows_scanned = 0;
+            uint64_t rows_applied = 0;
+            uint64_t side_log_records_applied = 0;
+            bool has_last_resume_row_uuid = false;
+            ID last_resume_row_uuid;
+            bool partial_chunk_rewind_required = false;
+            std::string restart_disposition;
+            bool is_valid = true;
+        };
+
+        struct IndexBuildCutoverGuardCatalogInfo
+        {
+            ID index_build_cutover_guard_uuid;
+            ID index_build_plan_uuid;
+            uint64_t expected_schema_epoch = 0;
+            bool side_log_drained = false;
+            uint64_t validation_manifest_hash = 0;
+            std::string guard_state;
+            uint64_t checked_at = 0;
+            bool is_valid = true;
+        };
+
+        struct BulkLoadPlanCatalogInfo
+        {
+            ID bulk_load_plan_uuid;
+            ID object_uuid;
+            std::string ingest_lane;
+            std::string load_kind;
+            std::string source_format;
+            ID requested_by_uuid;
+            uint64_t requested_at = 0;
+            std::string phase_state;
+            bool has_expected_row_count = false;
+            uint64_t expected_row_count = 0;
+            bool is_valid = true;
+        };
+
+        struct BulkLoadEventCatalogInfo
+        {
+            ID bulk_load_event_uuid;
+            ID bulk_load_plan_uuid;
+            uint64_t event_seq = 0;
+            bool has_phase_from = false;
+            std::string phase_from;
+            std::string phase_to;
+            std::string event_state;
+            std::string event_code;
+            uint64_t event_time = 0;
+            bool is_valid = true;
+        };
+
+        struct BulkLoadProgressCatalogInfo
+        {
+            ID bulk_load_progress_uuid;
+            ID bulk_load_plan_uuid;
+            uint64_t worker_generation = 0;
+            uint64_t scanned_row_count = 0;
+            uint64_t written_row_count = 0;
+            uint64_t validated_row_count = 0;
+            bool partial_chunk_rewind_required = false;
+            std::string restart_disposition;
+            bool has_last_heartbeat_at = false;
+            uint64_t last_heartbeat_at = 0;
+            bool is_valid = true;
+        };
+
+        struct BulkLoadCutoverGuardCatalogInfo
+        {
+            ID bulk_load_cutover_guard_uuid;
+            ID bulk_load_plan_uuid;
+            uint64_t expected_pre_cutover_schema_epoch = 0;
+            uint64_t validation_manifest_hash = 0;
+            bool dependency_refresh_complete = false;
+            std::string guard_state;
+            uint64_t checked_at = 0;
+            bool is_valid = true;
+        };
+
+        struct MemoryGrantFeedbackCatalogInfo
+        {
+            ID grant_feedback_uuid;
+            uint64_t grant_key_hash = 0;
+            ID database_uuid;
+            ID schema_root_uuid;
+            std::string operator_kind;
+            uint64_t sample_count = 0;
+            uint64_t last_grant_bytes = 0;
+            uint64_t p50_bytes = 0;
+            uint64_t p90_bytes = 0;
+            uint64_t peak_bytes = 0;
+            uint64_t spill_count = 0;
+            uint64_t cancel_count = 0;
+            uint64_t oscillation_count = 0;
+            uint8_t underuse_streak = 0;
+            int8_t last_adjustment_direction = 0;
+            uint8_t oscillation_disable_count = 0;
+            std::string state;
+            uint64_t updated_at = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
         struct ForensicSnapshotCapsuleCatalogInfo
         {
             ID capsule_id;
@@ -4953,6 +5217,8 @@ public:
             uint64_t reclaimed_version_count = 0;
             uint64_t reclaimed_bytes = 0;
             uint64_t index_backlog_count = 0;
+            uint64_t index_backlog_pages = 0;
+            uint64_t index_backlog_bytes = 0;
             uint32_t cursor_crc32c = 0;
             bool is_valid = true;
         };
@@ -5599,6 +5865,182 @@ public:
             std::string resource_scope_value;
             ID settings_profile_id;
             uint16_t priority_u16 = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        enum class ConfigValueSource : uint8_t
+        {
+            CATALOG = 1,
+            BOOTSTRAP = 2,
+            SESSION_OVERRIDE = 3,
+        };
+
+        struct ConfigKeyCatalogInfo
+        {
+            uint32_t key_id = 0;
+            std::string key_name;
+            config::CatalogValueType value_type = config::CatalogValueType::STRING;
+            config::CatalogScope scope = config::CatalogScope::INSTANCE;
+            std::string default_value;
+            std::string min_value;
+            std::string max_value;
+            std::string allowed_values;
+            bool is_restart_required = false;
+            bool is_mutable = true;
+            bool is_bootstrap_only = false;
+            bool is_cluster_managed = false;
+            config::CatalogHotApplyClass hot_apply_class = config::CatalogHotApplyClass::NONE;
+            bool is_sensitive = false;
+            std::string description;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ConfigValueCatalogInfo
+        {
+            ID config_value_id;
+            uint32_t key_id = 0;
+            bool has_scope_uuid = false;
+            ID scope_uuid;
+            std::string value_text;
+            ConfigValueSource source = ConfigValueSource::CATALOG;
+            uint64_t config_generation = 0;
+            uint64_t effective_txid = 0;
+            bool pending_restart = false;
+            ID updated_by;
+            uint64_t updated_at = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ConfigChangeLogCatalogInfo
+        {
+            uint64_t change_id = 0;
+            uint32_t key_id = 0;
+            bool has_scope_uuid = false;
+            ID scope_uuid;
+            std::string old_value_text;
+            std::string new_value_text;
+            std::string change_reason;
+            uint64_t config_generation = 0;
+            ID changed_by;
+            uint64_t changed_at = 0;
+            bool is_valid = true;
+        };
+
+        struct ListenerProfileCatalogInfo
+        {
+            ID listener_profile_id;
+            std::string profile_name;
+            std::string protocol_family;
+            bool enabled = true;
+            bool manager_fronted = false;
+            bool has_owner_database_uuid = false;
+            ID owner_database_uuid;
+            std::string desired_state = "ENABLED";
+            uint64_t applied_generation = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+        };
+
+        struct ListenerBindingCatalogInfo
+        {
+            ID listener_binding_id;
+            ID listener_profile_id;
+            std::string bind_address;
+            uint16_t bind_port = 0;
+            std::string bind_transport = "inet";
+            std::string bind_scope = "global";
+            bool is_primary = true;
+            uint64_t configuration_generation = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ListenerEmulationBindingCatalogInfo
+        {
+            ID listener_emulation_binding_id;
+            ID listener_profile_id;
+            std::string emulation_family;
+            std::string protocol_surface;
+            bool enabled = true;
+            bool has_parser_pool_policy_uuid = false;
+            ID parser_pool_policy_uuid;
+            uint64_t configuration_generation = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ParserPoolPolicyCatalogInfo
+        {
+            ID parser_pool_policy_id;
+            std::string policy_name;
+            std::string parser_library_family;
+            uint16_t min_workers = 0;
+            uint16_t preferred_workers = 0;
+            uint16_t max_workers = 0;
+            uint16_t queue_max = 0;
+            uint64_t queue_timeout_ms = 0;
+            uint64_t idle_timeout_ms = 0;
+            uint64_t spawn_backoff_ms = 0;
+            uint64_t health_interval_ms = 0;
+            uint16_t missed_heartbeat_threshold = 0;
+            uint64_t warm_replenish_timeout_ms = 0;
+            uint64_t memory_guardrail_bytes = 0;
+            std::string workload_guardrail_class;
+            uint64_t configuration_generation = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ListenerRuntimeTargetCatalogInfo
+        {
+            ID listener_runtime_target_id;
+            ID listener_profile_id;
+            std::string target_kind;
+            bool has_target_database_uuid = false;
+            ID target_database_uuid;
+            bool has_target_server_uuid = false;
+            ID target_server_uuid;
+            bool has_inner_listener_profile_uuid = false;
+            ID inner_listener_profile_uuid;
+            uint64_t current_generation = 0;
+            bool has_pending_generation = false;
+            uint64_t pending_generation = 0;
+            bool has_last_applied_generation = false;
+            uint64_t last_applied_generation = 0;
+            bool has_last_refused_generation = false;
+            uint64_t last_refused_generation = 0;
+            std::string last_error_code;
+            bool has_last_error_detail_uuid = false;
+            ID last_error_detail_uuid;
+            uint64_t last_observed_at = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ListenerGenerationRecordCatalogInfo
+        {
+            ID listener_generation_id;
+            ID target_database_uuid;
+            ID listener_profile_id;
+            uint64_t committed_generation = 0;
+            uint64_t applied_generation = 0;
+            bool has_refused_generation = false;
+            uint64_t refused_generation = 0;
+            std::string drift_state = "CONSISTENT";
+            bool has_last_instruction_uuid = false;
+            ID last_instruction_uuid;
+            uint64_t observed_at = 0;
             bool is_valid = true;
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
@@ -6315,6 +6757,14 @@ public:
             uint8_t io_reject_pct = 0;
             AdmissionRejectMode reject_mode = AdmissionRejectMode::REJECT;
             uint32_t queue_timeout_ms = 0;
+            std::string accelerator_profile_name;
+            uint64_t accelerator_memory_budget_bytes = 0;
+            uint64_t accelerator_pinned_residency_target_bytes = 0;
+            uint32_t accelerator_concurrent_build_limit = 0;
+            uint32_t accelerator_concurrent_search_limit = 0;
+            std::string accelerator_prewarm_policy;
+            std::string accelerator_fallback_policy;
+            std::string accelerator_degraded_state_override;
             bool is_enabled = true;
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
@@ -6329,6 +6779,9 @@ public:
             ID target_uuid;
             ID class_id;
             uint8_t priority = 0;
+            std::string accelerator_device_class;
+            std::string accelerator_device_id;
+            std::string accelerator_device_pool_id;
             bool is_enabled = true;
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
@@ -7506,6 +7959,15 @@ public:
         auto alterIndexState(const ID &index_id, IndexState state,
                              ErrorContext *ctx = nullptr) -> Status;
 
+        /**
+         * Persist an updated root GPID for an existing index.
+         *
+         * Used by runtime index structures when splits or rebuild paths move the
+         * authoritative root page and fresh opens must observe the new root.
+         */
+        auto updateIndexRootGPID(const ID &index_id, GPID root_gpid,
+                                 ErrorContext *ctx = nullptr) -> Status;
+
         // LSM Integration Phase 3.3: Index object cache management
         /**
          * Get cached index object pointer
@@ -8343,6 +8805,18 @@ public:
         auto deleteIndexBuildDeltaCatalogEntry(const ID& build_delta_id,
                                                ErrorContext* ctx = nullptr) -> Status;
 
+        auto upsertIndexPageDeltaCatalogEntry(const IndexPageDeltaCatalogInfo& info,
+                                              ID& page_delta_id_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexPageDeltaCatalogEntry(const ID& page_delta_id,
+                                           IndexPageDeltaCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexPageDeltaCatalogEntries(const ID& index_id,
+                                              std::vector<IndexPageDeltaCatalogInfo>& rows_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto deleteIndexPageDeltaCatalogEntry(const ID& page_delta_id,
+                                              ErrorContext* ctx = nullptr) -> Status;
+
         // ============================================================================
         // Canonical index telemetry extension catalog operations (CAT-017)
         // ============================================================================
@@ -8486,6 +8960,109 @@ public:
                                               ErrorContext* ctx = nullptr) -> Status;
         auto buildCurrentSchemaEpochDefinitionManifest(std::string& manifest_out,
                                                        ErrorContext* ctx = nullptr) -> Status;
+        auto appendSchemaChangePlanCatalogEntry(SchemaChangePlanCatalogInfo& info,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getSchemaChangePlanCatalogEntry(const ID& schema_change_plan_uuid,
+                                             SchemaChangePlanCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listSchemaChangePlanCatalogEntries(
+            std::vector<SchemaChangePlanCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto appendSchemaChangeEventCatalogEntry(SchemaChangeEventCatalogInfo& info,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto listSchemaChangeEventCatalogEntries(
+            const ID& schema_change_plan_uuid,
+            std::vector<SchemaChangeEventCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto upsertSchemaChangeBackfillProgressCatalogEntry(
+            const SchemaChangeBackfillProgressCatalogInfo& info,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getSchemaChangeBackfillProgressCatalogEntry(
+            const ID& schema_change_plan_uuid,
+            SchemaChangeBackfillProgressCatalogInfo& info_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto upsertSchemaChangeCutoverGuardCatalogEntry(
+            const SchemaChangeCutoverGuardCatalogInfo& info,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getSchemaChangeCutoverGuardCatalogEntry(
+            const ID& schema_change_plan_uuid,
+            SchemaChangeCutoverGuardCatalogInfo& info_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto appendIndexBuildPlanCatalogEntry(IndexBuildPlanCatalogInfo& info,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto updateIndexBuildPlanCatalogState(const ID& index_build_plan_uuid,
+                                              const std::string& build_state,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexBuildPlanCatalogEntry(const ID& index_build_plan_uuid,
+                                           IndexBuildPlanCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexBuildPlanCatalogEntries(
+            std::vector<IndexBuildPlanCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto appendIndexBuildEventCatalogEntry(IndexBuildEventCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexBuildEventCatalogEntries(
+            const ID& index_build_plan_uuid,
+            std::vector<IndexBuildEventCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto upsertIndexBuildProgressCatalogEntry(
+            const IndexBuildProgressCatalogInfo& info,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexBuildProgressCatalogEntry(
+            const ID& index_build_plan_uuid,
+            IndexBuildProgressCatalogInfo& info_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto upsertIndexBuildCutoverGuardCatalogEntry(
+            const IndexBuildCutoverGuardCatalogInfo& info,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexBuildCutoverGuardCatalogEntry(
+            const ID& index_build_plan_uuid,
+            IndexBuildCutoverGuardCatalogInfo& info_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto appendBulkLoadPlanCatalogEntry(BulkLoadPlanCatalogInfo& info,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto updateBulkLoadPlanCatalogPhaseState(const ID& bulk_load_plan_uuid,
+                                                 const std::string& phase_state,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getBulkLoadPlanCatalogEntry(const ID& bulk_load_plan_uuid,
+                                         BulkLoadPlanCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listBulkLoadPlanCatalogEntries(
+            std::vector<BulkLoadPlanCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto appendBulkLoadEventCatalogEntry(BulkLoadEventCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listBulkLoadEventCatalogEntries(
+            const ID& bulk_load_plan_uuid,
+            std::vector<BulkLoadEventCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto upsertBulkLoadProgressCatalogEntry(
+            const BulkLoadProgressCatalogInfo& info,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getBulkLoadProgressCatalogEntry(
+            const ID& bulk_load_plan_uuid,
+            BulkLoadProgressCatalogInfo& info_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto upsertBulkLoadCutoverGuardCatalogEntry(
+            const BulkLoadCutoverGuardCatalogInfo& info,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getBulkLoadCutoverGuardCatalogEntry(
+            const ID& bulk_load_plan_uuid,
+            BulkLoadCutoverGuardCatalogInfo& info_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto upsertMemoryGrantFeedbackCatalogEntry(
+            const MemoryGrantFeedbackCatalogInfo& info,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getMemoryGrantFeedbackCatalogEntry(
+            uint64_t grant_key_hash,
+            MemoryGrantFeedbackCatalogInfo& info_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto listMemoryGrantFeedbackCatalogEntries(
+            std::vector<MemoryGrantFeedbackCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteMemoryGrantFeedbackCatalogEntry(
+            uint64_t grant_key_hash,
+            ErrorContext* ctx = nullptr) -> Status;
 
         auto appendPageAuditFindingCatalogEntry(PageAuditFindingCatalogInfo& info,
                                                 ErrorContext* ctx = nullptr) -> Status;
@@ -8849,6 +9426,103 @@ public:
         auto resolveSettingsPolicy(const SettingsResolutionRequest& request,
                                    SettingsResolutionDecision& decision_out,
                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertConfigKeyCatalogEntry(const ConfigKeyCatalogInfo& info,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto getConfigKeyCatalogEntry(uint32_t key_id,
+                                      ConfigKeyCatalogInfo& info_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
+        auto getConfigKeyCatalogEntryByName(const std::string& key_name,
+                                            ConfigKeyCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listConfigKeyCatalogEntries(std::vector<ConfigKeyCatalogInfo>& rows_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertConfigValueCatalogEntry(const ConfigValueCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getConfigValueCatalogEntry(uint32_t key_id,
+                                        const ID* scope_uuid,
+                                        ConfigValueCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listConfigValueCatalogEntries(std::vector<ConfigValueCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteConfigValueCatalogEntry(uint32_t key_id,
+                                           const ID* scope_uuid,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto appendConfigChangeLogCatalogEntry(const ConfigChangeLogCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listConfigChangeLogCatalogEntries(
+            std::vector<ConfigChangeLogCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertListenerProfileCatalogEntry(const ListenerProfileCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getListenerProfileCatalogEntry(const ID& listener_profile_id,
+                                            ListenerProfileCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listListenerProfileCatalogEntries(std::vector<ListenerProfileCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteListenerProfileCatalogEntry(const ID& listener_profile_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertListenerBindingCatalogEntry(const ListenerBindingCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getListenerBindingCatalogEntry(const ID& listener_binding_id,
+                                            ListenerBindingCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listListenerBindingCatalogEntries(std::vector<ListenerBindingCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteListenerBindingCatalogEntry(const ID& listener_binding_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertListenerEmulationBindingCatalogEntry(
+            const ListenerEmulationBindingCatalogInfo& info,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getListenerEmulationBindingCatalogEntry(
+            const ID& listener_emulation_binding_id,
+            ListenerEmulationBindingCatalogInfo& info_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto listListenerEmulationBindingCatalogEntries(
+            std::vector<ListenerEmulationBindingCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteListenerEmulationBindingCatalogEntry(
+            const ID& listener_emulation_binding_id,
+            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertParserPoolPolicyCatalogEntry(const ParserPoolPolicyCatalogInfo& info,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getParserPoolPolicyCatalogEntry(const ID& parser_pool_policy_id,
+                                             ParserPoolPolicyCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listParserPoolPolicyCatalogEntries(std::vector<ParserPoolPolicyCatalogInfo>& rows_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto deleteParserPoolPolicyCatalogEntry(const ID& parser_pool_policy_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertListenerRuntimeTargetCatalogEntry(
+            const ListenerRuntimeTargetCatalogInfo& info,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getListenerRuntimeTargetCatalogEntry(const ID& listener_runtime_target_id,
+                                                  ListenerRuntimeTargetCatalogInfo& info_out,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto listListenerRuntimeTargetCatalogEntries(
+            std::vector<ListenerRuntimeTargetCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteListenerRuntimeTargetCatalogEntry(const ID& listener_runtime_target_id,
+                                                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertListenerGenerationRecordCatalogEntry(
+            const ListenerGenerationRecordCatalogInfo& info,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getListenerGenerationRecordCatalogEntry(const ID& listener_generation_id,
+                                                     ListenerGenerationRecordCatalogInfo& info_out,
+                                                     ErrorContext* ctx = nullptr) -> Status;
+        auto listListenerGenerationRecordCatalogEntries(
+            std::vector<ListenerGenerationRecordCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteListenerGenerationRecordCatalogEntry(const ID& listener_generation_id,
+                                                        ErrorContext* ctx = nullptr) -> Status;
 
         auto upsertAuthMappingCatalogEntry(const AuthMappingCatalogInfo& info,
                                            ErrorContext* ctx = nullptr) -> Status;
@@ -12264,6 +12938,8 @@ public:
         // @return Status::OK on success
         auto storeStringInToast(const std::string& str, uint64_t xmin,
                                ID& oid_out, ErrorContext* ctx = nullptr) -> Status;
+        auto deleteToastValue(const ID& oid, uint64_t xmax,
+                             ErrorContext* ctx = nullptr) -> Status;
 
         // Initialize policy TOAST storage (must be called after StorageEngine is ready)
         auto initializePolicyToastIfNeeded(ErrorContext* ctx = nullptr) -> Status;
@@ -12442,6 +13118,10 @@ public:
         {
             return index_build_deltas_table_page_;
         }
+        auto indexPageDeltasTablePage() const -> uint32_t
+        {
+            return index_page_deltas_table_page_;
+        }
         auto indexStatsTablePage() const -> uint32_t
         {
             return index_stats_table_page_;
@@ -12493,6 +13173,94 @@ public:
             return transaction_table_page_;
         }
 
+        auto configKeyTablePage() const -> uint32_t
+        {
+            return config_key_table_page_;
+        }
+        auto configValueTablePage() const -> uint32_t
+        {
+            return config_value_table_page_;
+        }
+        auto configChangeLogTablePage() const -> uint32_t
+        {
+            return config_change_log_table_page_;
+        }
+        auto listenerProfileTablePage() const -> uint32_t
+        {
+            return listener_profile_table_page_;
+        }
+        auto listenerBindingTablePage() const -> uint32_t
+        {
+            return listener_binding_table_page_;
+        }
+        auto listenerEmulationBindingTablePage() const -> uint32_t
+        {
+            return listener_emulation_binding_table_page_;
+        }
+        auto parserPoolPolicyTablePage() const -> uint32_t
+        {
+            return parser_pool_policy_table_page_;
+        }
+        auto listenerRuntimeTargetTablePage() const -> uint32_t
+        {
+            return listener_runtime_target_table_page_;
+        }
+        auto listenerGenerationRecordTablePage() const -> uint32_t
+        {
+            return listener_generation_record_table_page_;
+        }
+        auto schemaChangePlanTablePage() const -> uint32_t
+        {
+            return schema_change_plan_table_page_;
+        }
+        auto schemaChangeEventTablePage() const -> uint32_t
+        {
+            return schema_change_event_table_page_;
+        }
+        auto schemaChangeBackfillProgressTablePage() const -> uint32_t
+        {
+            return schema_change_backfill_progress_table_page_;
+        }
+        auto schemaChangeCutoverGuardTablePage() const -> uint32_t
+        {
+            return schema_change_cutover_guard_table_page_;
+        }
+        auto indexBuildPlanTablePage() const -> uint32_t
+        {
+            return index_build_plan_table_page_;
+        }
+        auto indexBuildEventTablePage() const -> uint32_t
+        {
+            return index_build_event_table_page_;
+        }
+        auto indexBuildProgressTablePage() const -> uint32_t
+        {
+            return index_build_progress_table_page_;
+        }
+        auto indexBuildCutoverGuardTablePage() const -> uint32_t
+        {
+            return index_build_cutover_guard_table_page_;
+        }
+        auto bulkLoadPlanTablePage() const -> uint32_t
+        {
+            return bulk_load_plan_table_page_;
+        }
+        auto bulkLoadEventTablePage() const -> uint32_t
+        {
+            return bulk_load_event_table_page_;
+        }
+        auto bulkLoadProgressTablePage() const -> uint32_t
+        {
+            return bulk_load_progress_table_page_;
+        }
+        auto bulkLoadCutoverGuardTablePage() const -> uint32_t
+        {
+            return bulk_load_cutover_guard_table_page_;
+        }
+        auto memoryGrantFeedbackTablePage() const -> uint32_t
+        {
+            return memory_grant_feedback_table_page_;
+        }
         auto authMappingTablePage() const -> uint32_t
         {
             return auth_mapping_table_page_;
@@ -13572,6 +14340,7 @@ public:
         uint32_t index_maintenance_table_page_ = 0; // Index maintenance catalog (CAT-016)
         uint32_t index_maintenance_deltas_table_page_ = 0; // Index maintenance delta catalog (CAT-016)
         uint32_t index_build_deltas_table_page_ = 0; // Index build delta catalog (CAT-016)
+        uint32_t index_page_deltas_table_page_ = 0; // Index page delta catalog (CAT-016)
         uint32_t index_stats_table_page_ = 0; // Index statistics catalog (CAT-017)
         uint32_t index_usage_table_page_ = 0; // Index usage telemetry catalog (CAT-017)
         uint32_t index_contention_table_page_ = 0; // Index contention telemetry catalog (CAT-017)
@@ -13585,6 +14354,19 @@ public:
         uint32_t audit_export_segment_table_page_ = 0; // Audit export segment catalog (NCW-034)
         uint32_t transaction_lineage_event_table_page_ = 0; // Retained transaction lineage catalog (NCW-040)
         uint32_t schema_epoch_table_page_ = 0; // Historical schema epoch catalog (NCW-046)
+        uint32_t schema_change_plan_table_page_ = 0; // Durable schema change plan catalog (B1-02-004)
+        uint32_t schema_change_event_table_page_ = 0; // Durable schema change event catalog (B1-02-004)
+        uint32_t schema_change_backfill_progress_table_page_ = 0; // Durable schema change progress catalog (B1-02-004)
+        uint32_t schema_change_cutover_guard_table_page_ = 0; // Durable schema change cutover guard catalog (B1-02-004)
+        uint32_t index_build_plan_table_page_ = 0; // Durable index build plan catalog (B1-08-004)
+        uint32_t index_build_event_table_page_ = 0; // Durable index build event catalog (B1-08-004)
+        uint32_t index_build_progress_table_page_ = 0; // Durable index build progress catalog (B1-08-004)
+        uint32_t index_build_cutover_guard_table_page_ = 0; // Durable index build cutover guard catalog (B1-08-004)
+        uint32_t bulk_load_plan_table_page_ = 0; // Durable bulk load plan catalog (B1-08-004)
+        uint32_t bulk_load_event_table_page_ = 0; // Durable bulk load event catalog (B1-08-004)
+        uint32_t bulk_load_progress_table_page_ = 0; // Durable bulk load progress catalog (B1-08-004)
+        uint32_t bulk_load_cutover_guard_table_page_ = 0; // Durable bulk load cutover guard catalog (B1-08-004)
+        uint32_t memory_grant_feedback_table_page_ = 0; // Durable memory grant feedback catalog (B1-08-004)
         uint32_t page_audit_finding_table_page_ = 0; // Sweep page audit findings catalog (NCW-043)
         uint32_t shadow_capture_manifest_table_page_ = 0; // Sweep shadow capture manifest catalog (NCW-044)
         uint32_t forensic_snapshot_capsule_table_page_ = 0; // Retained replay snapshot capsule catalog (NCW-045)
@@ -13617,6 +14399,15 @@ public:
         uint32_t quota_binding_table_page_ = 0; // Quota binding catalog (EN-019)
         uint32_t settings_profile_table_page_ = 0; // Settings profile catalog (EN-019)
         uint32_t settings_binding_table_page_ = 0; // Settings binding catalog (EN-019)
+        uint32_t config_key_table_page_ = 0; // Config key catalog (CFG-001)
+        uint32_t config_value_table_page_ = 0; // Config value catalog (CFG-001)
+        uint32_t config_change_log_table_page_ = 0; // Config change log catalog (CFG-001)
+        uint32_t listener_profile_table_page_ = 0; // Listener profile catalog (CFG-002)
+        uint32_t listener_binding_table_page_ = 0; // Listener binding catalog (CFG-002)
+        uint32_t listener_emulation_binding_table_page_ = 0; // Listener emulation binding catalog (CFG-002)
+        uint32_t parser_pool_policy_table_page_ = 0; // Parser pool policy catalog (CFG-002)
+        uint32_t listener_runtime_target_table_page_ = 0; // Listener runtime target catalog (CFG-002)
+        uint32_t listener_generation_record_table_page_ = 0; // Listener generation record catalog (CFG-002)
         uint32_t auth_mapping_table_page_ = 0; // Auth mapping catalog (CAT-020)
         uint32_t role_setting_table_page_ = 0; // Role setting catalog (CAT-020)
         uint32_t security_label_table_page_ = 0; // Security label catalog (CAT-020)
@@ -13870,6 +14661,16 @@ public:
             BufferPool *bp = db_->buffer_pool();
             uint32_t current_page_id = page_id;
             uint32_t chain_slot_base = 0;
+            const uint32_t page_size = db_->page_size();
+
+            if (page_size < sizeof(CatalogHeapPage))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Catalog heap page size is invalid");
+                return {Status::PAGE_CORRUPT, 0, RecordType{}};
+            }
+
+            const uint32_t max_records_per_page =
+                static_cast<uint32_t>((page_size - sizeof(CatalogHeapPage)) / sizeof(RecordType));
 
             while (current_page_id != 0)
             {
@@ -13882,10 +14683,30 @@ public:
                 }
 
                 auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+                if (heap->free_offset < sizeof(CatalogHeapPage) ||
+                    heap->free_offset > page_size ||
+                    heap->record_count > max_records_per_page)
+                {
+                    bp->unpinPage(current_page_id, false, ctx);
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                      "Catalog heap page header is invalid");
+                    return {Status::PAGE_CORRUPT, 0, RecordType{}};
+                }
+
                 uint32_t offset = sizeof(CatalogHeapPage);
+                const uint32_t max_offset = heap->free_offset;
 
                 for (uint32_t i = 0; i < heap->record_count; i++)
                 {
+                    if (offset + sizeof(RecordType) > max_offset ||
+                        offset + sizeof(RecordType) > page_size)
+                    {
+                        bp->unpinPage(current_page_id, false, ctx);
+                        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                          "Catalog heap page record layout is invalid");
+                        return {Status::PAGE_CORRUPT, 0, RecordType{}};
+                    }
+
                     auto *record = reinterpret_cast<RecordType *>(
                         reinterpret_cast<uint8_t *>(page_buffer) + offset);
 
@@ -14011,6 +14832,16 @@ public:
             BufferPool *bp = db_->buffer_pool();
             uint32_t current_page_id = page_id;
             uint32_t remaining_slot_index = slot_index;
+            const uint32_t page_size = db_->page_size();
+
+            if (page_size < sizeof(CatalogHeapPage))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Catalog heap page size is invalid");
+                return Status::PAGE_CORRUPT;
+            }
+
+            const uint32_t max_records_per_page =
+                static_cast<uint32_t>((page_size - sizeof(CatalogHeapPage)) / sizeof(RecordType));
 
             while (current_page_id != 0)
             {
@@ -14023,10 +14854,27 @@ public:
                 }
 
                 auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+                if (heap->free_offset < sizeof(CatalogHeapPage) ||
+                    heap->free_offset > page_size ||
+                    heap->record_count > max_records_per_page)
+                {
+                    bp->unpinPage(current_page_id, false, ctx);
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                      "Catalog heap page header is invalid");
+                    return Status::PAGE_CORRUPT;
+                }
                 if (remaining_slot_index < heap->record_count)
                 {
                     uint32_t offset =
                         sizeof(CatalogHeapPage) + (remaining_slot_index * sizeof(RecordType));
+                    if (offset + sizeof(RecordType) > heap->free_offset ||
+                        offset + sizeof(RecordType) > page_size)
+                    {
+                        bp->unpinPage(current_page_id, false, ctx);
+                        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                          "Catalog heap page record layout is invalid");
+                        return Status::PAGE_CORRUPT;
+                    }
                     auto *record = reinterpret_cast<RecordType *>(
                         reinterpret_cast<uint8_t *>(page_buffer) + offset);
                     *record = updated_record;
@@ -14137,6 +14985,22 @@ public:
         auto schemaEpochCatalogPageForTesting() const -> uint32_t
         {
             return schema_epoch_table_page_;
+        }
+        auto schemaChangePlanCatalogPageForTesting() const -> uint32_t
+        {
+            return schema_change_plan_table_page_;
+        }
+        auto schemaChangeEventCatalogPageForTesting() const -> uint32_t
+        {
+            return schema_change_event_table_page_;
+        }
+        auto schemaChangeBackfillCatalogPageForTesting() const -> uint32_t
+        {
+            return schema_change_backfill_progress_table_page_;
+        }
+        auto schemaChangeCutoverGuardCatalogPageForTesting() const -> uint32_t
+        {
+            return schema_change_cutover_guard_table_page_;
         }
         auto forensicSnapshotCapsuleCatalogPageForTesting() const -> uint32_t
         {

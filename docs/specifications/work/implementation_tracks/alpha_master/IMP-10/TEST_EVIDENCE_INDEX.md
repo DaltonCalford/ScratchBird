@@ -1,0 +1,19 @@
+# Test Evidence Index
+
+- Ticket: IMP-10
+- Section: 10_GC_and_Sweep
+- Gate Contract: docs/specifications/10_GC_and_Sweep/TEST_CONTRACT.md
+- Evidence Files:
+  - IMPLEMENTATION_CHECKLIST.md
+  - IMPLEMENTATION_NOTES.md
+  - GC_HORIZON_ELIGIBILITY_MATRIX.csv
+  - SWEEP_TRIGGER_SCHEDULING_MATRIX.csv
+  - GC_SWEEP_ACTION_MATRIX.csv
+  - INDEX_LOB_CLEANUP_MATRIX.csv
+  - GC_FAILURE_RECOVERY_MATRIX.csv
+  - TEST_RESULTS.md
+  - CHECKSUMS.sha256
+  - RUN_MANIFEST.json
+  - SPEC_TRACEABILITY.csv
+  - GATE_RESULT.json
+  - CHANGESET_LOG.md

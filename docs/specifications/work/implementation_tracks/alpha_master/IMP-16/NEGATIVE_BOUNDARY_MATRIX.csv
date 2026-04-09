@@ -1,0 +1,6 @@
+case_id,scenario,input,expected_result,error_code
+T16-NG-001,min_token_bound,empty_variable_token,rejected,E_UNKNOWN_CONTEXT_VARIABLE
+T16-NG-002,malformed_namespace,SESSION..user_uuid,rejected,E_CONTEXT_NAMESPACE_INVALID
+T16-NG-003,null_assignment_value,SESSION.language=null,rejected,E_CONTEXT_VALUE_UNAVAILABLE
+T16-NG-004,permission_denied_engine_detail,low_priv_user_reads_sensitive_system_var,rejected,E_PERMISSION_DENIED
+T16-NG-005,resource_exhaustion_context_cache,cache_full_on_registry_load,rejected,E_RESOURCE_EXHAUSTED

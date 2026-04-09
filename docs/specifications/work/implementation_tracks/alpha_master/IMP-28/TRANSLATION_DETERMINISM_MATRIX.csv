@@ -1,0 +1,6 @@
+case_id,suite,required_check,expected_result,error_code
+T28-D001,D,same_request_same_profile_version_byte_identical_sblr,pass,
+T28-D002,D,uuid_binding_output_contains_no_raw_names,pass,
+T28-D003,D,canonicalization_preserves_equivalent_semantics,pass,
+T28-D004,D,source_map_stable_token_span_mapping,pass,
+T28-D005,D,engine_visible_rendering_stable,pass,

@@ -1,0 +1,5 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+21_V3_Dialect_Surface/NATIVE_DDL_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,DDL-CANONICAL-PRODUCTIONS,LD-004/GRAMMAR_ACCEPT_REJECT_MATRIX.csv,PASS,Canonical statement forms covered by accept/reject cases
+21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md,21_V3_Dialect_Surface,DDL-CLAUSE-ORDER-AND-REJECTION,LD-004/GRAMMAR_ACCEPT_REJECT_MATRIX.csv,PASS,Clause order, duplicate, and conflict rejects bound to deterministic codes
+21_V3_Dialect_Surface/NATIVE_DDL_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,DDL-DETERMINISTIC-ERRORS,LD-004/DDL_ERROR_MAP.csv,PASS,All deterministic DDL and parser-level errors mapped to trigger conditions
+21_V3_Dialect_Surface/OBJECT_NAMING_AND_QUOTING.md,21_V3_Dialect_Surface,DDL-NAMING-RULES,LD-004/GRAMMAR_ACCEPT_REJECT_MATRIX.csv,PASS,Quoted/unquoted naming behavior covered

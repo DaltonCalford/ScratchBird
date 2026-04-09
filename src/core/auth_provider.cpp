@@ -239,6 +239,12 @@ bool isOidcPluginMethod(std::string_view method_id) {
            isPluginMethodId(method_id, "scratchbird.auth.oidc_id_token");
 }
 
+bool isDeferredBeta1EnterprisePluginMethod(std::string_view method_id) {
+    return isLdapPluginMethod(method_id) ||
+           isKerberosPluginMethod(method_id) ||
+           isOidcPluginMethod(method_id);
+}
+
 bool providerKindMatchesPluginMethod(CatalogManager::AuthProviderKind provider_kind,
                                      std::string_view method_id) {
     using AK = CatalogManager::AuthProviderKind;
@@ -3323,6 +3329,42 @@ public:
             error_msg_out = ctx.message.empty() ? "Authentication provider catalog unavailable"
                                                 : ctx.message;
             return AuthResult::PROVIDER_ERROR;
+        }
+
+        if (isDeferredBeta1EnterprisePluginMethod(method_id)) {
+            std::vector<EnterpriseProviderAttempt> denied_attempts;
+            denied_attempts.reserve(catalog_auth_ctx.policy.provider_chain.size());
+            for (const auto& provider_id : catalog_auth_ctx.policy.provider_chain) {
+                const auto provider_it = std::find_if(
+                    providers.begin(),
+                    providers.end(),
+                    [&provider_id](const CatalogManager::AuthProviderCatalogInfo& row) {
+                        return row.provider_id == provider_id;
+                    });
+                if (provider_it == providers.end() ||
+                    provider_it->provider_state != CatalogManager::AuthProviderState::ENABLED ||
+                    !providerKindMatchesPluginMethod(provider_it->provider_kind, method_id)) {
+                    continue;
+                }
+
+                EnterpriseProviderAttempt attempt{};
+                attempt.provider_id = provider_it->provider_id;
+                attempt.outcome = CatalogManager::AuthAdapterOutcome::REJECT;
+                denied_attempts.push_back(attempt);
+            }
+
+            CatalogManager::AuthProviderRuntimeRequest runtime_request =
+                makeEnterpriseRuntimeRequest(catalog_auth_ctx, method_id, denied_attempts);
+            CatalogManager::AuthProviderRuntimeDecision runtime_decision{};
+            ErrorContext runtime_ctx;
+            const Status runtime_status = catalog->evaluateAuthProviderRuntime(
+                runtime_request, runtime_decision, &runtime_ctx);
+            if (runtime_status != Status::OK) {
+                return mapEnterpriseRuntimeFailure(runtime_status, runtime_ctx, error_msg_out);
+            }
+
+            error_msg_out = "Invalid username or password";
+            return AuthResult::INVALID_CREDENTIALS;
         }
 
         std::vector<EnterpriseProviderAttempt> attempts;

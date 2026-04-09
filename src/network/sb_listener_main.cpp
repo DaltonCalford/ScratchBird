@@ -29,6 +29,7 @@
 #include <ctime>
 #include <deque>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -106,6 +107,7 @@ struct ListenerConfig {
     std::string spawn_strategy = "hybrid";
     uint32_t max_requests = 0;
     uint32_t max_age_seconds = 0;
+    uint32_t parser_engine_response_timeout_ms = 30000;
     uint32_t health_check_interval_ms = 5000;
     bool show_help = false;
     bool show_version = false;
@@ -264,6 +266,18 @@ std::array<uint8_t, 16> deriveDatabaseUuid(const std::string& database_name) {
     out[6] = static_cast<uint8_t>((out[6] & 0x0F) | 0x40);
     out[8] = static_cast<uint8_t>((out[8] & 0x3F) | 0x80);
     return out;
+}
+
+std::string uuidToString(const std::array<uint8_t, 16>& uuid) {
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (size_t i = 0; i < uuid.size(); ++i) {
+        if (i == 4 || i == 6 || i == 8 || i == 10) {
+            oss << '-';
+        }
+        oss << std::setw(2) << static_cast<unsigned int>(uuid[i]);
+    }
+    return oss.str();
 }
 
 std::string protocolKey(const std::string& protocol) {
@@ -487,6 +501,7 @@ public:
 
     bool applyRuntimeConfig(uint32_t pool_min,
                             uint32_t pool_max,
+                            uint32_t parser_engine_response_timeout_ms,
                             uint32_t health_check_interval_ms,
                             std::string& error) {
         if (pool_min == 0 || pool_max == 0 || pool_min > pool_max) {
@@ -497,6 +512,7 @@ public:
             std::lock_guard<std::mutex> lock(mutex_);
             config_.pool_min = pool_min;
             config_.pool_max = pool_max;
+            config_.parser_engine_response_timeout_ms = parser_engine_response_timeout_ms;
             config_.health_check_interval_ms = health_check_interval_ms;
         }
         ensureMinWorkers();
@@ -924,6 +940,8 @@ private:
             args.push_back("--database-path");
             args.push_back(config_.database_path);
         }
+        args.push_back("--engine-response-timeout-ms");
+        args.push_back(std::to_string(config_.parser_engine_response_timeout_ms));
         args.push_back("--log-level");
         args.push_back(config_.log_level);
         if (!config_.tls_config.empty()) {
@@ -1379,6 +1397,8 @@ void printUsage(const char* program) {
               << "  --engine-endpoint <path>    Engine IPC endpoint\n"
               << "  --database-owner <name>     Owning database name\n"
               << "  --database-path <path>      Database file path for parser-side catalog access\n"
+              << "  --engine-response-timeout-ms <n>\n"
+              << "                              Parser->engine response timeout in milliseconds (0 = blocking)\n"
               << "  --pool-min <n>              Minimum parser pool size\n"
               << "  --pool-max <n>              Maximum parser pool size\n"
               << "  --spawn-strategy <mode>     prefork|on_demand|hybrid\n"
@@ -1466,6 +1486,11 @@ bool applyConfigFile(ListenerConfig& config) {
         }
         if (network->has("spawn_strategy")) {
             config.spawn_strategy = network->getString("spawn_strategy", config.spawn_strategy);
+        }
+        if (network->has("parser_engine_response_timeout_ms")) {
+            config.parser_engine_response_timeout_ms = static_cast<uint32_t>(
+                network->getDuration("parser_engine_response_timeout_ms",
+                                     config.parser_engine_response_timeout_ms));
         }
     }
 
@@ -1573,6 +1598,22 @@ bool applyArgOverrides(int argc, char* argv[], ListenerConfig& config) {
             config.database_path = argv[++i];
         } else if (arg.rfind("--database-path=", 0) == 0) {
             config.database_path = arg.substr(16);
+        } else if (arg == "--engine-response-timeout-ms" && i + 1 < argc) {
+            try {
+                config.parser_engine_response_timeout_ms =
+                    static_cast<uint32_t>(std::stoul(argv[++i]));
+            } catch (...) {
+                std::cerr << "Invalid engine-response-timeout-ms value\n";
+                return false;
+            }
+        } else if (arg.rfind("--engine-response-timeout-ms=", 0) == 0) {
+            try {
+                config.parser_engine_response_timeout_ms =
+                    static_cast<uint32_t>(std::stoul(arg.substr(29)));
+            } catch (...) {
+                std::cerr << "Invalid engine-response-timeout-ms value\n";
+                return false;
+            }
         } else if (arg == "--pool-min" && i + 1 < argc) {
             try {
                 config.pool_min = static_cast<uint32_t>(std::stoul(argv[++i]));
@@ -1807,6 +1848,7 @@ static bool reloadListenerRuntimeConfig(ListenerConfig& config,
     std::string error;
     if (!pool.applyRuntimeConfig(refreshed.pool_min,
                                  refreshed.pool_max,
+                                 refreshed.parser_engine_response_timeout_ms,
                                  refreshed.health_check_interval_ms,
                                  error)) {
         out_message = "reload_failed:" + error;
@@ -1815,6 +1857,7 @@ static bool reloadListenerRuntimeConfig(ListenerConfig& config,
 
     config.pool_min = refreshed.pool_min;
     config.pool_max = refreshed.pool_max;
+    config.parser_engine_response_timeout_ms = refreshed.parser_engine_response_timeout_ms;
     config.health_check_interval_ms = refreshed.health_check_interval_ms;
     config.max_requests = refreshed.max_requests;
     config.max_age_seconds = refreshed.max_age_seconds;
@@ -1863,13 +1906,36 @@ static void handleManagementConnection(std::unique_ptr<scratchbird::network::Soc
         ok = true;
         message = "PONG";
     } else if (command == "STATUS") {
+        const size_t warm_workers = pool.warmWorkerCount();
         std::ostringstream oss;
         oss << "draining=" << (g_draining.load(std::memory_order_acquire) ? 1 : 0)
             << ";owner_database=" << config.database_owner
             << ";active_sessions=" << pool.activeSessionCount()
-            << ";warm_workers=" << pool.warmWorkerCount()
+            << ";warm_workers=" << warm_workers
             << ";pool_min=" << config.pool_min
-            << ";pool_max=" << config.pool_max;
+            << ";pool_max=" << config.pool_max
+            << ";owner_database_uuid=" << uuidToString(deriveDatabaseUuid(config.database_owner))
+            << ";listener_id=" << config.listener_id
+            << ";parser_pool_ready=" << (warm_workers >= config.pool_min ? "true" : "false")
+            << ";parser_pool_warm=" << warm_workers
+            << ";config_generation=0"
+            << ";startup_quarantine_active=false"
+            << ";derivative_backpressure_class=unknown"
+            << ";shadow_group_state=unknown"
+            << ";cluster_id=00000000-0000-0000-0000-000000000000"
+            << ";node_id=00000000-0000-0000-0000-000000000000"
+            << ";link_state=UNBOUND"
+            << ";link_ready_time_ms=0"
+            << ";unresolved_drift_count=0"
+            << ";unresolved_drift_class=CONSISTENT"
+            << ";queued_instruction_count=0"
+            << ";blocked_instruction_count=0"
+            << ";quarantined_instruction_count=0"
+            << ";applying_instruction_count=0"
+            << ";last_assessment_time_ms=0"
+            << ";last_successful_apply_time_ms=0"
+            << ";last_instruction_id=00000000-0000-0000-0000-000000000000"
+            << ";last_instruction_state=NONE";
         ok = true;
         message = oss.str();
     } else if (command == "STOP graceful") {
@@ -1891,6 +1957,7 @@ static void handleManagementConnection(std::unique_ptr<scratchbird::network::Soc
         if (iss >> min_value >> max_value) {
             std::string error;
             ok = pool.applyRuntimeConfig(min_value, max_value,
+                                         config.parser_engine_response_timeout_ms,
                                          config.health_check_interval_ms,
                                          error);
             if (ok) {

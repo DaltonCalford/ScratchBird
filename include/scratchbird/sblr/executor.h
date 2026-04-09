@@ -21,6 +21,7 @@
 #include "scratchbird/core/permission_cache.h"  // For PermissionCheckMode
 #include "scratchbird/core/function_invoker.h"
 #include "scratchbird/core/lock_manager.h"
+#include "scratchbird/sblr/query_result_cache.h"
 #include "scratchbird/sblr/jit/jit_runtime.h"
 // Index headers needed for template implementation
 #include "scratchbird/core/btree.h"
@@ -86,18 +87,36 @@ namespace scratchbird
 
             // Row data
             void addRow(std::vector<Value> row);
+            void addRows(std::vector<std::vector<Value>> rows);
             using RowCallback = std::function<void(const std::vector<Value>&)>;
+            using RowMoveCallback = std::function<void(std::vector<Value>&&)>;
             void setRowCallback(RowCallback cb)
             {
                 row_callback_ = std::move(cb);
+            }
+            void setRowMoveCallback(RowMoveCallback cb)
+            {
+                row_move_callback_ = std::move(cb);
             }
             void setStoreRows(bool store)
             {
                 store_rows_ = store;
             }
+            bool storesRows() const
+            {
+                return store_rows_;
+            }
             size_t rowCount() const
             {
                 return rows_.size();
+            }
+            const std::vector<Value> &getRow(size_t row) const
+            {
+                return rows_[row];
+            }
+            std::vector<std::vector<Value>> takeRows()
+            {
+                return std::move(rows_);
             }
             const Value &getValue(size_t row, size_t col) const
             {
@@ -112,6 +131,7 @@ namespace scratchbird
             std::vector<core::DataType> column_types_;
             std::vector<std::vector<Value>> rows_;
             RowCallback row_callback_;
+            RowMoveCallback row_move_callback_;
             bool store_rows_ = true;
         };
 
@@ -247,6 +267,26 @@ namespace scratchbird
             void setCopyInputStream(std::istream* in) { copy_input_stream_ = in; }
             void setCopyOutputStream(std::ostream* out) { copy_output_stream_ = out; }
 
+            enum class CopyBulkLane : uint8_t
+            {
+                RETAIL_MICRO_BATCH = 1,
+                SORTED_EXACT_BULK = 2,
+                SHADOW_LOAD_CUTOVER = 3,
+            };
+
+            struct CopyBulkPlan
+            {
+                CopyBulkLane lane = CopyBulkLane::RETAIL_MICRO_BATCH;
+                uint32_t batch_size = 2048;
+                bool batch_size_explicit = false;
+            };
+
+            static CopyBulkPlan resolveCopyBulkPlan(std::optional<uint32_t> requested_batch_size);
+            static CopyBulkLane classifyCopyBulkLane(std::optional<uint64_t> estimated_row_count,
+                                                     bool sorted_exact_candidate,
+                                                     bool shadow_load_requested = false);
+            static const char* copyBulkLaneName(CopyBulkLane lane);
+
             // SECURITY ENHANCEMENT (MEDIUM-3): Query execution limits management
             void setQueryLimits(const QueryLimits& limits) { query_limits_ = limits; }
             const QueryLimits& getQueryLimits() const { return query_limits_; }
@@ -287,6 +327,14 @@ namespace scratchbird
             const std::unordered_set<core::ID, core::IDHash>& getLastSelectTableIds() const
             {
                 return last_select_table_ids_;
+            }
+            bool lastStatementUsedResultCache() const
+            {
+                return last_statement_used_result_cache_;
+            }
+            bool lastStatementInsertedResultCache() const
+            {
+                return last_statement_inserted_result_cache_;
             }
 
             // NET-M1: Query cancellation support
@@ -445,6 +493,8 @@ namespace scratchbird
             // Note: bytecode_ is a raw pointer that must remain valid during execute()
             const uint8_t *bytecode_;
             const std::vector<uint8_t> *current_bytecode_vec_ = nullptr;
+            std::string pending_schema_change_class_override_;
+            std::string pending_schema_change_detail_json_;
             size_t bytecode_size_;
             size_t pc_; // Program counter
             std::stack<Value> stack_;
@@ -460,6 +510,7 @@ namespace scratchbird
             std::string current_table_;
             std::vector<std::string> current_columns_;
             std::unique_ptr<ResultSet> current_result_set_;
+            std::unique_ptr<ResultSet> pending_result_set_override_;
 
             // Row context for expression evaluation (during SELECT WHERE)
             const std::vector<Value> *current_row_values_ = nullptr;
@@ -487,6 +538,42 @@ namespace scratchbird
             std::vector<bool> parameter_nulls_;
             std::unordered_set<core::ID, core::IDHash> last_select_table_ids_;
             bool last_select_cacheable_ = true;
+            bool last_statement_used_result_cache_ = false;
+            bool last_statement_inserted_result_cache_ = false;
+
+            struct InsertDomainDefaultCacheEntry
+            {
+                bool has_default = false;
+                std::string value;
+            };
+
+            struct InsertTableRuntimeCacheEntry
+            {
+                core::ID table_id{};
+                core::ID schema_epoch_uuid{};
+                std::vector<core::CatalogManager::ColumnInfo> all_columns;
+                std::unordered_map<std::string, size_t> column_index_by_name;
+                std::vector<InsertDomainDefaultCacheEntry> domain_defaults;
+                std::vector<core::CatalogManager::IndexInfo> table_indexes;
+                std::vector<bool> storage_backed_single_column_uniques;
+                std::vector<core::CatalogManager::ConstraintInfo> table_constraints;
+                bool have_table_constraints = false;
+                std::vector<bool> storage_backed_constraint_uniques;
+                std::vector<core::CatalogManager::ForeignKeyInfo> foreign_keys;
+                bool have_foreign_keys = false;
+                std::vector<core::CatalogManager::TriggerInfo> before_insert_triggers;
+                bool have_before_insert_triggers = false;
+                std::vector<core::CatalogManager::TriggerInfo> after_insert_triggers;
+                bool have_after_insert_triggers = false;
+                std::vector<core::CatalogManager::TriggerInfo> before_update_triggers;
+                bool have_before_update_triggers = false;
+                std::vector<core::CatalogManager::TriggerInfo> after_update_triggers;
+                bool have_after_update_triggers = false;
+            };
+
+            std::unordered_map<core::ID,
+                               InsertTableRuntimeCacheEntry,
+                               core::IDHash> insert_table_runtime_cache_;
 
             struct MySqlTableLock {
                 core::LockTag tag{};
@@ -1394,7 +1481,8 @@ namespace scratchbird
             bool checkUniqueViolation(const core::ID& table_id,
                                      const core::CatalogManager::ColumnInfo& column,
                                      const Value& value,
-                                     const std::vector<core::CatalogManager::ColumnInfo>& all_columns);
+                                     const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
+                                     const std::vector<core::CatalogManager::IndexInfo>* cached_indexes = nullptr);
 
             // ALPHA Phase A: Check for UNIQUE constraint violation during UPDATE
             // Similar to checkUniqueViolation, but excludes the row being updated (identified by TID)
@@ -1402,7 +1490,8 @@ namespace scratchbird
                                               const core::CatalogManager::ColumnInfo& column,
                                               const Value& value,
                                               const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
-                                              const core::TID& exclude_tid);
+                                              const core::TID& exclude_tid,
+                                              const std::vector<core::CatalogManager::IndexInfo>* cached_indexes = nullptr);
             bool indexTidsContainVisibleDuplicate(const core::ID& table_id,
                                                   const core::CatalogManager::ColumnInfo& column,
                                                   const Value& value,
@@ -1414,7 +1503,8 @@ namespace scratchbird
                                      const std::vector<Value>& row_values,
                                      const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
                                      const std::vector<core::CatalogManager::ConstraintInfo>& table_constraints,
-                                     const core::TID* exclude_tid);
+                                     const core::TID* exclude_tid,
+                                     const std::vector<core::CatalogManager::IndexInfo>* cached_indexes = nullptr);
 
             void validateForeignKeyDefinition(const core::ID& child_table_id,
                                              const std::vector<std::string>& child_columns,
@@ -1430,7 +1520,8 @@ namespace scratchbird
             // Returns true if suitable index found, false otherwise
             bool findIndexForColumns(const core::ID& table_id,
                                     const std::vector<core::ID>& column_ids,
-                                    core::CatalogManager::IndexInfo& index_out);
+                                    core::CatalogManager::IndexInfo& index_out,
+                                    const std::vector<core::CatalogManager::IndexInfo>* cached_indexes = nullptr);
 
             // Fulltext helper: find FULLTEXT index for a single column
             bool findFullTextIndexForColumn(const core::ID& table_id,
@@ -1481,12 +1572,27 @@ namespace scratchbird
                                          std::vector<uint8_t>& tuple_data_out,
                                          core::ErrorContext* ctx = nullptr);
 
+            bool serializeTupleFromPreparedValues(
+                const std::vector<Value>& values,
+                const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                std::vector<uint8_t>& tuple_data_out,
+                core::ErrorContext* ctx = nullptr);
+
             // Modify specific columns in a tuple and reserialize
             bool modifyTupleColumns(const uint8_t* original_tuple, uint32_t original_size,
                                    const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
                                    const std::vector<size_t>& column_indices,
                                    const std::vector<Value>& new_values,
                                    std::vector<uint8_t>& new_tuple_out);
+
+            bool tryPatchFixedWidthTupleColumns(
+                const uint8_t* original_tuple,
+                uint32_t original_size,
+                const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
+                const std::vector<size_t>& column_indices,
+                const std::vector<Value>& new_values,
+                std::vector<uint8_t>& new_tuple_out,
+                core::ErrorContext* ctx = nullptr);
 
             // Bit Manipulation Functions (Nov 14, 2025)
             void executeGetByte();       // GET_BYTE(bytes, offset)

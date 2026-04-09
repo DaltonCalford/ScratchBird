@@ -1,0 +1,40 @@
+{
+  "metadata": {
+    "dialect_family": "firebird",
+    "target_role": "emulation",
+    "target_engine": "scratchbird-firebird",
+    "source_result_dir": "",
+    "source_manifest": "",
+    "latest_seen_result_dir": "",
+    "latest_seen_manifest": ""
+  },
+  "comparison_contract": {
+    "suite_family": "emulation-comparison",
+    "contract_id": "compatibility-emulation-compare-v1",
+    "expected_harness": "compatibility_converted_sql_ctest",
+    "dialect_family": "firebird",
+    "target_role": "emulation",
+    "target_engine": "scratchbird-firebird",
+    "contract_state": "missing_same_contract_source",
+    "pairwise_eligible": false,
+    "protocol_surface": "",
+    "parser_core": "",
+    "parser_mode": "",
+    "ctest_list_mode": "",
+    "ctest_list_identity": "",
+    "listed_tests": 0,
+    "execution_mode": ""
+  },
+  "summary": {
+    "total": 0,
+    "passed": 0,
+    "failed": 0,
+    "skipped": 0,
+    "pass_rate": 0.0,
+    "result": "missing"
+  },
+  "results": {
+    "manifest": {},
+    "latest_seen_manifest": {}
+  }
+}

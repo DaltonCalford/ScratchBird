@@ -14,6 +14,8 @@
 #include <unordered_map>
 #include <optional>
 #include <mutex>
+#include <set>
+#include <string_view>
 #include <vector>
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
@@ -94,6 +96,62 @@ namespace scratchbird::core::config
     // Key output truncation limit
     constexpr size_t KEY_OUTPUT_LIMIT = 256;
 
+    enum class CatalogValueType : uint8_t
+    {
+        BOOL = 1,
+        INT64 = 2,
+        UINT64 = 3,
+        FLOAT64 = 4,
+        STRING = 5,
+        DURATION = 6,
+        BYTES = 7,
+        LIST_STRING = 8,
+        LIST_KV = 9,
+    };
+
+    enum class CatalogScope : uint8_t
+    {
+        INSTANCE = 1,
+        DATABASE = 2,
+        SCHEMA = 3,
+        USER = 4,
+        SESSION = 5,
+    };
+
+    enum class CatalogHotApplyClass : uint8_t
+    {
+        NONE = 0,
+        POST_COMMIT_LOCAL = 1,
+        POST_COMMIT_CLUSTER_DISPATCH = 2,
+    };
+
+    struct CatalogKeyDefinition
+    {
+        uint32_t key_id = 0;
+        const char *key_name = "";
+        CatalogValueType value_type = CatalogValueType::STRING;
+        CatalogScope scope = CatalogScope::INSTANCE;
+        const char *default_value = "";
+        const char *min_value = nullptr;
+        const char *max_value = nullptr;
+        const char *allowed_values = nullptr;
+        bool is_restart_required = false;
+        bool is_mutable = true;
+        bool is_bootstrap_only = false;
+        bool is_cluster_managed = false;
+        CatalogHotApplyClass hot_apply_class = CatalogHotApplyClass::NONE;
+        bool is_sensitive = false;
+        const char *description = "";
+    };
+
+    auto catalogKeyDefinitions() -> const std::vector<CatalogKeyDefinition> &;
+    auto findCatalogKeyDefinition(std::string_view key_name) -> const CatalogKeyDefinition *;
+    auto isDedicatedTopologyBootstrapKey(std::string_view key_name) -> bool;
+    auto validateCatalogValue(const CatalogKeyDefinition &definition,
+                              const std::string &raw_value,
+                              std::string &normalized_value,
+                              std::string &error_message) -> bool;
+
 } // namespace scratchbird::core::config
 
 namespace scratchbird::core
@@ -121,6 +179,21 @@ namespace scratchbird::core
     class Config
     {
     public:
+        enum class ValueSource : uint8_t
+        {
+            NONE = 0,
+            DURABLE_OVERRIDE = 1,
+            COMMAND_LINE = 2,
+            ENVIRONMENT = 3,
+            CONFIG_FILE = 4,
+        };
+
+        struct ResolvedValue
+        {
+            std::string value;
+            ValueSource source = ValueSource::NONE;
+        };
+
         // Get singleton instance
         static Config &getInstance();
 
@@ -210,12 +283,46 @@ namespace scratchbird::core
         bool hasKey(const std::string &section, const std::string &key) const;
 
         /**
-         * Set value programmatically (for testing or runtime changes)
+         * Set value programmatically as a durable post-mount override
          * @param section Configuration section
          * @param key Configuration key
          * @param value Value to set
          */
         void set(const std::string &section, const std::string &key, const std::string &value);
+
+        /**
+         * Set value as a durable override without changing bootstrap state.
+         */
+        void setDurableOverride(const std::string &section,
+                                const std::string &key,
+                                const std::string &value);
+
+        /**
+         * Remove a durable override for section.key.
+         */
+        void unsetDurableOverride(const std::string &section, const std::string &key);
+
+        /**
+         * Clear all durable overrides.
+         */
+        void clearDurableOverrides();
+
+        /**
+         * Check whether a durable override exists for section.key.
+         */
+        bool hasDurableOverride(const std::string &section, const std::string &key) const;
+
+        /**
+         * Resolve a value using full precedence, including durable overrides.
+         */
+        std::optional<ResolvedValue> getResolvedValue(const std::string &section,
+                                                      const std::string &key) const;
+
+        /**
+         * Resolve a value using bootstrap precedence only (cmdline, env, file).
+         */
+        std::optional<ResolvedValue> getBootstrapResolvedValue(const std::string &section,
+                                                               const std::string &key) const;
 
         /**
          * Get all keys in a section
@@ -270,9 +377,10 @@ namespace scratchbird::core
         Config(Config &&) = delete;
         Config &operator=(Config &&) = delete;
 
-        // Internal helper to get value with priority
-        std::optional<std::string> getValue(const std::string &section,
-                                            const std::string &key) const;
+        // Internal helper to get value with priority.
+        std::optional<ResolvedValue> resolveValueLocked(const std::string &section,
+                                                        const std::string &key,
+                                                        bool include_durable) const;
 
         // Parse INI file
         Status parseFile(const std::string &filepath, ErrorContext *ctx);
@@ -292,6 +400,9 @@ namespace scratchbird::core
 
         // Storage structure: section -> key -> value
         std::unordered_map<std::string, std::unordered_map<std::string, std::string>> config_data_;
+
+        // Durable post-mount overrides: section -> key -> value
+        std::unordered_map<std::string, std::unordered_map<std::string, std::string>> durable_data_;
 
         // Command-line overrides (highest priority)
         std::unordered_map<std::string, std::unordered_map<std::string, std::string>> cmdline_data_;

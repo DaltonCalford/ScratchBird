@@ -1,0 +1,7 @@
+ticket,title,status,depends_on,primary_evidence
+B1-01-001,Specification sufficiency closure,completed,-,"updated assigned specs|gap closure notes|audit matrix"
+B1-01-002,Ownership and audit anchor normalization,completed,B1-01-001,"current audit matrix|canonical spec audit anchors"
+B1-01-003,MGA record page filespace allocator and buffer closure,completed,B1-01-002,"custom tablespace allocator or buffer proof|updated audit matrix|lane-A evidence note"
+B1-01-004,Writeback checkpoint restart lock GC LOB and failure closure,completed,B1-01-003,"write-admission fence proof|lane-B audit matrix closure|lane-B evidence note"
+B1-01-005,Gates benchmarks and evidence closure,completed,"B1-01-003|B1-01-004","gate artifacts|benchmark artifacts|section 31 closure"
+B1-01-006,Final closeout,completed,B1-01-005,"section 40 direct proof|completed trackers|archived package"

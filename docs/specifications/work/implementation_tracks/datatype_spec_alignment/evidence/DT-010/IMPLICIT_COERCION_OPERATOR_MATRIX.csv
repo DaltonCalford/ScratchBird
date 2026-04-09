@@ -1,0 +1,4 @@
+operator,input_types,coercion_rule,status
+comparison,text numeric + numeric,coerce text->numeric when valid,PASS
+arithmetic,text numeric + numeric,coerce text->numeric when valid,PASS
+concatenation,text + numeric,coerce numeric->text,PASS

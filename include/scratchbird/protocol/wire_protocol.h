@@ -374,7 +374,8 @@ enum class QueryFlags : uint8_t {
     EXPLAIN_ONLY    = 0x04,  // Don't execute, just explain
     NO_RESULTS      = 0x08,  // Don't send results (for DDL)
     BYTECODE        = 0x10,  // Payload is SBLR bytecode (not UTF-8 SQL)
-    BYTECODE_HAS_SQL = 0x20  // Payload includes original SQL after bytecode
+    BYTECODE_HAS_SQL = 0x20, // Payload includes original SQL after bytecode
+    BYTECODE_HAS_PARAMS = 0x40 // Payload includes bound parameter values/nulls
 };
 
 /**
@@ -860,6 +861,12 @@ public:
                                       uint8_t flags = 0);
     static Message buildQueryBytecode(const uint8_t session_id[16],
                                       const std::vector<uint8_t>& bytecode,
+                                      const std::string& sql,
+                                      const std::vector<std::string>& parameter_values,
+                                      const std::vector<bool>& parameter_nulls,
+                                      uint8_t flags = 0);
+    static Message buildQueryBytecode(const uint8_t session_id[16],
+                                      const std::vector<uint8_t>& bytecode,
                                       uint8_t flags = 0);
 
     static core::Status parseQuery(const Message& msg,
@@ -867,6 +874,21 @@ public:
                                    std::string& query,
                                    uint8_t& flags,
                                    std::vector<uint8_t>* bytecode_out,
+                                   std::vector<std::string>* parameter_values_out,
+                                   std::vector<bool>* parameter_nulls_out,
+                                   core::ErrorContext* ctx = nullptr);
+    static core::Status parseQuery(const Message& msg,
+                                   uint8_t session_id[16],
+                                   std::string& query,
+                                   uint8_t& flags,
+                                   std::vector<uint8_t>* bytecode_out,
+                                   core::ErrorContext* ctx = nullptr);
+    static core::Status parseQuery(const Message& msg,
+                                   uint8_t session_id[16],
+                                   std::string& query,
+                                   uint8_t& flags,
+                                   std::vector<std::string>* parameter_values_out,
+                                   std::vector<bool>* parameter_nulls_out,
                                    core::ErrorContext* ctx = nullptr);
     static core::Status parseQuery(const Message& msg,
                                    uint8_t session_id[16],
@@ -1233,8 +1255,13 @@ public:
     uint64_t getBytesReceived() const { return bytes_received_; }
 
 private:
+    core::Status flushSendBufferLocked(core::ErrorContext* ctx);
+
     scratchbird::server::IPCConnection* connection_;  // Not owned
     mutable std::mutex send_mutex_;
+    std::vector<uint8_t> send_buffer_;
+    uint64_t pending_messages_ = 0;
+    uint64_t pending_bytes_ = 0;
     uint64_t messages_sent_ = 0;
     uint64_t messages_received_ = 0;
     uint64_t bytes_sent_ = 0;

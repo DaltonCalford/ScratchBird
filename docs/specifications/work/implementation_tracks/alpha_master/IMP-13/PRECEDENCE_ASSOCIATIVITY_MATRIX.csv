@@ -1,0 +1,7 @@
+case_id,expression,expected_parse_tree,expected_result
+T13-PR-001,1+2*3,1+(2*3),7
+T13-PR-002,1||2+3,1||(2+3),15
+T13-PR-003,NOT a AND b,(NOT a) AND b,deterministic_boolean
+T13-PR-004,a OR b AND c,a OR (b AND c),deterministic_boolean
+T13-PR-005,x<<1+2,x<<(1+2),deterministic_shift
+T13-PR-006,a=b OR c=d AND e=f,a=b OR ((c=d) AND (e=f)),deterministic_boolean

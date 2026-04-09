@@ -1,0 +1,5 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+21_V3_Dialect_Surface/NATIVE_ADMIN_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,ADM-FEATURE-KEY-MAP,LD-003/ADMIN_FEATURE_KEY_MAP.csv,PASS,All admin feature keys mapped to canonical family and result shape
+21_V3_Dialect_Surface/NATIVE_LISTENER_CONTROL_SQL.md,21_V3_Dialect_Surface,ADM-LISTENER-ERROR-CONTRACT,LD-003/ADMIN_ACCEPT_REJECT_MATRIX.csv,PASS,Listener-specific deterministic errors covered in matrix
+21_V3_Dialect_Surface/NATIVE_STORAGE_AND_BLOB_FILTER_SQL.md,21_V3_Dialect_Surface,ADM-STORAGE-BLOB-CONTROL,LD-003/ADMIN_ACCEPT_REJECT_MATRIX.csv,PASS,Relocation and blob-filter reject paths covered
+21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md,21_V3_Dialect_Surface,ADM-REJECTION-CODES,LD-003/ADMIN_ACCEPT_REJECT_MATRIX.csv,PASS,Global parser rejection codes bound to admin cases

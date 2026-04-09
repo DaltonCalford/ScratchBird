@@ -1,0 +1,17 @@
+order,ticket,title,phase,status
+1,CPG-10-001,Scope freeze and reference-layout bootstrap,scope_freeze,completed
+2,CPG-10-002,Research transparent at-rest encryption and rekey,research_security,completed
+3,CPG-10-003,Draft Beta 2 transparent at-rest encryption canon,spec_security,completed
+4,CPG-10-004,Research protected-query encryption and enclaves,research_security,completed
+5,CPG-10-005,Draft Beta 2 protected-query encryption canon,spec_security,completed
+6,CPG-10-006,Research HA / DR / PITR / clustered failover,research_runtime,completed
+7,CPG-10-007,Draft Beta 2 HA / DR / PITR / failover canon,spec_runtime,completed
+8,CPG-10-008,Research hard multi-tenant isolation and QoS,research_governance,completed
+9,CPG-10-009,Draft Beta 2 hard multi-tenant isolation canon,spec_governance,completed
+10,CPG-10-010,Research archive tier / ILM / legal hold / replay,research_storage,completed
+11,CPG-10-011,Draft Beta 2 archive tier / ILM canon,spec_storage,completed
+12,CPG-10-012,Research production workload capture and replay,research_conformance,completed
+13,CPG-10-013,Draft Beta 2 workload capture and replay canon,spec_conformance,completed
+14,CPG-10-014,Research open table formats and object-store tables,research_external_data,completed
+15,CPG-10-015,Draft Beta 2 open table format canon,spec_external_data,completed
+16,CPG-10-016,Final sync inventory update and closeout,closeout,completed

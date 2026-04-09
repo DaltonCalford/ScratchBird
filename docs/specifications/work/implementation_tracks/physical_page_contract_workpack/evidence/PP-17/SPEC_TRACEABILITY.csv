@@ -1,0 +1,7 @@
+spec_clause,implementation,evidence,status
+Checksum mismatch with PAGE_FLAG_CHECKSUM_VALID set must be treated as corruption,src/core/index_page_diagnostics.cpp (INVALID_CHECKSUM -> Status::CHECKSUM_MISMATCH),INDEX_CORRUPTION_ERROR_MATRIX.csv,pass
+Non-index page type must be rejected by index page validator,src/core/index_page_diagnostics.cpp (INVALID_PAGE_TYPE),INDEX_CORRUPTION_ERROR_MATRIX.csv,pass
+Invalid index header/special-area bounds must be deterministic corruption errors,src/core/index_page_diagnostics.cpp (INVALID_INDEX_PAGE_HEADER checks),INDEX_CORRUPTION_ERROR_MATRIX.csv,pass
+Opaque length mismatch must be deterministic corruption error,src/core/index_page_diagnostics.cpp (INVALID_INDEX_OPAQUE_SIZE),INDEX_CORRUPTION_ERROR_MATRIX.csv,pass
+Sibling contract and index_uuid mismatch must be deterministic corruption errors,src/core/index_page_diagnostics.cpp (INVALID_INDEX_SIBLING/INVALID_INDEX_UUID),INDEX_CORRUPTION_ERROR_MATRIX.csv,pass
+Corruption/error mappings are regression-tested,tests/unit/test_index_corruption_error_contract.cpp,TEST_RESULTS.md,pass

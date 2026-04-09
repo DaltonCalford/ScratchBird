@@ -11,7 +11,7 @@ BENCHMARK_PROJECT_ROOT="${REPO_ROOT}/../ScratchBird-Benchmarks"
 BENCHMARKS_ROOT="${BENCHMARK_PROJECT_ROOT}/results"
 BENCHMARKS_ROOT_EXPLICIT=0
 BENCHMARK_MATRIX_OUTPUT=""
-BENCHMARK_ENGINES="${BENCHMARK_ENGINES:-firebird,mysql,postgresql}"
+BENCHMARK_ENGINES="${BENCHMARK_ENGINES:-firebird,mysql,postgresql,scratchbird}"
 BENCHMARK_SUITES="${BENCHMARK_SUITES:-stress,acid,engine-differential,index-comparison}"
 BENCHMARK_STRESS_SCALE="${BENCHMARK_STRESS_SCALE:-small}"
 
@@ -135,6 +135,29 @@ build_exit=""
 ctest_exit=""
 benchmark_exit=""
 
+discover_ctest_parallel_level() {
+  if [[ -n "${CTEST_PARALLEL_LEVEL:-}" ]]; then
+    printf '%s\n' "${CTEST_PARALLEL_LEVEL}"
+    return
+  fi
+
+  if [[ -f "${BUILD_DIR}/CMakeCache.txt" ]]; then
+    local cache_level
+    cache_level="$(awk -F= '/^SCRATCHBIRD_TEST_PARALLEL_LEVEL:STRING=/{print $2; exit}' "${BUILD_DIR}/CMakeCache.txt")"
+    if [[ -n "${cache_level}" ]]; then
+      printf '%s\n' "${cache_level}"
+      return
+    fi
+  fi
+
+  if command -v nproc >/dev/null 2>&1; then
+    nproc
+    return
+  fi
+
+  printf '1\n'
+}
+
 if [[ "${RUN_CONFIGURE}" == "1" ]]; then
   set +e
   cmake -S "${REPO_ROOT}" -B "${BUILD_DIR}" >"${CONFIGURE_LOG}" 2>&1
@@ -171,8 +194,11 @@ EOF
 fi
 
 if [[ "${RUN_CTEST}" == "1" ]]; then
+  CTEST_PARALLEL_LEVEL_EFFECTIVE="$(discover_ctest_parallel_level)"
   set +e
-  ctest --test-dir "${BUILD_DIR}" --output-on-failure >"${CTEST_LOG}" 2>&1
+  ctest --test-dir "${BUILD_DIR}" \
+    --parallel "${CTEST_PARALLEL_LEVEL_EFFECTIVE}" \
+    --output-on-failure >"${CTEST_LOG}" 2>&1
   ctest_exit=$?
   set -e
 else

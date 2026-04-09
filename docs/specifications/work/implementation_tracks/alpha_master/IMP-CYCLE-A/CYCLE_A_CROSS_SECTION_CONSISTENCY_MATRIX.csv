@@ -1,0 +1,6 @@
+case_id,consistency_check,left_artifact,right_artifact,expected_result
+CA-CS-001,invalid_text_error_alignment,IMP-13/INVALID_CAST_ERROR_MATRIX.csv,IMP-14/SCALAR_EDGE_CASE_DISCOVERY_MATRIX.csv,pass
+CA-CS-002,numeric_overflow_error_alignment,IMP-13/INVALID_CAST_ERROR_MATRIX.csv,IMP-14/SCALAR_EDGE_CASE_DISCOVERY_MATRIX.csv,pass
+CA-CS-003,cast_pair_exists_in_scalar_io,IMP-13/CAST_CORRECTNESS_MATRIX.csv,14_Base_Scalar_Types/TYPE_IO_AND_ERROR_SEMANTICS.md,pass
+CA-CS-004,implicit_coercion_uses_defined_types,IMP-13/COERCION_EDGE_CASE_MATRIX.csv,IMP-14/SCALAR_TYPE_ENCODING_MATRIX.csv,pass
+CA-CS-005,null_logic_independent_of_encoding,IMP-13/NULL_THREE_VALUED_LOGIC_MATRIX.csv,IMP-14/SCALAR_TYPE_ENCODING_MATRIX.csv,pass

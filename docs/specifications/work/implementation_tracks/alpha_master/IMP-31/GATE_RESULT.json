@@ -1,0 +1,7 @@
+{
+  "ticket_id": "IMP-31",
+  "gate": "docs/specifications/31_Conformance_Performance_and_Reliability_Gates/TEST_CONTRACT.md",
+  "result": "pass",
+  "failed_checks": [],
+  "notes": "All T31 suites (G1..G12) are represented by deterministic implementation matrices and required global evidence artifacts are present."
+}

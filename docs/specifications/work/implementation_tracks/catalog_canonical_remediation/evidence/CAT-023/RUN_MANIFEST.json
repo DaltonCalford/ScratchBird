@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-023",
+  "status": "completed",
+  "started_at": "2026-02-14T16:31:30Z",
+  "finished_at": "2026-02-14T17:06:11Z",
+  "owner": "codex",
+  "notes": "CAT-023 complete: routing/admission plus SLO/autoscale/admission-tuning catalog families are fully wired in root/bootstrap/backfill with deterministic CRUD contracts and focused gate tests passing."
+}

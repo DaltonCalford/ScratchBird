@@ -1,0 +1,6 @@
+spec_clause,implementation,evidence,status
+Insert assigns canonical row_uuid/record_format/payload_len,src/core/heap_page.cpp (insertTuple + applyCanonicalRecordContract),HEAP_RECORD_LAYOUT_AUDIT.csv,pass
+Delete sets canonical record deleted flag and delete_txid,src/core/heap_page.cpp (deleteTuple + applyCanonicalRecordContract),HEAP_RECORD_LAYOUT_AUDIT.csv,pass
+Update preserves row_uuid across new and back versions,src/core/heap_page.cpp (updateTuple stable_row_uuid propagation),HEAP_RECORD_LAYOUT_AUDIT.csv,pass
+Canonical record flags map from heap infomask (deleted/chained/moved/toast_ptr),src/core/heap_page.cpp (applyCanonicalRecordContract),HEAP_RECORD_LAYOUT_AUDIT.csv,pass
+Heap record contract executable gate exists,tests/unit/test_heap_record_contract.cpp,TEST_RESULTS.md,pass

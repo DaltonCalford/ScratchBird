@@ -1,0 +1,18 @@
+{
+  "gate_id": "DTYPE-GATE-02",
+  "status": "pass",
+  "updated_at": "2026-02-13T23:22:49Z",
+  "criteria": {
+    "decimal_precision_zero_variable_path": "pass",
+    "money_scale_config_path": "pass",
+    "temporal_sentinel_semantics": "pass",
+    "scalar_deterministic_error_contract": "pass"
+  },
+  "blocking_items": [],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-005/DECIMAL_VARPRECISION_AUDIT.csv",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-006/MONEY_SCALE_CONFIG_MATRIX.csv",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-007/TEMPORAL_IO_SENTINEL_AUDIT.csv",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-008/SCALAR_IO_ERRORCODE_MATRIX.csv"
+  ]
+}

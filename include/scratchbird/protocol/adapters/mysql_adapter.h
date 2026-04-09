@@ -476,6 +476,12 @@ protected:
     void setClientCapabilitiesForTest(uint32_t capabilities) {
         client_capabilities_ = capabilities;
     }
+    core::Status ensureRemoteClientForTest(core::ErrorContext* ctx = nullptr) {
+        return ensureRemoteClient(ctx);
+    }
+    const client::ConnectionConfig& remoteClientConfigForTest() const {
+        return client_config_;
+    }
 
 private:
     void applySuccessfulSessionQuery(const std::string& sql);

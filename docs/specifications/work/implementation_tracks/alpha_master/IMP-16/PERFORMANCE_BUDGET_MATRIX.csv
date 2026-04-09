@@ -1,0 +1,5 @@
+metric_id,workload,threshold_type,threshold_value,pass_condition
+T16-PF-001,context_lookup_hot_path,p95_us,40,measured_p95<=40
+T16-PF-002,alias_resolution_lookup,p95_us,50,measured_p95<=50
+T16-PF-003,trigger_row_context_access,p95_us,60,measured_p95<=60
+T16-PF-004,session_assignment_validation,p95_us,120,measured_p95<=120

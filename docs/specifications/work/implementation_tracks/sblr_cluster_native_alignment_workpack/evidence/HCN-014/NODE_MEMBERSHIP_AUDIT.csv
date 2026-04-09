@@ -1,0 +1,4 @@
+surface,validation,status,notes
+NodeCatalogInfo,upsert/get/list/delete lifecycle,pass,Duplicate node_name rejected in same cluster
+NodeRoleBindingCatalogInfo,uniqueness and lifecycle,pass,Duplicate role binding rejected
+NodeServiceCatalogInfo,endpoint uniqueness and lifecycle,pass,Duplicate service endpoint rejected

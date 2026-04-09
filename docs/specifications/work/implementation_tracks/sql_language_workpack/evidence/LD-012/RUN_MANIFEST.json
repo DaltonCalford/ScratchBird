@@ -1,0 +1,21 @@
+{
+  "ticket_id": "LD-012",
+  "status": "completed",
+  "started_at": "2026-02-11T23:32:33Z",
+  "completed_at": "2026-02-11T23:32:33Z",
+  "spec_inputs": [
+    "docs/specifications/21_V3_Dialect_Surface/TEST_CONTRACT.md",
+    "docs/specifications/31_Conformance_Performance_and_Reliability_Gates/TEST_CONTRACT.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/GATE_EVIDENCE_MATRIX.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/ORDERED_TASK_TICKETS.csv"
+  ],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-012/E2E_CORPUS_MATRIX.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-012/E2E_LANGUAGE_GATE_RESULTS.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-012/SPEC_TRACEABILITY.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-012/TEST_RESULTS.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-012/IMPLEMENTATION_NOTES.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-012/CHECKSUMS.sha256"
+  ],
+  "notes": "Final language gate execution artifact bundle completed for P21-LANG-GATE-04."
+}

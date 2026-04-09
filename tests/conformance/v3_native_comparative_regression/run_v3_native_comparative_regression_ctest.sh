@@ -23,9 +23,11 @@ fi
 
 DEFAULT_SB_ISQL=""
 for candidate in \
+  "${REPO_ROOT}/../ScratchBird-driver/build_cli/tracks/p3/drivers/cli/sb_isql" \
   "${REPO_ROOT}/../ScratchBird-driver/build/tracks/p3/drivers/cli/sb_isql" \
   "${REPO_ROOT}/build/src/sb_isql" \
   "${REPO_ROOT}/build/src/cli/sb_isql" \
+  "${REPO_ROOT}/../ScratchBird-driver/build_cli/tracks/alpha/drivers/cli/sb_isql" \
   "${REPO_ROOT}/../ScratchBird-driver/build/tracks/alpha/drivers/cli/sb_isql" \
   "$(command -v sb_isql 2>/dev/null || true)"; do
   if [[ -n "${candidate}" && -x "${candidate}" ]]; then

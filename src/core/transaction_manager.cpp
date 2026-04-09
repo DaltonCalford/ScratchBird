@@ -631,6 +631,17 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
+        if (db_ != nullptr &&
+            db_->write_admission_fenced() &&
+            !db_->write_admission_enforcement_suspended())
+        {
+            const Status fenced_status = db_->write_admission_status();
+            SET_ERROR_CONTEXT(ctx,
+                              fenced_status == Status::OK ? Status::IO_ERROR : fenced_status,
+                              "Transaction begin is blocked by an open writeback incident");
+            return fenced_status == Status::OK ? Status::IO_ERROR : fenced_status;
+        }
+
         // No longer check for active_xid_ - allow multiple active transactions
 
         // P1-2: Age-based wraparound protection (check OIT age first)
@@ -885,6 +896,8 @@ namespace scratchbird::core
                 if (!stragglers.empty())
                 {
                     std::vector<TipBatchEntry> straggler_batch;
+                    std::vector<uint64_t> straggler_commit_xids;
+                    std::vector<uint64_t> straggler_rolled_back_xids;
                     straggler_batch.reserve(stragglers.size());
                     {
                         std::lock_guard<std::mutex> seq_lock(mutex_);
@@ -896,13 +909,38 @@ namespace scratchbird::core
                             if (straggler->state == TransactionState::COMMITTED)
                             {
                                 entry.commit_seqno = ++latest_commit_seqno_;
+                                straggler_commit_xids.push_back(straggler->xid);
+                            }
+                            else
+                            {
+                                straggler_rolled_back_xids.push_back(straggler->xid);
                             }
                             straggler->commit_seqno = entry.commit_seqno;
                             straggler_batch.push_back(entry);
                         }
                     }
 
-                    Status straggler_status = writeTipEntriesBatch(straggler_batch, ctx);
+                    StorageEngine* storage_engine = db_ ? db_->storage_engine() : nullptr;
+                    std::vector<uint64_t> prepared_maintenance_xids;
+                    std::vector<ID> prepared_maintenance_delta_ids;
+                    uint64_t prepared_locality_group_count = 0;
+                    uint64_t prepared_delta_count = 0;
+
+                    Status straggler_status = Status::OK;
+                    if (storage_engine != nullptr && !straggler_commit_xids.empty())
+                    {
+                        straggler_status = storage_engine->prepareCommitGroupMaintenanceDeltas(
+                            straggler_commit_xids,
+                            prepared_maintenance_xids,
+                            prepared_maintenance_delta_ids,
+                            &prepared_locality_group_count,
+                            &prepared_delta_count,
+                            ctx);
+                    }
+                    if (straggler_status == Status::OK)
+                    {
+                        straggler_status = writeTipEntriesBatch(straggler_batch, ctx);
+                    }
                     if (straggler_status == Status::OK)
                     {
                         for (const auto *straggler : stragglers)
@@ -920,6 +958,26 @@ namespace scratchbird::core
                     if (straggler_status == Status::OK)
                     {
                         straggler_status = flushTransactionState(ctx);
+                    }
+                    if (storage_engine != nullptr)
+                    {
+                        if (straggler_status == Status::OK)
+                        {
+                            storage_engine->finalizePreparedCommitGroupMaintenanceDeltas(
+                                prepared_maintenance_xids,
+                                prepared_locality_group_count,
+                                prepared_delta_count);
+                            if (!straggler_rolled_back_xids.empty())
+                            {
+                                storage_engine->discardPendingCommitGroupMaintenanceDeltas(
+                                    straggler_rolled_back_xids);
+                            }
+                        }
+                        else if (!prepared_maintenance_delta_ids.empty())
+                        {
+                            storage_engine->abortPreparedCommitGroupMaintenanceDeltas(
+                                prepared_maintenance_delta_ids);
+                        }
                     }
 
                     // Wake stragglers with result
@@ -1591,6 +1649,17 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
+        if (db_ != nullptr &&
+            db_->write_admission_fenced() &&
+            !db_->write_admission_enforcement_suspended())
+        {
+            const Status fenced_status = db_->write_admission_status();
+            SET_ERROR_CONTEXT(ctx,
+                              fenced_status == Status::OK ? Status::IO_ERROR : fenced_status,
+                              "Rollback publication is blocked by an open writeback incident");
+            return fenced_status == Status::OK ? Status::IO_ERROR : fenced_status;
+        }
+
         Status status;
 
         // GROUP COMMIT OPTIMIZATION (Issue 2.19) - Applied to rollbacks for consistency
@@ -1644,6 +1713,7 @@ namespace scratchbird::core
                 if (!stragglers.empty())
                 {
                     std::vector<TipBatchEntry> straggler_batch;
+                    std::vector<uint64_t> rolled_back_xids;
                     straggler_batch.reserve(stragglers.size());
                     for (const auto *straggler : stragglers)
                     {
@@ -1651,6 +1721,7 @@ namespace scratchbird::core
                         entry.xid = straggler->xid;
                         entry.state = straggler->state;
                         straggler_batch.push_back(entry);
+                        rolled_back_xids.push_back(straggler->xid);
                     }
 
                     Status straggler_status = writeTipEntriesBatch(straggler_batch, ctx);
@@ -1671,6 +1742,12 @@ namespace scratchbird::core
                     if (straggler_status == Status::OK)
                     {
                         straggler_status = flushTransactionState(ctx);
+                    }
+                    if (straggler_status == Status::OK && db_ != nullptr &&
+                        db_->storage_engine() != nullptr)
+                    {
+                        db_->storage_engine()->discardPendingCommitGroupMaintenanceDeltas(
+                            rolled_back_xids);
                     }
 
                     // Wake stragglers with result
@@ -1709,6 +1786,10 @@ namespace scratchbird::core
         if (status != Status::OK)
         {
             return status;
+        }
+        if (db_ != nullptr && db_->storage_engine() != nullptr)
+        {
+            db_->storage_engine()->discardPendingCommitGroupMaintenanceDeltas(xid);
         }
 
         // Clear ProcArray slot after durability guaranteed (Issue 1.14)
@@ -3648,6 +3729,8 @@ namespace scratchbird::core
 
         // Build TIP batch and assign durable commit sequence numbers to committed entries.
         std::vector<TipBatchEntry> xid_batch;
+        std::vector<uint64_t> committed_xids;
+        std::vector<uint64_t> rolled_back_xids;
         xid_batch.reserve(batch.size());
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -3659,10 +3742,31 @@ namespace scratchbird::core
                 if (waiter->state == TransactionState::COMMITTED)
                 {
                     entry.commit_seqno = ++latest_commit_seqno_;
+                    committed_xids.push_back(waiter->xid);
+                }
+                else
+                {
+                    rolled_back_xids.push_back(waiter->xid);
                 }
                 waiter->commit_seqno = entry.commit_seqno;
                 xid_batch.push_back(entry);
             }
+        }
+
+        StorageEngine* storage_engine = db_ ? db_->storage_engine() : nullptr;
+        std::vector<uint64_t> prepared_maintenance_xids;
+        std::vector<ID> prepared_maintenance_delta_ids;
+        uint64_t prepared_locality_group_count = 0;
+        uint64_t prepared_delta_count = 0;
+        if (status == Status::OK && storage_engine != nullptr && !committed_xids.empty())
+        {
+            status = storage_engine->prepareCommitGroupMaintenanceDeltas(
+                committed_xids,
+                prepared_maintenance_xids,
+                prepared_maintenance_delta_ids,
+                &prepared_locality_group_count,
+                &prepared_delta_count,
+                ctx);
         }
 
         // Write all TIP entries in batch
@@ -3689,6 +3793,26 @@ namespace scratchbird::core
         if (status == Status::OK)
         {
             status = flushTransactionState(ctx);
+        }
+        if (storage_engine != nullptr)
+        {
+            if (status == Status::OK)
+            {
+                storage_engine->finalizePreparedCommitGroupMaintenanceDeltas(
+                    prepared_maintenance_xids,
+                    prepared_locality_group_count,
+                    prepared_delta_count);
+                if (!rolled_back_xids.empty())
+                {
+                    storage_engine->discardPendingCommitGroupMaintenanceDeltas(
+                        rolled_back_xids);
+                }
+            }
+            else if (!prepared_maintenance_delta_ids.empty())
+            {
+                storage_engine->abortPreparedCommitGroupMaintenanceDeltas(
+                    prepared_maintenance_delta_ids);
+            }
         }
 
         // Wake all waiters with result

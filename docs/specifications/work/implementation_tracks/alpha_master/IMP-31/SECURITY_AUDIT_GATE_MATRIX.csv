@@ -1,0 +1,4 @@
+suite_id,requirement_id,check,method,expected_result,reject_condition,evidence_artifact
+T31-G8,IMP-31-REQ-G8-01,Auth and authorization conformance,Security conformance harness,All required auth/authz checks pass,Any auth/authz contract failure,TEST_RESULTS.md#T31-G8
+T31-G8,IMP-31-REQ-G8-02,Credential handling and redaction,Security audit harness,Credential handling and redaction match policy,Credential leak or redaction policy violation,TEST_RESULTS.md#T31-G8
+T31-G8,IMP-31-REQ-G8-03,Audit integrity and trace coverage,Audit integrity harness,Audit chain and trace coverage complete,Audit gap or integrity failure,TEST_RESULTS.md#T31-G8

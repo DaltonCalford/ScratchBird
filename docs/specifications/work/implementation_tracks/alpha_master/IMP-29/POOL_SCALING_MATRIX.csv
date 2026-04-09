@@ -1,0 +1,8 @@
+case_id,suite,required_check,expected_result,error_code
+T29-C01,C,assignment_tiebreak_deterministic,pass,
+T29-C02,C,queue_timeout_overload_rejection_behavior,pass,
+T29-C03,C,warm_pool_maintenance_and_idle_retirement,pass,
+T29-C04,C,crash_replacement_backoff_behavior,pass,
+T29-C05,C,workers_never_cross_parser_family_boundaries,pass,
+T29-C06,C,worker_terminates_on_disconnect_and_warm_pool_replenishes,pass,
+T29-C07,C,listener_reports_unavailable_when_warm_worker_count_zero,pass,

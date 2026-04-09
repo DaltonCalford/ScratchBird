@@ -10,7 +10,9 @@
 #pragma once
 
 #include "scratchbird/core/gpid.h"
+#include "scratchbird/optimizer/statistics.h"
 #include <cstdint>
+#include <map>
 #include <string>
 
 namespace scratchbird::core
@@ -27,6 +29,19 @@ struct BloomIndexParams
 
 struct IndexParams
 {
+    std::string physical_family;
+    std::string planner_family;
+    std::string family_mode;
+    uint16_t format_version = 1;
+    std::string alias_origin;
+    uint16_t family_options_version = 1;
+    std::string lifecycle_model;
+    optimizer::IndexFamilyMetricsType metrics_type =
+        optimizer::IndexFamilyMetricsType::UNKNOWN;
+    uint16_t metrics_version = 1;
+    std::string queryability_state;
+    std::map<std::string, std::string> legacy_pairs;
+    std::map<std::string, std::string> raw_options;
     bool has_bloom = false;
     BloomIndexParams bloom{};
 };

@@ -1,0 +1,11 @@
+op_id,operation,preconditions,lock_set,state_transitions,success_criteria,failure_code
+FSL-OP-001,CREATE_FILESPACE,valid path and capacity,filespace_lock,none->online,page0 header and fsm root written plus catalog row created,NONE
+FSL-OP-002,ATTACH_FILESPACE,valid header and db uuid,filespace_lock,offline->online,catalog online and allocator fsm loaded,NONE
+FSL-OP-003,DETACH_FILESPACE,no active refs and dirty pages flushed,filespace_lock+filespace_alloc_lock,online->maintenance->offline,new allocations blocked and handle closed,NONE
+FSL-OP-004,AUTOEXTEND,autoextend enabled and allocator pressure,filespace_alloc_lock,online->online,total_pages increased by extend_chunk_pages,NONE
+FSL-OP-005,AUTOEXTEND_LIMIT,max_pages reached,filespace_alloc_lock,online->read_only,state changed and writes blocked,FILESPACE_NOT_ONLINE
+FSL-OP-006,ONLINE_MIGRATION_START,source online target online and no active migration,filespace_migration_lock,MIGRATION_INIT->MIGRATION_COPYING,migration_history row created,NONE
+FSL-OP-007,ONLINE_MIGRATION_SWAP,catch-up converged,filespace_migration_lock+LOCK_TABLE_EXCLUSIVE,MIGRATION_READY_FOR_SWAP->MIGRATION_SWAP->MIGRATION_CLEANUP->MIGRATION_COMPLETE,root pointer atomically switched,NONE
+FSL-OP-008,ONLINE_MIGRATION_FAIL,copy/catch-up/swap error,filespace_migration_lock,any->MIGRATION_FAILED,source remains authoritative and shadow discarded,MIGRATION_FAILED
+FSL-OP-009,SHRINK_COMPACTION,tail extents fully free after moves,filespace_migration_lock,online->online,file truncated to new boundary,NONE
+FSL-OP-010,DETACH_IN_USE,live references present,filespace_lock,online->online,operation rejected and state unchanged,FILESPACE_IN_USE

@@ -1,0 +1,19 @@
+{
+  "gate_id": "P-PAGE-GATE-02",
+  "status": "pass",
+  "timestamp_utc": "2026-02-13T18:15:33Z",
+  "required_tickets": ["PP-05", "PP-06", "PP-07", "PP-08"],
+  "evidence_root": "docs/specifications/work/implementation_tracks/physical_page_contract_workpack/evidence",
+  "validation": {
+    "bootstrap_page_map": "pass",
+    "bootstrap_struct_layout": "pass",
+    "allocation_reservation_contract": "pass",
+    "startup_validation_contract": "pass",
+    "test_slice": "49/49 pass"
+  },
+  "commands": [
+    "cmake --build build -j8 --target scratchbird_tests",
+    "./build/tests/scratchbird_tests --gtest_filter='PageManagementEdgeTest.PageManager_FSMCorruption_*' --gtest_color=no",
+    "./build/tests/scratchbird_tests --gtest_filter='*Alpha101*:*PageManagement*:*MoreCases*:*ErrorPaths*:*OnDiskFormat*:*CRC32C_Comprehensive*:*BTreeRightmost*' --gtest_color=no"
+  ]
+}

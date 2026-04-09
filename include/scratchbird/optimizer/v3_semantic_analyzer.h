@@ -36,6 +36,7 @@ namespace scratchbird::optimizer
         const parser::v3::Expression *expression = nullptr;
         bool has_index_match = false;
         core::CatalogManager::IndexInfo matched_index{};
+        std::vector<core::CatalogManager::IndexInfo> matched_indexes;
         PlannerAccessFamily matched_family = PlannerAccessFamily::UNKNOWN;
         std::string matched_path_name;
     };

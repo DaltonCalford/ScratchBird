@@ -1,0 +1,6 @@
+case_id,event_type,required_fields_present,append_only,tamper_evident_chain,expected_result,error_code
+T20-AU-001,security_change,yes,yes,yes,accepted,
+T20-AU-002,ddl_change,yes,yes,yes,accepted,
+T20-AU-003,privileged_read,yes,yes,yes,accepted,
+T20-AU-004,dml_change,missing_actor_uuid,yes,yes,rejected,E_AUDIT_FIELD_MISSING
+T20-AU-005,security_change,yes,no,yes,rejected,E_AUDIT_APPEND_ONLY_REQUIRED

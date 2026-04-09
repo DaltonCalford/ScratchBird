@@ -1,0 +1,6 @@
+case_id,suite,required_check,expected_result,error_code
+T22-B01,B,required_sections_present,pass,
+T22-B02,B,section_offsets_aligned_and_non_overlapping,pass,
+T22-B03,B,stream_begins_op_mod_begin_ends_op_mod_end,pass,
+T22-B04,B,symbol_tables_sorted_unique,pass,
+T22-B05,B,constant_pool_sorted_deduplicated,pass,

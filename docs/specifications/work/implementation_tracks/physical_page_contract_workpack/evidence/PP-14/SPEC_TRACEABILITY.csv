@@ -1,0 +1,5 @@
+spec_clause,implementation,evidence,status
+Diagnostic page walk must validate page header/magic/page-size and supported type,src/core/heap_toast_lob_diagnostics.cpp (walkPage header validation),HEAP_TOAST_LOB_PAGE_WALK_RESULTS.md,pass
+Diagnostic page walk must validate tuple bounds and pointer metadata consistency,src/core/heap_toast_lob_diagnostics.cpp (tuple validation and TOAST flag/payload checks),HEAP_TOAST_LOB_PAGE_WALK_RESULTS.md,pass
+Chunk sequence validation must reject missing indices,src/core/heap_toast_lob_diagnostics.cpp (validateChunkSequence),HEAP_TOAST_LOB_PAGE_WALK_RESULTS.md,pass
+Diagnostic contracts must have dedicated regression tests,tests/unit/test_heap_toast_lob_diagnostics.cpp,TEST_RESULTS.md,pass

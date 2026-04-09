@@ -1,0 +1,7 @@
+component,source_basis,structured_runtime_plan_input,plan_text_input,output_surface,current_state,loss_profile,notes
+query_compiler_v3_optimizer_support,src/sblr/query_compiler_v3_optimizer_support.cpp,yes,yes,payload_fields_plan_plan_text_plan_hash,ready,none,"Injects canonical plan bytes plus derived text and hash into rewritten payloads"
+executor_structured_explain,src/sblr/executor.cpp,yes,fallback_only,text_json_xml_yaml,ready,low,"Current best authority for donor rendering work"
+legacy_executeExplainPlan,src/sblr/executor.cpp,no,implicit_bytecode_summary,query_plan_text_and_wrapped_json_xml_yaml,legacy,high,"Direct bytecode summarizer limited to SELECT INSERT UPDATE DELETE"
+mysql_adapter_explain_rewrite,src/protocol/adapters/mysql_adapter.cpp,no,yes,mysql_explain_rowset,compatibility_only,high,"Text-scrapes QUERY PLAN lines instead of rendering from RuntimePlan"
+firebird_parser_agent_plan_extraction,src/ipc/external_agents/firebird_parser_agent.cpp,no,yes,firebird_plan_text,aligned_for_text_surface,low,"Extracts plan_text for isc_info_sql_get_plan and isc_info_sql_explain_plan"
+postgresql_adapter,src/protocol/adapters/postgresql_adapter.cpp,no,debug_detection_only,no_renderer_proven,missing_renderer,not_applicable,"Sampled code proves payload inspection only, not a donor-facing plan conversion layer"

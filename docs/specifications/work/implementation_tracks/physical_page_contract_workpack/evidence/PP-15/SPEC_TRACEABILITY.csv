@@ -1,0 +1,6 @@
+spec_clause,implementation,evidence,status
+Index special area starts with 32-byte IndexPageHeader,include/scratchbird/core/ondisk.h (IndexPageHeader + static_assert),INDEX_BASE_HEADER_LAYOUT_AUDIT.csv,pass
+Index header fields and offsets are fixed and canonical,tests/unit/test_index_page_base_layout_contract.cpp (offset assertions),INDEX_BASE_HEADER_LAYOUT_AUDIT.csv,pass
+Index page flags reserve bits 4-15 and reject non-zero reserved bits,include/scratchbird/core/ondisk.h (isValidIndexPageFlags),INDEX_BASE_HEADER_LAYOUT_AUDIT.csv,pass
+Header validator enforces opaque_len match and reserved=0,include/scratchbird/core/ondisk.h (isValidIndexPageHeaderBasic),TEST_RESULTS.md,pass
+Index UUID bytes are stable via read/write helpers,include/scratchbird/core/ondisk.h + tests/unit/test_index_page_base_layout_contract.cpp,TEST_RESULTS.md,pass

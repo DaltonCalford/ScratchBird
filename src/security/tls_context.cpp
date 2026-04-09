@@ -963,7 +963,21 @@ core::Status TLSContext::reloadCertificates(core::ErrorContext* ctx) {
         return core::Status::OK;
     }
 
-    return loadCertificate(cert_file_, key_file_, key_password_, ctx);
+    core::Status status = loadCertificate(cert_file_, key_file_, key_password_, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    if (is_server_) {
+        X509* cert = SSL_CTX_get0_certificate(ctx_);
+        if (cert) {
+            server_cert_info_ = extractCertificateInfo(cert);
+        } else {
+            server_cert_info_ = CertificateInfo{};
+        }
+    }
+
+    return core::Status::OK;
 }
 
 // ============================================================================

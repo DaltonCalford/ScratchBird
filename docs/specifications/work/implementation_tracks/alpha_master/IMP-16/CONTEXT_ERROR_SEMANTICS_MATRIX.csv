@@ -1,0 +1,7 @@
+case_id,scenario,expected_error_code,deterministic_behavior
+T16-ER-001,unknown_variable,E_UNKNOWN_CONTEXT_VARIABLE,always_error_native
+T16-ER-002,invalid_namespace,E_CONTEXT_NAMESPACE_INVALID,always_error
+T16-ER-003,scope_violation,E_CONTEXT_SCOPE_VIOLATION,always_error
+T16-ER-004,value_unavailable_with_null_allowed,none,returns_null
+T16-ER-005,value_unavailable_not_null_allowed,E_CONTEXT_VALUE_UNAVAILABLE,always_error
+T16-ER-006,row_invalid_access,E_ROW_CONTEXT_INVALID_ACCESS,always_error

@@ -219,9 +219,8 @@ protected:
     std::unique_ptr<ConnectionContext> conn_;
 };
 
-TEST_F(EnterpriseAuthProviderRuntimeTest, LdapBindUsesProviderChainAndAuthMapping) {
+TEST_F(EnterpriseAuthProviderRuntimeTest, LdapBindFailsClosedOutsideAdmittedBeta1Set) {
     const std::string username = "alice";
-    const std::string external_subject = "uid=alice,ou=People,dc=example,dc=com";
     const auto seeded = seedEnterpriseAuth(
         username,
         CatalogManager::AuthProviderKind::LDAP_SIMPLE_BIND,
@@ -233,7 +232,7 @@ TEST_F(EnterpriseAuthProviderRuntimeTest, LdapBindUsesProviderChainAndAuthMappin
         "bind_dn_template=uid={user},ou=People,dc=example,dc=com;"
         "tls_mode=LDAPS;"
         "allowed_ldap_endpoints=ldaps://ldap.example",
-        external_subject);
+        "uid=alice,ou=People,dc=example,dc=com");
 
     auto provider = makeProvider();
     ASSERT_NE(provider, nullptr);
@@ -243,21 +242,17 @@ TEST_F(EnterpriseAuthProviderRuntimeTest, LdapBindUsesProviderChainAndAuthMappin
     const std::vector<uint8_t> payload{'s', 'e', 'c', 'r', 'e', 't'};
     EXPECT_EQ(provider->authenticatePluginPayload(
                   "scratchbird.auth.ldap_bind", username, payload, user_info, error),
-              AuthResult::SUCCESS)
-        << error;
-    EXPECT_EQ(user_info.user_id, seeded.user_id);
-    EXPECT_EQ(user_info.username, username);
-    EXPECT_EQ(user_info.external_id, external_subject);
-    EXPECT_NE(user_info.authkey_id, ID{});
+              AuthResult::INVALID_CREDENTIALS);
+    EXPECT_FALSE(error.empty());
+    EXPECT_EQ(user_info.user_id, ID{});
+    EXPECT_EQ(user_info.authkey_id, ID{});
 
     ErrorContext ctx;
     std::vector<CatalogManager::AuthAttemptLogCatalogInfo> attempts;
     ASSERT_EQ(catalog_->listAuthAttemptLogCatalogEntries(seeded.account_id, attempts, &ctx), Status::OK)
         << ctx.message;
     ASSERT_EQ(attempts.size(), 1u);
-    EXPECT_EQ(attempts.back().outcome, CatalogManager::AuthAttemptOutcome::SUCCESS);
-    EXPECT_TRUE(attempts.back().has_provider_id);
-    EXPECT_EQ(attempts.back().provider_id, seeded.provider_id);
+    EXPECT_NE(attempts.back().outcome, CatalogManager::AuthAttemptOutcome::SUCCESS);
 }
 
 TEST_F(EnterpriseAuthProviderRuntimeTest, KerberosReplayFailsClosedAndAppliesLockout) {
@@ -309,7 +304,7 @@ TEST_F(EnterpriseAuthProviderRuntimeTest, KerberosReplayFailsClosedAndAppliesLoc
     EXPECT_TRUE(account.is_locked);
 }
 
-TEST_F(EnterpriseAuthProviderRuntimeTest, EntraOidcIsProviderBackedAndPolicyBound) {
+TEST_F(EnterpriseAuthProviderRuntimeTest, EntraOidcFailsClosedOutsideAdmittedBeta1Set) {
     const std::string username = "alice";
     const std::string issuer = "https://login.microsoftonline.com/test-tenant/v2.0";
     const std::string audience = "scratchbird";
@@ -341,11 +336,10 @@ TEST_F(EnterpriseAuthProviderRuntimeTest, EntraOidcIsProviderBackedAndPolicyBoun
                   std::vector<uint8_t>(good_token.begin(), good_token.end()),
                   user_info,
                   error),
-              AuthResult::SUCCESS)
-        << error;
-    EXPECT_EQ(user_info.user_id, seeded.user_id);
-    EXPECT_EQ(user_info.external_id, subject);
-    EXPECT_EQ(user_info.email, "alice@example.com");
+              AuthResult::INVALID_CREDENTIALS);
+    EXPECT_FALSE(error.empty());
+    EXPECT_EQ(user_info.user_id, ID{});
+    EXPECT_EQ(user_info.authkey_id, ID{});
 
     const std::string bad_token = makeHs256Jwt(
         "https://login.microsoftonline.com/other-tenant/v2.0",
@@ -363,6 +357,13 @@ TEST_F(EnterpriseAuthProviderRuntimeTest, EntraOidcIsProviderBackedAndPolicyBoun
                   user_info,
                   error),
               AuthResult::INVALID_CREDENTIALS);
+
+    ErrorContext ctx;
+    std::vector<CatalogManager::AuthAttemptLogCatalogInfo> attempts;
+    ASSERT_EQ(catalog_->listAuthAttemptLogCatalogEntries(seeded.account_id, attempts, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(attempts.size(), 2u);
+    EXPECT_NE(attempts.back().outcome, CatalogManager::AuthAttemptOutcome::SUCCESS);
 }
 
 }  // namespace

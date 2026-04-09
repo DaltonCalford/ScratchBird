@@ -1,0 +1,13 @@
+{
+  "ticket_id": "HCN-053",
+  "title": "Validate rebasing behavior across target transitions",
+  "phase": "PH5",
+  "owner": "codex",
+  "started_utc": "2026-02-23T00:00:00Z",
+  "completed_utc": "2026-02-26T22:12:00Z",
+  "source_commit": "9e789eaad9b8e377f42f96f2ea8fec0193970f40",
+  "commands": [
+    "/home/dcalford/CliWork/ScratchBird/build/tests/scratchbird_tests --gtest_filter='SblrJitFixture.*:LanguageUdrCompileApiMatrixContractTest.*:CatalogSblrArtifactExtensionContractTest.*'"
+  ],
+  "notes": "Cross-target mismatch and rebase portability paths validated with deterministic VM fallback semantics."
+}

@@ -1,0 +1,6 @@
+case_id,scenario,input,expected_result,error_code
+T17-FN-001,builtin_resolution_by_signature,fn(arg_types),function_uuid_resolved,
+T17-FN-002,overload_with_implicit_cast,fn(int_to_decimal),deterministic_overload_selection,
+T17-FN-003,undefined_function,fn_missing,rejected,E_FUNCTION_NOT_FOUND
+T17-FN-004,native_surface_union,native_plus_emulated_required_set,all_required_functions_visible,
+T17-FN-005,emulated_gating,unsupported_function_in_profile,rejected,E_DIALECT_FUNCTION_UNSUPPORTED

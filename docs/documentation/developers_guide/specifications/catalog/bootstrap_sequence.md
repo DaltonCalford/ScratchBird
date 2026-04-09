@@ -371,8 +371,8 @@ root.remote.emulation.milvus
 
 ### References
 
-- `local_work/docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/CATALOG_BOOTSTRAP_LAYOUT.md`
-- `local_work/docs/specifications/24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md`
+- `docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/CATALOG_BOOTSTRAP_LAYOUT.md`
+- `docs/specifications/24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md`
 
 ### Changelog
 

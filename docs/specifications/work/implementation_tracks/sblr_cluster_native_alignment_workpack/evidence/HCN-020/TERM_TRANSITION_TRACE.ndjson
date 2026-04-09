@@ -1,0 +1,4 @@
+{"ts":"2026-02-26T18:53:24Z","ticket":"HCN-020","event":"leader_state_upsert","shard_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","leader_term":7,"leader_node_id":"11111111-1111-4111-8111-111111111111"}
+{"ts":"2026-02-26T18:53:24Z","ticket":"HCN-020","event":"write_rejected","reason":"NOT_CURRENT_LEADER","request_term":7}
+{"ts":"2026-02-26T18:53:24Z","ticket":"HCN-020","event":"write_rejected","reason":"STALE_FENCING_TOKEN","request_term":6}
+{"ts":"2026-02-26T18:53:24Z","ticket":"HCN-020","event":"write_rejected","reason":"ROUTING_EPOCH_MISMATCH","request_routing_epoch":100,"current_routing_epoch":101}

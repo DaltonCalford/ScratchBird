@@ -1,0 +1,5 @@
+case_id,rule,required_behavior,evidence,expected_result,error_code
+T21-NR-001,clause_order_monotonicity,out_of_order_rejected,LD-007/CLAUSE_ORDER_NEGATIVE_CASES.csv,pass,
+T21-NR-002,duplicate_clause_rejection,duplicates_rejected_deterministically,LD-007/CLAUSE_ORDER_NEGATIVE_CASES.csv,pass,
+T21-NR-003,mutually_exclusive_conflict,conflicts_rejected_deterministically,LD-007/CLAUSE_ORDER_NEGATIVE_CASES.csv,pass,
+T21-NR-004,required_clause_missing,missing_required_clause_rejected,LD-004/GRAMMAR_ACCEPT_REJECT_MATRIX.csv,pass,

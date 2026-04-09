@@ -1,0 +1,30 @@
+{
+  "ticket_id": "IMP-14",
+  "section": "14_Base_Scalar_Types",
+  "wave": "W2",
+  "status": "done",
+  "started_at_utc": "2026-02-12T00:33:00Z",
+  "completed_at_utc": "2026-02-12T00:33:00Z",
+  "gate_contract": "docs/specifications/14_Base_Scalar_Types/TEST_CONTRACT.md",
+  "artifacts": [
+    "IMPLEMENTATION_CHECKLIST.md",
+    "IMPLEMENTATION_NOTES.md",
+    "SCALAR_TYPE_ENCODING_MATRIX.csv",
+    "SCALAR_ROUNDTRIP_PERSISTENCE_MATRIX.csv",
+    "EMULATED_SCALAR_LOSSLESS_MAPPING_MATRIX.csv",
+    "WIRE_FORMAT_CONVERSION_MATRIX.csv",
+    "SCALAR_EDGE_CASE_DISCOVERY_MATRIX.csv",
+    "SCALAR_IO_FUZZ_VALIDATION_MATRIX.csv",
+    "NEGATIVE_BOUNDARY_MATRIX.csv",
+    "PERFORMANCE_BUDGET_MATRIX.csv",
+    "COMPATIBILITY_PARITY_MATRIX.csv",
+    "TEST_RESULTS.md",
+    "CHECKSUMS.sha256",
+    "RUN_MANIFEST.json",
+    "SPEC_TRACEABILITY.csv",
+    "TEST_EVIDENCE_INDEX.md",
+    "GATE_RESULT.json",
+    "CHANGESET_LOG.md"
+  ],
+  "mode": "specification_contract_validation"
+}

@@ -1,0 +1,6 @@
+case_id,scenario,input,expected_result,error_code
+T12-NG-001,min_bound_name,empty_table_name,rejected,E_TEMP_TABLE_NOT_FOUND
+T12-NG-002,max_bound_columns,column_count_exceeds_limit,rejected,E_RESOURCE_EXHAUSTED
+T12-NG-003,malformed_ddl,invalid_temp_clause,rejected,E_TEMP_DDL_CONFLICT
+T12-NG-004,null_session_uuid,missing_session_context,rejected,E_TEMP_SCOPE_VIOLATION
+T12-NG-005,permission_denied,non_owner_drop_attempt,rejected,E_PERMISSION_DENIED

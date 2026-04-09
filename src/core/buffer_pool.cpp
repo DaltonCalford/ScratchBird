@@ -257,6 +257,59 @@ namespace scratchbird::core
         // Flush all dirty pages
         Status status = flushAll(ctx);
 
+        uint32_t forced_shutdown_flushes = 0;
+        uint32_t forced_pinned_flushes = 0;
+        for (uint32_t i = 0; i < config_.pool_size; i++)
+        {
+            std::unique_lock<std::mutex> content_lock(*frames_[i].content_mutex);
+
+            if (frames_[i].gpid == INVALID_GPID ||
+                !frames_[i].is_dirty.load(std::memory_order_acquire) ||
+                static_cast<DirtyState>(frames_[i].dirty_state.load(std::memory_order_relaxed)) ==
+                    DirtyState::DirtyFlushedPendingFsync)
+            {
+                continue;
+            }
+
+            auto *header = reinterpret_cast<PageHeader *>(frames_[i].data.get());
+            if (header != nullptr && pageIsTemporaryWork(*header))
+            {
+                continue;
+            }
+
+            const uint32_t pin_count = frames_[i].pin_count.load(std::memory_order_relaxed);
+            if (pin_count > 0)
+            {
+                forced_pinned_flushes++;
+                LOG_WARNING(STORAGE,
+                            "BufferPool::shutdown forcing flush of dirty pinned frame gpid=%llu pin_count=%u",
+                            static_cast<unsigned long long>(frames_[i].gpid),
+                            pin_count);
+            }
+
+            const uint64_t flushed_generation =
+                frames_[i].dirty_generation.load(std::memory_order_acquire);
+            beginFrameWriteback(i, WritebackQueueState::NONE);
+            Status force_status = writePageToDisk(i, ctx, WritebackQueueState::NONE);
+            if (force_status != Status::OK)
+            {
+                markFrameWritebackFailure(i, WritebackQueueState::NONE);
+                return force_status;
+            }
+
+            finishFrameWriteback(i, flushed_generation, WritebackQueueState::NONE);
+            stats_.flushes.fetch_add(1, std::memory_order_relaxed);
+            forced_shutdown_flushes++;
+        }
+
+        if (forced_shutdown_flushes > 0)
+        {
+            LOG_WARNING(STORAGE,
+                        "BufferPool::shutdown forced %u dirty frame flushes during teardown (%u pinned)",
+                        forced_shutdown_flushes,
+                        forced_pinned_flushes);
+        }
+
         {
             std::lock_guard<std::mutex> lock(mutex_);
             // Memory is freed automatically by unique_ptr
@@ -1400,7 +1453,9 @@ namespace scratchbird::core
                     const uint64_t max_protected_age = std::max<uint64_t>(
                         4, static_cast<uint64_t>(
                                config_.admission_second_touch_generations) * 2);
-                    if (protected_frames > protected_budget || age > max_protected_age)
+                    const bool direct_protect = isDirectProtectFrame(frame);
+                    if (!direct_protect &&
+                        (protected_frames > protected_budget || age > max_protected_age))
                     {
                         frame.residency_tier.store(
                             static_cast<uint8_t>(ResidencyTier::Probationary),
@@ -2414,6 +2469,25 @@ namespace scratchbird::core
             frame.mga_page_class.load(std::memory_order_relaxed));
         return page_class == MgaPageClass::TX_STATE &&
                isBootstrapCriticalTxStateFrame(frame);
+    }
+
+    auto BufferPool::isDirectProtectFrame(const Frame &frame) const -> bool
+    {
+        const MgaPageClass page_class = static_cast<MgaPageClass>(
+            frame.mga_page_class.load(std::memory_order_relaxed));
+        if (isDirectProtectClass(page_class))
+        {
+            return true;
+        }
+
+        if (page_class != MgaPageClass::SYSTEM_META || frame.data == nullptr)
+        {
+            return false;
+        }
+
+        const auto *header = reinterpret_cast<const PageHeader *>(frame.data.get());
+        return header->magic == K_MAGIC_SBRD &&
+               isDirectProtectSystemMetaPageType(header->page_type);
     }
 
     void BufferPool::applyAutomaticMgaClassification(uint32_t frame_index,
@@ -3800,7 +3874,8 @@ segmented_owner_recheck_miss:
         }
 
         auto *header = reinterpret_cast<PageHeader *>(frames_[frame_index].data.get());
-        if (header != nullptr && pageIsTemporaryWork(*header))
+        if (header != nullptr && pageIsTemporaryWork(*header) &&
+            header->page_type == PAGE_TYPE_TEMP_HEAP)
         {
             return Status::OK;
         }
@@ -4504,7 +4579,9 @@ evict_specific_frame_stats_done:
                                                  : 0;
                         const uint64_t max_protected_age = std::max<uint64_t>(
                             4, static_cast<uint64_t>(config_.admission_second_touch_generations) * 2);
-                        if (protected_frames > protected_budget || age > max_protected_age)
+                        const bool direct_protect = isDirectProtectFrame(frame);
+                        if (!direct_protect &&
+                            (protected_frames > protected_budget || age > max_protected_age))
                         {
                             frame.residency_tier.store(
                                 static_cast<uint8_t>(ResidencyTier::Probationary),

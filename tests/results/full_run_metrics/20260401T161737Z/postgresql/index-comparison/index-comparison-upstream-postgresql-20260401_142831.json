@@ -1,0 +1,232 @@
+{
+  "metadata": {
+    "engine": "postgresql",
+    "suite": "index-comparison",
+    "timestamp": "20260401_142831",
+    "host": "localhost",
+    "port": 5433,
+    "database": "benchmark",
+    "target": "upstream-postgresql",
+    "runtime_service": "postgresql",
+    "target_class": "upstream",
+    "docker_first": true,
+    "iterations": 5,
+    "noise_band_pct": 5.0
+  },
+  "results": {
+    "scenarios": {
+      "tests": [
+        {
+          "test_name": "btree_point_lookup",
+          "name": "Selective lookup through a secondary B-tree index.",
+          "status": "pass",
+          "duration_ms": 0.338,
+          "error_message": null,
+          "plan_family": "index_scan",
+          "plan_expectation_status": "matched",
+          "target": "upstream-postgresql"
+        },
+        {
+          "test_name": "btree_range_scan",
+          "name": "Range filter through a single-column B-tree index.",
+          "status": "pass",
+          "duration_ms": 0.664,
+          "error_message": null,
+          "plan_family": "index_scan",
+          "plan_expectation_status": "matched",
+          "target": "upstream-postgresql"
+        },
+        {
+          "test_name": "btree_composite_order",
+          "name": "Composite predicate with ordered output satisfied by a composite B-tree index.",
+          "status": "pass",
+          "duration_ms": 0.543,
+          "error_message": null,
+          "plan_family": "index_only_scan",
+          "plan_expectation_status": "partial",
+          "target": "upstream-postgresql"
+        }
+      ]
+    }
+  },
+  "test_results": [
+    {
+      "scenario_id": "btree_point_lookup",
+      "description": "Selective lookup through a secondary B-tree index.",
+      "index_family": "btree",
+      "workload_family": "point_lookup",
+      "benchmark_target": "upstream-postgresql",
+      "runtime_service": "postgresql",
+      "execution_status": "pass",
+      "comparative_verdict": null,
+      "comparison_score": null,
+      "plan_capture_status": "ok",
+      "actual_plan_family": "index_scan",
+      "used_index": true,
+      "index_names": [
+        "idx_idxcmp_point_lookup_key"
+      ],
+      "fallback_to_scan": false,
+      "extra_sort": false,
+      "order_satisfied_by_index": true,
+      "expectation_status": "matched",
+      "plan_quality_score": 100,
+      "rows_returned": 1,
+      "iterations": 5,
+      "noise_band_pct": 5.0,
+      "raw_plan": [
+        {
+          "Plan": {
+            "Node Type": "Index Scan",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Scan Direction": "Forward",
+            "Index Name": "idx_idxcmp_point_lookup_key",
+            "Relation Name": "idxcmp_point_lookup",
+            "Alias": "idxcmp_point_lookup",
+            "Startup Cost": 0.28,
+            "Total Cost": 2.5,
+            "Plan Rows": 1,
+            "Plan Width": 16,
+            "Index Cond": "(lookup_key = 842)"
+          }
+        }
+      ],
+      "error": null,
+      "latency_avg_ms": 0.338,
+      "latency_p95_ms": 0.4,
+      "latency_p99_ms": 0.406,
+      "throughput_qps": 2960.332
+    },
+    {
+      "scenario_id": "btree_range_scan",
+      "description": "Range filter through a single-column B-tree index.",
+      "index_family": "btree",
+      "workload_family": "range_scan",
+      "benchmark_target": "upstream-postgresql",
+      "runtime_service": "postgresql",
+      "execution_status": "pass",
+      "comparative_verdict": null,
+      "comparison_score": null,
+      "plan_capture_status": "ok",
+      "actual_plan_family": "index_scan",
+      "used_index": true,
+      "index_names": [
+        "idx_idxcmp_range_scan_key"
+      ],
+      "fallback_to_scan": false,
+      "extra_sort": false,
+      "order_satisfied_by_index": true,
+      "expectation_status": "matched",
+      "plan_quality_score": 100,
+      "rows_returned": 301,
+      "iterations": 5,
+      "noise_band_pct": 5.0,
+      "raw_plan": [
+        {
+          "Plan": {
+            "Node Type": "Index Scan",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Scan Direction": "Forward",
+            "Index Name": "idx_idxcmp_range_scan_key",
+            "Relation Name": "idxcmp_range_scan",
+            "Alias": "idxcmp_range_scan",
+            "Startup Cost": 0.28,
+            "Total Cost": 10.6,
+            "Plan Rows": 301,
+            "Plan Width": 8,
+            "Index Cond": "((range_key >= 300) AND (range_key <= 600))"
+          }
+        }
+      ],
+      "error": null,
+      "latency_avg_ms": 0.664,
+      "latency_p95_ms": 0.874,
+      "latency_p99_ms": 0.896,
+      "throughput_qps": 1506.024
+    },
+    {
+      "scenario_id": "btree_composite_order",
+      "description": "Composite predicate with ordered output satisfied by a composite B-tree index.",
+      "index_family": "btree",
+      "workload_family": "order_preserving_scan",
+      "benchmark_target": "upstream-postgresql",
+      "runtime_service": "postgresql",
+      "execution_status": "pass",
+      "comparative_verdict": null,
+      "comparison_score": null,
+      "plan_capture_status": "ok",
+      "actual_plan_family": "index_only_scan",
+      "used_index": true,
+      "index_names": [
+        "idx_idxcmp_composite_sci"
+      ],
+      "fallback_to_scan": false,
+      "extra_sort": false,
+      "order_satisfied_by_index": true,
+      "expectation_status": "partial",
+      "plan_quality_score": 80,
+      "rows_returned": 25,
+      "iterations": 5,
+      "noise_band_pct": 5.0,
+      "raw_plan": [
+        {
+          "Plan": {
+            "Node Type": "Limit",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 0.28,
+            "Total Cost": 4.26,
+            "Plan Rows": 25,
+            "Plan Width": 16,
+            "Plans": [
+              {
+                "Node Type": "Index Only Scan",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Scan Direction": "Forward",
+                "Index Name": "idx_idxcmp_composite_sci",
+                "Relation Name": "idxcmp_composite_order",
+                "Alias": "idxcmp_composite_order",
+                "Startup Cost": 0.28,
+                "Total Cost": 25.14,
+                "Plan Rows": 156,
+                "Plan Width": 16,
+                "Index Cond": "((status = 'active'::text) AND (category >= 5) AND (category <= 9))"
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "latency_avg_ms": 0.543,
+      "latency_p95_ms": 0.652,
+      "latency_p99_ms": 0.666,
+      "throughput_qps": 1841.621
+    }
+  ],
+  "summary": {
+    "total_tests": 3,
+    "passed": 3,
+    "failed": 0,
+    "errors": 0,
+    "unsupported": 0,
+    "plan_capture_success": 3,
+    "score": 93.33,
+    "verdict_ready": false,
+    "by_index_family": {
+      "btree": 3
+    },
+    "by_workload_family": {
+      "point_lookup": 1,
+      "range_scan": 1,
+      "order_preserving_scan": 1
+    },
+    "by_expectation_status": {
+      "matched": 2,
+      "partial": 1
+    }
+  }
+}

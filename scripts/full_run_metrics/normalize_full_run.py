@@ -1420,6 +1420,7 @@ def write_baseline_comparison(
     baseline_summary = load_json(summary_path)
     baseline_unified = baseline_root / "matrix-comparison-unified.csv"
     if not baseline_unified.exists():
+        baseline_unified = output_root / "baseline-matrix-comparison-unified.csv"
         generate_unified_comparison_csv.write_unified_csv(summary_path, baseline_unified)
 
     current_engines, current_rows = load_unified_matrix(current_unified)

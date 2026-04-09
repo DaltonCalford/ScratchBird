@@ -1,0 +1,6 @@
+case_id,operation,precondition,expected_result,error_code
+T17-PR-001,create_procedure,valid_signature_and_body,created,
+T17-PR-002,alter_procedure,owner_or_admin,updated,
+T17-PR-003,drop_procedure,owner_or_admin,dropped,
+T17-PR-004,execute_procedure,execute_grant_present,resultset_or_status_returned,
+T17-PR-005,execute_without_grant,missing_execute_grant,rejected,E_PERMISSION_DENIED

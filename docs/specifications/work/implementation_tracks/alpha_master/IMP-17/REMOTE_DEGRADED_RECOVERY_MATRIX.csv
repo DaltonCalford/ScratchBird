@@ -1,0 +1,6 @@
+case_id,state,input_condition,expected_result,error_code
+T17-RD-001,READY,consecutive_failures_exceed_threshold,transition_to_degraded,
+T17-RD-002,DEGRADED,write_policy_blocked,reject_write_ops,E_REMOTE_CONNECTOR_DEGRADED
+T17-RD-003,DEGRADED,health_probe_success,transition_to_ready,
+T17-RD-004,DEGRADED,retry_backoff_sequence,deterministic_retry_schedule,
+T17-RD-005,DISABLED,new_execution_attempt,reject,E_REMOTE_CONNECTOR_DISABLED

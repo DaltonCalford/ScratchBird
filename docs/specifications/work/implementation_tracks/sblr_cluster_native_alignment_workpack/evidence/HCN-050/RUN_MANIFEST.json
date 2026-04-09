@@ -1,0 +1,14 @@
+{
+  "ticket_id": "HCN-050",
+  "title": "Deliver explicit native compile path for routines and package members",
+  "phase": "PH5",
+  "owner": "codex",
+  "started_utc": "2026-02-23T00:00:00Z",
+  "completed_utc": "2026-02-26T22:05:00Z",
+  "source_commit": "9e789eaad9b8e377f42f96f2ea8fec0193970f40",
+  "commands": [
+    "cmake --build /home/dcalford/CliWork/ScratchBird/build --target scratchbird_tests -j8",
+    "/home/dcalford/CliWork/ScratchBird/build/tests/scratchbird_tests --gtest_filter='SblrJitFixture.*:LanguageUdrCompileApiMatrixContractTest.*:CatalogSblrArtifactExtensionContractTest.*'"
+  ],
+  "notes": "Explicit compile path hardened with native-scope checks and routine/member coverage matrix validated by VM/native equivalence tests."
+}

@@ -1,0 +1,19 @@
+{
+  "ticket_id": "PP-004",
+  "title": "Page validation and object UUID integration",
+  "timestamp_utc": "2026-02-13T19:36:23Z",
+  "implementation_repo": "/home/dcalford/CliWork/ScratchBird",
+  "primary_specs": [
+    "05_Page_Taxonomy_and_Binary_Layouts/PAGE_HEADER_LAYOUT.md",
+    "05_Page_Taxonomy_and_Binary_Layouts/PAGE_TYPE_ENUMS.md"
+  ],
+  "changed_files": [
+    "include/scratchbird/core/ondisk.h",
+    "tests/unit/test_page_contract_stage_s1.cpp"
+  ],
+  "commands": [
+    {"cmd": "cmake --build /home/dcalford/CliWork/ScratchBird/build --target scratchbird_tests -j6", "result": "pass"},
+    {"cmd": "ctest --test-dir /home/dcalford/CliWork/ScratchBird/build -R \"PageContractStageS1Test\" --output-on-failure", "result": "pass"}
+  ],
+  "status": "done"
+}

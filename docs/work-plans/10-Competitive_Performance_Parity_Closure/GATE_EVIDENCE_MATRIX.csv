@@ -1,0 +1,7 @@
+gate_id,gate_name,required_scope,required_artifact,pass_rule,owning_tickets
+G10-01,Process parity ceiling gate,all rows in PROCESS_PARITY_TARGETS.csv,donor-comparable benchmark comparison artifact,every row is at or below target_ceiling_ms or carries an approved waiver,PP-10-014
+G10-02,Load table ceiling gate,all rows in LOAD_TABLE_TARGETS.csv,table-level load comparison artifact,every table row is at or below target_ceiling_ms or carries an approved waiver,PP-10-014
+G10-03,Prepared-query performance gate,prepared point select point DML and micro-batch insert,prepared fast-path evidence pack,prepared bundle hit or miss and cache coordination are proven with correct invalidation,PP-10-008
+G10-04,Secondary-read and join locality gate,ICP MRR BKA memoize runtime filters adaptive build-side,focused runtime-plan and correctness proof set,secondary-read and indexed-join specializations are implemented or explicitly refused with canonical reasons,PP-10-009|PP-10-010
+G10-05,Upper-stage spill vectorization and locality gate,hash sort aggregate distinct window parallel locality,focused runtime-plan and spill evidence pack,all benchmark-governed upper-stage operators have bounded runtime workfile paths and explicit vector or row-mode behavior,PP-10-011|PP-10-012|PP-10-013
+G10-06,Benchmark provenance gate,runner binary and config identity,pinned artifact root with runner metadata,comparison tooling refuses unpinned runs and preserved artifacts show exact binary and configuration identity,PP-10-002|PP-10-014

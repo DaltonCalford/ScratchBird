@@ -1,0 +1,30 @@
+{
+  "ticket_id": "IMP-13",
+  "section": "13_Operator_Model_and_Coercion",
+  "wave": "W2",
+  "status": "done",
+  "started_at_utc": "2026-02-12T00:34:01Z",
+  "completed_at_utc": "2026-02-12T00:34:01Z",
+  "gate_contract": "docs/specifications/13_Operator_Model_and_Coercion/TEST_CONTRACT.md",
+  "artifacts": [
+    "IMPLEMENTATION_CHECKLIST.md",
+    "IMPLEMENTATION_NOTES.md",
+    "OPERATOR_BEHAVIOR_MATRIX.csv",
+    "PRECEDENCE_ASSOCIATIVITY_MATRIX.csv",
+    "CAST_CORRECTNESS_MATRIX.csv",
+    "COERCION_EDGE_CASE_MATRIX.csv",
+    "INVALID_CAST_ERROR_MATRIX.csv",
+    "NULL_THREE_VALUED_LOGIC_MATRIX.csv",
+    "NEGATIVE_BOUNDARY_MATRIX.csv",
+    "PERFORMANCE_BUDGET_MATRIX.csv",
+    "COMPATIBILITY_PARITY_MATRIX.csv",
+    "TEST_RESULTS.md",
+    "CHECKSUMS.sha256",
+    "RUN_MANIFEST.json",
+    "SPEC_TRACEABILITY.csv",
+    "TEST_EVIDENCE_INDEX.md",
+    "GATE_RESULT.json",
+    "CHANGESET_LOG.md"
+  ],
+  "mode": "specification_contract_validation"
+}

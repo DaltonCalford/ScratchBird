@@ -1,0 +1,24 @@
+# Changeset Log
+
+- Ticket: IMP-14
+- Section: 14_Base_Scalar_Types
+- Summary: Completed deterministic implementation contract pack and gate evidence.
+- Files changed:
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/IMPLEMENTATION_CHECKLIST.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/IMPLEMENTATION_NOTES.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/SCALAR_TYPE_ENCODING_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/SCALAR_ROUNDTRIP_PERSISTENCE_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/EMULATED_SCALAR_LOSSLESS_MAPPING_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/WIRE_FORMAT_CONVERSION_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/SCALAR_EDGE_CASE_DISCOVERY_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/SCALAR_IO_FUZZ_VALIDATION_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/NEGATIVE_BOUNDARY_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/PERFORMANCE_BUDGET_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/COMPATIBILITY_PARITY_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/TEST_RESULTS.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/CHECKSUMS.sha256
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/RUN_MANIFEST.json
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/SPEC_TRACEABILITY.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/TEST_EVIDENCE_INDEX.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/GATE_RESULT.json
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-14/CHANGESET_LOG.md

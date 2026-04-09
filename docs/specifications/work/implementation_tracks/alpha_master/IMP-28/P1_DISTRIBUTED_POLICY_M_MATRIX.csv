@@ -1,0 +1,8 @@
+case_id,suite,required_check,expected_result,error_code
+T28-M001,M,pd00_distributed_policy_feature_gate_by_profile,pass,
+T28-M002,M,pd01_policy_control_mapping_no_ambiguity,pass,
+T28-M003,M,pd02_policy_envelope_order_and_correlation_id_deterministic,pass,
+T28-M004,M,pd03_verification_repair_degraded_event_mapping,pass,
+T28-M005,M,pd04_telemetry_exposure_profile_enforced,pass,
+T28-M006,M,pd05_redaction_by_role_policy_enforced,pass,
+T28-M007,M,pd06_stale_policy_version_reject_remap_retry_bounded,pass,

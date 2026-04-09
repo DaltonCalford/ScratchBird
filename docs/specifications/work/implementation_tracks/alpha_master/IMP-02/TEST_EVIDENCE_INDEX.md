@@ -1,0 +1,19 @@
+# Test Evidence Index
+
+- Ticket: IMP-02
+- Section: 02_Filespace_Lifecycle
+- Gate Contract: docs/specifications/02_Filespace_Lifecycle/TEST_CONTRACT.md
+- Evidence Files:
+  - IMPLEMENTATION_CHECKLIST.md
+  - IMPLEMENTATION_NOTES.md
+  - FILESPACE_HEADER_AND_LAYOUT_MATRIX.csv
+  - FILESPACE_OPERATION_MATRIX.csv
+  - ONLINE_RELOCATION_STATE_MACHINE.csv
+  - PARTITION_SPLIT_AND_ROUTING_MATRIX.csv
+  - LOCK_AND_FAILURE_MATRIX.csv
+  - TEST_RESULTS.md
+  - CHECKSUMS.sha256
+  - RUN_MANIFEST.json
+  - SPEC_TRACEABILITY.csv
+  - GATE_RESULT.json
+  - CHANGESET_LOG.md

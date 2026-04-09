@@ -105,6 +105,7 @@ struct ParserConfig {
     uint32_t protocol_version = 1;
     uint32_t max_requests = 0;
     uint32_t max_age_seconds = 0;
+    uint32_t engine_response_timeout_ms = 30000;
     bool show_help = false;
     bool show_version = false;
     bool print_package_scaffold = false;
@@ -161,6 +162,8 @@ void printUsage(const char* program) {
               << "  --protocol-version <n>    Dialect protocol version\n"
               << "  --max-requests <n>        Max sessions before recycle (0 = unlimited)\n"
               << "  --max-age-seconds <n>     Max lifetime before recycle (0 = unlimited)\n"
+              << "  --engine-response-timeout-ms <n>\n"
+              << "                            Parser->engine response timeout in milliseconds (0 = blocking)\n"
               << "  --log-level <level>       info|debug|warn|error\n"
               << "  --compile-file <path>     Compile SQL in file to SBLR hex and exit\n"
               << "  --compile-schema <path>   Schema root for --compile-file\n"
@@ -300,6 +303,20 @@ bool parseArgs(int argc, char* argv[], ParserConfig& config) {
                 config.max_age_seconds = static_cast<uint32_t>(std::stoul(arg.substr(18)));
             } catch (...) {
                 std::cerr << "Invalid max-age-seconds value\n";
+                return false;
+            }
+        } else if (arg == "--engine-response-timeout-ms" && i + 1 < argc) {
+            try {
+                config.engine_response_timeout_ms = static_cast<uint32_t>(std::stoul(argv[++i]));
+            } catch (...) {
+                std::cerr << "Invalid engine-response-timeout-ms value\n";
+                return false;
+            }
+        } else if (arg.rfind("--engine-response-timeout-ms=", 0) == 0) {
+            try {
+                config.engine_response_timeout_ms = static_cast<uint32_t>(std::stoul(arg.substr(29)));
+            } catch (...) {
+                std::cerr << "Invalid engine-response-timeout-ms value\n";
                 return false;
             }
         } else if (arg == "--log-level" && i + 1 < argc) {
@@ -727,6 +744,8 @@ std::unique_ptr<scratchbird::ipc::ParserAgent> createConfiguredParserAgent(
     agent_config.enable_ssl = config.tls_context && config.tls_settings.enabled;
     agent_config.options["default_database"] = config.default_database;
     agent_config.options["database_path"] = config.database_path;
+    agent_config.options["engine_response_timeout_ms"] =
+        std::to_string(config.engine_response_timeout_ms);
 #if defined(SB_PARSER_TARGET_FIREBIRD)
     return std::make_unique<scratchbird::ipc::FirebirdParserAgent>(agent_config);
 #elif defined(SB_PARSER_TARGET_POSTGRESQL)
@@ -800,6 +819,8 @@ uint32_t runSession(const ParserConfig& config,
     adapter_config.engine_endpoint = config.engine_endpoint;
     adapter_config.default_database = config.default_database;
     adapter_config.database_path = config.database_path;
+    adapter_config.read_timeout_ms = config.engine_response_timeout_ms;
+    adapter_config.write_timeout_ms = config.engine_response_timeout_ms;
     const auto surface_auth_order =
         scratchbird::security::parserAuthMethodOrder(config.protocol);
     if (!surface_auth_order.empty()) {

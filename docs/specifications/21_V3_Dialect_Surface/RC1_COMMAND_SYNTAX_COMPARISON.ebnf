@@ -1,0 +1,271 @@
+# RC1 Command Syntax Comparison EBNF
+
+(*
+Purpose: compare baseline V3 parser surface syntax with RC1 parser/engine extension surface.
+Source documents: NATIVE_PARSER_FEATURE_FAMILIES.md, NATIVE_DML_LANGUAGE_DEFINITION.md,
+NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md, NATIVE_JDBC_COMPATIBILITY_SQL.md,
+NATIVE_SQL_SURFACE.md, and 21_V3_Dialect_Surface workplans.
+*)
+
+(* Top-level command entry point *)
+
+<command-stream> ::= <command>
+                   | <command> ";" <command-stream>
+
+<command> ::= <psql-command>             (* BASE *)
+            | <session-command>          (* BASE *)
+            | <ddl-command>              (* BASE *)
+            | <dml-command>              (* BASE *)
+            | <prepared-command>         (* BASE *)
+            | <notification-command>     (* BASE *)
+            | <admin-command>            (* BASE *)
+
+
+(* Core / baseline lexical tokens *)
+
+<identifier> ::= <unquoted-ident> | <quoted-ident>
+<unquoted-ident> ::= /[A-Za-z_][A-Za-z0-9_]*/
+<quoted-ident> ::= '"' /[^"]*/ '"'
+<string-literal> ::= /'.*?'/
+<number-literal> ::= <int-literal> | <float-literal>
+<int-literal> ::= /[0-9]+/
+<float-literal> ::= /[0-9]+\.[0-9]+/
+<bind-slot> ::= '$' <int-literal> | '?' | <named-param>
+<named-param> ::= ':' <param-name> | '@' <param-name>
+<param-name> ::= <unquoted-ident>
+
+
+(* PSQL / Transaction / Session family (baseline + aliases) *)
+
+<psql-command> ::= <txn-command>
+                 | <psql-block>
+
+<txn-command> ::= 'BEGIN' [ 'ISOLATION' <isolation-level> ] [ 'READ' ( 'ONLY' | 'WRITE' ) ]
+                | 'BEGIN' 'TRANSACTION' [ <identifier> ]
+                | 'COMMIT' [ 'RETAIN' 'SNAPSHOT' ]
+                | 'COMMIT' 'TRANSACTION' [ <identifier> ]
+                | 'ROLLBACK' [ 'TO' 'SAVEPOINT' <identifier> ]
+                | 'ROLLBACK' 'TRANSACTION' [ <identifier> ]
+                | 'SAVEPOINT' <identifier>
+                | 'RELEASE' 'SAVEPOINT' <identifier>
+
+<psql-block> ::= 'BEGIN' <psql-stmt-list> 'END'
+
+
+(* Session family (baseline) *)
+
+<session-command> ::= 'SET' <identifier> '=' <expr>
+                   | 'SHOW' ( <identifier> | <category> )
+                   | 'RESET' <identifier>
+                   | 'SHOW' 'CONFIG' [ 'LIKE' <expr> ]
+                   | 'SET' 'CONFIG' <identifier> '=' <expr> [ 'SCOPE' <identifier> ]
+                   | 'RESET' 'CONFIG' <identifier> [ 'SCOPE' <identifier> ]
+                   | 'CONFIG' 'HISTORY' <identifier>
+                   | 'RELOAD' 'CONFIG'
+
+
+(* DDL family (baseline summary placeholders) *)
+
+<ddl-command> ::= 'CREATE' <ddl-create>
+                | 'ALTER' <ddl-alter>
+                | 'DROP' <ddl-drop>
+                | <ddl-other>
+
+<ddl-create> ::= 'DATABASE' <identifier> [ 'WITH' <option-list> ]
+             | 'SCHEMA' <identifier> [ 'AUTHORIZATION' <identifier> ]
+             | 'TABLE' <identifier> <ddl-object-body>
+             | 'VIEW' <identifier> [ '(' <identifier-list> ')' ] 'AS' <query-expr>
+             | 'INDEX' <identifier>
+             | 'DOMAIN' <identifier> 'AS' <domain-body>
+             | 'FUNCTION' <identifier> '(' <param-list> ')' [ 'RETURNS' <type-name> ] [ 'LANGUAGE' <identifier> ] 'AS' <routine-body>
+             | 'PROCEDURE' <identifier> '(' <param-list> ')' [ 'RETURNS' <type-name> ] [ 'LANGUAGE' <identifier> ] 'AS' <routine-body>
+
+<ddl-alter> ::= 'DOMAIN' <identifier> [ 'AS' <domain-body> ] [ 'ADD' <domain-body> ]
+
+<ddl-drop> ::= 'DOMAIN' <identifier>
+             | 'TABLE' <identifier>
+             | 'VIEW' <identifier>
+             | 'FUNCTION' <identifier>
+             | 'PROCEDURE' <identifier>
+
+<ddl-other> ::= 'TRIGGER' <identifier> <ddl-trigger-tail>
+
+
+(* Canonical DML family *)
+
+<dml-command> ::= <dml-core>
+
+<dml-core> ::= <select-core>
+             | <insert-core>
+             | <update-core>
+             | <delete-core>
+             | <merge-core>
+             | <copy-core>
+
+
+(* SELECT *)
+<select-core> ::= 'SELECT' [ 'DISTINCT' | 'ALL' ]
+                  <select-list>
+                  [ <from-clause> ]
+                  [ 'WHERE' <expr> ]
+                  [ 'GROUP' 'BY' <group-item> [ ',' <group-item> ]... ]
+                  [ 'HAVING' <expr> ]
+                  [ 'WINDOW' <window-def> [ ',' <window-def> ]... ]
+                  [ 'ORDER' 'BY' <order-item> [ ',' <order-item> ]... ]
+                  [ 'LIMIT' <expr> ]
+                  [ 'OFFSET' <expr> ]
+                  [ 'FETCH' 'FIRST' <expr> 'ROWS' [ 'ONLY' | 'WITH' 'TIES' ] ]
+                  [ 'FOR' ( 'UPDATE' | 'SHARE' ) [ 'OF' <table-ref-list> ] [ 'NOWAIT' | 'SKIP' 'LOCKED' ] ]
+
+(* Canonical INSERT *)
+<insert-core> ::= 'INSERT' 'INTO' <relation> [ 'AS' <identifier> ]
+                  [ '(' <column-list> ')' ]
+                  ( <values-clause> | <query-expr> | 'DEFAULT' 'VALUES' )
+                  [ <on-conflict-clause> ]
+                  [ 'RETURNING' <select-list> ]
+
+(* Canonical UPDATE / DELETE *)
+<update-core> ::= 'UPDATE' <relation> [ 'AS' <identifier> ]
+                  'SET' <assignment-list>
+                  [ 'FROM' <from-item-list> ]
+                  [ 'WHERE' <expr> ]
+                  [ 'RETURNING' <select-list> ]
+
+<delete-core> ::= 'DELETE' 'FROM' <relation> [ 'AS' <identifier> ]
+                  [ 'USING' <from-item-list> ]
+                  [ 'WHERE' <expr> ]
+                  [ 'RETURNING' <select-list> ]
+
+(* Canonical MERGE / COPY *)
+<merge-core> ::= 'MERGE' 'INTO' <relation> [ 'AS' <identifier> ]
+                'USING' <from-item> [ 'AS' <identifier> ]
+                'ON' <expr>
+                <merge-when-list>
+                [ 'RETURNING' <select-list> ]
+
+<copy-core> ::= 'COPY' <relation> [ '(' <column-list> ')' ]
+               'FROM' <copy-source> [ <copy-clause> ]
+              | 'COPY' '(' <query-expr> ')' 'TO' <copy-target> [ <copy-clause> ]
+
+(* Canonical expression grammar (authoritative for parser rewrite) *)
+<expr> ::= <or-expr>
+
+<or-expr>  ::= <and-expr> { 'OR' <and-expr> }*
+<and-expr> ::= <not-expr> { 'AND' <not-expr> }*
+<not-expr> ::= [ 'NOT' ] <comparison-expr>
+
+<comparison-expr> ::= <concat-expr>
+  [ 'IS' [ 'NOT' ] ( 'NULL' | 'TRUE' | 'FALSE' | 'UNKNOWN'
+                   | ( 'DISTINCT' 'FROM' <concat-expr> ) )
+  | 'NOT' ( 'IN' <in-spec>
+          | 'BETWEEN' <between-spec>
+          | 'LIKE' <like-spec>
+          | 'STARTING' 'WITH' <like-spec>
+          | 'CONTAINING' <like-spec>
+          | 'ILIKE' <like-spec>
+          | 'SIMILAR' 'TO' <like-spec> )
+  | 'IN' <in-spec>
+  | 'BETWEEN' <between-spec>
+  | 'LIKE' <like-spec>
+  | 'STARTING' 'WITH' <like-spec>
+  | 'CONTAINING' <like-spec>
+  | 'ILIKE' <like-spec>
+  | 'SIMILAR' 'TO' <like-spec>
+  | ( '~' | '~*' | '!~' | '!~*' ) <concat-expr>
+  | ( '?' | '?|' | '?&' | '@>' | '<@' | '&&' ) <concat-expr>
+  | ( '=' | '!=' | '<' | '<=' | '>' | '>=' ) <concat-expr>
+  ]
+
+<in-spec> ::= '(' ( <query-expr> | <expr-list> ) ')'
+<between-spec> ::= <add-expr> 'AND' <add-expr>
+<like-spec> ::= <expr> [ 'ESCAPE' <expr> ]
+
+<concat-expr> ::= <bit-or-expr> { '||' <bit-or-expr> }*
+<bit-or-expr> ::= <bit-xor-expr> { '|' <bit-xor-expr> }*
+<bit-xor-expr> ::= <bit-and-expr> { '^' <bit-and-expr> }*
+<bit-and-expr> ::= <shift-expr> { '&' <shift-expr> }*
+<shift-expr> ::= <add-expr> { ( '<<' | '>>' ) <add-expr> }*
+<add-expr> ::= <mul-expr> { ( '+' | '-' ) <mul-expr> }*
+<mul-expr> ::= <unary-expr> { ( '*' | '/' | 'DIV' | '%' | '->' | '->>' | '#>' | '#>>' ) <unary-expr> }*
+
+<unary-expr> ::= ( '+' | '~' | '-' ) <unary-expr>
+               | <primary-expr> { '::' <type-name> }*
+
+<primary-expr> ::= <literal>
+                 | <typed-literal>
+                 | <extract-expr>
+                 | 'CASE' <case-body> 'END'
+                 | 'EXISTS' '(' <select-with> ')'
+                 | 'ARRAY' '[' [ <expr-list> ] ']'
+                 | 'CAST' '(' <expr> 'AS' <type-name> [ 'USING' <identifier> ] ')'
+                 | <parameter>
+                 | <schema-path-ref>
+                 | '(' ( <query-expr> | <expr> ) ')'
+                 | <context-function-no-arg>
+                 | <identifier> '(' <arg-list> ')'
+
+<extract-expr> ::= 'EXTRACT' '(' <extract-field> 'FROM' <expr> ')'
+<extract-field> ::= <identifier>
+
+<type-name> ::= <type-of-ref>
+              | <qualified-type-path> [ <type-args> ] [ <array-suffix> ] [ <tz-suffix> ]
+<type-of-ref> ::= 'TYPE' 'OF' [ 'COLUMN' ] <schema-path>
+<qualified-type-path> ::= <schema-path> | <type-keyword-alias>
+<type-keyword-alias> ::= 'DOUBLE' 'PRECISION'
+                       | 'CHARACTER' 'VARYING'
+                       | 'BIT' 'VARYING'
+<type-args> ::= '(' <type-arg-list> ')'
+<type-arg-list> ::= <number-literal> [ ',' <number-literal> ]
+                  | <identifier> [ ',' <identifier> ]...
+<array-suffix> ::= { '[' [ <int-literal> ] ']' }*
+<tz-suffix> ::= ( 'WITH' 'TIME' 'ZONE' ) | ( 'WITHOUT' 'TIME' 'ZONE' )
+
+
+(* Canonical rewrites and removed RC1/compatibility spellings *)
+
+(* The forms below are not accepted in v3 canonical syntax.
+   Implementations MAY implement a separate compatibility layer that rewrites them to canonical forms. *)
+
+<select-rc1-top> ::= 'SELECT' [ 'DISTINCT' | 'ALL' ]
+                      [ 'TOP' '(' <expr> ')' [ 'PERCENT' ] [ 'WITH' 'TIES' ] ]
+                      <select-list>
+                      [ <from-clause> ]
+                      [ 'WHERE' <expr> ]
+                      [ 'GROUP' 'BY' <group-item> [ ',' <group-item> ]... ]
+                      [ 'HAVING' <expr> ]
+                      [ 'WINDOW' <window-def> [ ',' <window-def> ]... ]
+                      [ 'ORDER' 'BY' <order-item> [ ',' <order-item> ]... ]
+                      [ 'LIMIT' <expr> ]
+                      [ 'OFFSET' <expr> ]
+                      [ 'FOR' ( 'UPDATE' | 'SHARE' ) [ 'OF' <table-ref-list> ] [ 'NOWAIT' | 'SKIP' 'LOCKED' ] ]
+
+<select-rc1-from-with-cross-apply> ::= <from-clause> 'CROSS' 'APPLY' <from-item>
+<select-rc1-from-with-outer-apply> ::= <from-clause> 'OUTER' 'APPLY' <from-item>
+<set-difference-rc1> ::= <select-core> 'MINUS' [ 'ALL' ] <select-core>
+<select-rc1-dual> ::= 'SELECT' <select-list> 'FROM' 'DUAL'
+<select-rc1-hierarchy> ::= 'SELECT' [ 'DISTINCT' | 'ALL' ] <select-list>
+                           <from-clause>
+                           'START' 'WITH' <expr>
+                           'CONNECT' 'BY' [ 'NOCYCLE' ] <expr>
+<select-rc1-pivot> ::= 'SELECT' <select-list> 'FROM' <from-item>
+                        'PIVOT' '(' <agg-func> 'FOR' <expr> 'IN' '(' <pivot-spec-list> ')' ')'
+<select-rc1-unpivot> ::= 'SELECT' <select-list> 'FROM' <from-item>
+                          'UNPIVOT' '(' [ 'INCLUDE' | 'EXCLUDE' ] 'NULLS'
+                          <expr> 'FOR' <identifier> 'IN' '(' <unpivot-source-list> ')' ')'
+
+<insert-rc1-on-duplicate-key> ::= 'INSERT' 'INTO' <relation> [ '(' <column-list> ')' ] <insert-source>
+                                  'ON' 'DUPLICATE' 'KEY' 'UPDATE' <set-list>
+<insert-rc1-replace> ::= 'REPLACE' 'INTO' <relation> [ '(' <column-list> ')' ] <insert-source>
+<insert-rc1-ignore> ::= 'INSERT' 'IGNORE' 'INTO' <relation> [ '(' <column-list> ')' ] <insert-source>
+
+<update-rc1-order-limit> ::= 'UPDATE' <relation> 'SET' <assignment-list> [ 'WHERE' <expr> ] [ 'ORDER' 'BY' <order-item> [ ',' <order-item> ]... ] [ 'LIMIT' <expr> ]
+<delete-rc1-order-limit> ::= 'DELETE' 'FROM' <relation> [ 'WHERE' <expr> ] [ 'ORDER' 'BY' <order-item> [ ',' <order-item> ]... ] [ 'LIMIT' <expr> ]
+
+<output-base> ::= ( 'INSERT' | 'UPDATE' | 'DELETE' | 'MERGE' ) <mutation-target> 'OUTPUT' <select-list>
+<output-into> ::= <output-base> 'INTO' <relation> [ '(' <column-list> ')' ]
+<returning-into> ::= ( 'INSERT' | 'UPDATE' | 'DELETE' ) <mutation-target>
+                     [ <insert-select-tail> ]
+                     'RETURNING' <select-list>
+                     'INTO' <target-var-list>
+
+<merge-rc1-not-matched-by-source> ::= <merge-core> 'WHEN' 'NOT' 'MATCHED' 'BY' 'SOURCE' 'THEN' 'DELETE'

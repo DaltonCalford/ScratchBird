@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-023",
+  "phase": "PH2",
+  "title": "Define release channel and LTS deprecation policy",
+  "status": "pending",
+  "owner": "program-management",
+  "estimate_days": 3,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

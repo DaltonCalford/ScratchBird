@@ -1,0 +1,7 @@
+case_id,area,required_contract,expected_result,error_code
+T21-SC-001,system_columns,hidden_by_default_explicit_reference_or_show_system_only,pass,
+T21-SC-002,config_sql,show_set_reset_history_reload_feature_mapping_deterministic,pass,
+T21-SC-003,resource_bundle_sql,show_validate_activate_with_uuid_validation_deterministic,pass,
+T21-SC-004,operator_ast_resolution,section13_precedence_and_coercion_trace_deterministic,pass,
+T21-SC-005,transaction_aliases,begin_commit_rollback_aliases_follow_native_toggle,pass,
+T21-SC-006,scan_aliases,light_diagnostic_aliases_follow_admin_scan_toggle,pass,

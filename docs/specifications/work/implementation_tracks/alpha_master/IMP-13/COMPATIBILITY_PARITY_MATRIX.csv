@@ -1,0 +1,6 @@
+case_id,emulated_engine,operator_surface,expected_behavior
+T13-CP-001,firebird_5,arithmetic_boolean_concat,parser_maps_to_canonical_operator_ids
+T13-CP-002,postgresql_18,precedence_and_cast_behavior,parser_maps_to_canonical_precedence_and_cast_rules
+T13-CP-003,mysql_8,implicit_cast_differences,parser_gates_to_mysql_profile_before_sblr
+T13-CP-004,cassandra_5,unsupported_operator_forms,rejected_deterministically
+T13-CP-005,mongodb_8,expression_operator_set,mapped_or_rejected_by_profile

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/mga_failpoint_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/error_context.h"
@@ -32,6 +33,36 @@ protected:
     {
         db_.close();
         test_db_file_.reset();
+    }
+
+    void induceWriteAdmissionFence(const char *seed_name, Status failure_status)
+    {
+        auto *failpoints = db_.mga_failpoint_manager();
+        ASSERT_NE(failpoints, nullptr);
+
+        ErrorContext ctx;
+        MgaFailpointDefinition definition{};
+        definition.trigger_name = std::string(MgaFailpointTriggers::kWritebackSyncFailure);
+        definition.injected_status = failure_status;
+        ASSERT_EQ(failpoints->installSeed(seed_name, {definition}, &ctx), Status::OK)
+            << ctx.message;
+
+        WritebackAttribution attribution{};
+        attribution.queue_kind = WritebackQueueKind::FOREGROUND_HELP;
+        attribution.policy_domain = WritebackPolicyDomain::TRANSACTION;
+        ASSERT_EQ(db_.sync(&ctx, attribution), failure_status);
+        ASSERT_TRUE(db_.write_admission_fenced());
+        ASSERT_EQ(db_.write_admission_status(), failure_status);
+
+        ASSERT_EQ(failpoints->clear(&ctx), Status::OK) << ctx.message;
+    }
+
+    void clearWriteAdmissionFence()
+    {
+        ErrorContext ctx;
+        ASSERT_EQ(db_.clearWritebackFailureState(&ctx), Status::OK) << ctx.message;
+        ASSERT_FALSE(db_.write_admission_fenced());
+        ASSERT_EQ(db_.write_admission_status(), Status::OK);
     }
 
     std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_file_;
@@ -77,6 +108,72 @@ TEST_F(TransactionManagerTest, TransactionRollback)
     TransactionState state;
     ASSERT_EQ(Status::OK, tm_->getTransactionState(xid, state, &ctx)) << ctx.message;
     EXPECT_EQ(TransactionState::ABORTED, state);
+
+    ProcArrayManager::unregisterBackend(proc_id, &ctx);
+}
+
+TEST_F(TransactionManagerTest, BeginTransactionRefusesOpenWritebackFenceWithoutConsumingXid)
+{
+    ErrorContext ctx;
+    uint32_t proc_id = 0;
+    ASSERT_EQ(Status::OK, ProcArrayManager::registerBackend(&proc_id, &ctx)) << ctx.message;
+
+    uint64_t baseline_xid = 0;
+    ASSERT_EQ(Status::OK, tm_->beginTransaction(proc_id, baseline_xid, &ctx)) << ctx.message;
+    ASSERT_EQ(Status::OK, tm_->commitTransaction(proc_id, baseline_xid, &ctx)) << ctx.message;
+
+    induceWriteAdmissionFence("txn_begin_fenced", Status::DISK_FULL);
+
+    uint64_t blocked_xid = 0;
+    EXPECT_EQ(tm_->beginTransaction(proc_id, blocked_xid, &ctx), Status::DISK_FULL);
+    EXPECT_EQ(blocked_xid, 0u);
+    EXPECT_NE(ctx.message.find("writeback incident"), std::string::npos) << ctx.message;
+
+    std::vector<uint64_t> active_xids;
+    uint64_t oldest_xmin = 0;
+    ASSERT_EQ(ProcArrayManager::getActiveTransactions(&active_xids, &oldest_xmin, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(active_xids.empty());
+
+    clearWriteAdmissionFence();
+
+    uint64_t resumed_xid = 0;
+    ASSERT_EQ(tm_->beginTransaction(proc_id, resumed_xid, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(resumed_xid, baseline_xid + 1);
+    ASSERT_EQ(tm_->rollbackTransaction(proc_id, resumed_xid, &ctx), Status::OK) << ctx.message;
+
+    ProcArrayManager::unregisterBackend(proc_id, &ctx);
+}
+
+TEST_F(TransactionManagerTest, RollbackRefusesOpenWritebackFenceAndKeepsTransactionActive)
+{
+    ErrorContext ctx;
+    uint32_t proc_id = 0;
+    ASSERT_EQ(Status::OK, ProcArrayManager::registerBackend(&proc_id, &ctx)) << ctx.message;
+
+    uint64_t xid = 0;
+    ASSERT_EQ(Status::OK, tm_->beginTransaction(proc_id, xid, &ctx)) << ctx.message;
+
+    induceWriteAdmissionFence("txn_rollback_fenced", Status::DISK_FULL);
+
+    EXPECT_EQ(tm_->rollbackTransaction(proc_id, xid, &ctx), Status::DISK_FULL);
+    EXPECT_NE(ctx.message.find("writeback incident"), std::string::npos) << ctx.message;
+
+    TransactionState state = TransactionState::COMMITTED;
+    ASSERT_EQ(Status::OK, tm_->getTransactionState(xid, state, &ctx)) << ctx.message;
+    EXPECT_EQ(state, TransactionState::ACTIVE);
+
+    std::vector<uint64_t> active_xids;
+    uint64_t oldest_xmin = 0;
+    ASSERT_EQ(ProcArrayManager::getActiveTransactions(&active_xids, &oldest_xmin, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_NE(std::find(active_xids.begin(), active_xids.end(), xid), active_xids.end());
+
+    clearWriteAdmissionFence();
+
+    ASSERT_EQ(tm_->rollbackTransaction(proc_id, xid, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(Status::OK, tm_->getTransactionState(xid, state, &ctx)) << ctx.message;
+    EXPECT_EQ(state, TransactionState::ABORTED);
 
     ProcArrayManager::unregisterBackend(proc_id, &ctx);
 }

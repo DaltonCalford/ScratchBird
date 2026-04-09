@@ -1,0 +1,46 @@
+# Definitive Specset Index
+
+This package is controlled by the following canonical specification set.
+
+## Workpack controller
+
+- docs/specifications/work/implementation_tracks/competitive_performance_parity_workpack/README.md
+
+## Cross-layer orchestration
+
+- docs/specifications/23_SBLR_VM_Compiler_and_Executor/QUERY_PERFORMANCE_ORCHESTRATION_AND_CROSS_LAYER_COORDINATION_MODEL.md
+- docs/specifications/23_SBLR_VM_Compiler_and_Executor/VM_EXECUTION_ARCHITECTURE.md
+- docs/specifications/23_SBLR_VM_Compiler_and_Executor/OPTIMIZER_ARCHITECTURE_AND_MAIN_PATH_INTEGRATION.md
+- docs/specifications/23_SBLR_VM_Compiler_and_Executor/OPTIMIZER_PASS_PIPELINE.md
+
+## Prepared execution and cache reuse
+
+- docs/specifications/36_Query_Rewrite_and_Planner/HIGH_PERFORMANCE_OLTP_PLAN_SHAPES_CONTENTION_AVOIDANCE_AND_PREPARED_EXECUTION_MODEL.md
+- docs/specifications/23_SBLR_VM_Compiler_and_Executor/EXECUTION_CACHE_AND_INVALIDATION.md
+- docs/specifications/23_SBLR_VM_Compiler_and_Executor/PLAN_CACHE_PARALLELISM_AND_OPTIMIZER_FEEDBACK.md
+- docs/specifications/36_Query_Rewrite_and_Planner/PLAN_CACHE_AND_INVALIDATION_RULES.md
+
+## Row-store and write-path parity
+
+- docs/specifications/34_Table_Storage_and_Access_Methods/HEAP_MULTI_INSERT_AND_HEAP_ONLY_UPDATE_PERFORMANCE_MODEL.md
+- docs/specifications/18_Index_Framework/DML_WRITE_PATH_AND_INDEX_OPTIMIZATION_MODEL.md
+- docs/specifications/39_Backup_Restore_and_Bulk_Data_Paths/BULK_INGEST_LANES_AND_SHADOW_LOAD_CUTOVER_MODEL.md
+- docs/specifications/03_Disk_Allocator_and_Free_Space/ALLOCATION_ALGORITHMS.md
+- docs/specifications/02_Filespace_Lifecycle/FILESPACE_OPERATIONS.md
+
+## Secondary-read and join locality parity
+
+- docs/specifications/18_Index_Framework/SECONDARY_ACCESS_LOCALITY_PUSHDOWN_AND_COVERING_EXECUTION_MODEL.md
+- docs/specifications/36_Query_Rewrite_and_Planner/MEMOIZE_INCREMENTAL_SORT_RUNTIME_FILTER_AND_ADAPTIVE_JOIN_MODEL.md
+
+## Memory, spill, vectorization, and parallelism
+
+- docs/specifications/33_Memory_Management/MEMORY_GRANT_FEEDBACK_AND_OPERATOR_RESERVATION_MODEL.md
+- docs/specifications/12_Temporary_Tables/TEMP_WORKFILE_AND_OPERATOR_SPILL_CONTRACT.md
+- docs/specifications/23_SBLR_VM_Compiler_and_Executor/VECTORIZED_PIPELINED_AND_INTRA_QUERY_PARALLEL_EXECUTION_MODEL.md
+- docs/specifications/03_Disk_Allocator_and_Free_Space/NUMA_LOCALITY_AND_FRAME_OWNERSHIP.md
+
+## Benchmark and release evidence consumers
+
+- docs/specifications/31_Conformance_Performance_and_Reliability_Gates/SCRATCHBIRD_BENCHMARKS_PROJECT_AND_MATRIX_MODEL.md
+- docs/specifications/31_Conformance_Performance_and_Reliability_Gates/FULL_CLEAN_BUILD_TEST_AND_BENCHMARK_ARTIFACT_MODEL.md

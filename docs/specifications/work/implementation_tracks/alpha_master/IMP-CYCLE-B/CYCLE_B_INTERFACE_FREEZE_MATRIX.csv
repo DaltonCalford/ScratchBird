@@ -1,0 +1,6 @@
+case_id,contract_surface,sections,freeze_rule,expected_result
+CB-IF-001,feature_key_to_opcode_and_result_shape,22_23_26_28,fixed_mapping_and_shape_id_contract,pass
+CB-IF-002,normalization_evidence_and_plan_key,22_23_28,fixed_field_set_and_hash_inclusion,pass
+CB-IF-003,handshake_and_wire_channel_profiles,26_27_28,fixed_channel_purpose_and_auth_constraints,pass
+CB-IF-004,runtime_layer_boundaries,25_28_29,engine_parser_listener_ipc_boundaries_fixed,pass
+CB-IF-005,error_domain_mapping,22_23_26_27_28,stable_code_mapping_contract,pass

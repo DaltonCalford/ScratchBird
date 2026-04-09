@@ -1,0 +1,11 @@
+case_id,phase,stored_page_size,observed_page_size,expected_result,error_code
+PSV-001,create,16,16,success,NONE
+PSV-002,create,64,64,success,NONE
+PSV-003,create,24,24,fail,INVALID_PAGE_SIZE
+PSV-004,startup,16,16,success,NONE
+PSV-005,startup,16,32,fail,PAGE_SIZE_MISMATCH
+PSV-006,startup,64,128,fail,PAGE_SIZE_MISMATCH
+PSV-007,attach_filespace,16,16,success,NONE
+PSV-008,attach_filespace,16,64,fail,INVALID_PAGE_SIZE
+PSV-009,open_corrupt_header,16,0,fail,INVALID_PAGE_SIZE
+PSV-010,open_missing_header,16,null,fail,INVALID_PAGE_SIZE

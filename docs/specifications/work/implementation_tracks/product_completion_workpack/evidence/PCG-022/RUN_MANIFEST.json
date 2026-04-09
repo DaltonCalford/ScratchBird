@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-022",
+  "phase": "PH2",
+  "title": "Implement downgrade rollback safety checkpoints",
+  "status": "pending",
+  "owner": "upgrade-runtime",
+  "estimate_days": 6,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

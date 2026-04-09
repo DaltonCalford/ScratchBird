@@ -1,0 +1,5 @@
+case_id,pipeline_stage,masking_policy,input_value,expected_output,error_code
+T19-DM-001,after_row_filter_before_serialization,full_mask,123-45-6789,***-**-6789,
+T19-DM-002,after_row_filter_before_serialization,tokenize,alice@example.com,TOKEN_001,
+T19-DM-003,before_row_filter,full_mask,any,rejected_pipeline_order,E_MASKING_PIPELINE_ORDER
+T19-DM-004,no_mask_policy,none,raw_value,raw_value,

@@ -1,0 +1,4 @@
+spec_clause,implementation,evidence,status
+Checksum mismatch with CHECKSUM_VALID flag set is corruption,include/scratchbird/core/ondisk.h (validatePageContract + validatePageChecksum),CHECKSUM_FLAG_BEHAVIOR_MATRIX.csv,pass
+Checksum mismatch with CHECKSUM_VALID cleared does not hard-fail,tests/unit/test_page_contract_stage_s1.cpp:ChecksumValidationFollowsChecksumFlagSemantics,CHECKSUM_FLAG_BEHAVIOR_MATRIX.csv,pass
+preparePageForWrite sets checksum-valid and refreshes checksum/generation,include/scratchbird/core/ondisk.h (preparePageForWrite),CHECKSUM_FLAG_BEHAVIOR_MATRIX.csv,pass

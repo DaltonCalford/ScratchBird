@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-062",
+  "phase": "PH6",
+  "title": "Implement CVE ingestion triage and patch SLA automation",
+  "status": "pending",
+  "owner": "security-platform",
+  "estimate_days": 5,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

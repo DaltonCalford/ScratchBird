@@ -1,0 +1,6 @@
+metric_id,workload,threshold_type,threshold_value,pass_condition
+T21-PF-001,lex_parse_hot_path,p95_us,80,measured_p95<=80
+T21-PF-002,grammar_bind_feature_key,p95_us,120,measured_p95<=120
+T21-PF-003,normalization_pipeline,p95_us,150,measured_p95<=150
+T21-PF-004,sql_to_sblr_envelope_build,p95_ms,6,measured_p95<=6
+T21-PF-005,e2e_statement_compile,p95_ms,12,measured_p95<=12

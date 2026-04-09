@@ -1,0 +1,20 @@
+{
+  "gate_id": "P-PAGE-GATE-03",
+  "status": "pass",
+  "timestamp_utc": "2026-02-13T19:01:38Z",
+  "required_tickets": ["PP-09", "PP-10", "PP-11", "PP-12", "PP-13", "PP-14"],
+  "evidence_root": "docs/specifications/work/implementation_tracks/physical_page_contract_workpack/evidence",
+  "validation": {
+    "heap_record_layout": "pass",
+    "row_uuid_system_columns": "pass",
+    "toast_pointer_binary_contract": "pass",
+    "toast_lob_page_type_split": "pass",
+    "toast_lob_gc_visibility": "pass",
+    "heap_toast_lob_page_walk": "pass",
+    "test_slice": "51/51 pass"
+  },
+  "commands": [
+    "cmake --build /home/dcalford/CliWork/ScratchBird/build --target scratchbird_tests -j6",
+    "ctest --test-dir /home/dcalford/CliWork/ScratchBird/build -R \"ToastGCContractTest|HeapToastLobPageWalkerContractTest|LobPageLayoutContractTest|HeapRecordContractTest|ToastOperationsTest|HeapToastIntegrationTest|ToastTIPVisibilityTest|HeapPageToastAPITest|MGABackVersioningTest\" --output-on-failure"
+  ]
+}

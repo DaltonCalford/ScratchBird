@@ -1,0 +1,7 @@
+case_id,scenario,input_expr,strict_mode,expected_result,error_code
+T13-EC-001,null_arithmetic,null+5,false,null,
+T13-EC-002,null_comparison,null=5,false,null_three_valued,
+T13-EC-003,overflow_add,max_int32+1,false,reject,E_NUMERIC_VALUE_OUT_OF_RANGE
+T13-EC-004,lossy_float_to_int,cast(1.9 as int32),false,reject_or_truncate_by_cast_rule,E_INVALID_PARAMETER_VALUE
+T13-EC-005,text_to_numeric_failure,'12a'+3,false,reject,E_INVALID_TEXT_REPRESENTATION
+T13-EC-006,strict_mode_implicit_cast,'3'+3,true,reject,E_IMPLICIT_CAST_DISABLED

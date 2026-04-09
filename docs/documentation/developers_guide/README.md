@@ -65,6 +65,6 @@ When implementing or modifying code, **consult the specs first**. When specs and
 
 ## External Reference Material
 
-External specification documents exist in `~/CliWork/local_work/docs/specifications/` (31 comprehensive sections). These are **reference material only** for understanding the system design - they should not be linked from this documentation.
+Canonical specification documents now live in `docs/specifications/`. Use that tree as the authoritative specification baseline when implementation and documentation drift.
 
 When documenting implementation details here, **reverse-engineer from the actual code** in `src/` and add verified source anchors.

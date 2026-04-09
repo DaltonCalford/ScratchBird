@@ -1,0 +1,6 @@
+case_id,emulated_engine,security_feature,expected_behavior
+T19-CP-001,firebird_5,role_grants_and_view_access,parser_maps_to_canonical_grants
+T19-CP-002,postgresql_18,rls_and_column_privileges,parser_maps_to_row_column_policies
+T19-CP-003,mysql_8,user_host_grants,parser_maps_to_user_role_group_model
+T19-CP-004,cassandra_5,role_permissions,parser_maps_to_effective_permission_engine
+T19-CP-005,mongodb_8,authn_profiles,parser_maps_to_authn_methods_and_policies

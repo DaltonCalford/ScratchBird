@@ -1,0 +1,9 @@
+state,event,next_state,required_persistence,rollback_rule
+MIGRATION_INIT,copy_start,MIGRATION_COPYING,migration_history phase write,abort clears temp allocations only
+MIGRATION_COPYING,initial_copy_done,MIGRATION_CATCH_UP,phase write plus watermark persist,on failure stay source authoritative
+MIGRATION_CATCH_UP,no_pending_changes,MIGRATION_READY_FOR_SWAP,phase write and last watermark persist,on failure resume catch-up
+MIGRATION_READY_FOR_SWAP,exclusive_lock_acquired,MIGRATION_SWAP,phase write and lock stamp persist,on lock timeout return to catch-up
+MIGRATION_SWAP,pointer_swap_success,MIGRATION_CLEANUP,phase write plus new root pointer persist,on failure transaction rollback keeps source root
+MIGRATION_CLEANUP,reclamation_done,MIGRATION_COMPLETE,terminal row with bytes and pages copied,on failure stay retryable cleanup
+ANY,operator_abort,MIGRATION_ABORTED,terminal row with reason,source authoritative
+ANY,unhandled_failure,MIGRATION_FAILED,terminal row with failure code,source authoritative

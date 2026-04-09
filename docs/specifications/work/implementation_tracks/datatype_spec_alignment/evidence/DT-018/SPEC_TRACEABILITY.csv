@@ -1,0 +1,4 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+14_Base_Scalar_Types/EMULATED_SCALAR_TYPE_MATRIX.md,14_Base_Scalar_Types,SCALAR-EMULATION-MATRIX-RESOLUTION,DT-018/EMULATION_TYPE_MATRIX_CLOSURE.csv,PASS,Engine-side deterministic resolver covers scalar mapping contracts
+15_Complex_Types/EMULATED_COMPLEX_TYPE_MATRIX.md,15_Complex_Types,COMPLEX-EMULATION-MATRIX-RESOLUTION,DT-018/EMULATION_TYPE_MATRIX_CLOSURE.csv,PASS,Resolver table includes complex/list/map/vector/document domain-backed mappings
+15_Complex_Types/DOMAIN_EMULATION_PARAMETERS.md,15_Complex_Types,DOMAIN-HINT-SURFACE,DT-018/EMULATION_TYPE_MATRIX_CLOSURE.csv,PASS,Domain-hint column encodes canonical system domain parameterization hooks

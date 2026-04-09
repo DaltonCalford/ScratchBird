@@ -1,0 +1,9 @@
+case_id,suite,required_check,expected_result,error_code
+T29-A01,A,listener_startup_server_managed_requires_open_database,pass,
+T29-A02,A,parser_worker_start_fails_without_listener_context,reject,LSN-E-LISTENER-CTX
+T29-A03,A,parser_worker_data_path_requires_ipc_server,pass,
+T29-A04,A,listener_not_ipc_client_to_server,pass,
+T29-A05,A,listener_management_ipc_rejects_sql_sblr_data_payloads,reject,LSN-E-CONTROL-PLANE
+T29-A06,A,one_listener_one_parser_family_per_port_policy,pass,
+T29-A07,A,preauth_open_database_gate_before_parser_auth_success,pass,
+T29-A08,A,startup_config_conflict_db_config_precedence_before_listener_enable,pass,

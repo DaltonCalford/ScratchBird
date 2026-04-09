@@ -1,0 +1,9 @@
+case_id,emulated_engine,parser_surface_rule,expected_behavior
+T21-CP-001,firebird_5,statement_set_is_profile_subset_of_native,pass
+T21-CP-002,postgresql_18,statement_set_is_profile_subset_of_native,pass
+T21-CP-003,mysql_8,statement_set_is_profile_subset_of_native,pass
+T21-CP-004,cassandra_5,statement_set_is_profile_subset_of_native,pass
+T21-CP-005,mongodb_8,statement_set_is_profile_subset_of_native,pass
+T21-CP-006,neo4j_5,statement_set_is_profile_subset_of_native,pass
+T21-CP-007,redis_7,statement_set_is_profile_subset_of_native,pass
+T21-CP-008,milvus_2,statement_set_is_profile_subset_of_native,pass

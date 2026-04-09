@@ -1,0 +1,11 @@
+order,ticket,title,phase,status
+1,DQO-11-001,Scope freeze and reference-layout bootstrap,scope_freeze,completed
+2,DQO-11-002,Research cross-machine query execution,research_distributed_query,completed
+3,DQO-11-003,Draft Beta 2 cross-machine query canon,spec_distributed_query,completed
+4,DQO-11-004,Research high-performance OLTP support,research_oltp,completed
+5,DQO-11-005,Draft Beta 2 high-performance OLTP canon,spec_oltp,completed
+6,DQO-11-006,Research shard support,research_sharding,completed
+7,DQO-11-007,Draft Beta 2 shard-support canon,spec_sharding,completed
+8,DQO-11-008,Research OLAP support and cubes,research_olap,completed
+9,DQO-11-009,Draft Beta 2 OLAP and cube canon,spec_olap,completed
+10,DQO-11-010,Final sync inventory update and closeout,closeout,completed

@@ -1,18 +1,14 @@
 # Compatibility CTest List Summary
 
-> Section 36 boundary note: these lane inventories and runtime estimates are
-> planning and execution evidence only. They do not certify mature cost-model,
-> cardinality, or stable-plan guarantees.
-
-Generated: 2026-03-28T07:10:04Z
+Generated: 2026-04-05T03:36:12Z
 Expanded ratio: `0.35`
 Expanded max per suite: `400`
 
 | Engine | Curated | Expanded | Full | Runtime Model | Est. Curated | Est. Expanded | Est. Full |
 |--------|--------:|---------:|-----:|---------------|-------------:|--------------:|----------:|
-| firebird | 12 | 721 | 2257 | latest_run (20260328_030305, 0.02s/test) | 0s | 13s | 40s |
-| mysql | 4 | 2995 | 8842 | latest_run (20260328_025240, 147.82s/test) | 9m 51s | 122h 58m 50s | 363h 4m 10s |
-| postgresql | 5 | 88 | 238 | latest_run (20260328_025105, 12.38s/test) | 1m 2s | 18m 9s | 49m 6s |
+| firebird | 12 | 721 | 2257 | latest_run (20260404_233329, 0.03s/test) | 0s | 19s | 58s |
+| mysql | 3 | 2994 | 8842 | latest_run (20260404_233306, 1.22s/test) | 4s | 1h 0m 46s | 2h 59m 27s |
+| postgresql | 5 | 88 | 238 | latest_run (20260404_233310, 3.87s/test) | 19s | 5m 41s | 15m 21s |
 
 Notes:
 - Runtime estimates are rough planning values, not hard guarantees.

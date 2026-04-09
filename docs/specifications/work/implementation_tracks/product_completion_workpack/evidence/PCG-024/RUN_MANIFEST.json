@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-024",
+  "phase": "PH2",
+  "title": "Execute upgrade rehearsal and compatibility certification suite",
+  "status": "pending",
+  "owner": "qa-reliability",
+  "estimate_days": 6,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

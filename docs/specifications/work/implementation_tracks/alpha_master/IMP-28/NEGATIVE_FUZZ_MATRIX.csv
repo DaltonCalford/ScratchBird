@@ -1,0 +1,5 @@
+case_id,required_check,expected_result,error_code
+T28-NF-001,grammar_fuzzing_sql_command_decoders_deterministic_rejects,pass,
+T28-NF-002,malformed_wire_frame_fuzzing_per_protocol,pass,
+T28-NF-003,capability_profile_corruption_rejected_deterministically,pass,
+T28-NF-004,ipc_payload_corruption_rejected_deterministically,pass,

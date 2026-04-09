@@ -97,6 +97,8 @@ namespace scratchbird::optimizer
         auto invalidateByTranslationRuleVersion(uint64_t rule_version) -> uint64_t;
         auto invalidateByHostApiAbiVersion(const std::string &abi_version) -> uint64_t;
         auto invalidateByTargetTriplesHash(const std::string &target_triples_hash) -> uint64_t;
+        auto countFamilyStatisticsBoundarySiblings(
+            const sblr::v3::PlanCacheKeyInput &key) const -> uint64_t;
 
         auto getStats() const -> VNextPlanCacheStats;
         auto resetStats() -> void;

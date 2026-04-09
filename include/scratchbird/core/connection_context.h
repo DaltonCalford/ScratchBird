@@ -346,7 +346,9 @@ namespace scratchbird::core
                                         const ID& object_id,
                                         const std::string& operation_class,
                                         uint64_t statement_hash,
-                                        const std::string& statement_text);
+                                        const std::string& statement_text,
+                                        const std::string& change_class = std::string(),
+                                        const std::string& detail_json = std::string());
         auto resolveForensicReplayTablePath(const std::string& qualified_name,
                                             ID& table_id_out,
                                             ErrorContext* ctx = nullptr,
@@ -536,6 +538,9 @@ namespace scratchbird::core
                                  uint64_t deletes,
                                  uint64_t hot_updates = 0,
                                  uint64_t newpage_updates = 0);
+        bool snapshotPendingTableDmlDelta(const ID& table_id,
+                                          TableDmlDelta& out) const;
+        bool hasPendingTableDmlDelta(const ID& table_id) const;
 
         uint64_t lastActivityTime() const { return last_activity_time_; }
         std::string sessionSettingsJson() const;
@@ -705,6 +710,8 @@ namespace scratchbird::core
             std::string operation_class;
             uint64_t statement_hash = 0;
             std::string statement_text;
+            std::string change_class;
+            std::string detail_json;
         };
         ID current_schema_epoch_uuid_;
         ID transaction_start_schema_epoch_uuid_;
@@ -828,6 +835,35 @@ namespace scratchbird::core
         std::vector<TableReservation> table_reservations_;
 
         // Subtransaction/Savepoint support (Issue 2.15)
+        struct SavepointBackoutLocator
+        {
+            ID table_id{};
+            uint32_t stable_page_id = 0;
+            uint16_t stable_item_id = 0;
+
+            [[nodiscard]] bool operator==(const SavepointBackoutLocator &other) const
+            {
+                return table_id == other.table_id &&
+                       stable_page_id == other.stable_page_id &&
+                       stable_item_id == other.stable_item_id;
+            }
+        };
+
+        struct SavepointBackoutLocatorHash
+        {
+            [[nodiscard]] size_t operator()(const SavepointBackoutLocator &locator) const
+            {
+                size_t hash = 0;
+                for (uint8_t byte : locator.table_id.bytes)
+                {
+                    hash = hash * 131 + static_cast<size_t>(byte);
+                }
+                hash = hash * 131 + static_cast<size_t>(locator.stable_page_id);
+                hash = hash * 131 + static_cast<size_t>(locator.stable_item_id);
+                return hash;
+            }
+        };
+
         struct Savepoint
         {
             std::string name;                    // Savepoint name
@@ -835,6 +871,7 @@ namespace scratchbird::core
             uint64_t xid;                        // Transaction ID at savepoint creation
             uint32_t command_id;                 // Command ID at savepoint (for future use)
             bool implicit_statement_frame = false; // Internal frame for statement-scope rollback
+            bool append_only_backout_tracking = false; // Fast path for top-level statement frames
 
             struct TemporaryObjectCreation
             {
@@ -848,6 +885,9 @@ namespace scratchbird::core
             // Canonical per-row backout records. Each stable root TID appears at most once
             // per savepoint, carrying the earliest pre-savepoint row state needed for undo.
             std::vector<SavepointBackoutAction> changes;
+            std::unordered_map<SavepointBackoutLocator,
+                               size_t,
+                               SavepointBackoutLocatorHash> change_index;
             std::vector<TemporaryObjectCreation> temp_objects_created;
         };
 
@@ -1059,12 +1099,29 @@ namespace scratchbird::core
             OptimizerPlanMode optimizer_plan_mode = OptimizerPlanMode::AUTO;
             std::string optimizer_generic_plan_hash;
             uint64_t optimizer_custom_sample_count = 0;
+            uint64_t optimizer_bundle_hit_count = 0;
+            uint64_t optimizer_bundle_rebuild_count = 0;
+            std::string optimizer_last_parameter_signature;
+            std::string optimizer_last_bucket_signature;
             std::unordered_map<std::string, std::vector<uint8_t>>
                 optimizer_bucketed_bytecode;
             std::unordered_map<std::string, std::string>
                 optimizer_parameter_signature_to_bucket;
             std::unordered_map<std::string, std::string>
                 optimizer_bucket_plan_hash;
+        };
+
+        struct PreparedExecutionSelection
+        {
+            std::vector<uint8_t> bytecode;
+            std::string parameter_signature;
+            std::string bucket_signature;
+            bool specialization_supported = false;
+            bool used_generic_bytecode = true;
+            bool bundle_hit = false;
+            bool bundle_rebuilt = false;
+            bool plan_cache_consulted = false;
+            bool plan_cache_hit = false;
         };
 
         struct PreparedStatementInfo
@@ -1091,6 +1148,27 @@ namespace scratchbird::core
                                const std::vector<uint8_t>& bytecode,
                                const std::vector<uint16_t>& param_types,
                                ErrorContext* ctx = nullptr);
+
+        /**
+         * Seed generic-plan metadata for a prepared statement.
+         * This keeps prepared-plan selection logic aligned across protocol and
+         * direct executor surfaces.
+         */
+        Status seedPreparedStatementOptimizerProfile(const std::string& name,
+                                                    const std::string& generic_plan_hash,
+                                                    ErrorContext* ctx = nullptr);
+
+        /**
+         * Resolve the bytecode to execute for a prepared statement under the
+         * current parameter regime, reusing or rebuilding bucketed variants when
+         * the canonical prepared fast-path rules admit them.
+         */
+        Status resolvePreparedStatementExecutionPlan(
+            const std::string& name,
+            const std::vector<std::string>& parameter_values,
+            const std::vector<bool>& parameter_nulls,
+            PreparedExecutionSelection& selection_out,
+            ErrorContext* ctx = nullptr);
 
         /**
          * Get a prepared statement by name

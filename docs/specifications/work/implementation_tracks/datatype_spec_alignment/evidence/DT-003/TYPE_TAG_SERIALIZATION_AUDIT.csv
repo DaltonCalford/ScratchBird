@@ -1,0 +1,5 @@
+type,serialize_path,deserialize_path,status
+LIST,TypeSerialization::serializeList,TypeSerialization::deserializeList,PASS
+MAP,TypeSerialization::serializeMap,TypeSerialization::deserializeMap,PASS
+BSON,TypeSerialization::serializeVariantPayload,TypeSerialization::deserializeVariantPayload,PASS
+DECIMAL(precision=0),TypeSerialization::serializeDecimalVarWidth,TypeSerialization::deserializeDecimalVarWidth,PASS

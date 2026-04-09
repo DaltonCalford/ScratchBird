@@ -1,0 +1,3 @@
+scan_scope,pattern,match_count,status,command,notes
+ScratchBird include/src/tests,SBDB$,0,PASS,rg -n "SBDB\\$" /home/dcalford/CliWork/ScratchBird/include /home/dcalford/CliWork/ScratchBird/src /home/dcalford/CliWork/ScratchBird/tests,No legacy SBDB$ domain naming residues found in active code/test tree
+ScratchBird include/src/tests,[SBDB],0,PASS,rg -n "\\[SBDB" /home/dcalford/CliWork/ScratchBird/include /home/dcalford/CliWork/ScratchBird/src /home/dcalford/CliWork/ScratchBird/tests,No bracketed SBDB legacy namespace residues found

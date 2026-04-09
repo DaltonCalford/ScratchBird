@@ -1,0 +1,11 @@
+case_id,required_check,expected_result,error_code
+T25-BOOT-01,precedence_instance_defaults_file_db_config_session_override,pass,
+T25-BOOT-02,db_config_precedence_over_file_config,pass,
+T25-BOOT-03,listener_ready_gate_bind_pool_db_preauth_health,pass,
+T25-BOOT-04,encrypted_db_locked_unlocking_open_no_page_open_before_open,pass,
+T25-BOOT-05,key_retrieval_source_kms_hsm_primary_only_fail_closed,pass,
+T25-BOOT-06,unlock_retry_backoff_policy_deterministic,pass,
+T25-BOOT-07,udr_required_optional_deferred_init_policies_deterministic,pass,
+T25-BOOT-08,udr_partial_init_rollback_no_partial_ready,pass,
+T25-BOOT-09,catalog_spec_storage_compatibility_checked_before_listener_enable,pass,
+T25-BOOT-10,auto_downgrade_rejected_auto_upgrade_requires_explicit_policy,pass,

@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-040",
+  "phase": "PH4",
+  "title": "Build engine and version conformance harness framework",
+  "status": "pending",
+  "owner": "emulation-conformance",
+  "estimate_days": 6,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

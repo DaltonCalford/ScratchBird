@@ -1,0 +1,14 @@
+{
+  "ticket_id": "HCN-061",
+  "title": "Execute performance and latency gates for cluster and native paths",
+  "phase": "PH6",
+  "owner": "codex",
+  "started_utc": "2026-02-23T00:00:00Z",
+  "completed_utc": "2026-02-26T22:22:00Z",
+  "source_commit": "9e789eaad9b8e377f42f96f2ea8fec0193970f40",
+  "commands": [
+    "/home/dcalford/CliWork/ScratchBird/build/tests/scratchbird_tests --gtest_filter='SblrJitFixture.jit_performance_envelope:SblrJitFixture.jit_soak_mixed_policy_no_semantic_divergence:SblrJitFixture.jit_queue_stress_retains_vm_correctness:SblrJitFixture.jit_tiering_hotness_threshold_promotion_queues_compile:SblrJitFixture.jit_tiering_queue_saturation_retains_deterministic_vm_execution:FollowerApplyPipelineTest.*:CommittedWatermarkPublisherTest.*:TelemetryReportingContractTest.*'",
+    "/home/dcalford/CliWork/ScratchBird/build/tests/scratchbird_tests --gtest_filter='ClusterWriteFencingTest.*:DeterministicShardRouterTest.*:SessionEpochPinsTest.*:MultiShardWriteGuardTest.*:GtxidOrderingTest.*:ShardCommitLogPipelineTest.*:FollowerApplyPipelineTest.*:SnapshotRegistryTest.*:CommittedWatermarkPublisherTest.*:GcSafeHorizonCalculatorTest.*:DomainControlPlaneReplicaCatalogTest.*:MetricContractPolicyTest.*:SqlObservabilityViewBuilderTest.*:HealthReadinessContractTest.*:StructuredEventStreamTest.*:SblrJitFixture.*:LanguageUdrCompileApiMatrixContractTest.*:CatalogSblrArtifactExtensionContractTest.*:TelemetryReportingContractTest.*'"
+  ],
+  "notes": "Latency/perf gates passed with stable JIT envelope and cluster replication safety/perf regressions absent in extended regression subset."
+}

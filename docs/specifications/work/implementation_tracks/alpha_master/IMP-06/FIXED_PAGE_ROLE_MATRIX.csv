@@ -1,0 +1,9 @@
+case_id,page_id,expected_page_type,required_role,runtime_usage,expected_result,error_code
+BPM-001,0,PAGE_TYPE_DATABASE_HEADER,database_header,startup_identity_and_page_size,accept,NONE
+BPM-002,1,PAGE_TYPE_SYSTEM_STATE,system_state,startup_state_and_membership,accept,NONE
+BPM-003,2,PAGE_TYPE_CATALOG_ROOT,catalog_root_pointer,catalog_bootstrap_entry,accept,NONE
+BPM-004,3,PAGE_TYPE_FSM_ROOT,fsm_root_pointer,allocator_bootstrap_entry,accept,NONE
+BPM-005,4,PAGE_TYPE_TRANSACTION_MAP,transaction_map_root,tip_bootstrap_entry,accept,NONE
+BPM-006,5,PAGE_TYPE_BOOTSTRAP_RESERVED,reserved_extension,future_bootstrap_extension,accept,NONE
+BPM-007,6..15,PAGE_TYPE_BOOTSTRAP_RESERVED,cluster_bootstrap_reserved,cluster_metadata_predecrypt,accept,NONE
+BPM-008,2,unexpected_page_type,invalid_catalog_root,startup_abort,reject,INVALID_PAGE_TYPE

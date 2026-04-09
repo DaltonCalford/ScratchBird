@@ -1,0 +1,5 @@
+case_id,dialect,required_check,expected_result,error_code
+T18-DC-001,firebird_5,btree_only_features_limits_and_partial_rules,pass,
+T18-DC-002,postgresql_18,hash_equality_only_and_gin_brin_spgist_behavior,pass,
+T18-DC-003,mysql_8,fulltext_restrictions_token_vars_spatial_not_null_rtree,pass,
+T18-DC-004,unsupported_type_or_feature,deterministic_rejection_in_parser_profile,reject,E_INDEX_TYPE_UNSUPPORTED

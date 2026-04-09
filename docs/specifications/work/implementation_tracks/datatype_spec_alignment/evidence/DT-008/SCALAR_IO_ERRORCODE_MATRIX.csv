@@ -1,0 +1,6 @@
+conversion_case,error_code,status
+invalid text -> int,DATATYPE_MISMATCH,PASS
+unsigned from negative text,DATATYPE_MISMATCH,PASS
+overflow int conversion,DATATYPE_MISMATCH,PASS
+invalid uuid text,DATATYPE_MISMATCH,PASS
+invalid boolean text,DATATYPE_MISMATCH,PASS

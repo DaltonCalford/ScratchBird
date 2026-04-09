@@ -1,0 +1,7 @@
+order,ticket,title,phase,status
+1,B1-04-001,Specification sufficiency closure,spec_closure,completed
+2,B1-04-002,Ownership and audit anchor normalization,ownership,completed
+3,B1-04-003,Index family parity table access and memory closure,implementation_a,completed
+4,B1-04-004,Optimizer workload governance and accelerator closure,implementation_b,completed
+5,B1-04-005,Gates benchmarks and evidence closure,gates,completed
+6,B1-04-006,Final closeout,closeout,completed

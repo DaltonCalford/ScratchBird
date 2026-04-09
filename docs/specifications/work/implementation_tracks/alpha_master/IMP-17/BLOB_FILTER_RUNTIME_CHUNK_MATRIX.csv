@@ -1,0 +1,6 @@
+case_id,phase,input,expected_result,error_code
+T17-BR-001,init,valid_subtypes_and_options,ctx_created,
+T17-BR-002,process_single_chunk,input_chunk,output_chunk_emitted,
+T17-BR-003,process_multi_chunk_with_needs_more,large_chunk,repeat_call_until_flushed,
+T17-BR-004,finish,ctx_with_pending_output,final_bytes_emitted,
+T17-BR-005,module_returns_code_2,process_failure,rejected,E_BLOB_FILTER_PROCESS_FAILED

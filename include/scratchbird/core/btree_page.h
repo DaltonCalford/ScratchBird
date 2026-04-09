@@ -32,6 +32,11 @@ namespace scratchbird
             Status add_node(const std::vector<uint8_t> &key, const Tuple &value,
                             uint64_t xmin,  // Transaction ID creating this entry
                             ErrorContext *ctx = nullptr);
+            Status append_sorted_leaf_node(const std::vector<uint8_t> &key,
+                                           const Tuple &value,
+                                           uint64_t xmin,
+                                           const std::vector<uint8_t> &prev_full_key,
+                                           ErrorContext *ctx = nullptr);
             SBBTreeNode *get_node(uint16_t node_index);
             void remove_node(uint16_t node_index);
 

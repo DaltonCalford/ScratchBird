@@ -1,0 +1,7 @@
+ticket,title,status,depends_on,primary_evidence
+B1-08-001,Specification sufficiency closure,completed,-,"updated assigned specs|gap closure notes|audit matrix"
+B1-08-002,Ownership and audit anchor normalization,completed,B1-08-001,"current audit matrix|canonical spec audit anchors"
+B1-08-003,Tooling drivers and admin-surface closure,completed,B1-08-002,"code spec and evidence updates for lane A"
+B1-08-004,Beta 1 optimization benchmarks gates and release closure,active,B1-08-003,"ordered optimization backlog|clean gate replay logs|crash regression|benchmark throughput findings|performance remediation plan"
+B1-08-005,Gates benchmarks and evidence closure,queued,"B1-08-003|B1-08-004","gate rerun artifacts|benchmark rerun artifacts|section 31 closure"
+B1-08-006,Final closeout,queued,B1-08-005,"move-ready package"

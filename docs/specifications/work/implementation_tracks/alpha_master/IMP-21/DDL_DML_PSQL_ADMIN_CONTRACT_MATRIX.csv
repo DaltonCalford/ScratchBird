@@ -1,0 +1,6 @@
+case_id,statement_family,required_contract,expected_result,error_code
+T21-DD-001,DDL,deterministic_accept_reject_and_feature_key_assignment,pass,
+T21-DD-002,DML,deterministic_accept_reject_and_result_shape_assignment,pass,
+T21-DD-003,PSQL_TSQL,deterministic_rewrite_trace_and_cursor_semantics,pass,
+T21-DD-004,ADMIN,grammar_and_privilege_gating_deterministic,pass,
+T21-DD-005,DCL_TCL,shared_sblr_path_and_deterministic_alias_policy,pass,

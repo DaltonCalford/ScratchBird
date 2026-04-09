@@ -1,0 +1,3 @@
+ticket,scenario,routed,reason,test_case
+HCN-021,stable_route_lookup,true,NONE,DeterministicShardRouterTest.SameInputsProduceSameRouteDecision
+HCN-021,stale_epoch_reject,false,STALE_ROUTING_EPOCH,DeterministicShardRouterTest.RejectsStaleRoutingEpoch

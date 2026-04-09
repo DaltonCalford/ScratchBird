@@ -2043,6 +2043,24 @@ set_tests_properties(CheckConstraints PROPERTIES
     TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
+# ALTER TABLE column-modification integration tests
+add_executable(test_alter_table_column_mods
+    integration/test_alter_table_column_mods.cpp
+)
+target_link_libraries(test_alter_table_column_mods
+    scratchbird_core
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    scratchbird_sblr
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+    gtest
+    gtest_main
+)
+add_test(NAME AlterTableColumnMods COMMAND test_alter_table_column_mods)
+set_tests_properties(AlterTableColumnMods PROPERTIES
+    LABELS "integration;ddl;schema_change;alter_table"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+)
+
 # Domain Integrity Tests (Plan 03B - Global Uniqueness)
 add_executable(test_domain_integrity
     integration/test_domain_integrity.cpp

@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-001",
+  "phase": "PH0",
+  "title": "Freeze product completion scope and baseline",
+  "status": "pending",
+  "owner": "program-management",
+  "estimate_days": 2,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

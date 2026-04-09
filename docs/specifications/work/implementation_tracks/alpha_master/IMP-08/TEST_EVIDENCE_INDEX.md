@@ -1,0 +1,20 @@
+# Test Evidence Index
+
+- Ticket: IMP-08
+- Section: 08_Transaction_Core
+- Gate Contract: docs/specifications/08_Transaction_Core/TEST_CONTRACT.md
+- Evidence Files:
+  - IMPLEMENTATION_CHECKLIST.md
+  - IMPLEMENTATION_NOTES.md
+  - TRANSACTION_STATE_TIP_MATRIX.csv
+  - SNAPSHOT_VISIBILITY_MATRIX.csv
+  - ISOLATION_MODE_BEHAVIOR_MATRIX.csv
+  - COMMIT_ROLLBACK_DURABILITY_MATRIX.csv
+  - CONTEXT_ATTRIBUTION_JOIN_MATRIX.csv
+  - LIMBO_RECOVERY_MATRIX.csv
+  - TEST_RESULTS.md
+  - CHECKSUMS.sha256
+  - RUN_MANIFEST.json
+  - SPEC_TRACEABILITY.csv
+  - GATE_RESULT.json
+  - CHANGESET_LOG.md

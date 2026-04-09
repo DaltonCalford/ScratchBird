@@ -1,0 +1,10 @@
+case_id,path,operation_order,expected_flags,expected_result,error_code
+ICE-001,plain_write,serialize->checksum,none,success,NONE
+ICE-002,compressed_write,serialize->compress->checksum,PAGE_FLAG_COMPRESSED,success,NONE
+ICE-003,encrypted_write,serialize->encrypt->checksum,PAGE_FLAG_ENCRYPTED,success,NONE
+ICE-004,compressed_encrypted_write,serialize->compress->encrypt->checksum,PAGE_FLAG_COMPRESSED|PAGE_FLAG_ENCRYPTED,success,NONE
+ICE-005,compression_not_beneficial,serialize->no_compress->checksum,compressed_flag_cleared,success,NONE
+ICE-006,decrypt_fail,read->decrypt,none,fail,DECRYPTION_FAILED
+ICE-007,decompress_fail,read->decrypt_if_needed->decompress,none,fail,DECOMPRESSION_FAILED
+ICE-008,payload_framing_invalid,read_payload_prefix,none,fail,INVALID_PAYLOAD_FORMAT
+ICE-009,checksum_after_transform,checksum_over_stored_image,checksum_valid,success,NONE

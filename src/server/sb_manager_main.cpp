@@ -28,10 +28,13 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <random>
+#include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 #ifndef _WIN32
 #include <poll.h>
@@ -249,18 +252,132 @@ uint64_t fnv1a64(const std::string& value, uint64_t seed) {
     return hash;
 }
 
-std::array<uint8_t, 16> deriveDatabaseUuid(const std::string& database_name) {
+std::array<uint8_t, 16> deriveStableUuid(const std::string& seed) {
     std::array<uint8_t, 16> out{};
-    const uint64_t hi = fnv1a64(database_name, 1469598103934665603ull);
-    const uint64_t lo = fnv1a64(database_name, 1099511628211ull);
+    const uint64_t hi = fnv1a64(seed, 1469598103934665603ull);
+    const uint64_t lo = fnv1a64(seed, 1099511628211ull);
     for (int i = 0; i < 8; ++i) {
         out[static_cast<size_t>(i)] = static_cast<uint8_t>((hi >> (i * 8)) & 0xFF);
         out[static_cast<size_t>(8 + i)] = static_cast<uint8_t>((lo >> (i * 8)) & 0xFF);
     }
-    // Normalize to UUID v4 layout bits.
     out[6] = static_cast<uint8_t>((out[6] & 0x0F) | 0x40);
     out[8] = static_cast<uint8_t>((out[8] & 0x3F) | 0x80);
     return out;
+}
+
+std::string uuidToString(const std::array<uint8_t, 16>& uuid) {
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (size_t i = 0; i < uuid.size(); ++i) {
+        if (i == 4 || i == 6 || i == 8 || i == 10) {
+            oss << '-';
+        }
+        oss << std::setw(2) << static_cast<unsigned int>(uuid[i]);
+    }
+    return oss.str();
+}
+
+std::array<uint8_t, 16> deriveDatabaseUuid(const std::string& database_name) {
+    return deriveStableUuid(database_name);
+}
+
+std::unordered_map<std::string, std::string> parseKeyValuePayload(const std::string& payload) {
+    std::unordered_map<std::string, std::string> values;
+    std::stringstream stream(payload);
+    std::string token;
+    while (std::getline(stream, token, ';')) {
+        const size_t eq = token.find('=');
+        if (eq == std::string::npos) {
+            continue;
+        }
+        values[token.substr(0, eq)] = token.substr(eq + 1);
+    }
+    return values;
+}
+
+std::string getOrDefault(const std::unordered_map<std::string, std::string>& values,
+                         const std::string& key,
+                         const std::string& fallback) {
+    const auto it = values.find(key);
+    return it == values.end() ? fallback : it->second;
+}
+
+bool sendListenerManagementCommand(const ManagerOptions& options,
+                                   const std::string& command,
+                                   std::string& response,
+                                   ErrorContext* ctx);
+bool isInternalNativeReady(const ManagerOptions& options);
+
+uint64_t nextHeartbeatSequence() {
+    static std::atomic<uint64_t> sequence{0};
+    return sequence.fetch_add(1, std::memory_order_acq_rel) + 1;
+}
+
+void appendManagerInspectionEntries(std::vector<ProtocolCodec::StatusEntry>& entries,
+                                    const ManagerOptions& options,
+                                    const std::string& database_name) {
+    const bool internal_ready = isInternalNativeReady(options);
+    const std::string manager_uuid = uuidToString(
+        deriveStableUuid("manager:" + options.bind_address + ":" + std::to_string(options.port) +
+                         ":" + database_name + ":" + std::to_string(options.listener_id)));
+    const std::string server_uuid = uuidToString(
+        deriveStableUuid("server:" + options.native_bind + ":" + std::to_string(options.native_port) +
+                         ":" + database_name));
+    const std::string owner_database_uuid = uuidToString(deriveDatabaseUuid(database_name));
+    const std::string zero_uuid = uuidToString(std::array<uint8_t, 16>{});
+
+    std::unordered_map<std::string, std::string> listener_status;
+    bool listener_control_reachable = false;
+    if (!options.control_socket_dir.empty()) {
+        ErrorContext mgmt_ctx;
+        std::string response;
+        if (sendListenerManagementCommand(options, "STATUS", response, &mgmt_ctx)) {
+            listener_status = parseKeyValuePayload(response);
+            listener_control_reachable = true;
+        }
+    }
+
+    entries.push_back({"cluster_id", getOrDefault(listener_status, "cluster_id", zero_uuid)});
+    entries.push_back({"node_id", getOrDefault(listener_status, "node_id", zero_uuid)});
+    entries.push_back({"manager_uuid", manager_uuid});
+    entries.push_back({"server_uuid", server_uuid});
+    entries.push_back({"owner_database_uuid", owner_database_uuid});
+    entries.push_back({"heartbeat_state", internal_ready ? "READY" : "STARTING"});
+    entries.push_back({"heartbeat_sequence", std::to_string(nextHeartbeatSequence())});
+    entries.push_back({"config_generation", getOrDefault(listener_status, "config_generation", "0")});
+    entries.push_back({"controller_reachable", "true"});
+    entries.push_back({"listener_control_reachable", listener_control_reachable ? "true" : "false"});
+    entries.push_back({"parser_pool_ready",
+                       getOrDefault(listener_status, "parser_pool_ready", internal_ready ? "true" : "false")});
+    entries.push_back({"parser_pool_warm", getOrDefault(listener_status, "parser_pool_warm", "0")});
+    entries.push_back({"startup_quarantine_active",
+                       getOrDefault(listener_status, "startup_quarantine_active", "false")});
+    entries.push_back({"derivative_backpressure_class",
+                       getOrDefault(listener_status, "derivative_backpressure_class", "unknown")});
+    entries.push_back({"shadow_group_state",
+                       getOrDefault(listener_status, "shadow_group_state", "unknown")});
+    entries.push_back({"link_state", getOrDefault(listener_status, "link_state", "UNBOUND")});
+    entries.push_back({"link_ready_time_ms", getOrDefault(listener_status, "link_ready_time_ms", "0")});
+    entries.push_back({"unresolved_drift_count",
+                       getOrDefault(listener_status, "unresolved_drift_count", "0")});
+    entries.push_back({"unresolved_drift_class",
+                       getOrDefault(listener_status, "unresolved_drift_class", "CONSISTENT")});
+    entries.push_back({"queued_instruction_count",
+                       getOrDefault(listener_status, "queued_instruction_count", "0")});
+    entries.push_back({"blocked_instruction_count",
+                       getOrDefault(listener_status, "blocked_instruction_count", "0")});
+    entries.push_back({"quarantined_instruction_count",
+                       getOrDefault(listener_status, "quarantined_instruction_count", "0")});
+    entries.push_back({"applying_instruction_count",
+                       getOrDefault(listener_status, "applying_instruction_count", "0")});
+    entries.push_back({"last_assessment_time_ms",
+                       getOrDefault(listener_status, "last_assessment_time_ms", "0")});
+    entries.push_back({"last_successful_apply_time_ms",
+                       getOrDefault(listener_status, "last_successful_apply_time_ms", "0")});
+    entries.push_back({"last_instruction_id",
+                       getOrDefault(listener_status, "last_instruction_id", zero_uuid)});
+    entries.push_back({"last_instruction_state",
+                       getOrDefault(listener_status, "last_instruction_state", "NONE")});
 }
 
 std::vector<uint8_t> randomBytes(size_t count) {
@@ -870,6 +987,7 @@ Message buildMcpHelloResponse(const ManagerOptions& options,
     entries.push_back({"database_owner", options.owner_database});
     entries.push_back({"internal_native_endpoint", internalEndpointString(options)});
     entries.push_back({"ready", isInternalNativeReady(options) ? "true" : "false"});
+    appendManagerInspectionEntries(entries, options, options.owner_database);
     return ProtocolCodec::buildStatusResponse(StatusRequestType::SERVER_INFO, entries);
 }
 
@@ -891,6 +1009,7 @@ Message buildMcpDbInfoResponse(const ManagerOptions& options,
     entries.push_back({"state", ready ? "OPEN" : "CLOSED"});
     entries.push_back({"ready", ready ? "true" : "false"});
     entries.push_back({"internal_native_endpoint", internalEndpointString(options)});
+    appendManagerInspectionEntries(entries, options, database_name);
     return ProtocolCodec::buildStatusResponse(StatusRequestType::DATABASE_INFO, entries);
 }
 

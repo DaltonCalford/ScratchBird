@@ -1,0 +1,26 @@
+{
+  "ticket_id": "PP-05",
+  "title": "Bootstrap Page Map 0-5 Creation Contract",
+  "timestamp_utc": "2026-02-13T18:15:33Z",
+  "implementation_repo": "/home/dcalford/CliWork/ScratchBird",
+  "primary_specs": [
+    "06_Fixed_Bootstrap_Page_Map/BOOTSTRAP_PAGE_LAYOUTS.md"
+  ],
+  "changed_files": [
+    "include/scratchbird/core/ondisk.h",
+    "include/scratchbird/core/database.h",
+    "src/core/database.cpp",
+    "tests/unit/test_alpha_101.cpp"
+  ],
+  "commands": [
+    {
+      "cmd": "cmake --build build -j8 --target scratchbird_tests",
+      "result": "pass"
+    },
+    {
+      "cmd": "./build/tests/scratchbird_tests --gtest_filter='*Alpha101*:*PageManagement*:*MoreCases*:*ErrorPaths*:*OnDiskFormat*:*CRC32C_Comprehensive*:*BTreeRightmost*'",
+      "result": "pass"
+    }
+  ],
+  "status": "done"
+}

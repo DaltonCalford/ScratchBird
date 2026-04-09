@@ -1,0 +1,5 @@
+case_id,scan_mode,required_check,expected_result,error_code
+T18-HS-001,LIGHT_SCAN,deterministic_sampling_fixed_seed_and_nonblocking_dml,pass,
+T18-HS-002,DIAGNOSTIC_SCAN,detect_checksum_pointer_ordering_violations,pass,
+T18-HS-003,DIAGNOSTIC_SCAN,report_orphan_pages_unlinked_from_root_meta,pass,
+T18-HS-004,DIAGNOSTIC_SCAN,mark_index_invalid_on_corrupt_status,pass,

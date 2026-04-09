@@ -1,0 +1,8 @@
+case_id,operator,operand_types,resolution_rule,result_type,expected_result,error_code
+T13-OB-001,+,int32_int32,direct_match,int32,success,
+T13-OB-002,+,int32_decimal,implicit_numeric_promotion,decimal,success,
+T13-OB-003,||,text_int32,implicit_int_to_text,text,success,
+T13-OB-004,-,text_int32,no_valid_implicit_cast,none,reject,E_INVALID_OPERATOR_SIGNATURE
+T13-OB-005,=,uuid_text,explicit_cast_required,boolean,reject,E_INVALID_OPERATOR_SIGNATURE
+T13-OB-006,AND,boolean_boolean,direct_match,boolean,success,
+T13-OB-007,LIKE,text_text,direct_match,boolean,success,

@@ -99,6 +99,14 @@ protected:
     // EF-041 contract hook for deterministic capability reporting tests.
     uint64_t contractServerFeatureMask() const { return serverFeatureMask(); }
 
+    core::Status ensureRemoteClientForTest(core::ErrorContext* ctx) {
+        return ensureRemoteClient(ctx);
+    }
+
+    const client::ConnectionConfig& remoteClientConfigForTest() const {
+        return client_config_;
+    }
+
 private:
     // ========================================================================
     // Message Handling
@@ -134,6 +142,8 @@ private:
     core::Status ensureRemoteClient(core::ErrorContext* ctx);
     core::Status executeRemoteQuery(const std::string& sql,
                                     const std::vector<uint8_t>* bytecode,
+                                    const std::vector<std::string>* parameter_values,
+                                    const std::vector<bool>* parameter_nulls,
                                     ResultContext& result);
 
     // ========================================================================
@@ -278,6 +288,7 @@ private:
     // Prepared statements (id -> query)
     uint32_t next_stmt_id_ = 1;
     std::unordered_map<uint32_t, std::string> native_prepared_statements_;
+    std::unordered_map<std::string, std::vector<uint8_t>> prepared_statement_bytecode_;
     std::unordered_map<std::string, std::vector<uint32_t>> prepared_statement_param_types_;
     std::unordered_map<std::string, PortalState> portals_;
     std::unordered_set<std::string> subscribed_channels_;

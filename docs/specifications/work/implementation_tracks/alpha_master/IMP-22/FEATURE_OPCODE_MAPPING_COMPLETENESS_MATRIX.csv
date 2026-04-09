@@ -1,0 +1,7 @@
+case_id,suite,required_check,expected_result,error_code
+T22-A01,A,all_section21_feature_keys_exist_in_feature_opcode_matrix,pass,
+T22-A02,A,matrix_rows_have_opcode_payload_ast_family_result_shape,pass,
+T22-A03,A,no_duplicate_feature_keys_or_opcode_symbols,pass,
+T22-H01,H,section21_and_section22_mapping_rows_match,pass,
+T22-H05,H,textsearch_drop_configuration_feature_and_result_shape_match,pass,
+T22-H07,H,resource_bundle_feature_keys_and_result_shapes_match,pass,

@@ -47,6 +47,7 @@ namespace
 {
     struct PersistedSweepStateForTest
     {
+        uint64_t version = SYSTEM_STATE_SWEEP_PROGRESS_VERSION;
         uint64_t sweep_generation = 0;
         bool active = false;
         SweepProgressStage stage = SweepProgressStage::NONE;
@@ -65,6 +66,8 @@ namespace
         uint64_t reclaimed_version_count = 0;
         uint64_t reclaimed_bytes = 0;
         uint64_t index_backlog_count = 0;
+        uint64_t index_backlog_pages = 0;
+        uint64_t index_backlog_bytes = 0;
         uint32_t cursor_crc32c = 0;
     };
 
@@ -106,7 +109,28 @@ namespace
     }
 
 #pragma pack(push, 1)
-    struct SweepProgressChecksumPayloadForTest
+    struct SweepProgressChecksumPayloadV1ForTest
+    {
+        uint64_t version = 1;
+        uint64_t control = 0;
+        uint64_t sweep_generation = 0;
+        uint64_t relation_hi = 0;
+        uint64_t relation_lo = 0;
+        uint64_t filespace_hi = 0;
+        uint64_t filespace_lo = 0;
+        uint64_t page_id = 0;
+        uint64_t captured_oit = 0;
+        uint64_t captured_oat = 0;
+        uint64_t captured_ost = 0;
+        uint64_t checkpoint_generation_seen = 0;
+        uint64_t persist_time = 0;
+        uint64_t start_horizon = 0;
+        uint64_t reclaimed_version_count = 0;
+        uint64_t reclaimed_bytes = 0;
+        uint64_t index_backlog_count = 0;
+    };
+
+    struct SweepProgressChecksumPayloadV2ForTest
     {
         uint64_t version = SYSTEM_STATE_SWEEP_PROGRESS_VERSION;
         uint64_t control = 0;
@@ -125,6 +149,8 @@ namespace
         uint64_t reclaimed_version_count = 0;
         uint64_t reclaimed_bytes = 0;
         uint64_t index_backlog_count = 0;
+        uint64_t index_backlog_pages = 0;
+        uint64_t index_backlog_bytes = 0;
     };
 #pragma pack(pop)
 
@@ -137,7 +163,35 @@ namespace
         encodeIdToSlotsForTest(state.relation_uuid, relation_hi, relation_lo);
         encodeIdToSlotsForTest(state.filespace_uuid, filespace_hi, filespace_lo);
 
-        SweepProgressChecksumPayloadForTest payload{};
+        if (state.version <= 1)
+        {
+            SweepProgressChecksumPayloadV1ForTest payload{};
+            payload.control = packSweepProgressControlForTest(state.active,
+                                                              state.stage,
+                                                              state.lane_mask,
+                                                              state.strict_audit,
+                                                              state.slot_id);
+            payload.sweep_generation = state.sweep_generation;
+            payload.relation_hi = relation_hi;
+            payload.relation_lo = relation_lo;
+            payload.filespace_hi = filespace_hi;
+            payload.filespace_lo = filespace_lo;
+            payload.page_id = state.page_id;
+            payload.captured_oit = state.captured_oit;
+            payload.captured_oat = state.captured_oat;
+            payload.captured_ost = state.captured_ost;
+            payload.checkpoint_generation_seen = state.checkpoint_generation_seen;
+            payload.persist_time = state.persist_time;
+            payload.start_horizon = state.start_horizon;
+            payload.reclaimed_version_count = state.reclaimed_version_count;
+            payload.reclaimed_bytes = state.reclaimed_bytes;
+            payload.index_backlog_count = state.index_backlog_count;
+            return crc32cCompute(reinterpret_cast<const uint8_t*>(&payload),
+                                 sizeof(payload),
+                                 0u);
+        }
+
+        SweepProgressChecksumPayloadV2ForTest payload{};
         payload.control = packSweepProgressControlForTest(state.active,
                                                           state.stage,
                                                           state.lane_mask,
@@ -158,7 +212,11 @@ namespace
         payload.reclaimed_version_count = state.reclaimed_version_count;
         payload.reclaimed_bytes = state.reclaimed_bytes;
         payload.index_backlog_count = state.index_backlog_count;
-        return crc32cCompute(reinterpret_cast<const uint8_t*>(&payload), sizeof(payload), 0u);
+        payload.index_backlog_pages = state.index_backlog_pages;
+        payload.index_backlog_bytes = state.index_backlog_bytes;
+        return crc32cCompute(reinterpret_cast<const uint8_t*>(&payload),
+                             sizeof(payload),
+                             0u);
     }
 
     void writePersistedSweepStateForTest(BootstrapSystemStatePage* state_page,
@@ -171,8 +229,7 @@ namespace
         encodeIdToSlotsForTest(state.relation_uuid, relation_hi, relation_lo);
         encodeIdToSlotsForTest(state.filespace_uuid, filespace_hi, filespace_lo);
 
-        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_VERSION_SLOT] =
-            SYSTEM_STATE_SWEEP_PROGRESS_VERSION;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_VERSION_SLOT] = state.version;
         state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CONTROL_SLOT] =
             packSweepProgressControlForTest(state.active,
                                            state.stage,
@@ -204,6 +261,10 @@ namespace
             state.reclaimed_bytes;
         state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_SLOT] =
             state.index_backlog_count;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_PAGES_SLOT] =
+            state.index_backlog_pages;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_BYTES_SLOT] =
+            state.index_backlog_bytes;
         state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CURSOR_CHECKSUM_SLOT] =
             state.cursor_crc32c;
     }
@@ -217,6 +278,8 @@ namespace
         -> PersistedSweepStateForTest
     {
         PersistedSweepStateForTest state{};
+        state.version =
+            state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_VERSION_SLOT];
         state.sweep_generation =
             state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_GENERATION_SLOT];
         const uint64_t control =
@@ -256,6 +319,13 @@ namespace
             state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RECLAIMED_BYTES_SLOT];
         state.index_backlog_count =
             state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_SLOT];
+        if (state.version >= SYSTEM_STATE_SWEEP_PROGRESS_VERSION)
+        {
+            state.index_backlog_pages = state_page->reserved[
+                SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_PAGES_SLOT];
+            state.index_backlog_bytes = state_page->reserved[
+                SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_BYTES_SLOT];
+        }
         state.cursor_crc32c = static_cast<uint32_t>(
             state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CURSOR_CHECKSUM_SLOT]);
         return state;

@@ -1,0 +1,6 @@
+case_id,mode,policy_check,txn_rule,audit_rule,expected_result,error_code
+T17-RP-001,QUERY,allowed,autonomous_or_join_local,terminal_audit_row_written,pass,
+T17-RP-002,DML,allowed,join_local_requires_active_local_txn,terminal_audit_row_written,pass,
+T17-RP-003,DDL,policy_denied,none,pre_execution_audit_written,reject,E_REMOTE_POLICY_REJECTED
+T17-RP-004,JOIN_LOCAL,missing_local_txn,reject,terminal_error_audit_written,reject,E_REMOTE_TXN_BINDING_INVALID
+T17-RP-005,prepared_execute,allowed,binding_valid,append_only_audit_chain,pass,

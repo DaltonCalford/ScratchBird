@@ -1,0 +1,6 @@
+case_id,scan_mode,scope,repair_flag,expected_behavior,error_code
+T20-PW-001,light_scan,index_only,false,health_summary_only,
+T20-PW-002,diagnostic_scan,table_and_index,false,full_structural_validation,
+T20-PW-003,diagnostic_scan,table_and_index,true,mark_needs_repair_and_emit_actions,
+T20-PW-004,light_scan,page_crc_failure,false,report_error_and_continue,E_PAGE_CHECKSUM_MISMATCH
+T20-PW-005,diagnostic_scan,orphan_chain_detected,true,repair_plan_generated,

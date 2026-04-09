@@ -1,0 +1,13 @@
+case_id,input_sql,alias_mode_enabled,active_savepoints,expected_decision,expected_family_error_code,expected_global_error_code,source_spec,notes
+AJ-001,"BEGIN TRANSACTION tx_main;",false,,REJECT,E_ALIAS_MODE_DISABLED,E_ALIAS_MODE_DISABLED,21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md,Alias begin rejected when alias mode disabled
+AJ-002,"COMMIT TRANSACTION;",false,,REJECT,E_ALIAS_MODE_DISABLED,E_ALIAS_MODE_DISABLED,21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md,Alias commit rejected when alias mode disabled
+AJ-003,"COMMIT TRANSACTION tx_main;",false,,REJECT,E_ALIAS_MODE_DISABLED,E_ALIAS_MODE_DISABLED,21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md,Named alias commit rejected when alias mode disabled
+AJ-004,"ROLLBACK TRANSACTION;",false,,REJECT,E_ALIAS_MODE_DISABLED,E_ALIAS_MODE_DISABLED,21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md,Alias rollback rejected when alias mode disabled
+AJ-005,"ROLLBACK TRANSACTION sp_orders;",false,sp_orders,REJECT,E_ALIAS_MODE_DISABLED,E_ALIAS_MODE_DISABLED,21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md,Named alias rollback rejected when alias mode disabled
+AJ-006,"ROLLBACK TRANSACTION sp_missing;",true,,REJECT,E_TXN_SAVEPOINT_NOT_FOUND,E_OPTION_VALUE_INVALID,21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md,Savepoint-target rollback rejects when target does not exist
+AJ-007,"ROLLBACK TRANSACTION tx_main;",true,tx_main(savepoint)|tx_main(alias_target),REJECT,E_OPTION_VALUE_INVALID,E_OPTION_VALUE_INVALID,21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md,Ambiguous rollback target name rejected deterministically
+AJ-008,"BEGIN TRANSACTION tx_main tx_extra;",true,,REJECT,E_PARSE_FAILED,E_PARSE_FAILED,21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md,Extra identifier tokens after alias name
+AJ-009,"COMMIT TRANSACTION tx_main tx_extra;",true,,REJECT,E_PARSE_FAILED,E_PARSE_FAILED,21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md,Extra identifier tokens after commit alias
+AJ-010,"ROLLBACK TRANSACTION tx_main tx_extra;",true,,REJECT,E_PARSE_FAILED,E_PARSE_FAILED,21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md,Extra identifier tokens after rollback alias
+AJ-011,"BEGIN TRANSACTION tx_main, tx_extra;",true,,REJECT,E_PARSE_FAILED,E_PARSE_FAILED,21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md,Comma-separated alias list is not a valid production
+AJ-012,"ROLLBACK TRANSACTION tx_main TO SAVEPOINT s1;",true,s1,REJECT,E_PARSE_FAILED,E_PARSE_FAILED,21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md,Mixed alias and canonical rollback forms are invalid

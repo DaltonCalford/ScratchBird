@@ -1,0 +1,11 @@
+case_id,partition_kind,input_range,split_boundary,expected_ranges,expected_routing,error_code
+FSL-PS-001,RANGE,[0,100),50,left=[0,50) right=[50,100),k<50 to left and k>=50 to right,NONE
+FSL-PS-002,RANGE,[10,20),10,none,split rejected,PARTITION_BOUNDARY_INVALID
+FSL-PS-003,RANGE,[10,20),20,none,split rejected,PARTITION_BOUNDARY_INVALID
+FSL-PS-004,RANGE,[10,20),9,none,split rejected,PARTITION_BOUNDARY_INVALID
+FSL-PS-005,RANGE,[10,20),21,none,split rejected,PARTITION_BOUNDARY_INVALID
+FSL-PS-006,HASH,n/a,50,none,split rejected,PARTITION_KIND_UNSUPPORTED
+FSL-PS-007,RANGE,[0,100),50 with default partition,left and right active plus default fallback,k not covered routes default if exists,NONE
+FSL-PS-008,RANGE,[0,100),50 without default and uncovered key,left and right active,key uncovered rejected,PARTITION_BOUNDARY_NOT_COVERED
+FSL-PS-009,RANGE,online split with concurrent writes,valid internal boundary,deterministic after catch-up,write routing follows pending partition bounds,NONE
+FSL-PS-010,RANGE,offline split,valid internal boundary,deterministic after move,final metadata switch atomic,NONE

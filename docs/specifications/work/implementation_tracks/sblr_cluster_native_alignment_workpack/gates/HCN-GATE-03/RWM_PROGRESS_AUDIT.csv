@@ -1,0 +1,7 @@
+scenario,starting_rwm,operation,expected_rwm,observed_rwm,test_case,status
+initial_apply_step_1,0,apply(local_txn_id=1),1,1,FollowerApplyPipelineTest.InOrderApplyUpdatesReplicationWatermark,pass
+initial_apply_step_2,1,apply(local_txn_id=2),2,2,FollowerApplyPipelineTest.InOrderApplyUpdatesReplicationWatermark,pass
+replay_idempotence,1,replay(local_txn_id=1),1,1,FollowerApplyPipelineTest.ReplayIsIdempotentAndOrderingIsEnforced,pass
+payload_mismatch_no_advance,1,apply(local_txn_id=2,payload_mismatch),1,1,FollowerApplyPipelineTest.ReplayIsIdempotentAndOrderingIsEnforced,pass
+out_of_order_no_advance,1,apply(local_txn_id=4),1,1,FollowerApplyPipelineTest.ReplayIsIdempotentAndOrderingIsEnforced,pass
+missing_log_entry_no_advance,2,apply(local_txn_id=3,missing),2,2,FollowerApplyPipelineTest.ReplayIsIdempotentAndOrderingIsEnforced,pass

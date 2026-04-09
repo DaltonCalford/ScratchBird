@@ -1,0 +1,3 @@
+requirement_id,requirement_surface,authority_file,evidence_or_gate,status
+LOB-01,overflow_payload_layout,LOB_PAGE_LAYOUTS.md,TEST_CONTRACT.md,canonicalized
+LOB-02,overflow_reachability_and_retirement,README.md,TEST_CONTRACT.md,bounded_current_authority

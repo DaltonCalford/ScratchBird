@@ -1,0 +1,6 @@
+case_id,scenario,input,expected_result,error_code
+T20-NG-001,min_timestamp_bound,event_time_before_epoch,rejected,E_AUDIT_TIME_INVALID
+T20-NG-002,malformed_metric_key,unknown_metric,rejected,E_METRIC_KEY_UNKNOWN
+T20-NG-003,null_audit_payload,payload=null,rejected,E_AUDIT_PAYLOAD_NULL
+T20-NG-004,permission_denied_diag,user_without_diag_rights,rejected,E_PERMISSION_DENIED
+T20-NG-005,resource_exhaustion_log_sink,sink_unavailable,degraded_nonfatal,E_LOG_SINK_UNAVAILABLE

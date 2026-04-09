@@ -1,0 +1,7 @@
+case_id,expression,expected_value,rule
+T13-NULL-001,true AND null,null,three_valued_logic
+T13-NULL-002,false AND null,false,three_valued_logic
+T13-NULL-003,true OR null,true,three_valued_logic
+T13-NULL-004,false OR null,null,three_valued_logic
+T13-NULL-005,NOT null,null,three_valued_logic
+T13-NULL-006,null = null,null,is_not_distinct_rules_apply_separately

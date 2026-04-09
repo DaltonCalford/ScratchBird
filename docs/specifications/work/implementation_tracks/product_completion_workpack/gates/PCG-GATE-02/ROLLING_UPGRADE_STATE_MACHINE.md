@@ -1,0 +1,3 @@
+# ROLLING_UPGRADE_STATE_MACHINE.md
+
+Template scaffold for PCG-GATE-02.

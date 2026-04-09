@@ -40,13 +40,16 @@ namespace scratchbird::core
         uint64_t rewrite_recommendations;
         uint64_t slot_stable_compactions;
         uint64_t index_backlog_count;
+        uint64_t index_backlog_pages;
+        uint64_t index_backlog_bytes;
 
         GcStats()
             : pages_scanned(0), tuples_scanned(0), dead_tuples_found(0), dead_tuples_removed(0),
               version_chains_pruned(0), pages_compacted(0), free_space_recovered(0),
               tuples_frozen(0), gc_time_us(0), pages_dead_space_warn(0),
               pages_dead_space_compact(0), pages_dead_space_rewrite(0),
-              rewrite_recommendations(0), slot_stable_compactions(0), index_backlog_count(0)
+              rewrite_recommendations(0), slot_stable_compactions(0), index_backlog_count(0),
+              index_backlog_pages(0), index_backlog_bytes(0)
         {
         }
     };

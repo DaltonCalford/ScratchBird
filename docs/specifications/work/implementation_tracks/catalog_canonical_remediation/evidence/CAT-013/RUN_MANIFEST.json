@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-013",
+  "status": "completed",
+  "started_at": "2026-02-14T05:20:00Z",
+  "finished_at": "2026-02-14T05:31:44Z",
+  "owner": "codex",
+  "notes": "CAT-013 complete: resource_bundle/resource_artifact/timezone_transition/timezone_leap_second page wiring, CRUD contracts, and gate tests."
+}

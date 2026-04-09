@@ -1,0 +1,8 @@
+case_id,trigger_condition,error_code,statement_state,transaction_state
+LES-001,nowait_conflict,LOCK_NOT_GRANTED_NOWAIT,failed,active
+LES-002,conversion_nowait_conflict,LOCK_CONVERT_NOWAIT_FAILED,failed,active
+LES-003,wait_timeout,LOCK_TIMEOUT,failed,active
+LES-004,wait_cancelled,LOCK_CANCELLED,failed,active
+LES-005,deadlock_victim,DEADLOCK_DETECTED,failed,active_or_profile_rollback
+LES-006,corrupt_lock_table,LOCK_TABLE_CORRUPT,failed,active
+LES-007,owner_not_found_on_release,LOCK_OWNER_NOT_FOUND,failed,active

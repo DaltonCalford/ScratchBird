@@ -616,13 +616,22 @@ namespace scratchbird::core
             return status;
         }
 
-        status = db_->sync(ctx);
-        if (status == Status::OK)
+        errno = 0;
+        if (platform::syncFd(db_->fd()) != 0)
         {
-            dirty_ = false;
+            const int sync_errno = errno;
+            if (sync_errno == ENOSPC)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DISK_FULL,
+                                  "Failed to sync primary FSM page: disk full");
+                return Status::DISK_FULL;
+            }
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to sync primary FSM page");
+            return Status::IO_ERROR;
         }
 
-        return status;
+        dirty_ = false;
+        return Status::OK;
     }
 
     void PageManager::buildFsmPageBuffer(uint8_t *buffer)

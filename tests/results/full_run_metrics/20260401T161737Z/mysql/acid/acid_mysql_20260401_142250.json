@@ -1,0 +1,215 @@
+{
+  "metadata": {
+    "engine": "mysql",
+    "host": "localhost",
+    "port": 3306,
+    "database": "benchmark",
+    "timestamp": "20260401_142250"
+  },
+  "results": {
+    "atomicity": [
+      {
+        "test_name": "atomic_commit_success",
+        "description": "All statements in transaction commit together",
+        "status": "passed",
+        "duration_ms": 108.07943344116211,
+        "expected": 3,
+        "actual": 3,
+        "error_message": ""
+      },
+      {
+        "test_name": "atomic_rollback_on_error",
+        "description": "Transaction rolls back on error - no partial commits",
+        "status": "passed",
+        "duration_ms": 3.6013126373291016,
+        "expected": 0,
+        "actual": 0,
+        "error_message": "(1062, \"Duplicate entry '1' for key 'atomic_test.PRIMARY'\")"
+      },
+      {
+        "test_name": "atomic_explicit_rollback",
+        "description": "Explicit ROLLBACK undoes all changes",
+        "status": "passed",
+        "duration_ms": 64.6963119506836,
+        "expected": 0,
+        "actual": 0,
+        "error_message": ""
+      },
+      {
+        "test_name": "atomic_multi_table_commit",
+        "description": "Multi-table transaction is atomic across all tables",
+        "status": "passed",
+        "duration_ms": 130.8438777923584,
+        "expected": 2000.0,
+        "actual": 2000.0,
+        "error_message": ""
+      },
+      {
+        "test_name": "atomic_savepoint_rollback",
+        "description": "ROLLBACK TO SAVEPOINT partially undoes transaction",
+        "status": "passed",
+        "duration_ms": 62.734365463256836,
+        "expected": 2,
+        "actual": 2,
+        "error_message": ""
+      }
+    ],
+    "consistency": [
+      {
+        "test_name": "consistency_pk_violation",
+        "description": "Primary key constraint is enforced",
+        "status": "passed",
+        "duration_ms": 62.23893165588379,
+        "expected": 1,
+        "actual": 1,
+        "error_message": "(1062, \"Duplicate entry '1' for key 'consistency_test.PRIMARY'\")"
+      },
+      {
+        "test_name": "consistency_fk_violation",
+        "description": "Foreign key constraint prevents orphaned records",
+        "status": "passed",
+        "duration_ms": 134.24444198608398,
+        "expected": 0,
+        "actual": 0,
+        "error_message": "(1452, 'Cannot add or update a child row: a foreign key constraint fails (`benchmark`.`child`, CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`parent_id`))')"
+      },
+      {
+        "test_name": "consistency_check_constraint",
+        "description": "CHECK constraints are enforced",
+        "status": "passed",
+        "duration_ms": 65.75918197631836,
+        "expected": 0,
+        "actual": 0,
+        "error_message": "(3819, \"Check constraint 'check_test_chk_1' is violated.\")"
+      },
+      {
+        "test_name": "consistency_unique_constraint",
+        "description": "UNIQUE constraints prevent duplicates",
+        "status": "passed",
+        "duration_ms": 74.39804077148438,
+        "expected": 1,
+        "actual": 1,
+        "error_message": "(1062, \"Duplicate entry 'test@example.com' for key 'unique_test.email'\")"
+      },
+      {
+        "test_name": "consistency_not_null",
+        "description": "NOT NULL constraints prevent NULL insertion",
+        "status": "passed",
+        "duration_ms": 64.4223690032959,
+        "expected": 0,
+        "actual": 0,
+        "error_message": "(1048, \"Column 'required_field' cannot be null\")"
+      },
+      {
+        "test_name": "consistency_invariant_maintenance",
+        "description": "Database invariants are maintained across operations",
+        "status": "passed",
+        "duration_ms": 46.2799072265625,
+        "expected": 0,
+        "actual": 0,
+        "error_message": "(3819, \"Check constraint 'ledger_chk_1' is violated.\")"
+      }
+    ],
+    "isolation": [
+      {
+        "test_name": "isolation_dirty_read_prevention",
+        "description": "Uncommitted changes are not visible to other transactions",
+        "status": "skipped",
+        "duration_ms": 0.0,
+        "expected": null,
+        "actual": null,
+        "error_message": "Requires concurrent execution mode"
+      },
+      {
+        "test_name": "isolation_non_repeatable_read",
+        "description": "Repeatable Read prevents non-repeatable reads",
+        "status": "skipped",
+        "duration_ms": 0.0,
+        "expected": null,
+        "actual": null,
+        "error_message": "Requires concurrent execution mode"
+      },
+      {
+        "test_name": "isolation_phantom_read",
+        "description": "Serializable isolation prevents phantom reads",
+        "status": "skipped",
+        "duration_ms": 0.0,
+        "expected": null,
+        "actual": null,
+        "error_message": "Requires concurrent execution mode"
+      },
+      {
+        "test_name": "isolation_lost_update",
+        "description": "Concurrent updates don't lose data",
+        "status": "skipped",
+        "duration_ms": 0.0,
+        "expected": null,
+        "actual": null,
+        "error_message": "Requires concurrent execution mode"
+      },
+      {
+        "test_name": "isolation_read_committed_default",
+        "description": "Default isolation level matches the engine baseline",
+        "status": "passed",
+        "duration_ms": 48.897504806518555,
+        "expected": "REPEATABLE-READ",
+        "actual": "REPEATABLE-READ",
+        "error_message": ""
+      }
+    ],
+    "durability": [
+      {
+        "test_name": "durability_commit_persistence",
+        "description": "Committed data persists after transaction ends",
+        "status": "passed",
+        "duration_ms": 41.98050498962402,
+        "expected": "committed_data",
+        "actual": "committed_data",
+        "error_message": ""
+      },
+      {
+        "test_name": "durability_rollback_not_persisted",
+        "description": "Rolled back data does not persist",
+        "status": "passed",
+        "duration_ms": 3.458261489868164,
+        "expected": 0,
+        "actual": 0,
+        "error_message": ""
+      },
+      {
+        "test_name": "durability_visibility_after_commit",
+        "description": "New transaction sees committed data immediately",
+        "status": "passed",
+        "duration_ms": 42.127370834350586,
+        "expected": 42,
+        "actual": 42,
+        "error_message": ""
+      }
+    ]
+  },
+  "summary": {
+    "total": 19,
+    "passed": 15,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 4,
+    "by_category": {
+      "atomicity": {
+        "total": 5,
+        "passed": 5
+      },
+      "consistency": {
+        "total": 6,
+        "passed": 6
+      },
+      "isolation": {
+        "total": 5,
+        "passed": 1
+      },
+      "durability": {
+        "total": 3,
+        "passed": 3
+      }
+    }
+  }
+}

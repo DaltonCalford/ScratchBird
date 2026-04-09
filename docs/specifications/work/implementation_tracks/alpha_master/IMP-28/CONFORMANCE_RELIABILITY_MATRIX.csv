@@ -1,0 +1,9 @@
+case_id,suite,required_check,expected_result,error_code
+T28-H001,H,per_dialect_conformance_corpus_passes_for_enabled_profile,pass,
+T28-H002,H,output_stable_across_patch_release_same_profile,pass,
+T28-H003,H,legacy_behavior_deltas_declared_and_tested,pass,
+T28-H004,H,mixed_parser_pool_no_session_state_contamination,pass,
+T28-I001,I,translation_p95_within_gate,pass,
+T28-I002,I,pool_warm_recycle_policy_thresholds_match,pass,
+T28-I003,I,sustained_load_cancel_streaming_error_rate_within_gate,pass,
+T28-I004,I,memory_per_worker_within_hard_limit,pass,

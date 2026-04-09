@@ -1,0 +1,18 @@
+{
+  "ticket_id": "DT-013",
+  "status": "completed",
+  "started_at": "2026-02-13T16:40:00Z",
+  "completed_at": "2026-02-13T17:10:00Z",
+  "spec_inputs": [
+    "docs/specifications/15_Complex_Types/DOMAIN_DDL_AND_CATALOG.md",
+    "docs/specifications/15_Complex_Types/SYSTEM_DOMAIN_UUID_REGISTRY.md"
+  ],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-013/SYSTEM_DOMAIN_NAMING_AUDIT.csv",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-013/SPEC_TRACEABILITY.csv",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-013/TEST_RESULTS.md",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-013/IMPLEMENTATION_NOTES.md",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-013/CHECKSUMS.sha256"
+  ],
+  "notes": "Reserved system domain naming policy normalized and tested."
+}

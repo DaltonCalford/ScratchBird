@@ -43,6 +43,7 @@
 #include "test_helpers.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/config.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/error_context.h"
 
@@ -54,6 +55,8 @@ protected:
         test_db_path_ =
             scratchbird::testing::uniqueTestDbPath("test_buffer_pool_exhaustion", ".db");
         std::remove(test_db_path_.c_str());
+        Config::getInstance().clear();
+        Config::getInstance().set("memory", "buffer_pool_size", "32");
 
         ErrorContext ctx;
         // Create database with small buffer pool (32 frames) to easily trigger exhaustion
@@ -87,6 +90,7 @@ protected:
         if (db_) {
             db_->close();
         }
+        Config::getInstance().clear();
         std::remove(test_db_path_.c_str());
     }
 

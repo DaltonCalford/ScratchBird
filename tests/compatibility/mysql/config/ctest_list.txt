@@ -4,5 +4,6 @@
 
 main/alias.sql
 main/ansi.sql
-main/insert.sql
+# main/insert.sql stays in expanded/full donor coverage. The curated Beta 1
+# release gate remains on the smaller supported subset.
 main/sb_wave2_parser_surface.sql

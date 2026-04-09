@@ -1,0 +1,25 @@
+{
+  "ticket_id": "PP-13",
+  "title": "TOAST/LOB visibility and GC contract implementation",
+  "timestamp_utc": "2026-02-13T19:01:38Z",
+  "implementation_repo": "/home/dcalford/CliWork/ScratchBird",
+  "primary_specs": [
+    "11_TOAST_and_LOB_Storage/TEST_CONTRACT.md",
+    "11_TOAST_and_LOB_Storage/LOB_PAGE_LAYOUTS.md"
+  ],
+  "changed_files": [
+    "src/core/garbage_collector.cpp",
+    "tests/unit/test_toast_gc_contract.cpp"
+  ],
+  "commands": [
+    {
+      "cmd": "cmake --build /home/dcalford/CliWork/ScratchBird/build --target scratchbird_tests -j6",
+      "result": "pass"
+    },
+    {
+      "cmd": "ctest --test-dir /home/dcalford/CliWork/ScratchBird/build -R \"ToastGCContractTest|HeapToastLobPageWalkerContractTest|LobPageLayoutContractTest|HeapRecordContractTest|ToastOperationsTest|HeapToastIntegrationTest|ToastTIPVisibilityTest|HeapPageToastAPITest|MGABackVersioningTest\" --output-on-failure",
+      "result": "pass"
+    }
+  ],
+  "status": "done"
+}

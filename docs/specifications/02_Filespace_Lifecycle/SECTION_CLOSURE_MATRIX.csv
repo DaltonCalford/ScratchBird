@@ -1,0 +1,4 @@
+requirement_id,requirement_surface,authority_file,evidence_or_gate,status
+FS-01,tablespace_create_attach_detach_lifecycle,TABLESPACE_DDL_AND_OPERATOR_LIFECYCLE_MODEL.md,TEST_CONTRACT.md,canonicalized
+FS-02,placement_and_header_compatibility,FILESPACE_FILE_LAYOUT.md,TEST_CONTRACT.md,canonicalized
+FS-03,migration_cutover_history,TABLESPACE_DDL_AND_OPERATOR_LIFECYCLE_MODEL.md,TEST_CONTRACT.md,canonicalized

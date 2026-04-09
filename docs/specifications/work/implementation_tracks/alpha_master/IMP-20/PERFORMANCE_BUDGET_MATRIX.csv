@@ -1,0 +1,6 @@
+metric_id,workload,threshold_type,threshold_value,pass_condition
+T20-PF-001,error_mapping_lookup,p95_us,50,measured_p95<=50
+T20-PF-002,audit_append_1k_events,p95_ms,40,measured_p95<=40
+T20-PF-003,light_scan_10k_pages,p95_ms,500,measured_p95<=500
+T20-PF-004,diagnostic_scan_10k_pages,p95_ms,1800,measured_p95<=1800
+T20-PF-005,metrics_snapshot_memory,MiB,128,measured_peak<=128

@@ -1,0 +1,5 @@
+topic_family,required_gate_class,required_evidence
+cross_machine_query,planner_and_runtime,fragment decomposition traces remote exchange legality and result-stitching correctness pack
+high_performance_oltp,performance_and_contention,OLTP benchmark corpus contention latency profiles and prepared execution traces
+sharding,correctness_and_rebalance,placement migration rebalance split merge and read-routing correctness evidence
+olap_cubes,analytical_correctness_and_refresh,analytical benchmark corpus cube refresh evidence and rewrite-matching goldens

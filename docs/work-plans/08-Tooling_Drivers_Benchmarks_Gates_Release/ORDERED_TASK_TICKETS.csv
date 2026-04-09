@@ -1,0 +1,7 @@
+order,ticket,title,phase,status
+1,B1-08-001,Specification sufficiency closure,spec_closure,completed
+2,B1-08-002,Ownership and audit anchor normalization,ownership,completed
+3,B1-08-003,Tooling drivers and admin-surface closure,implementation_a,completed
+4,B1-08-004,Beta 1 optimization benchmarks gates and release closure,implementation_b,active
+5,B1-08-005,Gates benchmarks and evidence closure,gates,queued
+6,B1-08-006,Final closeout,closeout,queued

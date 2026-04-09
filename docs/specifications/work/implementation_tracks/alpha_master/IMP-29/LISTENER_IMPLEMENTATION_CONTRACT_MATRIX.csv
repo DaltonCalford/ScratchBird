@@ -1,0 +1,11 @@
+case_id,suite,required_check,expected_result,error_code
+T29-K01,K,config_schema_validates_required_keys_types_ranges_uniqueness,pass,
+T29-K02,K,restart_required_keys_reject_hot_apply,pass,
+T29-K03,K,listener_ready_requires_bound_socket_and_warm_capacity,pass,
+T29-K04,K,handoff_requires_ack_within_timeout_or_close,pass,
+T29-K05,K,parser_family_mismatch_handoff_rejected,reject,LSN-E-PARSER-FAMILY
+T29-K06,K,disconnect_worker_termination_and_replenishment,pass,
+T29-K07,K,no_open_database_preauth_denial_logged_with_deterministic_code,pass,
+T29-K08,K,required_listener_metrics_emitted_with_dimensions,pass,
+T29-K09,K,required_listener_audit_events_append_only_schema_complete,pass,
+T29-K10,K,management_ipc_control_plane_only_rejects_data_plane,pass,

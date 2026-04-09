@@ -1,0 +1,6 @@
+surface,coverage_test,compile_mode,execution_policy,result,status
+FUNCTION,SblrJitFixture.jit_functions_vm_native_equivalence,JIT_ALLOWED,PREFER_NATIVE,VM/native outputs equivalent,pass
+PROCEDURE,SblrJitFixture.jit_procedures_vm_native_equivalence,JIT_ALLOWED,PREFER_NATIVE,VM/native outputs equivalent,pass
+TRIGGER,SblrJitFixture.jit_triggers_vm_native_equivalence,JIT_ALLOWED,PREFER_NATIVE,VM/native outputs equivalent,pass
+PACKAGE_MEMBER,SblrJitFixture.jit_package_members_vm_native_equivalence,JIT_ALLOWED,PREFER_NATIVE,VM/native outputs equivalent,pass
+UNKNOWN (negative),SblrJitFixture.jit_scope_compile_explicit_rejects_non_routine_surfaces,JIT_ALLOWED,PREFER_NATIVE,Explicit compile rejected with INVALID_ARGUMENT,pass

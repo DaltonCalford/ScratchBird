@@ -1,0 +1,20 @@
+{
+  "ticket_id": "LD-008",
+  "status": "completed",
+  "started_at": "2026-02-11T23:18:10Z",
+  "completed_at": "2026-02-11T23:18:10Z",
+  "spec_inputs": [
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md",
+    "docs/specifications/13_Operator_Model_and_Coercion/CAST_MATRIX.md",
+    "docs/specifications/13_Operator_Model_and_Coercion/IMPLICIT_COERCION_RULES.md"
+  ],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-008/PARAM_BINDING_AUDIT.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-008/TYPE_COERCION_CASES.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-008/SPEC_TRACEABILITY.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-008/TEST_RESULTS.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-008/IMPLEMENTATION_NOTES.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-008/CHECKSUMS.sha256"
+  ],
+  "notes": "Parameter binding and type coercion matrices completed from canonical section-21 and section-13 sources."
+}

@@ -1,0 +1,6 @@
+metric_id,workload,threshold_type,threshold_value,pass_condition
+T24-PF-001,overlay_view_resolution,p95_ms,20,measured_p95<=20
+T24-PF-002,migration_audit_write_per_dml,p95_us,400,measured_p95<=400
+T24-PF-003,replication_status_view_refresh,p95_ms,30,measured_p95<=30
+T24-PF-004,remote_execution_audit_append,p95_us,500,measured_p95<=500
+T24-PF-005,cluster_fabric_task_state_update,p95_us,350,measured_p95<=350

@@ -9,6 +9,8 @@
  */
 #include <gtest/gtest.h>
 
+#include <nlohmann/json.hpp>
+
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/table_stats_manager.h"
@@ -945,4 +947,77 @@ TEST_F(StatisticsManagerRuntimeTest, LowConfidenceStatisticsTriggerSampledRefres
     EXPECT_GT(after_stats.sample_size, before_stats.sample_size);
     EXPECT_NE(after_stats.confidence_class, StatisticsConfidenceClass::LOW);
     EXPECT_GT(selectivity, 0.70);
+}
+
+TEST_F(StatisticsManagerRuntimeTest,
+       RefreshIndexFamilyMetricsPublishesCanonicalNamedFamilyIdentity)
+{
+    ASSERT_TRUE(createDatabase());
+    auto create_users = executeSQL(
+        "CREATE TABLE users (id INTEGER, name VARCHAR(100), email VARCHAR(100), age INTEGER)");
+    ASSERT_TRUE(create_users.success()) << create_users.error();
+    auto create_art =
+        executeSQL("CREATE INDEX idx_users_name_art ON users USING ART (name)");
+    ASSERT_TRUE(create_art.success()) << create_art.error();
+    ASSERT_TRUE(
+        executeSQL("INSERT INTO users (id, name, email, age) VALUES "
+                   "(1, 'art1', 'art1@example.com', 30)")
+            .success());
+    ASSERT_TRUE(
+        executeSQL("INSERT INTO users (id, name, email, age) VALUES "
+                   "(2, 'art2', 'art2@example.com', 31)")
+            .success());
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info{};
+    std::vector<CatalogManager::ColumnInfo> columns;
+    ASSERT_TRUE(lookupTable("users", table_info, columns));
+
+    CatalogManager::IndexInfo index_info{};
+    ASSERT_EQ(db_->catalog_manager()->getIndex(table_info.table_id,
+                                               "idx_users_name_art",
+                                               index_info,
+                                               &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(index_info.physical_family, "ART");
+    EXPECT_EQ(index_info.planner_family, "BTREE");
+
+    ASSERT_EQ(db_->statistics_manager()->refreshIndexFamilyMetrics(
+                  index_info.index_id, 0, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    IndexFamilyMetricsPacket packet;
+    ASSERT_EQ(db_->statistics_manager()->getIndexFamilyMetrics(index_info.index_id,
+                                                               packet,
+                                                               &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(packet.physical_family, "ART");
+    EXPECT_EQ(packet.planner_family, "BTREE");
+    EXPECT_EQ(packet.family_metrics_type, IndexFamilyMetricsType::ORDERED_EXACT);
+
+    const auto payload = nlohmann::json::parse(packet.family_metrics_payload,
+                                               nullptr,
+                                               false);
+    ASSERT_TRUE(payload.is_object());
+    ASSERT_TRUE(payload.contains("shared_metrics_envelope"));
+    ASSERT_TRUE(payload["shared_metrics_envelope"].is_object());
+    EXPECT_EQ(payload["shared_metrics_envelope"].value("physical_family",
+                                                       std::string()),
+              "ART");
+    EXPECT_EQ(payload["shared_metrics_envelope"].value("planner_family",
+                                                       std::string()),
+              "BTREE");
+    EXPECT_EQ(payload["shared_metrics_envelope"].value("freshness_class",
+                                                       std::string()),
+              "AGED");
+    EXPECT_EQ(payload["shared_metrics_envelope"].value("invalidation_state",
+                                                       std::string()),
+              "VALID");
+    EXPECT_EQ(packet.metrics_freshness_class,
+              IndexMetricsFreshnessClass::AGED);
+    EXPECT_EQ(packet.metrics_invalidation_state,
+              IndexMetricsInvalidationState::VALID);
 }

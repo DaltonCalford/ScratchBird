@@ -1,0 +1,6 @@
+structure,source_file,contract_status,notes
+BootstrapSystemStatePage,include/scratchbird/core/ondisk.h,pass,Canonical system-state struct added for fixed page 1.
+BootstrapCatalogRootHeader,include/scratchbird/core/ondisk.h,pass,Canonical catalog-root struct added for fixed page 2.
+BootstrapCatalogRootEntry,include/scratchbird/core/ondisk.h,pass,Catalog entry contract added and packed in bootstrap namespace.
+BootstrapFsmRootPage,include/scratchbird/core/ondisk.h,pass,Canonical FSM root struct added for fixed page 3.
+BootstrapTxMapRootPage,include/scratchbird/core/ondisk.h,pass,Canonical tx-map root struct added for fixed page 4.

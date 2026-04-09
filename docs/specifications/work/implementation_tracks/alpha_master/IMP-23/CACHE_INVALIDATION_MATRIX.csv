@@ -1,0 +1,6 @@
+case_id,suite,required_check,expected_result,error_code
+T23-E01,E,cache_key_correctness,pass,
+T23-E02,E,dependency_based_invalidation,pass,
+T23-E03,E,corruption_detection_and_eviction,pass,
+T23-E04,E,normalization_evidence_hash_in_plan_key,pass,
+T23-E05,E,resource_bundle_activation_invalidates_runtime_caches_atomically,pass,

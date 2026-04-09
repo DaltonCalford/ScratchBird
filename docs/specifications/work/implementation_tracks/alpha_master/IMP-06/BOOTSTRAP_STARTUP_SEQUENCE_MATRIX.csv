@@ -1,0 +1,11 @@
+step_id,read_order,input,validation,expected_result,error_code
+BSS-001,1,page0,magic_page_size_db_identity,continue,NONE
+BSS-002,2,page1,system_state_checksum_fields,continue,NONE
+BSS-003,3,page2,catalog_root_entries_present,continue,NONE
+BSS-004,4,page3,fsm_root_pointer_valid,continue,NONE
+BSS-005,5,page4,tx_map_root_pointer_valid,continue,NONE
+BSS-006,6,page5,reserved_page_zero_or_valid_reserved,continue,NONE
+BSS-007,1,page0_corrupt,header_validation_fail,abort_startup,INVALID_PAGE_LAYOUT
+BSS-008,3,page2_missing_required_entry,catalog_pointer_fail,abort_startup,CATALOG_BOOTSTRAP_FAILED
+BSS-009,4,page3_invalid_pointer,fsm_pointer_fail,recovery_or_abort,INVALID_PAGE_LAYOUT
+BSS-010,5,page4_invalid_pointer,tx_map_pointer_fail,recovery_or_abort,INVALID_PAGE_LAYOUT

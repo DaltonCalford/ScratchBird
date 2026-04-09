@@ -1,0 +1,6 @@
+case_id,oit_lag,dead_version_ratio,admin_request,scheduler_tick_seconds,expected_trigger,expected_result
+SGT-001,250000,10,false,60,trigger_by_oit_lag,sweep_start
+SGT-002,100000,25,false,60,trigger_by_dead_ratio,sweep_start
+SGT-003,100000,10,true,60,trigger_by_admin_request,sweep_start
+SGT-004,100000,10,false,60,no_trigger,sweep_idle
+SGT-005,threshold_met_foreground_latency_exceeded,20,false,60,trigger_with_throttle,sweep_throttled

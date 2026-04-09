@@ -1,0 +1,8 @@
+case_id,operation,preconditions,input,expected_state,expected_result,error_code
+T11-RW-001,create_lob,tx_active;base_row_visible,size=0,metadata_row_created;chunk_count=0,success,
+T11-RW-002,write_lob,tx_active;lob_exists,offset=0;bytes=chunk_size,chunk_0_written;logical_len_updated,success,
+T11-RW-003,append_lob,tx_active;lob_exists,bytes=2*chunk_size,new_chunks_appended;logical_len_incremented,success,
+T11-RW-004,truncate_lob,tx_active;lob_exists,new_length=chunk_size,trailing_chunks_marked_obsolete,success,
+T11-RW-005,read_lob,tx_active;lob_visible,offset=0;len=chunk_size,payload_returned_exact,success,
+T11-RW-006,read_lob,tx_active;lob_not_visible,offset=0;len=1,no_state_change,fail,E_TXN_VISIBILITY_VIOLATION
+T11-RW-007,write_lob,tx_active;lob_locked_by_other,offset=0;bytes=1,no_state_change,fail,E_LOCK_CONFLICT

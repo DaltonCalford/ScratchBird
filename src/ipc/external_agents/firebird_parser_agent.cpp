@@ -11447,7 +11447,7 @@ core::Status FirebirdParserAgent::handleFetchStatement(FBClientState& state,
 
     std::unordered_map<uint8_t, std::vector<FBMessageFieldDesc>> effective_message_fields =
         stmt_it->second.output_message_fields;
-    if (!output_blr.empty()) {
+    if (!stmt_it->second.output_layout_authoritative && !output_blr.empty()) {
         std::unordered_map<uint8_t, std::vector<FBMessageFieldDesc>> requested_message_fields;
         if (!decodeFirebirdMessageOnlyLayout(
                 std::vector<uint8_t>(output_blr.begin(), output_blr.end()),

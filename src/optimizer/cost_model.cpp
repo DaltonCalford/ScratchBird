@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <sstream>
 
 namespace scratchbird::optimizer
@@ -44,6 +45,28 @@ namespace scratchbird::optimizer
                 return 0;
             }
             return (value + divisor - 1) / divisor;
+        }
+
+        auto safeMultiplyU64(uint64_t value, uint64_t multiplier) -> uint64_t
+        {
+            if (value == 0 || multiplier == 0)
+            {
+                return 0;
+            }
+            if (value > std::numeric_limits<uint64_t>::max() / multiplier)
+            {
+                return std::numeric_limits<uint64_t>::max();
+            }
+            return value * multiplier;
+        }
+
+        auto safeAddU64(uint64_t lhs, uint64_t rhs) -> uint64_t
+        {
+            if (lhs > std::numeric_limits<uint64_t>::max() - rhs)
+            {
+                return std::numeric_limits<uint64_t>::max();
+            }
+            return lhs + rhs;
         }
 
         auto estimateSpill(const CostParameters &params,
@@ -3126,6 +3149,10 @@ namespace scratchbird::optimizer
             1.0,
             static_cast<double>(workers_planned) +
                 (leader_participates ? 1.0 : 0.0));
+        const uint64_t participant_count = std::max<uint64_t>(
+            1,
+            static_cast<uint64_t>(workers_planned) +
+                (leader_participates ? 1ULL : 0ULL));
         const double parallelized_startup_cost =
             input_cost.startup_cost / participants;
         const double parallelized_run_cost = input_cost.run_cost / participants;
@@ -3160,6 +3187,14 @@ namespace scratchbird::optimizer
                           static_cast<double>(rows),
                           tuple_transfer_cost,
                           "cost");
+
+        cost.memory_bytes =
+            safeMultiplyU64(input_cost.memory_bytes, participant_count);
+        cost.memory_budget_bytes =
+            safeMultiplyU64(input_cost.memory_budget_bytes, participant_count);
+        cost.spill_expected = input_cost.spill_expected;
+        cost.spill_passes = input_cost.spill_passes;
+        cost.spill_bytes = input_cost.spill_bytes;
 
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = rows;
@@ -3207,6 +3242,12 @@ namespace scratchbird::optimizer
                           merge_comparisons,
                           merge_cost,
                           "cost");
+        const uint64_t coordinator_merge_budget =
+            safeBudgetBytes(params_.work_mem_bytes);
+        cost.memory_bytes =
+            safeAddU64(cost.memory_bytes, coordinator_merge_budget);
+        cost.memory_budget_bytes =
+            safeAddU64(cost.memory_budget_bytes, coordinator_merge_budget);
         cost.run_cost += merge_cost;
         cost.total_cost = cost.startup_cost + cost.run_cost;
         return cost;

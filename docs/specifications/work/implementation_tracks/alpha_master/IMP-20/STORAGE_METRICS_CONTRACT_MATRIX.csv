@@ -1,0 +1,6 @@
+case_id,metric_surface,metric_key,refresh_semantics,expected_result
+T20-SM-001,table_stats,row_count,txn_consistent_snapshot,stable_count
+T20-SM-002,index_stats,bloat_ratio,periodic_sampler,deterministic_ratio_bounds
+T20-SM-003,filespace_stats,free_bytes,allocator_checkpoint,deterministic_free_space
+T20-SM-004,query_stats,plan_latency_histogram,per_plan_uuid_window,deterministic_histogram_bins
+T20-SM-005,diagnostic_status,needs_repair_count,on_scan_commit,deterministic_count

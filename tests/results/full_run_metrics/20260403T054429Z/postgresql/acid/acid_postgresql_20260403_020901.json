@@ -1,0 +1,215 @@
+{
+  "metadata": {
+    "engine": "postgresql",
+    "host": "localhost",
+    "port": 5433,
+    "database": "benchmark",
+    "timestamp": "20260403_020901"
+  },
+  "results": {
+    "atomicity": [
+      {
+        "test_name": "atomic_commit_success",
+        "description": "All statements in transaction commit together",
+        "status": "passed",
+        "duration_ms": 11.44552230834961,
+        "expected": 3,
+        "actual": 3,
+        "error_message": ""
+      },
+      {
+        "test_name": "atomic_rollback_on_error",
+        "description": "Transaction rolls back on error - no partial commits",
+        "status": "passed",
+        "duration_ms": 5.055427551269531,
+        "expected": 0,
+        "actual": 0,
+        "error_message": "duplicate key value violates unique constraint \"atomic_test_pkey\"\nDETAIL:  Key (id)=(1) already exists.\n"
+      },
+      {
+        "test_name": "atomic_explicit_rollback",
+        "description": "Explicit ROLLBACK undoes all changes",
+        "status": "passed",
+        "duration_ms": 8.660554885864258,
+        "expected": 0,
+        "actual": 0,
+        "error_message": ""
+      },
+      {
+        "test_name": "atomic_multi_table_commit",
+        "description": "Multi-table transaction is atomic across all tables",
+        "status": "passed",
+        "duration_ms": 15.46478271484375,
+        "expected": 2000.0,
+        "actual": 2000.0,
+        "error_message": ""
+      },
+      {
+        "test_name": "atomic_savepoint_rollback",
+        "description": "ROLLBACK TO SAVEPOINT partially undoes transaction",
+        "status": "passed",
+        "duration_ms": 10.619163513183594,
+        "expected": 2,
+        "actual": 2,
+        "error_message": ""
+      }
+    ],
+    "consistency": [
+      {
+        "test_name": "consistency_pk_violation",
+        "description": "Primary key constraint is enforced",
+        "status": "passed",
+        "duration_ms": 8.651971817016602,
+        "expected": 1,
+        "actual": 1,
+        "error_message": "duplicate key value violates unique constraint \"consistency_test_pkey\"\nDETAIL:  Key (id)=(1) already exists.\n"
+      },
+      {
+        "test_name": "consistency_fk_violation",
+        "description": "Foreign key constraint prevents orphaned records",
+        "status": "passed",
+        "duration_ms": 11.970281600952148,
+        "expected": 0,
+        "actual": 0,
+        "error_message": "insert or update on table \"child\" violates foreign key constraint \"child_parent_id_fkey\"\nDETAIL:  Key (parent_id)=(999) is not present in table \"parent\".\n"
+      },
+      {
+        "test_name": "consistency_check_constraint",
+        "description": "CHECK constraints are enforced",
+        "status": "passed",
+        "duration_ms": 8.130788803100586,
+        "expected": 0,
+        "actual": 0,
+        "error_message": "new row for relation \"check_test\" violates check constraint \"check_test_age_check\"\nDETAIL:  Failing row contains (1, 200, invalid).\n"
+      },
+      {
+        "test_name": "consistency_unique_constraint",
+        "description": "UNIQUE constraints prevent duplicates",
+        "status": "passed",
+        "duration_ms": 11.299371719360352,
+        "expected": 1,
+        "actual": 1,
+        "error_message": "duplicate key value violates unique constraint \"unique_test_email_key\"\nDETAIL:  Key (email)=(test@example.com) already exists.\n"
+      },
+      {
+        "test_name": "consistency_not_null",
+        "description": "NOT NULL constraints prevent NULL insertion",
+        "status": "passed",
+        "duration_ms": 13.47804069519043,
+        "expected": 0,
+        "actual": 0,
+        "error_message": "null value in column \"required_field\" of relation \"notnull_test\" violates not-null constraint\nDETAIL:  Failing row contains (1, null).\n"
+      },
+      {
+        "test_name": "consistency_invariant_maintenance",
+        "description": "Database invariants are maintained across operations",
+        "status": "passed",
+        "duration_ms": 9.252071380615234,
+        "expected": 0,
+        "actual": 0,
+        "error_message": "new row for relation \"ledger\" violates check constraint \"ledger_check\"\nDETAIL:  Failing row contains (1, 1, -100.00, 0.00).\n"
+      }
+    ],
+    "isolation": [
+      {
+        "test_name": "isolation_dirty_read_prevention",
+        "description": "Uncommitted changes are not visible to other transactions",
+        "status": "skipped",
+        "duration_ms": 0.0,
+        "expected": null,
+        "actual": null,
+        "error_message": "Requires concurrent execution mode"
+      },
+      {
+        "test_name": "isolation_non_repeatable_read",
+        "description": "Repeatable Read prevents non-repeatable reads",
+        "status": "skipped",
+        "duration_ms": 0.0,
+        "expected": null,
+        "actual": null,
+        "error_message": "Requires concurrent execution mode"
+      },
+      {
+        "test_name": "isolation_phantom_read",
+        "description": "Serializable isolation prevents phantom reads",
+        "status": "skipped",
+        "duration_ms": 0.0,
+        "expected": null,
+        "actual": null,
+        "error_message": "Requires concurrent execution mode"
+      },
+      {
+        "test_name": "isolation_lost_update",
+        "description": "Concurrent updates don't lose data",
+        "status": "skipped",
+        "duration_ms": 0.0,
+        "expected": null,
+        "actual": null,
+        "error_message": "Requires concurrent execution mode"
+      },
+      {
+        "test_name": "isolation_read_committed_default",
+        "description": "Default isolation level matches the engine baseline",
+        "status": "passed",
+        "duration_ms": 3.305673599243164,
+        "expected": "read committed",
+        "actual": "read committed",
+        "error_message": ""
+      }
+    ],
+    "durability": [
+      {
+        "test_name": "durability_commit_persistence",
+        "description": "Committed data persists after transaction ends",
+        "status": "passed",
+        "duration_ms": 9.050130844116211,
+        "expected": "committed_data",
+        "actual": "committed_data",
+        "error_message": ""
+      },
+      {
+        "test_name": "durability_rollback_not_persisted",
+        "description": "Rolled back data does not persist",
+        "status": "passed",
+        "duration_ms": 3.3257007598876953,
+        "expected": 0,
+        "actual": 0,
+        "error_message": ""
+      },
+      {
+        "test_name": "durability_visibility_after_commit",
+        "description": "New transaction sees committed data immediately",
+        "status": "passed",
+        "duration_ms": 9.13691520690918,
+        "expected": 42,
+        "actual": 42,
+        "error_message": ""
+      }
+    ]
+  },
+  "summary": {
+    "total": 19,
+    "passed": 15,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 4,
+    "by_category": {
+      "atomicity": {
+        "total": 5,
+        "passed": 5
+      },
+      "consistency": {
+        "total": 6,
+        "passed": 6
+      },
+      "isolation": {
+        "total": 5,
+        "passed": 1
+      },
+      "durability": {
+        "total": 3,
+        "passed": 3
+      }
+    }
+  }
+}

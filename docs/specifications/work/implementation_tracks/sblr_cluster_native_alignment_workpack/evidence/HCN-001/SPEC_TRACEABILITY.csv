@@ -1,0 +1,6 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+SB-CLUSTER-SWS-MGA-01.md,HCN-001-LOCK,Spec input lock established,INPUT_SPEC_LOCK.md,locked,Input hash captured
+SB-CLUSTER-IMPLEMENTATION-WORKPLAN .md,HCN-001-HASH,Spec checksums captured,SPEC_SHA256SUMS.txt,locked,Input hash captured
+SB-CLUSTER-THREAT-MODEL-AND-FAILURE-ANALYSIS.md,HCN-001-PROOF,Proof anchors frozen,PROOF_ANCHOR_LEDGER.csv,locked,Anchor set frozen
+SB-OBS-METRICS-MONITORING-01.md,HCN-001-HASH,Spec checksums captured,SPEC_SHA256SUMS.txt,locked,Input hash captured
+23/NATIVE_COMPILATION_AND_ARTIFACT_LIFECYCLE.md,HCN-001-HASH,Spec checksums captured,SPEC_SHA256SUMS.txt,locked,Input hash captured

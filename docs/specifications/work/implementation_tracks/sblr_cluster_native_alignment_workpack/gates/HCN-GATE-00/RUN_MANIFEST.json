@@ -1,0 +1,16 @@
+{
+  "gate_id": "HCN-GATE-00",
+  "phase": "PH0",
+  "status": "pass",
+  "run_started_utc": "2026-02-24T03:25:00Z",
+  "run_completed_utc": "2026-02-24T03:40:00Z",
+  "owner": "codex",
+  "blocking_tickets": ["HCN-001", "HCN-002", "HCN-003"],
+  "artifacts": [
+    "INPUT_SPEC_LOCK.md",
+    "GAP_TO_TICKET_TRACE.csv",
+    "LICENSE_NOTICE_MATRIX.csv",
+    "RESULT_SUMMARY.md"
+  ],
+  "notes": "PH0 baseline gate passed; release-level legal signoff remains tracked for HCN-062."
+}

@@ -1,0 +1,11 @@
+case_id,input_page_size_kb,allowed,classification,default_recommendation,expected_result,error_code
+PSP-001,8,true,small,latency_sensitive_oltp,accept,NONE
+PSP-002,16,true,default,mixed_workload_default,accept,NONE
+PSP-003,32,true,medium,mixed_analytic_oltp,accept,NONE
+PSP-004,64,true,large,analytic_columnar,accept,NONE
+PSP-005,128,true,large,analytic_columnar_max,accept,NONE
+PSP-006,4,false,unsupported,n/a,reject,INVALID_PAGE_SIZE
+PSP-007,12,false,unsupported,n/a,reject,INVALID_PAGE_SIZE
+PSP-008,24,false,unsupported,n/a,reject,INVALID_PAGE_SIZE
+PSP-009,256,false,unsupported,n/a,reject,INVALID_PAGE_SIZE
+PSP-010,null,false,missing,n/a,reject,INVALID_PAGE_SIZE

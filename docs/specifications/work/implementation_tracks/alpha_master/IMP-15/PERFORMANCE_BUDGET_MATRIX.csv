@@ -1,0 +1,6 @@
+metric_id,workload,threshold_type,threshold_value,pass_condition
+T15-PF-001,jsonb_parse_100k_docs,throughput_docs_per_sec,60000,measured_rate>=60000
+T15-PF-002,array_slice_hot_path,p95_us,90,measured_p95<=90
+T15-PF-003,geometry_distance_hot_path,p95_us,120,measured_p95<=120
+T15-PF-004,bson_roundtrip_50k_docs,p95_ms,180,measured_p95<=180
+T15-PF-005,complex_fuzz_validation_memory,MiB,320,measured_peak<=320

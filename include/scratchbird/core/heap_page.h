@@ -384,7 +384,7 @@ namespace scratchbird::core
 
         // Constructor with TOAST support
         HeapPage(uint8_t *page_data, uint32_t page_size, ToastManager *toast_mgr, Database *db,
-                 const ID &table_id);
+                 const ID &table_id, uint16_t page_tablespace_id = PRIMARY_TABLESPACE_ID);
 
         // Initialize a new heap page
         auto initialize(uint32_t page_id, ErrorContext *ctx = nullptr) -> Status;
@@ -568,6 +568,7 @@ namespace scratchbird::core
         ToastManager *toast_mgr_; // Optional TOAST manager
         Database *db_;            // Database for TOAST operations
         ID table_id_;             // Table ID for TOAST operations
+        uint16_t page_tablespace_id_ = PRIMARY_TABLESPACE_ID;
 
         // Buffer for storing cross-page back version data
         // When findVisibleVersion encounters a visible version on another page,

@@ -1,0 +1,7 @@
+order,ticket,title,phase,status
+1,B1-03-001,Specification sufficiency closure,spec_closure,completed
+2,B1-03-002,Ownership and audit anchor normalization,ownership,completed
+3,B1-03-003,Type system function context and dialect closure,implementation_a,completed
+4,B1-03-004,SBLR v3 parser isolation and execution closure,implementation_b,completed
+5,B1-03-005,Gates benchmarks and evidence closure,gates,completed
+6,B1-03-006,Final closeout,closeout,completed

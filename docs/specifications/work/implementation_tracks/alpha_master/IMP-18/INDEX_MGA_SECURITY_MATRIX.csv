@@ -1,0 +1,6 @@
+case_id,area,required_check,expected_result,error_code
+T18-MS-001,MGA,uncommitted_inserts_not_visible_cross_txn,pass,
+T18-MS-002,MGA,deleted_versions_retained_until_oit_then_gc_removed,pass,
+T18-MS-003,GC,index_dead_entry_removal_and_invalidation_on_corruption,pass,
+T18-MS-004,SECURITY,row_level_policy_after_index_scan_and_visibility,pass,
+T18-MS-005,SECURITY,index_only_scan_disabled_when_policy_needs_nonindexed_columns,pass,

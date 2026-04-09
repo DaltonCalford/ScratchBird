@@ -1,0 +1,4 @@
+case_id,index_family,required_check,expected_result,error_code
+T18-TG-001,MINHASH_LSH,jaccard_candidate_generation_correctness,pass,
+T18-TG-002,SPARSE_INVERTED_SPARSE_WAND,dot_product_and_wand_equals_full_scan,pass,
+T18-TG-003,TRIE_INVERTED_NGRAM,prefix_substring_tokenization_correctness,pass,

@@ -68,10 +68,13 @@
 #include <sstream>
 #include <climits>
 #include <limits>
+#include <optional>
 #include <unordered_set>
 #include <cstdlib>
 #if defined(_WIN32)
     #include <io.h>
+#else
+    #include <unistd.h>
 #endif
 
 namespace scratchbird::core
@@ -93,6 +96,234 @@ namespace scratchbird::core
             value.erase(value.begin(), std::find_if_not(value.begin(), value.end(), is_space));
             value.erase(std::find_if_not(value.rbegin(), value.rend(), is_space).base(), value.end());
             return value;
+        }
+
+        auto parsePositiveU64Text(const std::string& raw) -> std::optional<uint64_t>
+        {
+            const std::string text = trimAscii(raw);
+            if (text.empty() || text == "max" || text == "MAX")
+            {
+                return std::nullopt;
+            }
+
+            char* end = nullptr;
+            errno = 0;
+            unsigned long long value = std::strtoull(text.c_str(), &end, 10);
+            if (errno != 0 || end == nullptr || *end != '\0' || value == 0)
+            {
+                return std::nullopt;
+            }
+            return static_cast<uint64_t>(value);
+        }
+
+        auto readLimitFileU64(const std::string& path) -> std::optional<uint64_t>
+        {
+            std::ifstream in(path);
+            if (!in.is_open())
+            {
+                return std::nullopt;
+            }
+
+            std::string text;
+            std::getline(in, text);
+            return parsePositiveU64Text(text);
+        }
+
+        auto detectHostMemoryBytes() -> uint64_t
+        {
+#if defined(_WIN32)
+            return 0;
+#else
+            const long page_count = ::sysconf(_SC_PHYS_PAGES);
+            const long page_size = ::sysconf(_SC_PAGESIZE);
+            if (page_count <= 0 || page_size <= 0)
+            {
+                return 0;
+            }
+            return static_cast<uint64_t>(page_count) * static_cast<uint64_t>(page_size);
+#endif
+        }
+
+        auto detectAuthoritativeMemoryCeilingBytes(bool* environment_bounded) -> uint64_t
+        {
+            if (environment_bounded != nullptr)
+            {
+                *environment_bounded = false;
+            }
+
+            if (const char* forced_limit = std::getenv("SCRATCHBIRD_TEST_CGROUP_MEMORY_LIMIT_BYTES");
+                forced_limit != nullptr && forced_limit[0] != '\0')
+            {
+                auto parsed = parsePositiveU64Text(forced_limit);
+                if (parsed.has_value())
+                {
+                    if (environment_bounded != nullptr)
+                    {
+                        *environment_bounded = true;
+                    }
+                    return parsed.value();
+                }
+            }
+
+            std::optional<uint64_t> container_limit;
+#if !defined(_WIN32)
+            container_limit = readLimitFileU64("/sys/fs/cgroup/memory.max");
+            if (!container_limit.has_value())
+            {
+                container_limit = readLimitFileU64("/sys/fs/cgroup/memory/memory.limit_in_bytes");
+            }
+#endif
+
+            const uint64_t host_limit = detectHostMemoryBytes();
+            if (container_limit.has_value())
+            {
+                if (environment_bounded != nullptr)
+                {
+                    *environment_bounded = true;
+                }
+                if (host_limit != 0)
+                {
+                    return std::min<uint64_t>(host_limit, container_limit.value());
+                }
+                return container_limit.value();
+            }
+
+            return host_limit;
+        }
+
+        auto deriveImplicitBufferPoolBytes(uint64_t database_page_size,
+                                           uint64_t detected_memory_ceiling_bytes) -> uint64_t
+        {
+            constexpr uint64_t kMiB = 1024ULL * 1024ULL;
+            constexpr uint64_t kImplicitMinBytes = 64ULL * kMiB;
+            constexpr uint64_t kImplicitMaxBytes = 256ULL * kMiB;
+            constexpr uint64_t kImplicitFractionDivisor = 8ULL;
+
+            if (database_page_size == 0)
+            {
+                return 0;
+            }
+
+            if (detected_memory_ceiling_bytes == 0)
+            {
+                return std::max<uint64_t>(database_page_size, kImplicitMaxBytes);
+            }
+
+            if (detected_memory_ceiling_bytes < database_page_size)
+            {
+                return 0;
+            }
+
+            const uint64_t bounded_floor =
+                std::min<uint64_t>(detected_memory_ceiling_bytes, kImplicitMinBytes);
+            const uint64_t bounded_ceiling =
+                std::min<uint64_t>(detected_memory_ceiling_bytes, kImplicitMaxBytes);
+
+            uint64_t derived_bytes =
+                detected_memory_ceiling_bytes / kImplicitFractionDivisor;
+            derived_bytes = std::max<uint64_t>(derived_bytes, bounded_floor);
+            derived_bytes = std::min<uint64_t>(derived_bytes, bounded_ceiling);
+
+            if (derived_bytes < database_page_size)
+            {
+                return database_page_size;
+            }
+
+            return derived_bytes;
+        }
+
+        bool splitCatalogConfigKey(const std::string& full_key,
+                                   std::string& section_out,
+                                   std::string& key_out)
+        {
+            const size_t dot = full_key.find('.');
+            if (dot == std::string::npos || dot == 0 || dot + 1 >= full_key.size())
+            {
+                section_out.clear();
+                key_out.clear();
+                return false;
+            }
+            section_out = full_key.substr(0, dot);
+            key_out = full_key.substr(dot + 1);
+            return !section_out.empty() && !key_out.empty();
+        }
+
+        std::string bootstrapResolvedText(const Config& config,
+                                          const std::string& section,
+                                          const std::string& key,
+                                          const std::string& fallback)
+        {
+            auto resolved = config.getBootstrapResolvedValue(section, key);
+            if (!resolved.has_value())
+            {
+                return fallback;
+            }
+            return resolved->value;
+        }
+
+        bool parseBootstrapBool(const Config& config,
+                                const std::string& section,
+                                const std::string& key,
+                                bool fallback)
+        {
+            const std::string raw = toLowerAscii(trimAscii(
+                bootstrapResolvedText(config, section, key, fallback ? "true" : "false")));
+            if (raw == "1" || raw == "true" || raw == "on" || raw == "yes")
+            {
+                return true;
+            }
+            if (raw == "0" || raw == "false" || raw == "off" || raw == "no")
+            {
+                return false;
+            }
+            return fallback;
+        }
+
+        uint16_t parseBootstrapPort(const Config& config,
+                                    const std::string& section,
+                                    const std::string& key,
+                                    uint16_t fallback)
+        {
+            const std::string raw = trimAscii(
+                bootstrapResolvedText(config, section, key, std::to_string(fallback)));
+            if (raw.empty())
+            {
+                return fallback;
+            }
+            try
+            {
+                unsigned long parsed = std::stoul(raw);
+                if (parsed > std::numeric_limits<uint16_t>::max())
+                {
+                    return fallback;
+                }
+                return static_cast<uint16_t>(parsed);
+            }
+            catch (...)
+            {
+                return fallback;
+            }
+        }
+
+        uint64_t parseBootstrapU64(const Config& config,
+                                   const std::string& section,
+                                   const std::string& key,
+                                   uint64_t fallback)
+        {
+            const std::string raw = trimAscii(
+                bootstrapResolvedText(config, section, key, std::to_string(fallback)));
+            if (raw.empty())
+            {
+                return fallback;
+            }
+            try
+            {
+                return std::stoull(raw);
+            }
+            catch (...)
+            {
+                return fallback;
+            }
         }
 
         auto isZeroUuidLocal(const ID& id) -> bool
@@ -976,6 +1207,18 @@ namespace scratchbird::core
                 return (errno == ENOSPC) ? Status::DISK_FULL : Status::IO_ERROR;
             }
 
+            if (BufferPool *buffer_pool = db->buffer_pool(); buffer_pool != nullptr)
+            {
+                void *page_buffer = nullptr;
+                ErrorContext refresh_ctx;
+                if (buffer_pool->pinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, &page_buffer, &refresh_ctx) ==
+                    Status::OK)
+                {
+                    std::memcpy(page_buffer, buffer.data(), db->page_size());
+                    buffer_pool->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, &refresh_ctx);
+                }
+            }
+
             if (sync_after_write && platform::syncFd(db->fd()) != 0)
             {
                 const int sync_errno = errno;
@@ -1449,10 +1692,13 @@ namespace scratchbird::core
             }
 
             uint64_t pool_pages = 0;
+            uint64_t configured_request_bytes = 0;
+            bool pool_size_explicit = false;
             if (const auto pool_size_mb_value =
                     lookupConfigString(settings, {{"storage.buffer", "pool_size_mb"}});
                 pool_size_mb_value.has_value())
             {
+                pool_size_explicit = true;
                 uint64_t pool_size_mb = 0;
                 if (!parseUnsignedIntegerStrict(pool_size_mb_value.value(), &pool_size_mb) ||
                     pool_size_mb == 0)
@@ -1466,26 +1712,85 @@ namespace scratchbird::core
                 const uint64_t pool_bytes = pool_size_mb * 1024ULL * 1024ULL;
                 pool_pages =
                     std::max<uint64_t>(1, (pool_bytes + database_page_size - 1) / database_page_size);
+                configured_request_bytes =
+                    pool_pages * static_cast<uint64_t>(database_page_size);
             }
             else
             {
-                const std::string pool_size_value = settings.getString(
-                    "memory", "buffer_pool_size", std::to_string(config.pool_size));
-                if (!parseUnsignedIntegerStrict(pool_size_value, &pool_pages))
+                pool_size_explicit = settings.hasKey("memory", "buffer_pool_size");
+                if (pool_size_explicit)
                 {
-                    uint64_t pool_bytes = 0;
-                    if (!parseBinarySizeBytes(pool_size_value, &pool_bytes))
+                    const std::string pool_size_value = settings.getString(
+                        "memory", "buffer_pool_size", std::to_string(config.pool_size));
+                    if (!parseUnsignedIntegerStrict(pool_size_value, &pool_pages))
                     {
-                        const std::string message =
-                            "Invalid buffer_pool_size '" + pool_size_value +
-                            "': use a page count or a size suffix such as 128MB";
-                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, message.c_str());
-                        return Status::INVALID_ARGUMENT;
+                        uint64_t pool_bytes = 0;
+                        if (!parseBinarySizeBytes(pool_size_value, &pool_bytes))
+                        {
+                            const std::string message =
+                                "Invalid buffer_pool_size '" + pool_size_value +
+                                "': use a page count or a size suffix such as 128MB";
+                            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, message.c_str());
+                            return Status::INVALID_ARGUMENT;
+                        }
+                        pool_pages = std::max<uint64_t>(
+                            1, (pool_bytes + database_page_size - 1) / database_page_size);
                     }
-                    pool_pages = std::max<uint64_t>(
-                        1, (pool_bytes + database_page_size - 1) / database_page_size);
+                    configured_request_bytes =
+                        pool_pages * static_cast<uint64_t>(database_page_size);
                 }
             }
+
+            config.detected_memory_ceiling_bytes =
+                detectAuthoritativeMemoryCeilingBytes(&config.memory_ceiling_is_environment_bounded);
+            config.memory_budget_clamped = false;
+
+            if (!pool_size_explicit)
+            {
+                const uint64_t derived_default_bytes = deriveImplicitBufferPoolBytes(
+                    static_cast<uint64_t>(database_page_size),
+                    config.detected_memory_ceiling_bytes);
+                if (derived_default_bytes == 0)
+                {
+                    SET_ERROR_CONTEXT(
+                        ctx,
+                        Status::INVALID_ARGUMENT,
+                        "Detected memory ceiling is smaller than one database page");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                pool_pages = std::max<uint64_t>(
+                    1,
+                    derived_default_bytes / static_cast<uint64_t>(database_page_size));
+                configured_request_bytes =
+                    pool_pages * static_cast<uint64_t>(database_page_size);
+            }
+
+            config.configured_memory_request_bytes = configured_request_bytes;
+
+            if (pool_size_explicit && config.detected_memory_ceiling_bytes > 0)
+            {
+                uint64_t effective_pages = pool_pages;
+                if (config.configured_memory_request_bytes > config.detected_memory_ceiling_bytes)
+                {
+                    if (config.detected_memory_ceiling_bytes <
+                        static_cast<uint64_t>(database_page_size))
+                    {
+                        SET_ERROR_CONTEXT(
+                            ctx,
+                            Status::INVALID_ARGUMENT,
+                            "Detected memory ceiling is smaller than one database page");
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    effective_pages = config.detected_memory_ceiling_bytes /
+                                      static_cast<uint64_t>(database_page_size);
+                    config.memory_budget_clamped = true;
+                }
+
+                pool_pages = std::max<uint64_t>(1, effective_pages);
+            }
+
             if (pool_pages == 0 || pool_pages > std::numeric_limits<uint32_t>::max())
             {
                 const std::string message =
@@ -1496,7 +1801,19 @@ namespace scratchbird::core
 
             config.pool_size = static_cast<uint32_t>(pool_pages);
             config.page_size = database_page_size;
+            config.effective_memory_budget_bytes =
+                static_cast<uint64_t>(config.pool_size) * static_cast<uint64_t>(config.page_size);
             config.recomputeDomainFrames();
+
+            LOG_INFO(STORAGE,
+                     "Buffer pool config resolved (source=%s, pages=%u, page_size=%u, requested_bytes=%llu, effective_bytes=%llu, detected_ceiling_bytes=%llu, clamped=%s)",
+                     pool_size_explicit ? "explicit" : "implicit",
+                     config.pool_size,
+                     config.page_size,
+                     static_cast<unsigned long long>(config.configured_memory_request_bytes),
+                     static_cast<unsigned long long>(config.effective_memory_budget_bytes),
+                     static_cast<unsigned long long>(config.detected_memory_ceiling_bytes),
+                     config.memory_budget_clamped ? "true" : "false");
 
             if (settings.hasKey("memory", "buffer_pool_page_size"))
             {
@@ -3242,6 +3559,432 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    Status Database::bootstrapConfigurationCatalog(ErrorContext* ctx)
+    {
+        if (catalog_manager_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        const uint64_t generation = std::max<uint64_t>(defaultTimeSource().nowMicros(), 1);
+        Status status = seedConfigurationCatalogKeys(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = seedBootstrapConfigurationValues(generation, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = seedBootstrapListenerTopology(generation, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = loadCatalogManagedConfiguration(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        return applyCatalogManagedConfigurationHooks(ctx);
+    }
+
+    Status Database::seedConfigurationCatalogKeys(ErrorContext* ctx)
+    {
+        if (catalog_manager_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        for (const auto& definition : config::catalogKeyDefinitions())
+        {
+            CatalogManager::ConfigKeyCatalogInfo info{};
+            info.key_id = definition.key_id;
+            info.key_name = definition.key_name;
+            info.value_type = definition.value_type;
+            info.scope = definition.scope;
+            info.default_value = definition.default_value != nullptr
+                ? std::string(definition.default_value)
+                : std::string();
+            info.min_value = definition.min_value != nullptr
+                ? std::string(definition.min_value)
+                : std::string();
+            info.max_value = definition.max_value != nullptr
+                ? std::string(definition.max_value)
+                : std::string();
+            info.allowed_values = definition.allowed_values != nullptr
+                ? std::string(definition.allowed_values)
+                : std::string();
+            info.is_restart_required = definition.is_restart_required;
+            info.is_mutable = definition.is_mutable;
+            info.is_bootstrap_only = definition.is_bootstrap_only;
+            info.is_cluster_managed = definition.is_cluster_managed;
+            info.hot_apply_class = definition.hot_apply_class;
+            info.is_sensitive = definition.is_sensitive;
+            info.description = definition.description != nullptr
+                ? std::string(definition.description)
+                : std::string();
+
+            Status status = catalog_manager_->upsertConfigKeyCatalogEntry(info, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+        return Status::OK;
+    }
+
+    Status Database::seedBootstrapConfigurationValues(uint64_t generation, ErrorContext* ctx)
+    {
+        if (catalog_manager_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        Config& cfg = Config::getInstance();
+        const ID system_user_id = catalog_manager_->getSystemUserId(ctx);
+        for (const auto& definition : config::catalogKeyDefinitions())
+        {
+            std::string section;
+            std::string key;
+            if (!splitCatalogConfigKey(definition.key_name, section, key))
+            {
+                continue;
+            }
+
+            std::string raw_value;
+            if (std::string(definition.key_name) == "engine.database_uuid")
+            {
+                raw_value = db_uuid_.toString();
+            }
+            else if (std::string(definition.key_name) == "engine.database_root")
+            {
+                std::filesystem::path db_path(path_);
+                std::string default_root = db_path.has_parent_path()
+                    ? db_path.parent_path().string()
+                    : path_;
+                raw_value = bootstrapResolvedText(cfg, section, key, default_root);
+            }
+            else
+            {
+                const std::string fallback =
+                    definition.default_value != nullptr ? std::string(definition.default_value) : std::string();
+                raw_value = bootstrapResolvedText(cfg, section, key, fallback);
+            }
+
+            std::string normalized_value;
+            std::string error_message;
+            if (!config::validateCatalogValue(definition, raw_value, normalized_value, error_message))
+            {
+                if (ctx != nullptr)
+                {
+                    const std::string message =
+                        "Invalid bootstrap value for " + std::string(definition.key_name) +
+                        ": " + error_message;
+                    ctx->set(Status::INVALID_ARGUMENT,
+                             message.c_str(),
+                             __FILE__,
+                             __LINE__,
+                             __func__);
+                }
+                return Status::INVALID_ARGUMENT;
+            }
+
+            CatalogManager::ConfigValueCatalogInfo existing{};
+            ErrorContext lookup_ctx;
+            Status lookup_status =
+                catalog_manager_->getConfigValueCatalogEntry(definition.key_id, nullptr, existing, &lookup_ctx);
+            if (lookup_status == Status::OK)
+            {
+                continue;
+            }
+            if (lookup_status != Status::NOT_FOUND)
+            {
+                if (ctx != nullptr && !lookup_ctx.message.empty())
+                {
+                    ctx->set(lookup_status,
+                             lookup_ctx.message.c_str(),
+                             __FILE__,
+                             __LINE__,
+                             __func__);
+                }
+                return lookup_status;
+            }
+
+            CatalogManager::ConfigValueCatalogInfo value_info{};
+            value_info.key_id = definition.key_id;
+            value_info.value_text = normalized_value;
+            value_info.source = CatalogManager::ConfigValueSource::BOOTSTRAP;
+            value_info.config_generation = generation;
+            value_info.effective_txid = 0;
+            value_info.pending_restart = definition.is_restart_required;
+            value_info.updated_by = system_user_id;
+            value_info.updated_at = generation;
+            Status status = catalog_manager_->upsertConfigValueCatalogEntry(value_info, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        return Status::OK;
+    }
+
+    Status Database::seedBootstrapListenerTopology(uint64_t generation, ErrorContext* ctx)
+    {
+        if (catalog_manager_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        std::vector<CatalogManager::ListenerProfileCatalogInfo> existing_profiles;
+        Status status = catalog_manager_->listListenerProfileCatalogEntries(existing_profiles, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (!existing_profiles.empty())
+        {
+            return Status::OK;
+        }
+
+        Config& cfg = Config::getInstance();
+        CatalogManager::ParserPoolPolicyCatalogInfo parser_policy{};
+        parser_policy.parser_pool_policy_id = generateUuidV7();
+        parser_policy.policy_name = "default";
+        parser_policy.parser_library_family = "scratchbird_sql";
+        parser_policy.min_workers = static_cast<uint16_t>(std::min<uint16_t>(
+            parseBootstrapPort(cfg, "parser", "pool.min", 1), 64));
+        parser_policy.preferred_workers = static_cast<uint16_t>(std::min<uint16_t>(
+            parseBootstrapPort(cfg, "parser", "pool.min", parser_policy.min_workers), 64));
+        parser_policy.max_workers = static_cast<uint16_t>(std::min<uint16_t>(
+            parseBootstrapPort(cfg, "parser", "pool.max", std::max<uint16_t>(parser_policy.preferred_workers, 4)),
+            128));
+        parser_policy.queue_max = parseBootstrapPort(cfg, "parser", "pool.queue_max", 128);
+        parser_policy.queue_timeout_ms =
+            parseBootstrapU64(cfg, "parser", "pool.queue_timeout_ms", 5000);
+        parser_policy.idle_timeout_ms =
+            parseBootstrapU64(cfg, "parser", "pool.idle_timeout_ms", 30000);
+        parser_policy.spawn_backoff_ms =
+            parseBootstrapU64(cfg, "parser", "pool.spawn_backoff_ms", 1000);
+        parser_policy.health_interval_ms =
+            parseBootstrapU64(cfg, "parser", "pool.health_interval_ms", 10000);
+        parser_policy.missed_heartbeat_threshold =
+            parseBootstrapPort(cfg, "parser", "pool.missed_heartbeat_threshold", 3);
+        parser_policy.warm_replenish_timeout_ms =
+            parseBootstrapU64(cfg, "parser", "pool.warm_replenish_timeout_ms", 15000);
+        parser_policy.memory_guardrail_bytes = 0;
+        parser_policy.workload_guardrail_class = "default";
+        parser_policy.configuration_generation = generation;
+        status = catalog_manager_->upsertParserPoolPolicyCatalogEntry(parser_policy, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        struct ListenerSeed
+        {
+            const char* profile_name;
+            const char* enabled_key;
+            const char* port_key;
+            const char* bind_key;
+            const char* transport;
+            const char* scope;
+            const char* target_kind;
+            bool create_emulation_binding;
+        };
+
+        const std::array<ListenerSeed, 10> seeds = {{
+            {"native", "listener.native.enabled", "listener.native.port", "listener.bind_address",
+             "inet", "global", "database", false},
+            {"postgresql", "listener.postgresql.enabled", "listener.postgresql.port", "listener.bind_address",
+             "inet", "global", "database", true},
+            {"mysql", "listener.mysql.enabled", "listener.mysql.port", "listener.bind_address",
+             "inet", "global", "database", true},
+            {"firebird", "listener.firebird.enabled", "listener.firebird.port", "listener.bind_address",
+             "inet", "global", "database", true},
+            {"cassandra", "listener.cassandra.enabled", "listener.cassandra.port", "listener.bind_address",
+             "inet", "global", "database", true},
+            {"mongodb", "listener.mongodb.enabled", "listener.mongodb.port", "listener.bind_address",
+             "inet", "global", "database", true},
+            {"neo4j", "listener.neo4j.enabled", "listener.neo4j.port", "listener.bind_address",
+             "inet", "global", "database", true},
+            {"redis", "listener.redis.enabled", "listener.redis.port", "listener.bind_address",
+             "inet", "global", "database", true},
+            {"milvus", "listener.milvus.enabled", "listener.milvus.port", "listener.bind_address",
+             "inet", "global", "database", true},
+            {"mgmt_ipc", "listener.mgmt_ipc.enabled", "listener.mgmt_ipc.port", "listener.mgmt_ipc.bind_address",
+             "ipc", "local", "manager_ipc", false},
+        }};
+
+        for (const auto& seed : seeds)
+        {
+            const size_t enabled_dot = std::string(seed.enabled_key).find('.');
+            const size_t port_dot = std::string(seed.port_key).find('.');
+            const size_t bind_dot = std::string(seed.bind_key).find('.');
+            const std::string enabled_section = std::string(seed.enabled_key).substr(0, enabled_dot);
+            const std::string enabled_key = std::string(seed.enabled_key).substr(enabled_dot + 1);
+            const std::string port_section = std::string(seed.port_key).substr(0, port_dot);
+            const std::string port_key = std::string(seed.port_key).substr(port_dot + 1);
+            const std::string bind_section = std::string(seed.bind_key).substr(0, bind_dot);
+            const std::string bind_key = std::string(seed.bind_key).substr(bind_dot + 1);
+
+            CatalogManager::ListenerProfileCatalogInfo profile{};
+            profile.listener_profile_id = generateUuidV7();
+            profile.profile_name = seed.profile_name;
+            profile.protocol_family = seed.profile_name;
+            profile.enabled = parseBootstrapBool(cfg, enabled_section, enabled_key, false);
+            profile.manager_fronted = std::string(seed.profile_name) != "native";
+            profile.has_owner_database_uuid = true;
+            profile.owner_database_uuid = db_uuid_;
+            profile.desired_state = profile.enabled ? "ENABLED" : "DISABLED";
+            profile.applied_generation = generation;
+            status = catalog_manager_->upsertListenerProfileCatalogEntry(profile, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            CatalogManager::ListenerBindingCatalogInfo binding{};
+            binding.listener_binding_id = generateUuidV7();
+            binding.listener_profile_id = profile.listener_profile_id;
+            binding.bind_address = bootstrapResolvedText(cfg, bind_section, bind_key,
+                                                        std::string(seed.transport) == "ipc"
+                                                            ? "local"
+                                                            : "127.0.0.1");
+            binding.bind_port = parseBootstrapPort(cfg, port_section, port_key, 0);
+            binding.bind_transport = seed.transport;
+            binding.bind_scope = seed.scope;
+            binding.is_primary = true;
+            binding.configuration_generation = generation;
+            status = catalog_manager_->upsertListenerBindingCatalogEntry(binding, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            if (seed.create_emulation_binding)
+            {
+                CatalogManager::ListenerEmulationBindingCatalogInfo emulation{};
+                emulation.listener_emulation_binding_id = generateUuidV7();
+                emulation.listener_profile_id = profile.listener_profile_id;
+                emulation.emulation_family = seed.profile_name;
+                emulation.protocol_surface = seed.profile_name;
+                emulation.enabled = profile.enabled;
+                emulation.has_parser_pool_policy_uuid = true;
+                emulation.parser_pool_policy_uuid = parser_policy.parser_pool_policy_id;
+                emulation.configuration_generation = generation;
+                status = catalog_manager_->upsertListenerEmulationBindingCatalogEntry(emulation, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+
+            CatalogManager::ListenerRuntimeTargetCatalogInfo target{};
+            target.listener_runtime_target_id = generateUuidV7();
+            target.listener_profile_id = profile.listener_profile_id;
+            target.target_kind = seed.target_kind;
+            target.has_target_database_uuid = true;
+            target.target_database_uuid = db_uuid_;
+            target.current_generation = generation;
+            target.has_last_applied_generation = true;
+            target.last_applied_generation = generation;
+            target.last_observed_at = generation;
+            status = catalog_manager_->upsertListenerRuntimeTargetCatalogEntry(target, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            CatalogManager::ListenerGenerationRecordCatalogInfo generation_record{};
+            generation_record.listener_generation_id = generateUuidV7();
+            generation_record.target_database_uuid = db_uuid_;
+            generation_record.listener_profile_id = profile.listener_profile_id;
+            generation_record.committed_generation = generation;
+            generation_record.applied_generation = generation;
+            generation_record.drift_state = "CONSISTENT";
+            generation_record.observed_at = generation;
+            status = catalog_manager_->upsertListenerGenerationRecordCatalogEntry(generation_record, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        return Status::OK;
+    }
+
+    Status Database::loadCatalogManagedConfiguration(ErrorContext* ctx)
+    {
+        if (catalog_manager_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        std::vector<CatalogManager::ConfigKeyCatalogInfo> key_rows;
+        Status status = catalog_manager_->listConfigKeyCatalogEntries(key_rows, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        std::unordered_map<uint32_t, std::string> key_names;
+        key_names.reserve(key_rows.size());
+        for (const auto& row : key_rows)
+        {
+            key_names.emplace(row.key_id, row.key_name);
+        }
+
+        std::vector<CatalogManager::ConfigValueCatalogInfo> value_rows;
+        status = catalog_manager_->listConfigValueCatalogEntries(value_rows, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        Config& cfg = Config::getInstance();
+        cfg.clearDurableOverrides();
+        for (const auto& row : value_rows)
+        {
+            if (row.has_scope_uuid)
+            {
+                continue;
+            }
+
+            auto key_it = key_names.find(row.key_id);
+            if (key_it == key_names.end())
+            {
+                continue;
+            }
+
+            std::string section;
+            std::string key;
+            if (!splitCatalogConfigKey(key_it->second, section, key))
+            {
+                continue;
+            }
+            cfg.setDurableOverride(section, key, row.value_text);
+        }
+
+        return Status::OK;
+    }
+
+    Status Database::applyCatalogManagedConfigurationHooks(ErrorContext* ctx)
+    {
+        Status status = applySchedulerConfig(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        return applyDormantTransactionPolicyConfig(ctx);
+    }
+
     auto Database::connect(std::unique_ptr<ConnectionContext> &connection_out, ErrorContext *ctx)
         -> Status
     {
@@ -4922,6 +5665,12 @@ namespace scratchbird::core
         if (status != Status::OK)
         {
             return close_with_stage_error(status, "ensureBootstrapUsersFromManifest");
+        }
+
+        status = bootstrapConfigurationCatalog(ctx);
+        if (status != Status::OK)
+        {
+            return close_with_stage_error(status, "database.bootstrapConfigurationCatalog");
         }
 
         status = bootstrapI18nResources(this, ctx);

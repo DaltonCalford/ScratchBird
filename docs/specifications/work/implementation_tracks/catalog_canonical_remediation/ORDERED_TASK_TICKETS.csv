@@ -1,0 +1,36 @@
+order,ticket_id,stage,title,depends_on,evidence_dir,gate_id
+1,CAT-000,C0,Create remediation workpack and trackers,,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-000,CAT-GATE-01
+2,CAT-001,C0,Canonical legacy to canonical name crosswalk,CAT-000,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-001,CAT-GATE-01
+3,CAT-002,C0,Catalog root slot expansion model,CAT-001,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-002,CAT-GATE-01
+4,CAT-003,C0,Schema type and branch naming alignment,CAT-002,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-003,CAT-GATE-01
+5,CAT-004,C1,Implement database table and bootstrap semantics,CAT-003,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-004,CAT-GATE-02
+6,CAT-005,C1,Implement object table,CAT-004,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-005,CAT-GATE-02
+7,CAT-006,C1,Implement object_name table,CAT-005,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-006,CAT-GATE-02
+8,CAT-007,C1,Rewrite bootstrap to canonical fixed schema tree,CAT-006,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-007,CAT-GATE-02
+9,CAT-008,C1,Object parentage and uniqueness enforcement,CAT-007,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-008,CAT-GATE-02
+10,CAT-009,C1,Home schema and search path persistence integration,CAT-008,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-009,CAT-GATE-02
+11,CAT-010,C2,Implement type system catalog families,CAT-009,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-010,CAT-GATE-03
+12,CAT-011,C2,Implement domain extension catalog families,CAT-010,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-011,CAT-GATE-03
+13,CAT-012,C2,Implement charset and collation extension catalogs,CAT-011,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-012,CAT-GATE-03
+14,CAT-013,C2,Implement resource bundle and timezone transition catalogs,CAT-012,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-013,CAT-GATE-03
+15,CAT-014,C2,Implement reserved-word and parser capability catalogs,CAT-013,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-014,CAT-GATE-03
+16,CAT-015,C3,Implement relation extension catalogs,CAT-014,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-015,CAT-GATE-04
+17,CAT-016,C3,Implement index metadata extension catalogs,CAT-015,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-016,CAT-GATE-04
+18,CAT-017,C3,Implement index metric catalogs,CAT-016,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-017,CAT-GATE-04
+19,CAT-018,C3,Implement storage extension catalogs,CAT-017,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-018,CAT-GATE-04
+20,CAT-019,C3,Implement runtime and metrics attribution catalogs,CAT-018,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-019,CAT-GATE-04
+21,CAT-020,C4,Implement security extension and PKI crypto catalogs,CAT-019,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-020,CAT-GATE-05
+22,CAT-021,C4,Implement cluster node and clock catalogs,CAT-020,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-021,CAT-GATE-05
+23,CAT-022,C4,Implement sharding catalogs,CAT-021,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-022,CAT-GATE-05
+24,CAT-023,C4,Implement routing admission slo autoscale catalogs,CAT-022,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-023,CAT-GATE-05
+25,CAT-024,C4,Implement incident healing and alert catalogs,CAT-023,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-024,CAT-GATE-05
+26,CAT-025,C4,Implement scheduler extension catalogs,CAT-024,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-025,CAT-GATE-05
+27,CAT-026,C5,Implement FDW remote connector and migration catalogs,CAT-025,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-026,CAT-GATE-06
+28,CAT-027,C5,Implement replication runtime and conflict catalogs,CAT-026,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-027,CAT-GATE-06
+29,CAT-028,C5,Implement extension publication subscription catalogs,CAT-027,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-028,CAT-GATE-06
+30,CAT-029,C5,Implement SB cluster fabric catalogs,CAT-028,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-029,CAT-GATE-06
+31,CAT-030,C5,Implement OLAP and cube catalogs,CAT-029,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-030,CAT-GATE-06
+32,CAT-031,C5,Implement text-search catalogs,CAT-030,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-031,CAT-GATE-06
+33,CAT-032,C5,Implement engine specific compatibility catalogs,CAT-031,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-032,CAT-GATE-06
+34,CAT-033,C5,Implement SBLR artifact catalogs,CAT-032,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-033,CAT-GATE-06
+35,CAT-034,C5,Implement canonical virtual overlays and compatibility views,CAT-033,docs/specifications/work/implementation_tracks/catalog_canonical_remediation/evidence/CAT-034,CAT-GATE-06

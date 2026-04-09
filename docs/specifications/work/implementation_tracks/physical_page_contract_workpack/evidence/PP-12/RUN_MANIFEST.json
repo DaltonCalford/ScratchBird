@@ -1,0 +1,25 @@
+{
+  "ticket_id": "PP-12",
+  "title": "TOAST/LOB Page-Type Split and Layout Implementation",
+  "timestamp_utc": "2026-02-13T18:52:43Z",
+  "implementation_repo": "/home/dcalford/CliWork/ScratchBird",
+  "primary_specs": [
+    "11_TOAST_and_LOB_Storage/LOB_PAGE_LAYOUTS.md",
+    "05_Page_Taxonomy_and_Binary_Layouts/PAGE_TYPE_ENUMS.md"
+  ],
+  "changed_files": [
+    "include/scratchbird/core/ondisk.h",
+    "tests/unit/test_lob_page_layout_contract.cpp"
+  ],
+  "commands": [
+    {
+      "cmd": "cmake --build /home/dcalford/CliWork/ScratchBird/build --target scratchbird_tests -j6",
+      "result": "pass"
+    },
+    {
+      "cmd": "ctest --test-dir /home/dcalford/CliWork/ScratchBird/build -R 'LobPageLayoutContractTest|HeapRecordContractTest|ToastOperationsTest|HeapToastIntegrationTest|ToastTIPVisibilityTest|HeapPageToastAPITest|MGABackVersioningTest' --output-on-failure",
+      "result": "pass"
+    }
+  ],
+  "status": "done"
+}

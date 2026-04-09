@@ -1,0 +1,9 @@
+case_id,type_name,input_value,persisted_read_value,roundtrip_expected,error_code
+T14-RT-001,int128,min_int128,min_int128,exact,
+T14-RT-002,uint128,max_uint128,max_uint128,exact,
+T14-RT-003,decimal,1234567890.1234,1234567890.1234,exact,
+T14-RT-004,text_utf8,multilingual_payload,multilingual_payload,exact,
+T14-RT-005,uuid,canonical_uuid,canonical_uuid_lowercase,exact,
+T14-RT-006,time_tz,23:59:59.999999+03:00,normalized_and_representable,exact,
+T14-RT-007,bytea,hex_payload,hex_payload,exact,
+T14-RT-008,inet,2001:db8::1/64,2001:db8::1/64,exact,

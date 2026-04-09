@@ -1,0 +1,6 @@
+run_dir=tests/results/full_gate/beta1_20260331T000800Z
+configure_log=tests/results/full_gate/beta1_20260331T000800Z/configure.log
+build_log=tests/results/full_gate/beta1_20260331T000800Z/build.log
+ctest_log=tests/results/full_gate/beta1_20260331T000800Z/ctest.log
+configure_exit=0
+build_exit=2

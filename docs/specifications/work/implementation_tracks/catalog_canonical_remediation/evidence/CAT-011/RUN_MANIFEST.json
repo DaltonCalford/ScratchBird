@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-011",
+  "status": "completed",
+  "started_at": "2026-02-14T04:44:15Z",
+  "finished_at": "2026-02-14T05:00:00Z",
+  "owner": "codex",
+  "notes": "CAT-011 complete: domain extension catalog pages + CRUD + deterministic contracts + targeted gate tests pass."
+}

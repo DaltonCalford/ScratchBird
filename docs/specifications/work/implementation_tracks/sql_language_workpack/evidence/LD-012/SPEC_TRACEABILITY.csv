@@ -1,0 +1,5 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+21_V3_Dialect_Surface/TEST_CONTRACT.md,21_V3_Dialect_Surface,P21-LANG-GATE-01-04-CONFORMANCE,LD-012/E2E_LANGUAGE_GATE_RESULTS.md,PASS,All required language gates summarized with artifact-level evidence
+21_V3_Dialect_Surface/TEST_CONTRACT.md,21_V3_Dialect_Surface,LANGUAGE-FAMILY-E2E-COVERAGE,LD-012/E2E_CORPUS_MATRIX.csv,PASS,Corpus includes admin DDL DML PSQL TSQL and infrastructure language surfaces
+31_Conformance_Performance_and_Reliability_Gates/TEST_CONTRACT.md,31_Conformance_Performance_and_Reliability_Gates,T31-LANGUAGE-EVIDENCE-ALIGNMENT,LD-012/E2E_LANGUAGE_GATE_RESULTS.md,PASS,T31 dependent language evidence alignment documented
+31_Conformance_Performance_and_Reliability_Gates/TEST_CONTRACT.md,31_Conformance_Performance_and_Reliability_Gates,T31-DETERMINISTIC-REPLAY-HOOK,LD-012/E2E_CORPUS_MATRIX.csv,PASS,Corpus references deterministic replay evidence from LD-011 diagnostics audit

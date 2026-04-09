@@ -27,6 +27,7 @@
 #include <string_view>
 #include <vector>
 
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/parser/parser_v3.h"
@@ -54,11 +55,13 @@ public:
         const std::vector<std::string>& warnings() const { return warnings_; }
         const CompilationStats& stats() const { return stats_; }
         const detail::QueryCompilerV3PlanProfile& planProfile() const { return plan_profile_; }
+        bool cacheHit() const { return cache_hit_; }
 
         void setBytecode(std::vector<uint8_t> bc) { bytecode_ = std::move(bc); }
         void addError(const std::string& err) { errors_.push_back(err); }
         void addWarning(const std::string& warn) { warnings_.push_back(warn); }
         void setStats(const CompilationStats& stats) { stats_ = stats; }
+        void setCacheHit(bool value) { cache_hit_ = value; }
         void setPlanProfile(detail::QueryCompilerV3PlanProfile profile)
         {
             plan_profile_ = std::move(profile);
@@ -70,6 +73,7 @@ public:
         std::vector<std::string> warnings_;
         CompilationStats stats_{};
         detail::QueryCompilerV3PlanProfile plan_profile_{};
+        bool cache_hit_ = false;
     };
 
     struct TraceDigest {
@@ -144,8 +148,9 @@ public:
             return result;
         }
 
+        const std::string compilation_sql = normalizeSqlForCompilation(sql);
         auto parser_start = std::chrono::steady_clock::now();
-        parser::v3::Parser parser(sql);
+        parser::v3::Parser parser(compilation_sql);
         parser::v3::ParseResult parse_result = parser.parseStatement();
         auto parser_end = std::chrono::steady_clock::now();
         if (!parse_result.success()) {
@@ -166,10 +171,10 @@ public:
         container.metadata.module_name = "scratchbird_native";
 
         auto finalized = detail::finalizeQueryCompilerV3Compilation(db_,
-                                                                    sql,
+                                                                    compilation_sql,
                                                                     parse_result.statement(),
                                                                     parser.stringPool(),
-                                                                    current_schema_,
+                                                                    resolveCompilationSchema(),
                                                                     optimizations_enabled_,
                                                                     container,
                                                                     parameter_bindings,
@@ -184,6 +189,7 @@ public:
             return result;
         }
         result.setBytecode(std::move(finalized.bytecode));
+        result.setCacheHit(finalized.cache_hit);
         result.setPlanProfile(finalized.plan_profile);
         if (stats_enabled_) {
             CompilationStats stats;
@@ -197,7 +203,8 @@ public:
 
     TraceResult compileTrace(const std::string& sql) {
         TraceResult trace;
-        parser::v3::Parser parser(sql);
+        const std::string compilation_sql = normalizeSqlForCompilation(sql);
+        parser::v3::Parser parser(compilation_sql);
         trace.setDiagnosticSqlContext(normalizeSqlForTrace(sql, nullptr, parser.stringPool()));
 
         if (db_ == nullptr) {
@@ -234,10 +241,10 @@ public:
         container.metadata.module_name = "scratchbird_native";
 
         auto finalized = detail::finalizeQueryCompilerV3Compilation(db_,
-                                                                    sql,
+                                                                    compilation_sql,
                                                                     parse_result.statement(),
                                                                     parser.stringPool(),
-                                                                    current_schema_,
+                                                                    resolveCompilationSchema(),
                                                                     optimizations_enabled_,
                                                                     container,
                                                                     nullptr,
@@ -639,6 +646,72 @@ private:
             }
         }
         return out;
+    }
+
+    static std::string normalizeSqlForCompilation(const std::string& sql) {
+        std::string out;
+        out.reserve(sql.size());
+
+        bool prev_space = true;
+        bool in_single_quote = false;
+        bool in_double_quote = false;
+
+        for (size_t i = 0; i < sql.size(); ++i) {
+            const char c = sql[i];
+
+            if (c == '\'' && !in_double_quote) {
+                out.push_back(c);
+                if (in_single_quote && i + 1 < sql.size() && sql[i + 1] == '\'') {
+                    out.push_back(sql[i + 1]);
+                    ++i;
+                } else {
+                    in_single_quote = !in_single_quote;
+                }
+                prev_space = false;
+                continue;
+            }
+
+            if (c == '"' && !in_single_quote) {
+                out.push_back(c);
+                if (in_double_quote && i + 1 < sql.size() && sql[i + 1] == '"') {
+                    out.push_back(sql[i + 1]);
+                    ++i;
+                } else {
+                    in_double_quote = !in_double_quote;
+                }
+                prev_space = false;
+                continue;
+            }
+
+            if (!in_single_quote && !in_double_quote &&
+                std::isspace(static_cast<unsigned char>(c)) != 0) {
+                if (!prev_space) {
+                    out.push_back(' ');
+                    prev_space = true;
+                }
+                continue;
+            }
+
+            out.push_back(c);
+            prev_space = false;
+        }
+
+        if (!out.empty() && out.back() == ' ') {
+            out.pop_back();
+        }
+
+        return out;
+    }
+
+    core::ID resolveCompilationSchema() const {
+        if (current_schema_ != core::ID{}) {
+            return current_schema_;
+        }
+        const auto* conn = core::ConnectionContext::getCurrent();
+        if (conn != nullptr && conn->getCurrentSchemaId() != core::ID{}) {
+            return conn->getCurrentSchemaId();
+        }
+        return {};
     }
 
     core::Database* db_ = nullptr;

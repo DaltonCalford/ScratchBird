@@ -19,6 +19,7 @@ struct ValidationResult {
 
 ValidationResult validateContainerDetailed(const uint8_t* data, size_t size);
 bool validateContainer(const uint8_t* data, size_t size, std::string& err);
+ValidationResult validateRetainedSymbolPayload(const Value::Object& payload);
 
 // Section-04 vNext IR contract validators.
 ValidationResult validateVNextOpcodeContract(const Instruction& inst);

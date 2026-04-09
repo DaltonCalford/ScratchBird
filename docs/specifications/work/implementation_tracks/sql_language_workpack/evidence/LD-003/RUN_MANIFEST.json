@@ -1,0 +1,21 @@
+{
+  "ticket_id": "LD-003",
+  "status": "completed",
+  "started_at": "2026-02-11T23:12:08Z",
+  "completed_at": "2026-02-11T23:12:08Z",
+  "spec_inputs": [
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_ADMIN_LANGUAGE_DEFINITION.md",
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_LISTENER_CONTROL_SQL.md",
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_STORAGE_AND_BLOB_FILTER_SQL.md",
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md"
+  ],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-003/ADMIN_FEATURE_KEY_MAP.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-003/ADMIN_ACCEPT_REJECT_MATRIX.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-003/SPEC_TRACEABILITY.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-003/TEST_RESULTS.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-003/IMPLEMENTATION_NOTES.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-003/CHECKSUMS.sha256"
+  ],
+  "notes": "Admin grammar mapping completed with deterministic accept/reject coverage."
+}

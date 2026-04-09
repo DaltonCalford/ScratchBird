@@ -1,0 +1,23 @@
+# Changeset Log
+
+- Ticket: IMP-12
+- Section: 12_Temporary_Tables
+- Summary: Completed deterministic implementation contract pack and gate evidence.
+- Files changed:
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/IMPLEMENTATION_CHECKLIST.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/IMPLEMENTATION_NOTES.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/TEMP_LIFECYCLE_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/TEMP_SCOPE_ISOLATION_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/TEMP_ON_COMMIT_POLICY_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/TEMP_RESTART_SEMANTICS_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/TEMP_LOCK_CONFLICT_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/NEGATIVE_BOUNDARY_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/PERFORMANCE_BUDGET_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/COMPATIBILITY_PARITY_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/TEST_RESULTS.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/CHECKSUMS.sha256
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/RUN_MANIFEST.json
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/SPEC_TRACEABILITY.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/TEST_EVIDENCE_INDEX.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/GATE_RESULT.json
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-12/CHANGESET_LOG.md

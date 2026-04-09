@@ -623,6 +623,12 @@ public:
                                  ResultSet* results,
                                  core::ErrorContext* ctx = nullptr);
     core::Status executeBytecode(const std::vector<uint8_t>& bytecode,
+                                 const std::string& sql,
+                                 const std::vector<std::string>& parameter_values,
+                                 const std::vector<bool>& parameter_nulls,
+                                 ResultSet* results,
+                                 core::ErrorContext* ctx = nullptr);
+    core::Status executeBytecode(const std::vector<uint8_t>& bytecode,
                                  ResultSet* results,
                                  core::ErrorContext* ctx = nullptr);
 

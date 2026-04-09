@@ -1,0 +1,26 @@
+{
+  "ticket_id": "PP-14",
+  "title": "Heap/TOAST/LOB diagnostic page walker and integrity checks",
+  "timestamp_utc": "2026-02-13T19:01:38Z",
+  "implementation_repo": "/home/dcalford/CliWork/ScratchBird",
+  "primary_specs": [
+    "11_TOAST_and_LOB_Storage/TEST_CONTRACT.md",
+    "05_Page_Taxonomy_and_Binary_Layouts/PAGE_TYPE_ENUMS.md"
+  ],
+  "changed_files": [
+    "include/scratchbird/core/heap_toast_lob_diagnostics.h",
+    "src/core/heap_toast_lob_diagnostics.cpp",
+    "tests/unit/test_heap_toast_lob_diagnostics.cpp"
+  ],
+  "commands": [
+    {
+      "cmd": "cmake --build /home/dcalford/CliWork/ScratchBird/build --target scratchbird_tests -j6",
+      "result": "pass"
+    },
+    {
+      "cmd": "ctest --test-dir /home/dcalford/CliWork/ScratchBird/build -R \"ToastGCContractTest|HeapToastLobPageWalkerContractTest|LobPageLayoutContractTest|HeapRecordContractTest|ToastOperationsTest|HeapToastIntegrationTest|ToastTIPVisibilityTest|HeapPageToastAPITest|MGABackVersioningTest\" --output-on-failure",
+      "result": "pass"
+    }
+  ],
+  "status": "done"
+}

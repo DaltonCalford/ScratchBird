@@ -1,0 +1,5 @@
+metric_id,workload,threshold_type,threshold_value,pass_condition
+T12-PF-001,temp_create_drop_cycle,p95_ms,25,measured_p95<=25
+T12-PF-002,temp_insert_10k_rows,p95_ms,150,measured_p95<=150
+T12-PF-003,on_commit_delete_rows_10k,p95_ms,120,measured_p95<=120
+T12-PF-004,startup_temp_cleanup_100k_pages,p95_ms,800,measured_p95<=800

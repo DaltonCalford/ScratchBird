@@ -1,0 +1,7 @@
+spec_file,requirement_id,implementation_path,test_id,status,notes
+docs/specifications/10_GC_and_Sweep/SPEC_OUTLINE.md,IMP-10-REQ-HORIZON,docs/specifications/work/implementation_tracks/alpha_master/IMP-10/GC_HORIZON_ELIGIBILITY_MATRIX.csv,T10-GCS-001,pass,GC eligibility boundaries mapped
+docs/specifications/10_GC_and_Sweep/SPEC_OUTLINE.md,IMP-10-REQ-TRIGGERS,docs/specifications/work/implementation_tracks/alpha_master/IMP-10/SWEEP_TRIGGER_SCHEDULING_MATRIX.csv,T10-GCS-002,pass,Sweep trigger thresholds and scheduler policy mapped
+docs/specifications/10_GC_and_Sweep/GC_SWEEP_ALGORITHM.md,IMP-10-REQ-SWEEP-ACTIONS,docs/specifications/work/implementation_tracks/alpha_master/IMP-10/GC_SWEEP_ACTION_MATRIX.csv,T10-GCS-003,pass,Sweep action algorithm mapped
+docs/specifications/10_GC_and_Sweep/GC_SWEEP_ALGORITHM.md,IMP-10-REQ-INDEX-LOB-CLEANUP,docs/specifications/work/implementation_tracks/alpha_master/IMP-10/INDEX_LOB_CLEANUP_MATRIX.csv,T10-GCS-004,pass,Index and LOB cleanup behavior mapped
+docs/specifications/10_GC_and_Sweep/SPEC_OUTLINE.md,IMP-10-REQ-FAILURE-RECOVERY,docs/specifications/work/implementation_tracks/alpha_master/IMP-10/GC_FAILURE_RECOVERY_MATRIX.csv,T10-GCS-005,pass,Failure handling and retry rules mapped
+docs/specifications/10_GC_and_Sweep/TEST_CONTRACT.md,IMP-10-REQ-GATE,docs/specifications/work/implementation_tracks/alpha_master/IMP-10/TEST_RESULTS.md,T10-GCS-GATE,pass,Required test suite represented in deterministic artifacts

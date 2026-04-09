@@ -1,0 +1,7 @@
+run_dir=tests/results/full_gate/20260405T022148Z
+configure_log=tests/results/full_gate/20260405T022148Z/configure.log
+build_log=tests/results/full_gate/20260405T022148Z/build.log
+ctest_log=tests/results/full_gate/20260405T022148Z/ctest.log
+configure_exit=0
+build_exit=0
+ctest_exit=8

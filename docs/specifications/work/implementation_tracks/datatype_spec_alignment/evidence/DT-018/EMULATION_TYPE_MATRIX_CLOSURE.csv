@@ -1,0 +1,9 @@
+engine_name,matrix_rows,example_native,example_domain,status,notes
+FIREBIRD,25,INT128,BINARY->[sb_fb_dom]binary_octets,IMPLEMENTED,Scalar+complex rows added to deterministic resolver table
+POSTGRESQL,55,JSONB,SERIAL->[sb_pg_dom]serial,IMPLEMENTED,Scalar+range+complex mappings covered with parser/domain hints
+MYSQL,35,GEOMETRY,MEDIUMINT->[sb_my_dom]mediumint_signed,IMPLEMENTED,Signed/unsigned and size-class domain mappings included
+CASSANDRA,28,TEXT,VARINT->[sb_cas_dom]varint,IMPLEMENTED,Frozen/list/set/map/tuple/udt/vector families included
+MILVUS,22,VECTOR,ARRAYOFVECTOR->[sb_mil_dom]array_of_vector,IMPLEMENTED,Scalar/vector/array families covered
+MONGODB,21,BSON,OBJECTID->[sb_mongo_dom]objectid,IMPLEMENTED,BSON scalar/document/array domain mappings included
+NEO4J,13,POINT,none,IMPLEMENTED,Property scalar/list/point mappings included
+REDIS,9,BLOB(STRING),STREAM->[sb_redis_dom]stream,IMPLEMENTED,Core redis structure mappings included

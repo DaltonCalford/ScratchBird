@@ -1,0 +1,11 @@
+gap_id,gap_summary,mapped_ticket,priority,status,notes
+G-001,Single writer and fencing runtime closure unresolved,HCN-020,P0,mapped,Linked through HCN-002 gap ledger
+G-002,Routing epoch validation missing,HCN-021,P0,mapped,Deterministic router epoch checks required
+G-003,Session epoch tuple mismatch risk,HCN-022,P0,mapped,Cluster schema security epoch tuple required
+G-004,GTXID and per-shard ordering contract missing,HCN-024,P0,mapped,Audit and replication ordering dependency
+G-005,SCL and follower apply pipeline missing,HCN-030|HCN-031,P0,mapped,Durability and replay safety dependency
+G-006,GC safe horizon enforcement missing,HCN-033,P0,mapped,MGA-safe distributed GC boundary required
+G-007,SB-OBS metric namespace and SQL view mismatch,HCN-040|HCN-041,P0,mapped,Operational contract closure required
+G-008,healthz readyz and structured events partial,HCN-042|HCN-043,P0,mapped,Readiness and event contract closure required
+G-009,Hybrid explicit compile and fallback incomplete,HCN-050|HCN-051,P0,mapped,SBLR canonical plus deterministic fallback policy
+G-010,License and notice packaging controls incomplete,HCN-003,P0,phase0_closed,Controls documented with follow-up blockers

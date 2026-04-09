@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -43,6 +44,51 @@ void writeTextFile(const std::filesystem::path& path, const std::string& content
     ASSERT_TRUE(out.is_open()) << path;
     out << contents;
 }
+
+class EnvVarGuard
+{
+public:
+    EnvVarGuard(std::string name, std::string value)
+        : name_(std::move(name))
+    {
+        const char* existing = std::getenv(name_.c_str());
+        if (existing != nullptr)
+        {
+            had_original_ = true;
+            original_value_ = existing;
+        }
+#if defined(_WIN32)
+        _putenv_s(name_.c_str(), value.c_str());
+#else
+        setenv(name_.c_str(), value.c_str(), 1);
+#endif
+    }
+
+    ~EnvVarGuard()
+    {
+        if (had_original_)
+        {
+#if defined(_WIN32)
+            _putenv_s(name_.c_str(), original_value_.c_str());
+#else
+            setenv(name_.c_str(), original_value_.c_str(), 1);
+#endif
+        }
+        else
+        {
+#if defined(_WIN32)
+            _putenv_s(name_.c_str(), "");
+#else
+            unsetenv(name_.c_str());
+#endif
+        }
+    }
+
+private:
+    std::string name_;
+    std::string original_value_;
+    bool had_original_ = false;
+};
 
 class HotPathRuntimeFixture : public ::testing::Test
 {
@@ -270,6 +316,55 @@ TEST_F(HotPathRuntimeFixture, DatabaseOpenRejectsDomainMinimumsThatEliminateShar
     EXPECT_EQ(db.open(dbPath().string(), &ctx), Status::INVALID_ARGUMENT);
     EXPECT_NE(ctx.message.find("no shared probationary capacity"), std::string::npos)
         << ctx.message;
+}
+
+TEST_F(HotPathRuntimeFixture, DatabaseOpenClampsExplicitBufferPoolToDetectedMemoryCeiling)
+{
+    EnvVarGuard memory_limit("SCRATCHBIRD_TEST_CGROUP_MEMORY_LIMIT_BYTES", "131072");
+
+    initializeConfig(
+        "[storage.buffer]\n"
+        "layout = segmented\n"
+        "pool_size_mb = 1\n");
+    createDatabase();
+
+    Database db;
+    ErrorContext ctx;
+    ASSERT_EQ(db.open(dbPath().string(), &ctx), Status::OK) << ctx.message;
+    ASSERT_NE(db.buffer_pool(), nullptr);
+
+    const auto pool_config = db.buffer_pool()->getConfigSnapshot();
+    EXPECT_EQ(pool_config.pool_size, 8U);
+    EXPECT_EQ(pool_config.configured_memory_request_bytes, 1048576ULL);
+    EXPECT_EQ(pool_config.detected_memory_ceiling_bytes, 131072ULL);
+    EXPECT_EQ(pool_config.effective_memory_budget_bytes, 131072ULL);
+    EXPECT_TRUE(pool_config.memory_budget_clamped);
+    EXPECT_TRUE(pool_config.memory_ceiling_is_environment_bounded);
+
+    db.close();
+}
+
+TEST_F(HotPathRuntimeFixture, DatabaseOpenDerivesImplicitBufferPoolFromDetectedMemoryCeiling)
+{
+    EnvVarGuard memory_limit("SCRATCHBIRD_TEST_CGROUP_MEMORY_LIMIT_BYTES", "2147483648");
+
+    initializeConfig("");
+    createDatabase();
+
+    Database db;
+    ErrorContext ctx;
+    ASSERT_EQ(db.open(dbPath().string(), &ctx), Status::OK) << ctx.message;
+    ASSERT_NE(db.buffer_pool(), nullptr);
+
+    const auto pool_config = db.buffer_pool()->getConfigSnapshot();
+    EXPECT_EQ(pool_config.pool_size, 16384U);
+    EXPECT_EQ(pool_config.configured_memory_request_bytes, 268435456ULL);
+    EXPECT_EQ(pool_config.detected_memory_ceiling_bytes, 2147483648ULL);
+    EXPECT_EQ(pool_config.effective_memory_budget_bytes, 268435456ULL);
+    EXPECT_FALSE(pool_config.memory_budget_clamped);
+    EXPECT_TRUE(pool_config.memory_ceiling_is_environment_bounded);
+
+    db.close();
 }
 
 class HotPathLsmRuntimeTest : public HotPathRuntimeFixture

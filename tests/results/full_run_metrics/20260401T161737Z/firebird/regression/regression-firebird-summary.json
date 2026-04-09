@@ -1,0 +1,34 @@
+{
+  "source": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/results/ctest/20260401_135254",
+  "manifest": {
+    "run_id": "20260401_135254",
+    "engine": "firebird",
+    "protocol_surface": "firebird_remote",
+    "parser_core": "v3",
+    "parser_mode": "emulation_surface_only",
+    "comparison_suite_family": "emulation-comparison",
+    "comparison_contract_id": "compatibility-emulation-compare-v1",
+    "comparison_harness": "compatibility_converted_sql_ctest",
+    "comparison_target_role": "original",
+    "comparison_target_id": "upstream-firebird",
+    "execution_mode": "native_firebird_client",
+    "isql_binary": "/home/dcalford/CliWork/ScratchBird/docs/reference/project_clones/local_existing/firebird/gen/Release/firebird/bin/isql",
+    "ctest_list_mode": "curated",
+    "ctest_list_file": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/config/ctest_list.txt",
+    "listed_tests": 12,
+    "status": "passed",
+    "failure_count": 0,
+    "results_dir": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/results/ctest/20260401_135254",
+    "isql_mode": "native_firebird",
+    "username": "SYSDBA",
+    "timestamp_utc": "2026-04-01T17:52:54Z"
+  },
+  "totals": {
+    "total": 12,
+    "passed": 12,
+    "failed": 0,
+    "skipped": 0,
+    "errors": 0,
+    "pass_rate": 1.0
+  }
+}

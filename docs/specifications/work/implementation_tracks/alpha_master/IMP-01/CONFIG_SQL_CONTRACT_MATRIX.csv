@@ -1,0 +1,10 @@
+statement,required_role,write_target,result_shape,deterministic_errors,notes
+SHOW CONFIG,sys.config.viewer,none,key|value|scope|source|restart_required|last_updated,NONE,sensitive values redacted unless sys.config.secrets
+SHOW CONFIG LIKE,sys.config.viewer,none,key|value|scope|source|restart_required|last_updated,NONE,pattern filter applied on key prefix
+SET CONFIG,sys.config.admin,sys.config.value,rows_affected|effective_scope,CONFIG_KEY_NOT_FOUND|CONFIG_VALUE_INVALID|CONFIG_SCOPE_INVALID|CONFIG_RESTART_REQUIRED,writes change log
+RESET CONFIG,sys.config.admin,sys.config.value,rows_affected|effective_scope,CONFIG_KEY_NOT_FOUND|CONFIG_SCOPE_INVALID,restores fallback chain
+CONFIG HISTORY,sys.config.viewer,none,change_id|old_value|new_value|changed_by|changed_at,CONFIG_KEY_NOT_FOUND,reads sys.config.change_log
+RELOAD CONFIG,sys.config.admin,none,reload_result|applied_keys|deferred_keys,CONFIG_VALUE_INVALID,restart-required keys deferred
+SHOW RESOURCE BUNDLES,sys.config.viewer,none,bundle_id|kind|version|active|activated_time|hash,NONE,shows staged and active bundles
+VALIDATE RESOURCE BUNDLE,sys.config.admin,none,bundle_id|valid|issues,RESOURCE_BUNDLE_NOT_FOUND|RESOURCE_BUNDLE_INVALID,no activation side effects
+ACTIVATE RESOURCE BUNDLE,sys.config.admin,resource_bundle_state,bundle_id|activation_result|activated_time,RESOURCE_BUNDLE_NOT_FOUND|RESOURCE_BUNDLE_INVALID|RESOURCE_BUNDLE_ACTIVATION_FAILED,atomic switch no partial activation

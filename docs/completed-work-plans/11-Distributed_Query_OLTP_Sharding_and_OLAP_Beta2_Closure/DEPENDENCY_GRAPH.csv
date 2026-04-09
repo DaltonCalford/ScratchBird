@@ -1,0 +1,13 @@
+from_ticket,to_ticket,dependency_type
+DQO-11-001,DQO-11-002,blocks
+DQO-11-001,DQO-11-004,blocks
+DQO-11-001,DQO-11-006,blocks
+DQO-11-001,DQO-11-008,blocks
+DQO-11-002,DQO-11-003,blocks
+DQO-11-004,DQO-11-005,blocks
+DQO-11-006,DQO-11-007,blocks
+DQO-11-008,DQO-11-009,blocks
+DQO-11-003,DQO-11-010,blocks
+DQO-11-005,DQO-11-010,blocks
+DQO-11-007,DQO-11-010,blocks
+DQO-11-009,DQO-11-010,blocks

@@ -1,0 +1,23 @@
+gate_id,tickets,required_evidence,close_condition
+G-12-01,NEQ-12-001,package scaffold plus frozen scope files,all package control files exist and work-plans index is updated
+G-12-02,NEQ-12-002|NEQ-12-003,eventing packet plus canonical queue or notification spec,research packet exists and canonical eventing spec is written
+G-12-03,NEQ-12-004|NEQ-12-005,scheduler packet plus canonical scheduler or alerting spec,research packet exists and canonical scheduler spec is written
+G-12-04,NEQ-12-006|NEQ-12-007,managed-runtime packet plus canonical WASM/WASI spec,research packet exists and canonical managed-runtime spec is written
+G-12-05,NEQ-12-008|NEQ-12-009,changefeed packet plus canonical changefeed spec,research packet exists and canonical changefeed spec is written
+G-12-06,NEQ-12-010|NEQ-12-011,temporal packet plus canonical temporal-versioning spec,research packet exists and canonical temporal spec is written
+G-12-07,NEQ-12-012|NEQ-12-013,ledger packet plus canonical attestation spec,research packet exists and canonical ledger spec is written
+G-12-08,NEQ-12-014|NEQ-12-015,graph packet plus canonical graph-storage spec,research packet exists and canonical graph spec is written
+G-12-09,NEQ-12-016|NEQ-12-017,federation packet plus implementation-closure canon,research packet exists and federation closure spec is written
+G-12-10,NEQ-12-018|NEQ-12-019,blob namespace packet plus canonical blob-namespace spec,research packet exists and blob namespace spec is written
+G-12-11,NEQ-12-020|NEQ-12-021,plan-store packet plus implementation-closure canon,research packet exists and plan-store closure spec is written
+G-12-12,NEQ-12-022|NEQ-12-023,service-tier packet plus canonical governance spec,research packet exists and service-tier governance spec is written
+G-12-13,NEQ-12-024|NEQ-12-025,serverless packet plus canonical serverless spec,research packet exists and serverless spec is written
+G-12-14,NEQ-12-026|NEQ-12-027,distributed-commit packet plus canonical coordination spec,research packet exists and distributed atomic coordination spec is written
+G-12-15,NEQ-12-028|NEQ-12-029,replicated-topology packet plus canonical geo failover spec,research packet exists and replicated-topology spec is written
+G-12-16,NEQ-12-030|NEQ-12-031,hot-row OLTP packet plus canonical memory-optimized OLTP spec,research packet exists and memory-optimized OLTP spec is written
+G-12-17,NEQ-12-032|NEQ-12-033,identity-federation packet plus canonical token-auth spec,research packet exists and identity federation spec is written
+G-12-18,NEQ-12-034|NEQ-12-035,TDE closure packet plus expanded implementation canon,research packet exists and TDE implementation closure is written
+G-12-19,NEQ-12-036|NEQ-12-037,protected-query closure packet plus expanded implementation canon,research packet exists and protected-query implementation closure is written
+G-12-20,NEQ-12-038|NEQ-12-039,RLS masking closure packet plus expanded implementation canon,research packet exists and RLS or masking implementation closure is written
+G-12-21,NEQ-12-040|NEQ-12-041,columnstore closure packet plus expanded implementation canon,research packet exists and columnstore implementation closure is written
+G-12-22,NEQ-12-042,section README sync inventory update and gate summary,all canonical files and indexes are updated and package trackers show complete

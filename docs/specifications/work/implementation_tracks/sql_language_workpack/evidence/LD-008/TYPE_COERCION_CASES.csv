@@ -1,0 +1,27 @@
+case_id,expression_or_sql,lhs_type,rhs_or_target_type,operator_or_cast,coercion_mode,expected_decision,expected_result_or_error,source_spec,notes
+TC-001,"SELECT '3' + 3;",TEXT,INT32,+,implicit,ACCEPT,6,13_Operator_Model_and_Coercion/IMPLICIT_COERCION_RULES.md,Native text-to-numeric coercion
+TC-002,"SELECT '3' || 3;",TEXT,INT32,||,implicit,ACCEPT,"33",13_Operator_Model_and_Coercion/IMPLICIT_COERCION_RULES.md,Concatenation to text
+TC-003,"SELECT 'abc' + 1;",TEXT,INT32,+,implicit,REJECT,INVALID_TEXT_REPRESENTATION,13_Operator_Model_and_Coercion/IMPLICIT_COERCION_RULES.md,Numeric parse failure
+TC-004,"SELECT CAST('550e8400-e29b-41d4-a716-446655440000' AS UUID);",TEXT,UUID,CAST,explicit,ACCEPT,UUID_VALUE,13_Operator_Model_and_Coercion/CAST_MATRIX.md,Canonical UUID parse
+TC-005,"SELECT CAST('not-uuid' AS UUID);",TEXT,UUID,CAST,explicit,REJECT,INVALID_TEXT_REPRESENTATION,13_Operator_Model_and_Coercion/CAST_MATRIX.md,UUID parse reject
+TC-006,"SELECT uuid_col || '';",UUID,TEXT,||,implicit,ACCEPT,TEXT_UUID_HEX,13_Operator_Model_and_Coercion/IMPLICIT_COERCION_RULES.md,UUID to text formatting
+TC-007,"SELECT CAST('2026-02-11' AS DATE);",TEXT,DATE,CAST,explicit,ACCEPT,DATE_VALUE,13_Operator_Model_and_Coercion/CAST_MATRIX.md,Date parse success
+TC-008,"SELECT CAST('bad-date' AS DATE);",TEXT,DATE,CAST,explicit,REJECT,INVALID_TEXT_REPRESENTATION,13_Operator_Model_and_Coercion/CAST_MATRIX.md,Date parse failure
+TC-009,"SELECT TRUE::INT8;",BOOLEAN,INT8,CAST,explicit,ACCEPT,1,13_Operator_Model_and_Coercion/CAST_MATRIX.md,Boolean explicit cast
+TC-010,"SELECT CAST('true' AS BOOLEAN);",TEXT,BOOLEAN,CAST,explicit,ACCEPT,TRUE,13_Operator_Model_and_Coercion/CAST_MATRIX.md,Text boolean parse
+TC-011,"SELECT CAST('maybe' AS BOOLEAN);",TEXT,BOOLEAN,CAST,explicit,REJECT,INVALID_TEXT_REPRESENTATION,13_Operator_Model_and_Coercion/CAST_MATRIX.md,Invalid boolean token
+TC-012,"SELECT CAST(-1 AS UINT64);",INT64,UINT64,CAST,explicit,REJECT,E_PARAMETER_TYPE_MISMATCH,13_Operator_Model_and_Coercion/CAST_MATRIX.md,Negative to unsigned disallowed
+TC-013,"SELECT CAST(1.5 AS INT32);",DECIMAL,INT32,CAST,explicit,REJECT,E_PARAMETER_TYPE_MISMATCH,13_Operator_Model_and_Coercion/CAST_MATRIX.md,Fractional to integer disallowed
+TC-014,"SELECT CAST('0A0B' AS VARBINARY);",TEXT,VARBINARY,CAST,explicit,ACCEPT,BINARY_VALUE,13_Operator_Model_and_Coercion/CAST_MATRIX.md,Hex decode success
+TC-015,"SELECT CAST('ZZ' AS VARBINARY);",TEXT,VARBINARY,CAST,explicit,REJECT,INVALID_TEXT_REPRESENTATION,13_Operator_Model_and_Coercion/CAST_MATRIX.md,Invalid hex decode
+TC-016,"SELECT CAST(json_col AS TEXT);",JSONB,TEXT,CAST,implicit,ACCEPT,JSON_TEXT,13_Operator_Model_and_Coercion/CAST_MATRIX.md,JSON serialize to text
+TC-017,"SELECT CAST(text_col AS JSONB);",TEXT,JSONB,CAST,explicit,ACCEPT,JSONB_VALUE,13_Operator_Model_and_Coercion/CAST_MATRIX.md,Text parse to JSONB
+TC-018,"SELECT CAST('not-json' AS JSONB);",TEXT,JSONB,CAST,explicit,REJECT,INVALID_TEXT_REPRESENTATION,13_Operator_Model_and_Coercion/CAST_MATRIX.md,JSON parse reject
+TC-019,"SELECT CAST('10.5' AS DECFLOAT16);",TEXT,DECFLOAT16,CAST,explicit,REJECT,E_PARAMETER_TYPE_MISMATCH,13_Operator_Model_and_Coercion/CAST_MATRIX.md,Text->numeric explicit cast not listed as implicit; parser requires explicit numeric parse path
+TC-020,"SELECT CAST('10.5' AS DECIMAL);",TEXT,DECIMAL,CAST,explicit,ACCEPT,DECIMAL_VALUE,13_Operator_Model_and_Coercion/CAST_MATRIX.md,Text numeric parse explicit
+TC-021,"SELECT ts_col + '1 day';",TIMESTAMP,INTERVAL,+,implicit,ACCEPT,TIMESTAMP_VALUE,13_Operator_Model_and_Coercion/IMPLICIT_COERCION_RULES.md,Temporal text coercion for interval operations
+TC-022,"SELECT ts_col > 'bad-ts';",TIMESTAMP,TEXT,>,implicit,REJECT,INVALID_TEXT_REPRESENTATION,13_Operator_Model_and_Coercion/IMPLICIT_COERCION_RULES.md,Temporal comparison parse failure
+TC-023,"SELECT CAST('192.168.1.1' AS INET);",TEXT,INET,CAST,explicit,ACCEPT,INET_VALUE,13_Operator_Model_and_Coercion/CAST_MATRIX.md,INET parse success
+TC-024,"SELECT CAST('999.999.1.1' AS INET);",TEXT,INET,CAST,explicit,REJECT,INVALID_TEXT_REPRESENTATION,13_Operator_Model_and_Coercion/CAST_MATRIX.md,INET parse reject
+TC-025,"SELECT CAST('550e8400-e29b-41d4-a716-446655440000' AS TEXT);",UUID,TEXT,CAST,implicit,ACCEPT,UUID_TEXT,13_Operator_Model_and_Coercion/CAST_MATRIX.md,UUID to text implicit allowed
+TC-026,"SELECT '3' + 3; /* emulated mysql profile strict */",TEXT,INT32,+,profile_gate,GATED_REWRITE,EXPLICIT_CAST_INSERTED_OR_REJECTED,13_Operator_Model_and_Coercion/IMPLICIT_COERCION_RULES.md,Emulated parsers gate unsupported implicit coercions

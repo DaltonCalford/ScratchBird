@@ -1,0 +1,5 @@
+case_id,suite,required_check,expected_result,error_code
+T22-E01,E,create_alter_domain_payload_roundtrip_stable,pass,
+T22-E02,E,system_domain_uuid_mismatch_fails,reject,SBLR-E-0041
+T22-E03,E,invalid_domain_parameter_type_fails,reject,SBLR-E-0041
+T22-E04,E,domain_refs_use_uuid_only_type_refs,pass,

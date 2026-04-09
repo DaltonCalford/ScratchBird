@@ -1,0 +1,6 @@
+case_id,scenario,input,expected_result,error_code
+T18-NG-001,unsupported_index_type,create_index_unknown_type,rejected,E_INDEX_TYPE_UNSUPPORTED
+T18-NG-002,constraint_violation,index_creation_limits_exceeded,rejected,E_INDEX_CONSTRAINT_VIOLATION
+T18-NG-003,permission_denied_create_index,missing_schema_privilege,rejected,E_PERMISSION_DENIED
+T18-NG-004,malformed_index_definition,invalid_opclass_or_expr,rejected,E_INDEX_DEFINITION_INVALID
+T18-NG-005,resource_exhaustion_build,insufficient_resources,rejected,E_RESOURCE_EXHAUSTED

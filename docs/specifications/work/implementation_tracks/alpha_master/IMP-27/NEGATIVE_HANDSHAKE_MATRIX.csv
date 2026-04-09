@@ -1,0 +1,6 @@
+case_id,suite,required_check,expected_result,error_code
+T27-F01,F,malformed_handshake_payload_rejected,reject,HS-E-MALFORMED
+T27-F02,F,unsupported_version_rejected,reject,HS-E-VERSION
+T27-F03,F,no_method_intersection_rejected,reject,HS-E-NOMETHOD
+T27-F04,F,invalid_mfa_response_rejected,reject,HS-E-MFA
+T27-F05,F,parser_channel_auth_rejected_when_no_open_database,reject,HS-AUTH-0013

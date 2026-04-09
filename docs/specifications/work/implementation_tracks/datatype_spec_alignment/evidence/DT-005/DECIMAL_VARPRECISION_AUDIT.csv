@@ -1,0 +1,4 @@
+scenario,expected,observed,status
+DECIMAL precision=0 serialize,variable payload width,variable payload width,PASS
+DECIMAL precision=0 deserialize,exact unscaled value recovery,exact unscaled value recovery,PASS
+Cassandra varint mapping,DECIMAL precision=0,DECIMAL precision=0,PASS

@@ -1,0 +1,18 @@
+{
+  "gate_id": "DTYPE-GATE-05",
+  "status": "pass",
+  "updated_at": "2026-02-13T23:22:49Z",
+  "criteria": {
+    "complex_storage_paths": "pass",
+    "emulation_matrix_closure": "pass",
+    "frozen_update_restrictions": "pass",
+    "embedded_field_accessor_contract": "pass"
+  },
+  "blocking_items": [],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-017/COMPLEX_TYPE_STORAGE_AUDIT.csv",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-018/EMULATION_TYPE_MATRIX_CLOSURE.csv",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-019/FROZEN_COLLECTION_RULE_AUDIT.csv",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-020/EMBEDDED_FIELD_ACCESSOR_RESULTS.md"
+  ]
+}

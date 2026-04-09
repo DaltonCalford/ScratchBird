@@ -1,0 +1,19 @@
+{
+  "ticket_id": "LD-006",
+  "status": "completed",
+  "started_at": "2026-02-11T23:14:47Z",
+  "completed_at": "2026-02-11T23:14:47Z",
+  "spec_inputs": [
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md",
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md"
+  ],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-006/PSQL_CONTROLFLOW_CASES.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-006/PSQL_CURSOR_STATE_MATRIX.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-006/SPEC_TRACEABILITY.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-006/TEST_RESULTS.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-006/IMPLEMENTATION_NOTES.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-006/CHECKSUMS.sha256"
+  ],
+  "notes": "PSQL controlflow and cursor-state matrices completed from canonical section-21 procedural contracts."
+}

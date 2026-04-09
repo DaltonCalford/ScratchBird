@@ -1,0 +1,13 @@
+case_id,input_condition,namespace,profile,expected_result,expected_error_code
+BOOT-VAL-001,missing engine.database_root,engine,production,fail_startup,CONFIG_VALUE_INVALID
+BOOT-VAL-002,missing ipc.port,ipc,production,fail_startup,CONFIG_VALUE_INVALID
+BOOT-VAL-003,duplicate key listener.native.port,listener,production,fail_startup,CONFIG_VALUE_INVALID
+BOOT-VAL-004,unknown key security.foo,security,production,fail_startup,CONFIG_KEY_NOT_FOUND
+BOOT-VAL-005,unknown key listener.foo,listener,production,fail_startup,CONFIG_KEY_NOT_FOUND
+BOOT-VAL-006,unknown key diagnostics.dev_flag,diagnostics,production,fail_startup,CONFIG_KEY_NOT_FOUND
+BOOT-VAL-007,unknown key diagnostics.dev_flag,diagnostics,development,warn_continue,NONE
+BOOT-VAL-008,port out of range 70000,ipc,production,fail_startup,CONFIG_VALUE_INVALID
+BOOT-VAL-009,invalid bool value maybe,listener,production,fail_startup,CONFIG_VALUE_INVALID
+BOOT-VAL-010,i18n.bootstrap_required=true with missing path,i18n,production,fail_startup,RESOURCE_BUNDLE_INVALID
+BOOT-VAL-011,valid minimal bootstrap set,engine,production,startup_success,NONE
+BOOT-VAL-012,comment parsing with escaped #,engine,production,startup_success,NONE

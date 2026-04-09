@@ -78,6 +78,7 @@ namespace scratchbird::optimizer
         std::string catalog_snapshot_id;
         std::string statistics_snapshot_id;
         std::string family_metrics_snapshot_id;
+        std::string memory_grant_feedback_snapshot_id;
         std::string security_snapshot_id;
         std::string planner_policy_snapshot_id;
         std::string artifact_mode = "RUNTIME_PLAN";
@@ -169,6 +170,11 @@ namespace scratchbird::optimizer
         StatisticsManager *stats_manager_;
         SelectivityEstimator selectivity_estimator_;
         core::ConnectionContext *conn_ctx_;
+        std::string active_normalized_statement_id_;
+        std::string active_memory_grant_policy_snapshot_id_;
+        std::string active_memory_grant_cache_mode_;
+        std::string active_memory_grant_execution_intent_class_;
+        std::string active_memory_grant_storage_layer_shape_;
         mutable std::unordered_set<std::string> expanding_views_;
     };
 

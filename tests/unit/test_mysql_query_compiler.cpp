@@ -618,6 +618,46 @@ TEST_F(MySQLQueryCompilerTest, IfFunctionAcceptsExistsSubqueryArgument) {
               "ROW_RESULT|TX-001|PASS|commit_visibility");
 }
 
+TEST_F(MySQLQueryCompilerTest, FieldAndEltFunctionsExecuteAsMySqlBuiltins) {
+    auto result = compileAndExecute(
+        "SELECT "
+        "FIELD('PG', 'PP', 'PPA', 'PG'), "
+        "ELT(3, 'alpha', 'beta', 'gamma'), "
+        "ELT(FIELD('B', 'A', 'B'), 'left', 'right')");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
+    ASSERT_EQ(rs->columnCount(), 3u);
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 3);
+    EXPECT_EQ(rs->getValue(0, 1).toString(), "gamma");
+    EXPECT_EQ(rs->getValue(0, 2).toString(), "right");
+}
+
+TEST_F(MySQLQueryCompilerTest, SelectStarThenAliasedColumnExec) {
+    ASSERT_TRUE(compileAndExecute(
+        "CREATE TABLE t_star_alias (a INT, b INT, c INT)").success());
+    ASSERT_TRUE(compileAndExecute(
+        "INSERT INTO t_star_alias VALUES (1, 2, 3), (11, 22, 33)").success());
+
+    auto result = compileAndExecute("SELECT *, a AS 'x' FROM t_star_alias");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 2u);
+    ASSERT_EQ(rs->columnCount(), 4u);
+    EXPECT_EQ(rs->columnName(0), "a");
+    EXPECT_EQ(rs->columnName(1), "b");
+    EXPECT_EQ(rs->columnName(2), "c");
+    EXPECT_EQ(rs->columnName(3), "x");
+    EXPECT_EQ(rs->getValue(0, 3).toInt64(), 1);
+    EXPECT_EQ(rs->getValue(1, 3).toInt64(), 11);
+}
+
 TEST_F(MySQLQueryCompilerTest, OnDuplicateKeyUpdateSupportsValuesInsideSubquery) {
     auto create_result = compileAndExecute(
         "CREATE TABLE t_dup_values (id INT PRIMARY KEY, x INT)");
@@ -1052,6 +1092,128 @@ TEST_F(MySQLQueryCompilerTest, RemoteModeCompilerKeepsMultiRowVarcharInsertExecu
     ASSERT_EQ(select_rows.resultSet()->rowCount(), 5u);
     EXPECT_EQ(select_rows.resultSet()->getValue(0, 0).toString(), "bar@aol.com");
     EXPECT_EQ(select_rows.resultSet()->getValue(4, 0).toString(), "sasha@mysql.com");
+}
+
+TEST_F(MySQLQueryCompilerTest, RemoteModeCompilerKeepsIndexedLegacyAliasCorpusInsertExecutable) {
+    constexpr const char* kMainRoot = "emulated.mysql.localhost.databases.main";
+    constexpr const char* kCompatRoot = "emulated.mysql.localhost.databases.compat_mysql_alias";
+
+    auto create_main = compileAndExecuteWithDefaultSchema(
+        "CREATE DATABASE IF NOT EXISTS main",
+        kMainRoot);
+    ASSERT_TRUE(create_main.success()) << create_main.error();
+
+    auto create_compat = compileAndExecuteWithDefaultSchema(
+        "CREATE DATABASE IF NOT EXISTS compat_mysql_alias",
+        kMainRoot);
+    ASSERT_TRUE(create_compat.success()) << create_compat.error();
+
+    auto use_compat = compileAndExecute("USE compat_mysql_alias");
+    ASSERT_TRUE(use_compat.success()) << use_compat.error();
+    ASSERT_EQ(conn_ctx_->search_path().front(), kCompatRoot);
+    ASSERT_EQ(conn_ctx_->current_schema(), kCompatRoot);
+
+    auto compile_remote = [&](const std::string& sql) -> sblr::ExecutionResult {
+        sblr::MySQLQueryCompiler compiler(nullptr);
+        compiler.setDefaultSchema(kCompatRoot);
+        auto compile_result = compiler.compile(sql);
+        if (!compile_result.success()) {
+            std::string errors;
+            for (const auto& err : compile_result.errors()) {
+                errors += err + "\n";
+            }
+            return sblr::ExecutionResult("Compilation failed: " + errors);
+        }
+        return executor_->execute(compile_result.bytecode());
+    };
+
+    auto create_table = compile_remote(
+        "CREATE TABLE IF NOT EXISTS t1 ("
+        "cont_nr INT NOT NULL AUTO_INCREMENT,"
+        "ver_nr INT NOT NULL DEFAULT 0,"
+        "aufnr INT NOT NULL DEFAULT 0,"
+        "username VARCHAR(50) NOT NULL DEFAULT '',"
+        "hdl_nr INT NOT NULL DEFAULT 0,"
+        "eintrag DATE NOT NULL DEFAULT '0000-00-00',"
+        "st_klasse VARCHAR(40) NOT NULL DEFAULT '',"
+        "st_wert VARCHAR(40) NOT NULL DEFAULT '',"
+        "st_zusatz VARCHAR(40) NOT NULL DEFAULT '',"
+        "st_bemerkung VARCHAR(255) NOT NULL DEFAULT '',"
+        "kunden_art VARCHAR(40) NOT NULL DEFAULT '',"
+        "mcbs_knr INT DEFAULT NULL,"
+        "mcbs_aufnr INT NOT NULL DEFAULT 0,"
+        "schufa_status CHAR(1) DEFAULT '?',"
+        "bemerkung TEXT,"
+        "wirknetz TEXT,"
+        "wf_igz INT NOT NULL DEFAULT 0,"
+        "tarifcode VARCHAR(80) DEFAULT NULL,"
+        "recycle CHAR(1) DEFAULT NULL,"
+        "sim VARCHAR(30) DEFAULT NULL,"
+        "mcbs_tpl VARCHAR(30) DEFAULT NULL,"
+        "emp_nr INT NOT NULL DEFAULT 0,"
+        "laufzeit INT DEFAULT NULL,"
+        "hdl_name VARCHAR(30) DEFAULT NULL,"
+        "prov_hdl_nr INT NOT NULL DEFAULT 0,"
+        "auto_wirknetz VARCHAR(50) DEFAULT NULL,"
+        "auto_billing VARCHAR(50) DEFAULT NULL,"
+        "touch TIMESTAMP NOT NULL,"
+        "kategorie VARCHAR(50) DEFAULT NULL,"
+        "kundentyp VARCHAR(20) NOT NULL DEFAULT '',"
+        "sammel_rech_msisdn VARCHAR(30) NOT NULL DEFAULT '',"
+        "p_nr VARCHAR(9) NOT NULL DEFAULT '',"
+        "suffix CHAR(3) NOT NULL DEFAULT '',"
+        "PRIMARY KEY (cont_nr),"
+        "KEY idx_aufnr(aufnr),"
+        "KEY idx_hdl_nr(hdl_nr),"
+        "KEY idx_st_klasse(st_klasse),"
+        "KEY ver_nr(ver_nr),"
+        "KEY eintrag_idx(eintrag),"
+        "KEY emp_nr_idx(emp_nr),"
+        "KEY wf_igz(wf_igz),"
+        "KEY touch(touch),"
+        "KEY hdl_tag(eintrag,hdl_nr),"
+        "KEY prov_hdl_nr(prov_hdl_nr),"
+        "KEY mcbs_aufnr(mcbs_aufnr),"
+        "KEY kundentyp(kundentyp),"
+        "KEY p_nr(p_nr,suffix))");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    ASSERT_TRUE(compile_remote(
+        "INSERT INTO t1 VALUES "
+        "(3359356,405,3359356,'Mustermann Musterfrau',52500,'2000-05-20','workflow',"
+        "'Auftrag erledigt','Originalvertrag eingegangen und geprüft','','privat',"
+        "1485525,2122316,'+','','N',1909160,'MobilComSuper92000D2',NULL,NULL,'MS9ND2',"
+        "3,24,'MobilCom Shop Koeln',52500,NULL,'auto',20010202105916,'Mobilfunk','PP',"
+        "'','','')").success());
+    ASSERT_TRUE(compile_remote(
+        "INSERT INTO t1 VALUES "
+        "(3359357,468,3359357,'Mustermann Musterfrau',7001,'2000-05-20','workflow',"
+        "'Auftrag erledigt','Originalvertrag eingegangen und geprüft','','privat',"
+        "1503580,2139699,'+','','P',1909171,'MobilComSuper9D1T10SFreisprech(Akquise)',"
+        "NULL,NULL,'MS9NS1',327,24,'MobilCom Intern',7003,NULL,'auto',20010202105916,"
+        "'Mobilfunk','PP','','','')").success());
+    ASSERT_TRUE(compile_remote(
+        "INSERT INTO t1 VALUES "
+        "(3359358,407,3359358,'Mustermann Musterfrau',7001,'2000-05-20','workflow',"
+        "'Auftrag erledigt','Originalvertrag eingegangen und geprüft','','privat',"
+        "1501358,2137473,'N','','N',1909159,'MobilComSuper92000D2',NULL,NULL,'MS9ND2',"
+        "325,24,'MobilCom Intern',7003,NULL,'auto',20010202105916,'Mobilfunk','PP',"
+        "'','','')").success());
+
+    auto fourth_insert = compile_remote(
+        "INSERT INTO t1 VALUES "
+        "(3359359,468,3359359,'Mustermann Musterfrau',7001,'2000-05-20','workflow',"
+        "'Auftrag erledigt','Originalvertrag eingegangen und geprüft','','privat',"
+        "1507831,2143894,'+','','P',1909162,'MobilComSuper9D1T10SFreisprech(Akquise)',"
+        "NULL,NULL,'MS9NS1',327,24,'MobilCom Intern',7003,NULL,'auto',20010202105916,"
+        "'Mobilfunk','PP','','','')");
+    ASSERT_TRUE(fourth_insert.success()) << fourth_insert.error();
+
+    auto row_count = compileAndExecute("SELECT COUNT(*) FROM t1");
+    ASSERT_TRUE(row_count.success()) << row_count.error();
+    ASSERT_TRUE(row_count.hasResultSet());
+    ASSERT_EQ(row_count.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(row_count.resultSet()->getValue(0, 0).toInt64(), 4);
 }
 
 TEST_F(MySQLQueryCompilerTest, QualifiedCrossDatabaseReferencesResolveUnderSharedMySqlRoot) {

@@ -1,0 +1,3 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+SB-CLUSTER-SWS-MGA-01.md,session-epoch-pinning,"include/scratchbird/core/catalog_manager.h;src/core/catalog_manager.cpp","SESSION_EPOCH_MODEL.md;TEST_RESULTS.md",pass,"Session state persists cluster/schema/security epoch pins"
+SB-CLUSTER-SWS-MGA-01.md,session-epoch-validation-policy,"src/core/catalog_manager.cpp::validateSessionEpochPins;src/core/cluster_write_safety.cpp::validateSessionEpochPins","EPOCH_MISMATCH_BEHAVIOR_MATRIX.csv;REPLAN_REJECT_TEST_RESULTS.md",pass,"Mismatch can reject or trigger replan deterministically"

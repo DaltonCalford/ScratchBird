@@ -1,0 +1,17 @@
+case_id,free_percent,expected_class,extent_state_transition,expected_result,error_code
+FSM-CLS-001,0,0,full_to_full,accept,NONE
+FSM-CLS-002,5,1,partial,accept,NONE
+FSM-CLS-003,12,1,partial,accept,NONE
+FSM-CLS-004,13,2,partial,accept,NONE
+FSM-CLS-005,25,2,partial,accept,NONE
+FSM-CLS-006,26,3,partial,accept,NONE
+FSM-CLS-007,50,3,partial,accept,NONE
+FSM-CLS-008,51,4,partial,accept,NONE
+FSM-CLS-009,75,4,partial,accept,NONE
+FSM-CLS-010,76,5,partial,accept,NONE
+FSM-CLS-011,90,5,partial,accept,NONE
+FSM-CLS-012,91,6,partial,accept,NONE
+FSM-CLS-013,99,6,partial,accept,NONE
+FSM-CLS-014,100,7,free,accept,NONE
+FSM-CLS-015,invalid_header_version,n/a,n/a,reject,INVALID_FSM_HEADER
+FSM-CLS-016,non_contiguous_extent_id,n/a,n/a,reject,INVALID_FSM_ENTRY

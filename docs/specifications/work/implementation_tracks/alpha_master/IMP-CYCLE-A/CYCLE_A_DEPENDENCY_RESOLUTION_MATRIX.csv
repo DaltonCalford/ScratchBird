@@ -1,0 +1,6 @@
+case_id,downstream_ticket,depends_on,status,evidence
+CA-DEP-001,IMP-15,IMP-14_and_IMP-11,resolved,IMP-14_RUN_MANIFEST_and_IMP-11_RUN_MANIFEST
+CA-DEP-002,IMP-17,IMP-14_and_IMP-16,resolved,IMP-14_RUN_MANIFEST_and_IMP-16_RUN_MANIFEST
+CA-DEP-003,IMP-18,IMP-13_and_IMP-14,resolved,IMP-13_RUN_MANIFEST_and_IMP-14_RUN_MANIFEST
+CA-DEP-004,IMP-21,IMP-13_and_IMP-14,partially_resolved,remaining_prereqs_18_pending
+CA-DEP-005,IMP-22,IMP-13_and_IMP-14,partially_resolved,remaining_prereqs_15_18_21_26_28_pending

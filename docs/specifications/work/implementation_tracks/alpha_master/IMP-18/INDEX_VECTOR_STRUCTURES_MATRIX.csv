@@ -1,0 +1,11 @@
+case_id,index_family,required_check,expected_result,error_code
+T18-VS-001,HNSW,level_distribution_and_neighbor_degree_bounds,pass,
+T18-VS-002,IVF,stable_centroids_fixed_seed_and_nprobe_baseline_smallset,pass,
+T18-VS-003,VECTOR_FLAT_BIN_FLAT,distance_correctness_and_scan_equals_bruteforce,pass,
+T18-VS-004,IVF_VARIANTS,ivf_flat_baseline_and_ivf_pq_ivf_sq8_recall_tolerance,pass,
+T18-VS-005,RHNSW_VARIANTS,pq_sq_encode_decode_and_recall_tolerance,pass,
+T18-VS-006,ANNOY,deterministic_build_fixed_seed_and_recall_monotonicity,pass,
+T18-VS-007,NSG,graph_connectivity_degree_bounds_and_knn_correctness,pass,
+T18-VS-008,DISKANN,disk_search_recall_threshold_and_pq_rerank_match,pass,
+T18-VS-009,SCANN,reorder_step_improves_accuracy_vs_approx_only,pass,
+T18-VS-010,GPU_CAGRA,gpu_cpu_fallback_result_equivalence,pass,

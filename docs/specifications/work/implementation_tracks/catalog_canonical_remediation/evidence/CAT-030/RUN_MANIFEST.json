@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-030",
+  "status": "completed",
+  "started_at": "2026-02-14T21:28:00Z",
+  "finished_at": "2026-02-14T22:09:17Z",
+  "owner": "codex",
+  "notes": "Implemented OLAP/cube catalog family end-to-end: root/backfill wiring, deterministic CRUD/constraints, and bootstrap/contract tests."
+}

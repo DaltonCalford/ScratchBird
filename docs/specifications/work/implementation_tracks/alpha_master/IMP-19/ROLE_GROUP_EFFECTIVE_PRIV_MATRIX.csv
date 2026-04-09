@@ -1,0 +1,6 @@
+case_id,user_roles,user_groups,active_role,effective_grants,expected_result
+T19-RG-001,sb_readonly,none,sb_readonly,select_only,allow_read_deny_write
+T19-RG-002,operator;sb_readonly,none,operator,operator_plus_readonly,allow_operator_ops
+T19-RG-003,sb_developer;sb_readonly,analytics_group,sb_developer,developer_plus_group_grants,allow_defined_scope
+T19-RG-004,sb_security_admin;sb_admin,none,sb_admin,no_implicit_inheritance_between_top_roles,role_scoped_only
+T19-RG-005,sb_service,cluster_bridge_group,sb_service,service_grants_only,deny_out_of_scope

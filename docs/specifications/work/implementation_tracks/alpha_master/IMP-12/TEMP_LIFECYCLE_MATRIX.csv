@@ -1,0 +1,6 @@
+case_id,table_kind,operation,precondition,expected_result,error_code
+T12-LC-001,TEMP_SESSION,create,session_active,session_local_metadata_created,
+T12-LC-002,TEMP_GLOBAL,create,session_active,persistent_catalog_metadata_created,
+T12-LC-003,TEMP_SESSION,drop,owner_session,metadata_and_rows_removed,
+T12-LC-004,TEMP_GLOBAL,drop,owner_session,global_definition_removed_and_session_rows_removed,
+T12-LC-005,TEMP_SESSION,access_after_session_end,session_closed,rejected,E_TEMP_SCOPE_VIOLATION

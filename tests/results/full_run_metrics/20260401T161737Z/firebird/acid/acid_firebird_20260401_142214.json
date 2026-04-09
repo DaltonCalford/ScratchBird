@@ -1,0 +1,215 @@
+{
+  "metadata": {
+    "engine": "firebird",
+    "host": "localhost",
+    "port": 3050,
+    "database": "/firebird/data/benchmark.fdb",
+    "timestamp": "20260401_142214"
+  },
+  "results": {
+    "atomicity": [
+      {
+        "test_name": "atomic_commit_success",
+        "description": "All statements in transaction commit together",
+        "status": "passed",
+        "duration_ms": 190.60015678405762,
+        "expected": 3,
+        "actual": 3,
+        "error_message": ""
+      },
+      {
+        "test_name": "atomic_rollback_on_error",
+        "description": "Transaction rolls back on error - no partial commits",
+        "status": "passed",
+        "duration_ms": 37.302494049072266,
+        "expected": 0,
+        "actual": 0,
+        "error_message": "('Error while executing SQL statement:\\n- SQLCODE: -803\\n- violation of PRIMARY or UNIQUE KEY constraint \"INTEG_14\" on table \"ATOMIC_TEST\"\\n- Problematic key value is (\"ID\" = 1)', -803, 335544665)"
+      },
+      {
+        "test_name": "atomic_explicit_rollback",
+        "description": "Explicit ROLLBACK undoes all changes",
+        "status": "passed",
+        "duration_ms": 181.3514232635498,
+        "expected": 0,
+        "actual": 0,
+        "error_message": ""
+      },
+      {
+        "test_name": "atomic_multi_table_commit",
+        "description": "Multi-table transaction is atomic across all tables",
+        "status": "passed",
+        "duration_ms": 323.3053684234619,
+        "expected": 2000.0,
+        "actual": 2000.0,
+        "error_message": ""
+      },
+      {
+        "test_name": "atomic_savepoint_rollback",
+        "description": "ROLLBACK TO SAVEPOINT partially undoes transaction",
+        "status": "passed",
+        "duration_ms": 157.1521759033203,
+        "expected": 2,
+        "actual": 2,
+        "error_message": ""
+      }
+    ],
+    "consistency": [
+      {
+        "test_name": "consistency_pk_violation",
+        "description": "Primary key constraint is enforced",
+        "status": "passed",
+        "duration_ms": 163.5425090789795,
+        "expected": 1,
+        "actual": 1,
+        "error_message": "('Error while executing SQL statement:\\n- SQLCODE: -803\\n- violation of PRIMARY or UNIQUE KEY constraint \"INTEG_27\" on table \"CONSISTENCY_TEST\"\\n- Problematic key value is (\"ID\" = 1)', -803, 335544665)"
+      },
+      {
+        "test_name": "consistency_fk_violation",
+        "description": "Foreign key constraint prevents orphaned records",
+        "status": "passed",
+        "duration_ms": 328.89318466186523,
+        "expected": 0,
+        "actual": 0,
+        "error_message": "('Error while executing SQL statement:\\n- SQLCODE: -530\\n- violation of FOREIGN KEY constraint \"INTEG_32\" on table \"CHILD\"\\n- Foreign key reference target does not exist\\n- Problematic key value is (\"PARENT_ID\" = 999)', -530, 335544466)"
+      },
+      {
+        "test_name": "consistency_check_constraint",
+        "description": "CHECK constraints are enforced",
+        "status": "passed",
+        "duration_ms": 203.04059982299805,
+        "expected": 0,
+        "actual": 0,
+        "error_message": "(\"Error while executing SQL statement:\\n- SQLCODE: -297\\n- Operation violates CHECK constraint INTEG_35 on view or table CHECK_TEST\\n- At trigger 'CHECK_1'\", -297, 335544558)"
+      },
+      {
+        "test_name": "consistency_unique_constraint",
+        "description": "UNIQUE constraints prevent duplicates",
+        "status": "passed",
+        "duration_ms": 214.7078514099121,
+        "expected": 1,
+        "actual": 1,
+        "error_message": "('Error while executing SQL statement:\\n- SQLCODE: -803\\n- violation of PRIMARY or UNIQUE KEY constraint \"INTEG_39\" on table \"UNIQUE_TEST\"\\n- Problematic key value is (\"EMAIL\" = \\'test@example.com\\')', -803, 335544665)"
+      },
+      {
+        "test_name": "consistency_not_null",
+        "description": "NOT NULL constraints prevent NULL insertion",
+        "status": "passed",
+        "duration_ms": 163.15436363220215,
+        "expected": 0,
+        "actual": 0,
+        "error_message": "('Error while executing SQL statement:\\n- SQLCODE: -625\\n- validation error for column \"NOTNULL_TEST\".\"REQUIRED_FIELD\", value \"*** null ***\"', -625, 335544347)"
+      },
+      {
+        "test_name": "consistency_invariant_maintenance",
+        "description": "Database invariants are maintained across operations",
+        "status": "passed",
+        "duration_ms": 181.7934513092041,
+        "expected": 0,
+        "actual": 0,
+        "error_message": "(\"Error while executing SQL statement:\\n- SQLCODE: -297\\n- Operation violates CHECK constraint INTEG_46 on view or table LEDGER\\n- At trigger 'CHECK_5'\", -297, 335544558)"
+      }
+    ],
+    "isolation": [
+      {
+        "test_name": "isolation_dirty_read_prevention",
+        "description": "Uncommitted changes are not visible to other transactions",
+        "status": "skipped",
+        "duration_ms": 0.0,
+        "expected": null,
+        "actual": null,
+        "error_message": "Requires concurrent execution mode"
+      },
+      {
+        "test_name": "isolation_non_repeatable_read",
+        "description": "Repeatable Read prevents non-repeatable reads",
+        "status": "skipped",
+        "duration_ms": 0.0,
+        "expected": null,
+        "actual": null,
+        "error_message": "Requires concurrent execution mode"
+      },
+      {
+        "test_name": "isolation_phantom_read",
+        "description": "Serializable isolation prevents phantom reads",
+        "status": "skipped",
+        "duration_ms": 0.0,
+        "expected": null,
+        "actual": null,
+        "error_message": "Requires concurrent execution mode"
+      },
+      {
+        "test_name": "isolation_lost_update",
+        "description": "Concurrent updates don't lose data",
+        "status": "skipped",
+        "duration_ms": 0.0,
+        "expected": null,
+        "actual": null,
+        "error_message": "Requires concurrent execution mode"
+      },
+      {
+        "test_name": "isolation_read_committed_default",
+        "description": "Default isolation level matches the engine baseline",
+        "status": "passed",
+        "duration_ms": 80.03711700439453,
+        "expected": "READ COMMITTED",
+        "actual": "READ COMMITTED",
+        "error_message": ""
+      }
+    ],
+    "durability": [
+      {
+        "test_name": "durability_commit_persistence",
+        "description": "Committed data persists after transaction ends",
+        "status": "passed",
+        "duration_ms": 154.67357635498047,
+        "expected": "committed_data",
+        "actual": "committed_data",
+        "error_message": ""
+      },
+      {
+        "test_name": "durability_rollback_not_persisted",
+        "description": "Rolled back data does not persist",
+        "status": "passed",
+        "duration_ms": 34.3475341796875,
+        "expected": 0,
+        "actual": 0,
+        "error_message": ""
+      },
+      {
+        "test_name": "durability_visibility_after_commit",
+        "description": "New transaction sees committed data immediately",
+        "status": "passed",
+        "duration_ms": 169.3277359008789,
+        "expected": 42,
+        "actual": 42,
+        "error_message": ""
+      }
+    ]
+  },
+  "summary": {
+    "total": 19,
+    "passed": 15,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 4,
+    "by_category": {
+      "atomicity": {
+        "total": 5,
+        "passed": 5
+      },
+      "consistency": {
+        "total": 6,
+        "passed": 6
+      },
+      "isolation": {
+        "total": 5,
+        "passed": 1
+      },
+      "durability": {
+        "total": 3,
+        "passed": 3
+      }
+    }
+  }
+}

@@ -628,6 +628,63 @@ TEST_F(SecurityPhase3_4_RLS_Test, RuntimeFiltering)
     EXPECT_EQ(rs->getValue(0, 1).toInt32(), 1);
 }
 
+TEST_F(SecurityPhase3_4_RLS_Test, RuntimeFilteringWithCurrentUserPolicySql)
+{
+    auto whoami = executeSQL("SELECT CURRENT_USER");
+    ASSERT_TRUE(whoami.success()) << "CURRENT_USER failed: " << whoami.error();
+    auto* whoami_rs = whoami.resultSet();
+    ASSERT_NE(whoami_rs, nullptr);
+    ASSERT_EQ(whoami_rs->rowCount(), 1u);
+    const std::string current_user = whoami_rs->getValue(0, 0).toString();
+    ASSERT_FALSE(current_user.empty());
+
+    auto create_result = executeSQL(
+        "CREATE TABLE docs_rls_current_user ("
+        "id INTEGER PRIMARY KEY, "
+        "owner_name VARCHAR(64), "
+        "payload VARCHAR(32))");
+    ASSERT_TRUE(create_result.success()) << "CREATE TABLE failed: "
+                                         << create_result.error();
+
+    auto insert_owned = executeSQL(
+        "INSERT INTO docs_rls_current_user (id, owner_name, payload) "
+        "VALUES (1, CURRENT_USER, 'mine')");
+    ASSERT_TRUE(insert_owned.success()) << "Owned INSERT failed: "
+                                        << insert_owned.error();
+
+    auto insert_other = executeSQL(
+        "INSERT INTO docs_rls_current_user (id, owner_name, payload) "
+        "VALUES (2, 'someone_else', 'other')");
+    ASSERT_TRUE(insert_other.success()) << "Other INSERT failed: "
+                                        << insert_other.error();
+    commitTransaction();
+
+    auto enable_rls =
+        executeSQL("ALTER TABLE docs_rls_current_user ENABLE ROW LEVEL SECURITY");
+    ASSERT_TRUE(enable_rls.success()) << "ENABLE RLS failed: " << enable_rls.error();
+
+    auto force_rls =
+        executeSQL("ALTER TABLE docs_rls_current_user FORCE ROW LEVEL SECURITY");
+    ASSERT_TRUE(force_rls.success()) << "FORCE RLS failed: " << force_rls.error();
+
+    auto create_policy = executeSQL(
+        "CREATE POLICY docs_rls_current_user_policy ON docs_rls_current_user "
+        "FOR SELECT TO PUBLIC USING (owner_name = CURRENT_USER)");
+    ASSERT_TRUE(create_policy.success()) << "CREATE POLICY failed: "
+                                         << create_policy.error();
+
+    auto select_visible = executeSQL(
+        "SELECT id, owner_name, payload FROM docs_rls_current_user ORDER BY id");
+    ASSERT_TRUE(select_visible.success()) << "SELECT failed: "
+                                          << select_visible.error();
+    auto* visible_rs = select_visible.resultSet();
+    ASSERT_NE(visible_rs, nullptr);
+    ASSERT_EQ(visible_rs->rowCount(), 1u);
+    EXPECT_EQ(visible_rs->getValue(0, 0).toInt32(), 1);
+    EXPECT_EQ(visible_rs->getValue(0, 1).toString(), current_user);
+    EXPECT_EQ(visible_rs->getValue(0, 2).toString(), "mine");
+}
+
 TEST_F(SecurityPhase3_4_RLS_Test, DmlHonorsWithCheckPolicies)
 {
     ID table_id = createTestTable("tasks");

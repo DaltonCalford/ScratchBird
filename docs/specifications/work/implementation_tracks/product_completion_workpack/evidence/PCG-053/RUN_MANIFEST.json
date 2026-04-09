@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-053",
+  "phase": "PH5",
+  "title": "Automate fault injection and chaos test suites",
+  "status": "pending",
+  "owner": "qa-reliability",
+  "estimate_days": 6,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

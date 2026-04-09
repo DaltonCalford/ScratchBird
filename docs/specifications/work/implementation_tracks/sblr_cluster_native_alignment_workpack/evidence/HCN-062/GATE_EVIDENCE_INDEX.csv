@@ -1,0 +1,9 @@
+gate_id,phase,decision,evidence_directory,decision_date,notes
+HCN-GATE-00,PH0,pass,docs/planning/SBLR_CLUSTER_NATIVE_ALIGNMENT_WORKTREE/gates/HCN-GATE-00,2026-02-24,Foundational lock and gap/license controls complete
+HCN-GATE-01,PH1,pass,docs/planning/SBLR_CLUSTER_NATIVE_ALIGNMENT_WORKTREE/gates/HCN-GATE-01,2026-02-26,Cluster identity/time/lock/control-plane foundations complete
+HCN-GATE-02,PH2,pass,docs/planning/SBLR_CLUSTER_NATIVE_ALIGNMENT_WORKTREE/gates/HCN-GATE-02,2026-02-26,Write safety routing epoch and GTXID controls complete
+HCN-GATE-03,PH3,pass,docs/planning/SBLR_CLUSTER_NATIVE_ALIGNMENT_WORKTREE/gates/HCN-GATE-03,2026-02-26,Replication watermark snapshot and GC-safe horizon controls complete
+HCN-GATE-04,PH4,pass,docs/planning/SBLR_CLUSTER_NATIVE_ALIGNMENT_WORKTREE/gates/HCN-GATE-04,2026-02-26,Observability contract closure complete
+HCN-GATE-05,PH5,pass,docs/planning/SBLR_CLUSTER_NATIVE_ALIGNMENT_WORKTREE/gates/HCN-GATE-05,2026-02-26,Explicit compile and deterministic fallback closure complete
+HCN-GATE-06,PH5,pass,docs/planning/SBLR_CLUSTER_NATIVE_ALIGNMENT_WORKTREE/gates/HCN-GATE-06,2026-02-26,Async JIT queue suppression and rebase portability closure complete
+HCN-GATE-07,PH6,pass,docs/planning/SBLR_CLUSTER_NATIVE_ALIGNMENT_WORKTREE/gates/HCN-GATE-07,2026-02-26,Threat/perf/signoff release-readiness closure complete

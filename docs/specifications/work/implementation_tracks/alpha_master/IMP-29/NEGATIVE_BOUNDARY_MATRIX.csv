@@ -1,0 +1,4 @@
+case_id,suite,required_check,expected_result,error_code
+T29-G01,G,invalid_pool_key_update_rejected,reject,LSN-E-POOL-KEY
+T29-G02,G,malformed_management_command_rejected,reject,LSN-E-MGMT-CMD
+T29-G03,G,illegal_lifecycle_transition_rejected,reject,LSN-E-STATE

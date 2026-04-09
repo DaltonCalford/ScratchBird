@@ -1,0 +1,3 @@
+# PROVENANCE_ATTESTATION_SCHEMA.md
+
+Template scaffold for PCG-061.

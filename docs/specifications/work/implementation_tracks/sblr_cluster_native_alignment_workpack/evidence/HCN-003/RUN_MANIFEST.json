@@ -1,0 +1,28 @@
+{
+  "ticket_id": "HCN-003",
+  "title": "Finalize license and notice packaging controls",
+  "phase": "PH0",
+  "status": "done",
+  "owner": "codex",
+  "started_utc": "2026-02-23T22:15:00Z",
+  "completed_utc": "2026-02-24T03:20:00Z",
+  "inputs": [
+    "docs/specifications/work/findings/LICENSE_COMPATIBILITY_LLVM_IDPL_REVIEW_2026-02-23.md",
+    "/home/dcalford/CliWork/llvm-project/LICENSE.TXT",
+    "/home/dcalford/CliWork/local_work/library/technical_specs/firebird/licenses/IDPL_1_0_FULL_TEXT.txt",
+    "/home/dcalford/CliWork/ScratchBird/LICENSE"
+  ],
+  "outputs": [
+    "LICENSE_NOTICE_MATRIX.csv",
+    "THIRD_PARTY_NOTICE_BUNDLE.txt",
+    "RELEASE_COMPLIANCE_CHECKLIST.md",
+    "SPEC_TRACEABILITY.csv",
+    "RESULT_SUMMARY.md"
+  ],
+  "commands": [
+    "nl -ba <license files> | sed -n '<line-window>p'",
+    "sha256sum <license files>",
+    "checksum regeneration"
+  ],
+  "notes": "LLVM plus IDPL obligations are explicit; unresolved LICENSE placeholders are release-gated blockers."
+}

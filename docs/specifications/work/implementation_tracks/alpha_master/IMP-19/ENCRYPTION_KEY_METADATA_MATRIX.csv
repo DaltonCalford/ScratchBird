@@ -1,0 +1,6 @@
+case_id,check,expected_behavior,error_code
+T19-EN-001,pre_decryption_catalog_read,only_pre_decrypt_fields_visible,
+T19-EN-002,unlock_policy_load,policy_loaded_before_mount,
+T19-EN-003,private_key_query_attempt,private_material_not_queryable,E_PRIVATE_KEY_NOT_QUERYABLE
+T19-EN-004,key_profile_rotation_metadata,new_profile_staged_then_activated,
+T19-EN-005,encrypted_db_without_key_material,open_denied,E_DB_UNLOCK_REQUIRED

@@ -433,6 +433,12 @@ protected:
                                     core::ErrorContext* ctx = nullptr);
     core::Status ensureRemoteClient(core::ErrorContext* ctx);
     void applyFirebirdSessionSchemaContextForTest(core::ErrorContext* ctx);
+    core::Status ensureRemoteClientForTest(core::ErrorContext* ctx = nullptr) {
+        return ensureRemoteClient(ctx);
+    }
+    const client::ConnectionConfig& remoteClientConfigForTest() const {
+        return client_config_;
+    }
 
 protected:
     // ========================================================================

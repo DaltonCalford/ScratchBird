@@ -1,0 +1,15 @@
+{
+  "ticket_id": "HCN-034",
+  "title": "Implement domain control-plane replication and join hash validation",
+  "phase": "PH3",
+  "owner": "codex",
+  "started_utc": "2026-02-23T00:00:00Z",
+  "completed_utc": "2026-02-26T19:15:29Z",
+  "source_commit": "9e789eaad9b8e377f42f96f2ea8fec0193970f40",
+  "commands": [
+    "cmake --build /home/dcalford/CliWork/ScratchBird/build --target scratchbird_tests -j8",
+    "/home/dcalford/CliWork/ScratchBird/build/tests/scratchbird_tests --gtest_filter='ShardCommitLogPipelineTest.*:FollowerApplyPipelineTest.*:SnapshotRegistryTest.*:CommittedWatermarkPublisherTest.*:GcSafeHorizonCalculatorTest.*:DomainControlPlaneReplicaCatalogTest.*'",
+    "/home/dcalford/CliWork/ScratchBird/build/tests/scratchbird_tests --gtest_filter='ClusterWriteFencingTest.*:DeterministicShardRouterTest.*:SessionEpochPinsTest.*:CatalogSessionEpochPinningTest.*:MultiShardWriteGuardTest.*:GtxidOrderingTest.*'"
+  ],
+  "notes": "Domain control-plane replication now enforces monotonic epochs and deterministic join mismatch classification for domain UUID/hash drift."
+}

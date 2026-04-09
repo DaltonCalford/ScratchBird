@@ -1,0 +1,5 @@
+case_id,emulated_engine,feature,expected_behavior
+T12-CP-001,firebird_5,global_temporary_tables,global_definition_with_session_data_isolation
+T12-CP-002,postgresql_18,temp_table_on_commit,delete_preserve_drop_policies_match_profile
+T12-CP-003,mysql_8,temporary_table_scope,session_scope_and_restart_discard_match_profile
+T12-CP-004,cassandra_5,unsupported_temp_semantics,rejected_deterministically

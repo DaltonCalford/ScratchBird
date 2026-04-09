@@ -1,0 +1,6 @@
+case_id,required_check,expected_result,error_code
+T25-P2-01,q00_q03_workload_classification_scoring_placement_deterministic,pass,
+T25-P2-02,q04_queue_admission_fairness_starvation_bounds,pass,
+T25-P2-03,q05_q06_rebalance_safety_online_relocation,pass,
+T25-P2-04,q07_autoscaling_join_leave_warmup_drain,pass,
+T25-P2-05,q08_q09_failure_containment_feedback_safety,pass,

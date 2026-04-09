@@ -1,0 +1,6 @@
+spec_clause,implementation,evidence,status
+TOAST and LOB page types are distinct canonical enum values,include/scratchbird/core/ondisk.h + tests/unit/test_lob_page_layout_contract.cpp,TOAST_LOB_PAGE_TYPE_MATRIX.csv,pass
+TOAST metadata page payload layout is explicit,include/scratchbird/core/ondisk.h (ToastMetaPageLayout),TOAST_LOB_PAGE_TYPE_MATRIX.csv,pass
+TOAST/LOB chunk record header layout is explicit,include/scratchbird/core/ondisk.h (ToastChunkRecordHeader + LobChunkRecordHeader),TOAST_LOB_PAGE_TYPE_MATRIX.csv,pass
+LOB metadata record layout is explicit,include/scratchbird/core/ondisk.h (LobMetaRecordLayout),TOAST_LOB_PAGE_TYPE_MATRIX.csv,pass
+chunk index and payload length normative validators exist,include/scratchbird/core/ondisk.h (isValidLobOrToastChunkPayload/isValidLobOrToastChunkIndex),TEST_RESULTS.md,pass

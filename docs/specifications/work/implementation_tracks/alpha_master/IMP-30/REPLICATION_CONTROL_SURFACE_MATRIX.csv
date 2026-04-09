@@ -1,0 +1,9 @@
+case_id,suite,required_check,expected_result,error_code
+T30-H01,H,create_replication_channel_persists_required_metadata,pass,
+T30-H02,H,channel_state_policy_mutations_require_expect_version,reject,SB-REPL-VERSION
+T30-H03,H,direction_constraints_reject_incompatible_commands,pass,
+T30-H04,H,show_replication_status_lag_cursors_conflicts_events_fixed_schema,pass,
+T30-H05,H,conflict_resolution_validates_action_and_persists_evidence,pass,
+T30-H06,H,fence_clear_fence_enforce_approval_and_convergence,pass,
+T30-H07,H,replication_control_failures_map_sb_repl_codes,pass,
+T30-H08,H,sb_admin_replication_and_sb_replctl_map_1to1_native_sql_control,pass,

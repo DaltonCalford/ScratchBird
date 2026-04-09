@@ -1,0 +1,5 @@
+case_id,suite,required_check,expected_result,error_code
+T27-G01,G,cluster_fabric_purpose_requires_mtls,reject_non_mtls,HS-E-CHANNEL-AUTH
+T27-G02,G,group_fabric_purpose_requires_mtls_alpha,reject_non_mtls,HS-E-CHANNEL-AUTH
+T27-G03,G,fabric_channels_support_multiplexed_signed_session_identity,pass,
+T27-G04,G,per_session_transaction_ownership_lookup_integrity,pass,

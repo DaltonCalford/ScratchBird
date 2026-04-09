@@ -1,0 +1,441 @@
+{
+  "metadata": {
+    "source_result_dir": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z",
+    "summary_markdown": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/SUMMARY.md"
+  },
+  "summary": {
+    "total_steps": 67,
+    "passed": 3,
+    "failed": 64,
+    "by_category": {
+      "wire_protocol": {
+        "passed": 3,
+        "failed": 4
+      },
+      "transaction_semantics": {
+        "passed": 0,
+        "failed": 31
+      },
+      "security_enforcement": {
+        "passed": 0,
+        "failed": 8
+      },
+      "end_to_end_sql": {
+        "passed": 0,
+        "failed": 2
+      },
+      "modal_nosql": {
+        "passed": 0,
+        "failed": 9
+      },
+      "cluster_infra": {
+        "passed": 0,
+        "failed": 10
+      }
+    }
+  },
+  "results": [
+    {
+      "category": "wire_protocol",
+      "step_id": "compat_postgresql",
+      "result": "PASS",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/compat_postgresql.log"
+    },
+    {
+      "category": "wire_protocol",
+      "step_id": "compat_mysql",
+      "result": "PASS",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/compat_mysql.log"
+    },
+    {
+      "category": "wire_protocol",
+      "step_id": "compat_firebird",
+      "result": "PASS",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/compat_firebird.log"
+    },
+    {
+      "category": "wire_protocol",
+      "step_id": "pg_frame_conformance",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/pg_frame_conformance.log"
+    },
+    {
+      "category": "wire_protocol",
+      "step_id": "mysql_frame_conformance",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/mysql_frame_conformance.log"
+    },
+    {
+      "category": "wire_protocol",
+      "step_id": "firebird_frame_conformance",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/firebird_frame_conformance.log"
+    },
+    {
+      "category": "wire_protocol",
+      "step_id": "generic_protocol_frame_conformance",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/generic_protocol_frame_conformance.log"
+    },
+    {
+      "category": "end_to_end_sql",
+      "step_id": "compat_scratchbird_native",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/compat_scratchbird_native.log"
+    },
+    {
+      "category": "end_to_end_sql",
+      "step_id": "v3_native_inet_suite",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/v3_native_inet_suite.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "transaction_truth_matrix",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/transaction_truth_matrix.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "transaction_truth_native",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/transaction_truth_native.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "mga_basic_update",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/mga_basic_update.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "mga_mvcc_visibility",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/mga_mvcc_visibility.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "storage_tx_backversion",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/storage_tx_backversion.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "txn_startup_failpoint_replay",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/txn_startup_failpoint_replay.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "txn_commit_pre_tip_restart",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/txn_commit_pre_tip_restart.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "txn_commit_post_tip_restart",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/txn_commit_post_tip_restart.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "txn_prepare_catalog_restart",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/txn_prepare_catalog_restart.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "txn_writeback_diskfull_fence",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/txn_writeback_diskfull_fence.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "txn_commit_fence_rejects_open_incident",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/txn_commit_fence_rejects_open_incident.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "txn_restart_reloads_write_fence",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/txn_restart_reloads_write_fence.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "txn_cleanup_blocked_recovery",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/txn_cleanup_blocked_recovery.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "txn_checksum_quarantine_recovery",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/txn_checksum_quarantine_recovery.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "txn_copy_write_fence_boundary",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/txn_copy_write_fence_boundary.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "txn_sweep_resume_generation_reuse",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/txn_sweep_resume_generation_reuse.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "txn_sweep_dirty_restart_rewind",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/txn_sweep_dirty_restart_rewind.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "txn_durability_observability_surface",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/txn_durability_observability_surface.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "memory_domain_config_surface",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/memory_domain_config_surface.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "memory_admission_second_touch",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/memory_admission_second_touch.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "memory_ghost_history_reuse",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/memory_ghost_history_reuse.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "memory_domain_isolation_version_undo",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/memory_domain_isolation_version_undo.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "memory_domain_reservation_floor",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/memory_domain_reservation_floor.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "memory_prefetch_fairness_budget",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/memory_prefetch_fairness_budget.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "memory_prefetch_thrash_guard",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/memory_prefetch_thrash_guard.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "memory_checkpoint_capture_debt",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/memory_checkpoint_capture_debt.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "memory_queue_rebuild_restart",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/memory_queue_rebuild_restart.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "memory_partition_ownership_transfer",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/memory_partition_ownership_transfer.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "memory_buffer_policy_observability",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/memory_buffer_policy_observability.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "memory_scan_resistance_benchmark",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/memory_scan_resistance_benchmark.log"
+    },
+    {
+      "category": "transaction_semantics",
+      "step_id": "memory_mixed_workload_benchmark",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/memory_mixed_workload_benchmark.log"
+    },
+    {
+      "category": "security_enforcement",
+      "step_id": "security_parity_matrix",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/security_parity_matrix.log"
+    },
+    {
+      "category": "security_enforcement",
+      "step_id": "security_phase3_column",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/security_phase3_column.log"
+    },
+    {
+      "category": "security_enforcement",
+      "step_id": "security_phase3_rls_dml",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/security_phase3_rls_dml.log"
+    },
+    {
+      "category": "security_enforcement",
+      "step_id": "domain_security",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/domain_security.log"
+    },
+    {
+      "category": "security_enforcement",
+      "step_id": "domain_encryption",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/domain_encryption.log"
+    },
+    {
+      "category": "security_enforcement",
+      "step_id": "domain_e2e",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/domain_e2e.log"
+    },
+    {
+      "category": "security_enforcement",
+      "step_id": "audit_compliance_trail",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/audit_compliance_trail.log"
+    },
+    {
+      "category": "security_enforcement",
+      "step_id": "auth_policy_protocol_parity",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/auth_policy_protocol_parity.log"
+    },
+    {
+      "category": "modal_nosql",
+      "step_id": "parser_search_dsl_surface",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/parser_search_dsl_surface.log"
+    },
+    {
+      "category": "modal_nosql",
+      "step_id": "parser_search_dsl_negative",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/parser_search_dsl_negative.log"
+    },
+    {
+      "category": "modal_nosql",
+      "step_id": "parser_vector_surface",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/parser_vector_surface.log"
+    },
+    {
+      "category": "modal_nosql",
+      "step_id": "parser_vector_negative",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/parser_vector_negative.log"
+    },
+    {
+      "category": "modal_nosql",
+      "step_id": "parser_redis_surface",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/parser_redis_surface.log"
+    },
+    {
+      "category": "modal_nosql",
+      "step_id": "parser_redis_negative",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/parser_redis_negative.log"
+    },
+    {
+      "category": "modal_nosql",
+      "step_id": "nosql_emitter_mapping",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/nosql_emitter_mapping.log"
+    },
+    {
+      "category": "modal_nosql",
+      "step_id": "nosql_emitter_alias_reject",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/nosql_emitter_alias_reject.log"
+    },
+    {
+      "category": "modal_nosql",
+      "step_id": "nosql_virtual_catalog_contract",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/nosql_virtual_catalog_contract.log"
+    },
+    {
+      "category": "cluster_infra",
+      "step_id": "cluster_fencing_term",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/cluster_fencing_term.log"
+    },
+    {
+      "category": "cluster_infra",
+      "step_id": "cluster_fencing_epoch",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/cluster_fencing_epoch.log"
+    },
+    {
+      "category": "cluster_infra",
+      "step_id": "cluster_identity_default",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/cluster_identity_default.log"
+    },
+    {
+      "category": "cluster_infra",
+      "step_id": "cluster_identity_persist",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/cluster_identity_persist.log"
+    },
+    {
+      "category": "cluster_infra",
+      "step_id": "cluster_replication_pipeline",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/cluster_replication_pipeline.log"
+    },
+    {
+      "category": "cluster_infra",
+      "step_id": "cluster_replication_conflict_contracts",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/cluster_replication_conflict_contracts.log"
+    },
+    {
+      "category": "cluster_infra",
+      "step_id": "cluster_observability_rows",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/cluster_observability_rows.log"
+    },
+    {
+      "category": "cluster_infra",
+      "step_id": "cluster_parser_control_surface",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/cluster_parser_control_surface.log"
+    },
+    {
+      "category": "cluster_infra",
+      "step_id": "cluster_parser_replication_surface",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/cluster_parser_replication_surface.log"
+    },
+    {
+      "category": "cluster_infra",
+      "step_id": "cluster_parser_replication_negative",
+      "result": "FAIL",
+      "log": "/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260405T002140Z/logs/cluster_parser_replication_negative.log"
+    }
+  ]
+}

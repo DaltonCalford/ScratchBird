@@ -34,11 +34,15 @@ namespace scratchbird::core
         UuidV7Bytes index_id{};
         std::string index_name;
         uint32_t page_id = 0;
+        uint32_t locality_page_id = 0;
         IndexCleanupFamily family = IndexCleanupFamily::EXACT;
         IndexCleanupPublicationState state = IndexCleanupPublicationState::COMPLETE;
         uint64_t heap_reclaim_count = 0;
         uint64_t entries_removed = 0;
         uint64_t backlog_count = 0;
+        uint64_t backlog_pages = 0;
+        uint64_t backlog_bytes = 0;
+        bool repair_required = false;
         uint64_t sweep_generation = 0;
         uint64_t checkpoint_generation = 0;
         uint64_t published_at_us = 0;
@@ -51,5 +55,7 @@ namespace scratchbird::core
         uint64_t summary_family_backlog_published = 0;
         uint64_t approximate_family_backlog_published = 0;
         uint64_t backlog_count = 0;
+        uint64_t backlog_pages = 0;
+        uint64_t backlog_bytes = 0;
     };
 } // namespace scratchbird::core

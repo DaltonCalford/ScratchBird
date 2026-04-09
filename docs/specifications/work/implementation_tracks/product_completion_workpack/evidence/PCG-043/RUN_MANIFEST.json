@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-043",
+  "phase": "PH4",
+  "title": "Implement continuous CDC sync and divergence reconciliation",
+  "status": "pending",
+  "owner": "migration-runtime",
+  "estimate_days": 8,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

@@ -52,6 +52,21 @@ namespace scratchbird::optimizer
                 relation.candidate_family_identity_signatures;
             out["candidate_family_statistics_signatures"] =
                 relation.candidate_family_statistics_signatures;
+            out["candidate_family_refusals"] = nlohmann::json::array();
+            for (const auto &refusal : relation.candidate_family_refusals)
+            {
+                nlohmann::json refusal_json;
+                refusal_json["family"] = refusal.family;
+                refusal_json["candidate_label"] = refusal.candidate_label;
+                refusal_json["refusal_class"] = refusal.refusal_class;
+                refusal_json["refusal_cause_domain"] =
+                    refusal.refusal_cause_domain;
+                refusal_json["refusal_reason_code"] =
+                    refusal.refusal_reason_code;
+                refusal_json["refusal_detail"] = refusal.refusal_detail;
+                out["candidate_family_refusals"].push_back(
+                    std::move(refusal_json));
+            }
             out["exactness_class"] =
                 accessPathExactnessClassName(relation.exactness_class);
             out["exactness_class_id"] =
@@ -69,7 +84,14 @@ namespace scratchbird::optimizer
             out["visibility_enforcement_id"] =
                 static_cast<uint32_t>(relation.visibility_enforcement);
             out["family_metrics_version"] = relation.family_metrics_version;
+            out["metrics_publication_epoch"] =
+                relation.metrics_publication_epoch;
             out["metrics_confidence_class"] = relation.metrics_confidence_class;
+            out["metrics_freshness_class"] = relation.metrics_freshness_class;
+            out["metrics_invalidation_state"] =
+                relation.metrics_invalidation_state;
+            out["metrics_invalidation_reason"] =
+                relation.metrics_invalidation_reason;
             out["queryability_state"] =
                 accessPathQueryabilityStateName(relation.queryability_state);
             out["queryability_state_id"] =
@@ -310,6 +332,34 @@ namespace scratchbird::optimizer
                     }
                 }
             }
+            relation_out.candidate_family_refusals.clear();
+            const auto candidate_family_refusals_it =
+                json_in.find("candidate_family_refusals");
+            if (candidate_family_refusals_it != json_in.end() &&
+                candidate_family_refusals_it->is_array())
+            {
+                for (const auto &entry : *candidate_family_refusals_it)
+                {
+                    if (!entry.is_object())
+                    {
+                        continue;
+                    }
+                    RuntimePlanCandidateRefusal refusal;
+                    refusal.family = entry.value("family", std::string());
+                    refusal.candidate_label =
+                        entry.value("candidate_label", std::string());
+                    refusal.refusal_class =
+                        entry.value("refusal_class", std::string());
+                    refusal.refusal_cause_domain =
+                        entry.value("refusal_cause_domain", std::string());
+                    refusal.refusal_reason_code =
+                        entry.value("refusal_reason_code", std::string());
+                    refusal.refusal_detail =
+                        entry.value("refusal_detail", std::string());
+                    relation_out.candidate_family_refusals.push_back(
+                        std::move(refusal));
+                }
+            }
             const auto exactness_class_id_it = json_in.find("exactness_class_id");
             if (exactness_class_id_it != json_in.end() &&
                 exactness_class_id_it->is_number_unsigned())
@@ -356,8 +406,16 @@ namespace scratchbird::optimizer
             }
             relation_out.family_metrics_version =
                 json_in.value("family_metrics_version", 0U);
+            relation_out.metrics_publication_epoch =
+                json_in.value("metrics_publication_epoch", 0ULL);
             relation_out.metrics_confidence_class =
                 json_in.value("metrics_confidence_class", std::string());
+            relation_out.metrics_freshness_class =
+                json_in.value("metrics_freshness_class", std::string());
+            relation_out.metrics_invalidation_state =
+                json_in.value("metrics_invalidation_state", std::string());
+            relation_out.metrics_invalidation_reason =
+                json_in.value("metrics_invalidation_reason", std::string());
             const auto queryability_state_id_it =
                 json_in.find("queryability_state_id");
             if (queryability_state_id_it != json_in.end() &&
@@ -445,6 +503,7 @@ namespace scratchbird::optimizer
                 json_in.value("maintenance_state_class",
                               std::string(accessPathMaintenanceStateClassName(
                                   relation_out.queryability_state,
+                                  relation_out.metrics_freshness_class,
                                   relation_out.metrics_confidence_class,
                                   relation_out.publish_lag_xids,
                                   relation_out.maintenance_backlog_ops,
@@ -812,6 +871,20 @@ namespace scratchbird::optimizer
             out["spill_passes"] = join_step.spill_passes;
             out["spill_bytes"] = join_step.spill_bytes;
             out["spill_policy"] = join_step.spill_policy;
+            out["adaptive_join_enabled"] = join_step.adaptive_join_enabled;
+            out["planned_build_side"] = join_step.planned_build_side;
+            out["adaptive_alternative_build_side"] =
+                join_step.adaptive_alternative_build_side;
+            out["adaptive_probe_sample_rows"] =
+                join_step.adaptive_probe_sample_rows;
+            out["adaptive_flip_ratio_threshold"] =
+                join_step.adaptive_flip_ratio_threshold;
+            out["adaptive_join_flip_taken"] =
+                join_step.adaptive_join_flip_taken;
+            out["adaptive_join_sample_rows"] =
+                join_step.adaptive_join_sample_rows;
+            out["adaptive_join_selected_build_side"] =
+                join_step.adaptive_join_selected_build_side;
             out["parallel_eligible"] = join_step.parallel_eligible;
             out["parallel_enabled"] = join_step.parallel_enabled;
             out["parallel_workers_planned"] = join_step.parallel_workers_planned;
@@ -1031,6 +1104,23 @@ namespace scratchbird::optimizer
             join_step_out.spill_bytes = json_in.value("spill_bytes", 0ULL);
             join_step_out.spill_policy =
                 json_in.value("spill_policy", std::string());
+            join_step_out.adaptive_join_enabled =
+                json_in.value("adaptive_join_enabled", false);
+            join_step_out.planned_build_side =
+                json_in.value("planned_build_side", std::string());
+            join_step_out.adaptive_alternative_build_side =
+                json_in.value("adaptive_alternative_build_side", std::string());
+            join_step_out.adaptive_probe_sample_rows =
+                json_in.value("adaptive_probe_sample_rows", 0ULL);
+            join_step_out.adaptive_flip_ratio_threshold =
+                json_in.value("adaptive_flip_ratio_threshold", 0.0);
+            join_step_out.adaptive_join_flip_taken =
+                json_in.value("adaptive_join_flip_taken", false);
+            join_step_out.adaptive_join_sample_rows =
+                json_in.value("adaptive_join_sample_rows", 0ULL);
+            join_step_out.adaptive_join_selected_build_side =
+                json_in.value("adaptive_join_selected_build_side",
+                              std::string());
             join_step_out.parallel_eligible =
                 json_in.value("parallel_eligible", false);
             join_step_out.parallel_enabled =

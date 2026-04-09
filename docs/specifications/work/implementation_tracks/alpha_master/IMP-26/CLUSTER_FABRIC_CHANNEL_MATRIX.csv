@@ -1,0 +1,6 @@
+case_id,suite,required_check,expected_result,error_code
+T26-I01,I,fabric_message_family_encode_decode_against_schemas,pass,
+T26-I02,I,fabric_session_multiplex_stream_binding_and_sequence,pass,
+T26-I03,I,missing_sblr_container_for_passthrough_task_rejected,reject,WP-E-FABRIC-PAYLOAD
+T26-I04,I,chunk_sequence_checksum_violations_rejected,reject,WP-E-FABRIC-SEQ
+T26-I05,I,heartbeat_miss_triggers_degraded_disabled_behavior,pass,

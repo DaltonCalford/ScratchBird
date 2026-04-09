@@ -1,0 +1,11 @@
+case_id,type_name,encoding_form,storage_rule,expected_result,error_code
+T15-EN-001,array,int_header_plus_element_payload,dimension_header_and_bounds_required,encoded,
+T15-EN-002,composite,field_tuple_payload,field_order_matches_definition,encoded,
+T15-EN-003,domain,base_type_plus_constraint_metadata,domain_uuid_and_base_uuid_required,encoded,
+T15-EN-004,jsonb,typed_binary_json,canonical_key_ordering_applied,encoded,
+T15-EN-005,xml,text_or_canonical_binary,validation_mode_respected,encoded,
+T15-EN-006,geometry,wkb_or_canonical_geometry,srid_and_type_tags_required,encoded,
+T15-EN-007,range,bounds_envelope,lower_upper_and_inclusive_flags_required,encoded,
+T15-EN-008,enum,label_id,label_must_exist_in_registry,encoded,
+T15-EN-009,set,ordered_label_set,uniqueness_and_registry_lookup_required,encoded,
+T15-EN-010,bson,typed_binary_document,strict_utf8_and_type_tags_required,encoded,

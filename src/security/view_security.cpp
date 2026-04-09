@@ -26,6 +26,20 @@ namespace scratchbird::security {
 // Thread-local security stack
 thread_local ViewSecurityStack ViewSecurityManager::current_stack_;
 
+namespace {
+
+auto setViewSecurityError(core::ErrorContext* ctx,
+                          core::Status status,
+                          const std::string& message) -> core::Status {
+    if (ctx) {
+        ctx->code = status;
+        ctx->message = message;
+    }
+    return status;
+}
+
+}  // namespace
+
 // ============================================================================
 // ViewSecurityContext Implementation
 // ============================================================================
@@ -186,23 +200,35 @@ core::Status ViewSecurityManager::checkTableAccess(
     uint32_t table_id,
     uint32_t required_privileges,
     core::ErrorContext* ctx) {
-
-    // Get effective user from security stack
-    uint32_t effective_user = current_stack_.effectiveUserId();
-
-    // If no view context, this check should be done by normal permission system
-    if (effective_user == 0) {
-        return core::Status::OK;  // Let caller handle direct access
+    if (table_id == 0 || required_privileges == 0) {
+        return setViewSecurityError(
+            ctx,
+            core::Status::INVALID_ARGUMENT,
+            "View security table access requires non-zero table and privilege ids");
     }
 
-    // Phase 4 Enhancement: Check actual permissions for effective_user on table_id
-    // This would integrate with the permission system
-    // For now, return OK - SECURITY DEFINER views always succeed (correct)
-    // Full implementation would call:
-    // return PermissionChecker::getInstance().checkAccess(
-    //     effective_user, table_id, required_privileges, ctx);
+    const ViewSecurityContext* current = current_stack_.current();
+    if (current == nullptr) {
+        return core::Status::OK;
+    }
 
-    return core::Status::OK;
+    // SECURITY INVOKER does not substitute privileges. The caller's normal
+    // permission path remains authoritative.
+    if (!current->isDefiner()) {
+        return core::Status::OK;
+    }
+
+    if (current->effectiveUserId() == 0) {
+        return setViewSecurityError(
+            ctx,
+            core::Status::PERMISSION_DENIED,
+            "SECURITY DEFINER view has no effective owner identity");
+    }
+
+    return setViewSecurityError(
+        ctx,
+        core::Status::PERMISSION_DENIED,
+        "SECURITY DEFINER table access requires an integrated permission backend");
 }
 
 core::Status ViewSecurityManager::checkColumnAccess(
@@ -210,16 +236,33 @@ core::Status ViewSecurityManager::checkColumnAccess(
     uint32_t column_id,
     uint32_t required_privileges,
     core::ErrorContext* ctx) {
+    if (table_id == 0 || column_id == 0 || required_privileges == 0) {
+        return setViewSecurityError(
+            ctx,
+            core::Status::INVALID_ARGUMENT,
+            "View security column access requires non-zero table column and privilege ids");
+    }
 
-    uint32_t effective_user = current_stack_.effectiveUserId();
-
-    if (effective_user == 0) {
+    const ViewSecurityContext* current = current_stack_.current();
+    if (current == nullptr) {
         return core::Status::OK;
     }
 
-    // Phase 4 Enhancement: Check column-level permissions
-    // For now, return OK - all columns accessible (correct for basic access)
-    return core::Status::OK;
+    if (!current->isDefiner()) {
+        return core::Status::OK;
+    }
+
+    if (current->effectiveUserId() == 0) {
+        return setViewSecurityError(
+            ctx,
+            core::Status::PERMISSION_DENIED,
+            "SECURITY DEFINER view has no effective owner identity");
+    }
+
+    return setViewSecurityError(
+        ctx,
+        core::Status::PERMISSION_DENIED,
+        "SECURITY DEFINER column access requires an integrated permission backend");
 }
 
 bool ViewSecurityManager::canPushPredicate(uint32_t view_id) const {
@@ -251,12 +294,17 @@ core::Status ViewSecurityManager::validateCheckOption(
         return core::Status::OK;  // No check option
     }
 
-    // Phase 4 Enhancement: Evaluate view's WHERE clause against row_data
-    // If row doesn't satisfy WHERE clause, return error
-    // This prevents inserting/updating rows that wouldn't be visible through the view
-    // For now, return OK - WITH CHECK OPTION validation deferred
+    if (row_data == nullptr) {
+        return setViewSecurityError(
+            ctx,
+            core::Status::INVALID_ARGUMENT,
+            "WITH CHECK OPTION validation requires row data");
+    }
 
-    return core::Status::OK;
+    return setViewSecurityError(
+        ctx,
+        core::Status::PERMISSION_DENIED,
+        "WITH CHECK OPTION requires an integrated predicate evaluation backend");
 }
 
 ViewSecurityManager::CheckOptionMode ViewSecurityManager::getCheckOptionMode(uint32_t view_id) const {

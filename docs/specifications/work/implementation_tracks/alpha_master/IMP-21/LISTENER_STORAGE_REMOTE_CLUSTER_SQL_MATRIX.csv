@@ -1,0 +1,9 @@
+case_id,sql_surface,required_contract,expected_result,error_code
+T21-LS-001,listener_control_sql,start_stop_reload_show_listener_mapping_deterministic,pass,
+T21-LS-002,listener_pool_sql,pool_selector_and_key_validation_deterministic,pass,
+T21-LS-003,storage_relocation_sql,online_offline_mode_semantics_deterministic,pass,
+T21-LS-004,partition_split_sql,boundary_validation_and_grammar_deterministic,pass,
+T21-LS-005,blob_filter_sql,subtype_validation_and_feature_key_mapping_deterministic,pass,
+T21-LS-006,remote_connector_sql,wrapper_server_mapping_table_lifecycle_deterministic,pass,
+T21-LS-007,remote_passthrough_sql,txn_mode_validation_and_audit_mapping_deterministic,pass,
+T21-LS-008,cluster_fabric_sql,link_session_task_lifecycle_and_parserless_data_plane_enforced,pass,

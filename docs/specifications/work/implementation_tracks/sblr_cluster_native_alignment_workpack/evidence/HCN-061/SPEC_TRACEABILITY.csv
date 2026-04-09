@@ -1,0 +1,4 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+SB-OBS-METRICS-MONITORING-01.md,latency_visibility_and_determinism,"tests/benchmark/test_sblr_jit_performance.cpp;tests/unit/test_telemetry_reporting_contract.cpp","LATENCY_PERCENTILE_REPORT.md;TEST_RESULTS.md",pass,"Latency and telemetry contracts remain deterministic"
+23/NATIVE_COMPILATION_AND_ARTIFACT_LIFECYCLE.md,jit_overhead_and_one_off_guard,"tests/benchmark/test_sblr_jit_performance.cpp;tests/unit/test_sblr_jit_tiering.cpp","JIT_OVERHEAD_AUDIT.csv;LATENCY_PERCENTILE_REPORT.md",pass,"One-off and queue behavior remains within deterministic guard envelope"
+SB-OBS-METRICS-MONITORING-01.md,cluster_replication_lag_slo_gate,"tests/unit/test_follower_apply_pipeline.cpp;tests/unit/test_snapshot_registry_cwm.cpp","CLUSTER_REPLICATION_LAG_SLO_REPORT.md;TEST_RESULTS.md",pass,"Replication lag/watermark progression behavior remains within gate expectations"

@@ -1,0 +1,5 @@
+scenario,shard_id,attempted_local_txn_id,expected_next_local_txn_id,status,reason,test_case
+initial_append,generated-per-test,1,1,accepted,NONE,ShardCommitLogPipelineTest.AppendIsStrictlyOrderedPerShard
+out_of_order_append,generated-per-test,3,2,rejected,OUT_OF_ORDER_LOCAL_TXN_ID,ShardCommitLogPipelineTest.AppendIsStrictlyOrderedPerShard
+next_valid_append,generated-per-test,2,2,accepted,NONE,ShardCommitLogPipelineTest.AppendIsStrictlyOrderedPerShard
+reopen_readback,generated-per-test,1..2,1..2,accepted,NONE,ShardCommitLogPipelineTest.AppendsAreDurableAndReadableAcrossInstances

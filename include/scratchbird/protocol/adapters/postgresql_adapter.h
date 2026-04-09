@@ -347,6 +347,12 @@ protected:
     PgProtocolState protocolStateForTest() const {
         return pg_state_;
     }
+    core::Status ensureRemoteClientForTest(core::ErrorContext* ctx = nullptr) {
+        return ensureRemoteClient(ctx);
+    }
+    const client::ConnectionConfig& remoteClientConfigForTest() const {
+        return client_config_;
+    }
 
 private:
     struct CopyOptions {

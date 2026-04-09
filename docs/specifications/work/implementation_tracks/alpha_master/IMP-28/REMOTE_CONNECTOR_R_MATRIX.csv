@@ -1,0 +1,13 @@
+case_id,suite,required_check,expected_result,error_code
+T28-R001,R,remote_connector_sql_classified_fg_fdw_with_deterministic_keys,pass,
+T28-R002,R,missing_capability_profile_row_rejected_profile_entry_missing,pass,
+T28-R003,R,object_identifier_to_uuid_resolution_no_discoverability_leak,pass,
+T28-R004,R,option_normalization_unknown_keys_rejected_order_deterministic,pass,
+T28-R005,R,metadata_operations_emit_complete_control_envelopes,pass,
+T28-R006,R,passthrough_envelope_includes_mode_capability_limits_fingerprint,pass,
+T28-R007,R,prepared_remote_lifecycle_session_connector_handle_rules,pass,
+T28-R008,R,remote_txn_control_invalid_mode_or_missing_binding_rejected,pass,
+T28-R009,R,show_remote_fixed_result_shape_and_column_order,pass,
+T28-R010,R,error_mapping_no_secret_payload_leak,pass,
+T28-R011,R,emulated_parsers_reject_native_only_remote_sql_without_remap,pass,
+T28-R012,R,remote_requests_include_required_correlation_fields,pass,

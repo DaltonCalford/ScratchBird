@@ -1,0 +1,6 @@
+gate_id,focus,required_tickets,required_evidence
+B1-GATE-01,beta1_scope_freeze,B1P-001,"README.md|DEFINITIVE_SPECSET_INDEX.md|SPEC_IMPLEMENTATION_AUDIT_MATRIX.csv"
+B1-GATE-02,ownership_and_sequence_freeze,"B1P-002|B1P-003","README.md|CODE_AREA_OWNERSHIP_MAP.md|ORDERED_TASK_TICKETS.csv|DEPENDENCY_GRAPH.csv"
+B1-GATE-03,downstream_plan_generation_a,"B1P-004","docs/work-plans/01-*|docs/work-plans/02-*|docs/work-plans/03-*|docs/work-plans/04-*|first ticket in each package is specification sufficiency closure"
+B1-GATE-04,downstream_plan_generation_b,"B1P-005","docs/work-plans/05-*|docs/work-plans/06-*|docs/work-plans/07-*|docs/work-plans/08-*|first ticket in each package is specification sufficiency closure"
+B1-GATE-05,beta1_handoff_closure,B1P-006,"docs/work-plans/README.md|MASTER_TRACKER.md|RISK_DECISION_LOG.md"

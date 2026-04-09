@@ -1,0 +1,7 @@
+suite_id,requirement_id,check,method,expected_result,reject_condition,evidence_artifact
+T31-G10-01,IMP-31-REQ-G10-01,GP1-A distributed read correctness,Deterministic distributed replay harness,Correctness gates pass with deterministic replay,Distributed read correctness/replay failure,TEST_RESULTS.md#T31-G10
+T31-G10-02,IMP-31-REQ-G10-02,GP1-B two-layer cache correctness,Cache correctness harness,No stale-read policy violation,Stale-read policy violation,TEST_RESULTS.md#T31-G10
+T31-G10-03,IMP-31-REQ-G10-03,GP1-C telemetry integrity and redaction,Telemetry compliance harness,Telemetry integrity and redaction gates pass,Telemetry integrity/redaction violation,TEST_RESULTS.md#T31-G10
+T31-G10-04,IMP-31-REQ-G10-04,GP2-A deterministic tie-break checks,Conflict policy harness,Tie-break behavior deterministic across repeats,Nondeterministic tie-break,TEST_RESULTS.md#T31-G10
+T31-G10-05,IMP-31-REQ-G10-05,GP2-B cost-aware placement and fairness,Placement fairness harness,Placement/fairness policy gates pass,Placement or fairness violation,TEST_RESULTS.md#T31-G10
+T31-G10-06,IMP-31-REQ-G10-06,GP2-C autoscale/failure/policy-change stability,Stability harness,Stability and rollback evidence pass gates,Stability/rollback failure,TEST_RESULTS.md#T31-G10

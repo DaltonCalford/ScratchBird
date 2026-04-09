@@ -1,0 +1,189 @@
+{
+  "metadata": {
+    "engine": "scratchbird",
+    "suite": "index-comparison",
+    "timestamp": "20260403_021507",
+    "host": "127.0.0.1",
+    "port": 17092,
+    "database": "main",
+    "target": "scratchbird-native",
+    "runtime_service": "scratchbird",
+    "target_class": "scratchbird-native",
+    "docker_first": true,
+    "iterations": 5,
+    "noise_band_pct": 5.0
+  },
+  "results": {
+    "scenarios": {
+      "tests": [
+        {
+          "test_name": "btree_point_lookup",
+          "name": "Selective lookup through a secondary B-tree index.",
+          "status": "pass",
+          "duration_ms": 8.921,
+          "error_message": null,
+          "plan_family": "unknown",
+          "plan_expectation_status": "mismatch",
+          "target": "scratchbird-native"
+        },
+        {
+          "test_name": "btree_range_scan",
+          "name": "Range filter through a single-column B-tree index.",
+          "status": "pass",
+          "duration_ms": 27.73,
+          "error_message": null,
+          "plan_family": "unknown",
+          "plan_expectation_status": "mismatch",
+          "target": "scratchbird-native"
+        },
+        {
+          "test_name": "btree_composite_order",
+          "name": "Composite predicate with ordered output satisfied by a composite B-tree index.",
+          "status": "pass",
+          "duration_ms": 13.247,
+          "error_message": null,
+          "plan_family": "unknown",
+          "plan_expectation_status": "mismatch",
+          "target": "scratchbird-native"
+        }
+      ]
+    }
+  },
+  "test_results": [
+    {
+      "scenario_id": "btree_point_lookup",
+      "description": "Selective lookup through a secondary B-tree index.",
+      "index_family": "btree",
+      "workload_family": "point_lookup",
+      "benchmark_target": "scratchbird-native",
+      "runtime_service": "scratchbird",
+      "execution_status": "pass",
+      "comparative_verdict": null,
+      "comparison_score": null,
+      "plan_capture_status": "ok",
+      "actual_plan_family": "unknown",
+      "used_index": false,
+      "index_names": [],
+      "fallback_to_scan": false,
+      "extra_sort": false,
+      "order_satisfied_by_index": true,
+      "expectation_status": "mismatch",
+      "plan_quality_score": 50,
+      "rows_returned": 1,
+      "iterations": 5,
+      "noise_band_pct": 5.0,
+      "raw_plan": {
+        "plan_hash": "",
+        "options": [
+          "COSTS",
+          "TIMING"
+        ],
+        "plan": [
+          "Plan unavailable for opcode SBLR3_EXPLAIN_PLAN"
+        ]
+      },
+      "error": null,
+      "latency_avg_ms": 8.921,
+      "latency_p95_ms": 27.293,
+      "latency_p99_ms": 31.779,
+      "throughput_qps": 112.1
+    },
+    {
+      "scenario_id": "btree_range_scan",
+      "description": "Range filter through a single-column B-tree index.",
+      "index_family": "btree",
+      "workload_family": "range_scan",
+      "benchmark_target": "scratchbird-native",
+      "runtime_service": "scratchbird",
+      "execution_status": "pass",
+      "comparative_verdict": null,
+      "comparison_score": null,
+      "plan_capture_status": "ok",
+      "actual_plan_family": "unknown",
+      "used_index": false,
+      "index_names": [],
+      "fallback_to_scan": false,
+      "extra_sort": false,
+      "order_satisfied_by_index": true,
+      "expectation_status": "mismatch",
+      "plan_quality_score": 50,
+      "rows_returned": 301,
+      "iterations": 5,
+      "noise_band_pct": 5.0,
+      "raw_plan": {
+        "plan_hash": "",
+        "options": [
+          "COSTS",
+          "TIMING"
+        ],
+        "plan": [
+          "Plan unavailable for opcode SBLR3_EXPLAIN_PLAN"
+        ]
+      },
+      "error": null,
+      "latency_avg_ms": 27.73,
+      "latency_p95_ms": 76.761,
+      "latency_p99_ms": 82.449,
+      "throughput_qps": 36.062
+    },
+    {
+      "scenario_id": "btree_composite_order",
+      "description": "Composite predicate with ordered output satisfied by a composite B-tree index.",
+      "index_family": "btree",
+      "workload_family": "order_preserving_scan",
+      "benchmark_target": "scratchbird-native",
+      "runtime_service": "scratchbird",
+      "execution_status": "pass",
+      "comparative_verdict": null,
+      "comparison_score": null,
+      "plan_capture_status": "ok",
+      "actual_plan_family": "unknown",
+      "used_index": false,
+      "index_names": [],
+      "fallback_to_scan": false,
+      "extra_sort": false,
+      "order_satisfied_by_index": true,
+      "expectation_status": "mismatch",
+      "plan_quality_score": 50,
+      "rows_returned": 25,
+      "iterations": 5,
+      "noise_band_pct": 5.0,
+      "raw_plan": {
+        "plan_hash": "",
+        "options": [
+          "COSTS",
+          "TIMING"
+        ],
+        "plan": [
+          "Plan unavailable for opcode SBLR3_EXPLAIN_PLAN"
+        ]
+      },
+      "error": null,
+      "latency_avg_ms": 13.247,
+      "latency_p95_ms": 40.82,
+      "latency_p99_ms": 47.697,
+      "throughput_qps": 75.491
+    }
+  ],
+  "summary": {
+    "total_tests": 3,
+    "passed": 3,
+    "failed": 0,
+    "errors": 0,
+    "unsupported": 0,
+    "plan_capture_success": 3,
+    "score": 50.0,
+    "verdict_ready": false,
+    "by_index_family": {
+      "btree": 3
+    },
+    "by_workload_family": {
+      "point_lookup": 1,
+      "range_scan": 1,
+      "order_preserving_scan": 1
+    },
+    "by_expectation_status": {
+      "mismatch": 3
+    }
+  }
+}

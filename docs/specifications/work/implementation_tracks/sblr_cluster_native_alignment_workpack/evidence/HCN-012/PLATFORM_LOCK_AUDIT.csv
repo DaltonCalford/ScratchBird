@@ -1,0 +1,4 @@
+file,legacy_call,replacement,status
+src/core/database.cpp,lockFileExclusiveNonBlocking(...),getStorageLockProvider().tryLockExclusive(...),pass
+src/server/daemon.cpp,flock(... LOCK_EX|LOCK_NB),getStorageLockProvider().tryLockExclusive(...),pass
+src/server/daemon.cpp,flock(... LOCK_UN),getStorageLockProvider().unlock(...),pass

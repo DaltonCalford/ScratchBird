@@ -1,0 +1,48 @@
+# Definitive Specset Index
+
+## Assigned Sections
+
+- docs/specifications/25_Runtime_Modes/CLOUD_SUPPORT_SCOPE_AND_BETA1_BETA2_PROGRAM_MODEL.md
+- docs/specifications/25_Runtime_Modes/REMOTE_MANAGEMENT_DEPLOYMENT_QUEUE_ASSESSMENT_AND_APPLY_RUNTIME_MODEL.md
+- docs/specifications/39_Backup_Restore_and_Bulk_Data_Paths/README.md
+- docs/specifications/39_Backup_Restore_and_Bulk_Data_Paths/BACKUP_AND_RESTORE_BOUNDARY.md
+- docs/specifications/39_Backup_Restore_and_Bulk_Data_Paths/CLOUD_OBJECT_STORAGE_SNAPSHOT_AND_RESTORE_AUTOMATION_MODEL.md
+- docs/specifications/39_Backup_Restore_and_Bulk_Data_Paths/LOGICAL_AND_PHYSICAL_BACKUP_CONSISTENCY_AND_OPTIONAL_WAL_ROLLFORWARD_MODEL.md
+- docs/specifications/39_Backup_Restore_and_Bulk_Data_Paths/ONLINE_TABLESPACE_MIGRATION_AND_PROXY_CUTOVER_MODEL.md
+- docs/specifications/39_Backup_Restore_and_Bulk_Data_Paths/DATA_PROXY_AND_MIGRATION_RUNTIME_MODEL.md
+- docs/specifications/39_Backup_Restore_and_Bulk_Data_Paths/WEAK_DONOR_RECONCILIATION_AND_CUTOVER_STATE_MACHINE.md
+- docs/specifications/39_Backup_Restore_and_Bulk_Data_Paths/NON_TRANSACTIONAL_DONOR_EXTRACTION_AND_CUTOVER_CLASSIFICATION.md
+- docs/specifications/39_Backup_Restore_and_Bulk_Data_Paths/TEST_CONTRACT.md
+- docs/specifications/41_Platform_Interface_and_Lifecycle_Management/README.md
+- docs/specifications/41_Platform_Interface_and_Lifecycle_Management/CLOUD_PACKAGING_SUPPORT_MATRIX_AND_DEPLOYMENT_AUTOMATION_MODEL.md
+- docs/specifications/41_Platform_Interface_and_Lifecycle_Management/BUILD_PACKAGING_AND_DEPLOYMENT_LIFECYCLE.md
+- docs/specifications/41_Platform_Interface_and_Lifecycle_Management/SYSTEM_COMPATIBILITY_MANIFEST_AND_OPERATIONAL_ROLLOUT_MODEL.md
+- docs/specifications/41_Platform_Interface_and_Lifecycle_Management/TEST_CONTRACT.md
+- docs/specifications/30_Client_Tooling/REMOTE_ADMIN_AND_DEPLOYMENT_CONTROL_SURFACE.md
+- docs/specifications/24_Catalog_Model_and_Virtual_Overlays/REMOTE_MANAGEMENT_CATALOG_AND_DEPLOYMENT_RECORDS.md
+- docs/specifications/24_Catalog_Model_and_Virtual_Overlays/REMOTE_MANAGEMENT_LOCAL_AND_CLUSTER_PERSISTENCE_CONSISTENCY_MODEL.md
+- docs/specifications/30_Client_Tooling/TEST_CONTRACT.md
+- docs/specifications/25_Runtime_Modes/TEST_CONTRACT.md
+- docs/specifications/31_Conformance_Performance_and_Reliability_Gates/CLOUD_READINESS_AND_BETA2_CLUSTER_CERTIFICATION_MODEL.md
+- docs/specifications/31_Conformance_Performance_and_Reliability_Gates/TEST_CONTRACT.md
+
+## Bounded Package Rules
+
+- package `07` is the Beta 1 single-node operational subset only
+- supported runtime package profiles are Linux and Windows only
+- remote-management scope is local single-target assess, apply, and status surfaces only
+- real remote object-storage transport is not a Beta 1 obligation in this package
+
+## Global Governance Inputs
+
+- docs/specifications/00_Governance_and_Invarients/WORK_PLAN_MANAGEMENT_STANDARD_AND_LIFECYCLE.md
+- docs/specifications/AUTHORITATIVE_SPEC_INVENTORY.md
+- docs/completed-work-plans/00-Beta1_Tasks/README.md
+- docs/completed-work-plans/00-Beta1_Tasks/WORKPLAN_GENERATION_INPUT.md
+
+## Required Research Order
+
+1. assigned canonical specs
+2. consumed cross-section canonical specs
+3. docs/reference local authority tree
+4. web research when local authority is insufficient

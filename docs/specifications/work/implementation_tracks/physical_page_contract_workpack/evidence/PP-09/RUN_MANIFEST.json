@@ -1,0 +1,30 @@
+{
+  "ticket_id": "PP-09",
+  "title": "Heap Item Pointer and Record Header Canonical Rewrite",
+  "timestamp_utc": "2026-02-13T18:30:29Z",
+  "implementation_repo": "/home/dcalford/CliWork/ScratchBird",
+  "primary_specs": [
+    "05_Page_Taxonomy_and_Binary_Layouts/HEAP_PAGE_LAYOUT.md",
+    "11_TOAST_and_LOB_Storage/TOAST_POINTER_FORMAT.md"
+  ],
+  "changed_files": [
+    "include/scratchbird/core/heap_page.h",
+    "src/core/heap_page.cpp",
+    "tests/unit/test_heap_record_contract.cpp"
+  ],
+  "commands": [
+    {
+      "cmd": "cmake --build /home/dcalford/CliWork/ScratchBird/build --target scratchbird_tests -j6",
+      "result": "pass"
+    },
+    {
+      "cmd": "ctest --test-dir /home/dcalford/CliWork/ScratchBird/build -R 'HeapRecordContractTest' --output-on-failure",
+      "result": "pass"
+    },
+    {
+      "cmd": "ctest --test-dir /home/dcalford/CliWork/ScratchBird/build -R 'HeapRecordContractTest|HeapPageToastAPITest|MGABackVersioningTest' --output-on-failure",
+      "result": "pass"
+    }
+  ],
+  "status": "done"
+}

@@ -1,0 +1,6 @@
+case_id,scenario,input,expected_result,error_code
+T24-NG-001,malformed_enum_label,unknown_textual_label,rejected,E_ENUM_LABEL_UNKNOWN
+T24-NG-002,null_required_uuid,missing_channel_uuid,rejected,E_UUID_REQUIRED
+T24-NG-003,permission_denied_catalog_mutation,non_admin_modifies_sys_catalog,rejected,E_PERMISSION_DENIED
+T24-NG-004,resource_exhaustion_catalog_insert,catalog_page_full_no_growth,rejected,E_RESOURCE_EXHAUSTED
+T24-NG-005,invalid_bundle_hash,cache_invalidation_with_bad_hash,rejected,E_BUNDLE_HASH_INVALID

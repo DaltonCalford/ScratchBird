@@ -1,0 +1,6 @@
+case_id,emulated_engine,feature,expected_behavior
+T11-CP-001,firebird_5,blob_text_binary,parser_maps_to_lob_without_loss
+T11-CP-002,postgresql_18,bytea_large_values,toast_path_used_for_overflow
+T11-CP-003,mysql_8,longblob_mediumblob,tiered_lob_mapping_preserves_length
+T11-CP-004,mongodb_8,large_binary_payload,variant_binary_maps_to_lob
+T11-CP-005,cassandra_5,blob_column_storage,blob_maps_to_lob_chunk_chain

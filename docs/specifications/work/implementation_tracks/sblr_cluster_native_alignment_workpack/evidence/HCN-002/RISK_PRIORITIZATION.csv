@@ -1,0 +1,11 @@
+risk_id,gap_id,severity,likelihood,impact_score,mitigation_ticket,owner,status,notes
+R-HCN-001,G-001,critical,high,25,HCN-020,tx-write-path,open,Fencing failure risks split-brain write commits
+R-HCN-002,G-011,critical,medium,20,HCN-033,platform-storage,open,Premature GC can violate MGA visibility guarantees
+R-HCN-003,G-016,high,high,16,HCN-040,runtime-infra,open,Observability contract mismatch blocks operational rollout
+R-HCN-004,G-017,high,high,16,HCN-041,runtime-infra,open,Missing required SQL views reduces diagnosability
+R-HCN-005,G-020,high,medium,12,HCN-050,routing-runtime,open,Native path remains partial and cannot be relied upon
+R-HCN-006,G-021,high,medium,12,HCN-051,routing-runtime,open,Fallback behavior must remain deterministic
+R-HCN-007,G-022,high,medium,12,HCN-052|HCN-053,routing-runtime,open,JIT and rebasing regressions can hurt portability and latency
+R-HCN-008,G-014,critical,medium,20,HCN-060,qa-conformance,open,Threat model has no proving evidence without gameday suites
+R-HCN-009,G-003,high,medium,12,HCN-010,platform-storage,open,Missing persistent cluster identity weakens safety invariants
+R-HCN-010,G-006,high,medium,12,HCN-022,session-runtime,open,Epoch mismatch handling must be deterministic in sessions

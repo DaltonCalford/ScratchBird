@@ -1,0 +1,6 @@
+case_id,index_family,required_check,expected_result,error_code
+T18-AS-001,BITMAP,row_id64_mapping_and_container_transitions,pass,
+T18-AS-002,COLUMNSTORE,deterministic_encoding_selection_and_predicate_pushdown,pass,
+T18-AS-003,LSM,memtable_flush_sorted_sstable_and_compaction_tombstones,pass,
+T18-AS-004,ART,node_growth_shrink_and_prefix_split_correctness,pass,
+T18-AS-005,BLOOM,bitset_size_hash_count_formulas_and_fp_rate_target,pass,

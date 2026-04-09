@@ -1,0 +1,9 @@
+case_id,operation,input_condition,lock_requirement,expected_state_change,expected_result,error_code
+ALG-GRW-001,allocate,partial_extent_available,filespace_alloc_lock,partial_or_full_update,success,NONE
+ALG-GRW-002,allocate,no_partial_extent_new_extent_available,filespace_alloc_lock,free_to_partial,success,NONE
+ALG-GRW-003,allocate,no_space_autoextend_enabled,filespace_alloc_lock,total_pages_increase_then_allocate,success,NONE
+ALG-GRW-004,allocate,no_space_autoextend_disabled,filespace_alloc_lock,no_state_change,fail,OUT_OF_SPACE
+ALG-GRW-005,allocate,filespace_state_read_only,filespace_alloc_lock,no_state_change,fail,FILESPACE_READ_ONLY
+ALG-GRW-006,deallocate,page_freed_to_empty,filespace_alloc_lock,extent_to_free_if_all_empty,success,NONE
+ALG-GRW-007,autoextend,os_extend_success,filespace_alloc_lock,new_extents_marked_free,success,NONE
+ALG-GRW-008,autoextend,os_extend_failure,filespace_alloc_lock,no_allocation,fail,OUT_OF_SPACE

@@ -1,0 +1,3 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+SB-CLUSTER-SWS-MGA-01.md,shard-commit-log-entry-and-ordering,"include/scratchbird/core/cluster_write_safety.h;src/core/cluster_write_safety.cpp","SCL_RECORD_SCHEMA.md;COMMIT_LOG_SEQUENCE_AUDIT.csv",pass,"SCL entries append in strict per-shard local_txn_id sequence"
+SB-CLUSTER-SWS-MGA-01.md,commit-log-durability,"src/core/cluster_write_safety.cpp::ShardCommitLog::appendDurableLine","SCL_APPEND_DURABILITY_RESULTS.md;TEST_RESULTS.md",pass,"Append path flushes and fsyncs before success is reported"

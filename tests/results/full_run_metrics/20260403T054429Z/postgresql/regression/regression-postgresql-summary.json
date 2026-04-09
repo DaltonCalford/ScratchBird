@@ -1,0 +1,38 @@
+{
+  "source": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260403_015950",
+  "manifest": {
+    "run_id": "20260403_015950",
+    "engine": "postgresql",
+    "protocol_surface": "postgresql_v3",
+    "parser_core": "v3",
+    "parser_mode": "emulation_surface_only",
+    "comparison_suite_family": "emulation-comparison",
+    "comparison_contract_id": "compatibility-emulation-compare-v1",
+    "comparison_harness": "compatibility_converted_sql_ctest",
+    "comparison_target_role": "emulation",
+    "comparison_target_id": "scratchbird-postgresql",
+    "execution_mode": "converted_sql_ctest",
+    "isql_binary": "/home/dcalford/CliWork/ScratchBird/docs/reference/project_clones/local_existing/postgresql/build_codex/src/bin/psql/psql",
+    "ctest_list_mode": "curated",
+    "ctest_list_file": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/config/ctest_list.txt",
+    "listed_tests": 5,
+    "status": "passed",
+    "failure_count": 0,
+    "results_dir": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260403_015950",
+    "host": "127.0.0.1",
+    "port": "16432",
+    "database": "regression",
+    "username": "postgres",
+    "compat_run": "1",
+    "require_sb_emulation_marker": "1",
+    "timestamp_utc": "2026-04-03T06:00:07Z"
+  },
+  "totals": {
+    "total": 5,
+    "passed": 5,
+    "failed": 0,
+    "skipped": 0,
+    "errors": 0,
+    "pass_rate": 1.0
+  }
+}

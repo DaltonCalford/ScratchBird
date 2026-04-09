@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-061",
+  "phase": "PH6",
+  "title": "Implement artifact signing and provenance attestations",
+  "status": "pending",
+  "owner": "release-engineering",
+  "estimate_days": 5,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

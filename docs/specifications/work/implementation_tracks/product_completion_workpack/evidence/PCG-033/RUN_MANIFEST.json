@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-033",
+  "phase": "PH3",
+  "title": "Implement RBAC and ABAC hardening with least privilege defaults",
+  "status": "pending",
+  "owner": "governance-security",
+  "estimate_days": 5,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

@@ -1,0 +1,7 @@
+case_id,suite,required_check,expected_result,error_code
+T23-L00,L,s00_scheduler_policy_snapshot_freeze,pass,
+T23-L01,L,s01_s02_deterministic_equal_cost_tiebreak,pass,
+T23-L02,L,s03_node_placement_scoring_deterministic,pass,
+T23-L03,L,s04_s05_queue_admission_fairness_starvation_bounds,pass,
+T23-L04,L,s06_s07_rebalance_preemption_safety_resumable,pass,
+T23-L05,L,s08_s09_feedback_and_rollback_safety,pass,

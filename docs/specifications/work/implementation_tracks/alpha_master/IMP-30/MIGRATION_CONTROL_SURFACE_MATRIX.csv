@@ -1,0 +1,9 @@
+case_id,suite,required_check,expected_result,error_code
+T30-G01,G,create_migration_parses_and_persists_required_rows,pass,
+T30-G02,G,mode_option_mutation_expect_version_required_and_stale_reject,reject,SB-MIG-VERSION
+T30-G03,G,cutover_retire_enforce_listener_guards,pass,
+T30-G04,G,show_migration_status_fixed_column_order_types,pass,
+T30-G05,G,show_migration_audit_detail_modes_fixed_result_schemas,pass,
+T30-G06,G,sb_admin_migration_and_sb_migrate_map_1to1_native_sql_control,pass,
+T30-G07,G,migration_control_failures_map_sb_mig_codes,pass,
+T30-G08,G,emulated_clients_do_not_expose_native_migration_without_mapping,pass,

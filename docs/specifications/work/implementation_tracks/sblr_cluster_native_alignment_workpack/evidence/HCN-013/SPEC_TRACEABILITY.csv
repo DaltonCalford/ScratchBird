@@ -1,0 +1,3 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+SB-CLUSTER-SWS-MGA-01.md,control_plane_log_service,"include/scratchbird/core/catalog_manager.h;src/core/catalog_manager.cpp","CONTROL_PLANE_LOG_SCHEMA.md",pass,"Control-plane entities and constraints materialized in catalog surfaces"
+SB-CLUSTER-SWS-MGA-01.md,config_updates_durable_replay_safe,"tests/unit/test_catalog_cluster_clock_extension_contract.cpp;tests/unit/test_catalog_cluster_fabric_extension_contract.cpp","LOG_APPEND_REPLAY_TEST_RESULTS.md",pass,"CRUD/constraint/retrieval lifecycles validated"

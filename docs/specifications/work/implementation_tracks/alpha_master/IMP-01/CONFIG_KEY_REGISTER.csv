@@ -1,0 +1,41 @@
+key_name,source,value_type,default_value,scope,is_mutable,is_restart_required,is_sensitive,validation_rule
+engine.database_root,bootstrap,string,,instance,false,true,false,required non-empty absolute path
+engine.database_uuid,bootstrap,string,,instance,false,true,false,required UUID v4/v7 format
+storage.default_filespace_path,bootstrap,string,,instance,false,true,false,required non-empty absolute path
+storage.page_size,defaults,uint64,16384,database,false,true,false,power-of-two page size policy key
+storage.default_page_size,catalog,uint64,16384,database,false,true,false,must match page size policy set
+ipc.enabled,bootstrap,bool,true,instance,false,true,false,required boolean
+ipc.bind_address,bootstrap,string,127.0.0.1,instance,false,true,false,valid bind address
+ipc.port,bootstrap,uint64,5100,instance,false,true,false,1..65535
+listener.native.enabled,bootstrap,bool,false,instance,true,false,false,boolean
+listener.native.port,bootstrap,uint64,5100,instance,false,true,false,1..65535
+listener.postgresql.enabled,catalog,bool,false,instance,true,false,false,boolean
+listener.postgresql.port,catalog,uint64,5432,instance,false,true,false,1..65535
+listener.mysql.enabled,catalog,bool,false,instance,true,false,false,boolean
+listener.mysql.port,catalog,uint64,3306,instance,false,true,false,1..65535
+listener.firebird.enabled,catalog,bool,false,instance,true,false,false,boolean
+listener.firebird.port,catalog,uint64,3050,instance,false,true,false,1..65535
+listener.cassandra.enabled,catalog,bool,false,instance,true,false,false,boolean
+listener.cassandra.port,catalog,uint64,9042,instance,false,true,false,1..65535
+listener.mongodb.enabled,catalog,bool,false,instance,true,false,false,boolean
+listener.mongodb.port,catalog,uint64,27017,instance,false,true,false,1..65535
+listener.neo4j.enabled,catalog,bool,false,instance,true,false,false,boolean
+listener.neo4j.port,catalog,uint64,7687,instance,false,true,false,1..65535
+listener.redis.enabled,catalog,bool,false,instance,true,false,false,boolean
+listener.redis.port,catalog,uint64,6379,instance,false,true,false,1..65535
+listener.milvus.enabled,catalog,bool,false,instance,true,false,false,boolean
+listener.milvus.port,catalog,uint64,19530,instance,false,true,false,1..65535
+logging.level,defaults,string,INFO,instance,true,false,false,enum TRACE|DEBUG|INFO|WARN|ERROR
+logging.path,defaults,string,/var/log/scratchbird,instance,true,false,false,writable path
+diagnostics.audit.enabled,defaults,bool,true,database,true,false,false,boolean
+i18n.resource_bundle_path,bootstrap,string,docs/specifications/resources,instance,false,true,false,path exists when bootstrap_required=true
+i18n.bootstrap_required,bootstrap,bool,true,instance,false,true,false,boolean
+timezone.resource_bundle_path,bootstrap,string,docs/specifications/resources/timezones,instance,false,true,false,path exists
+timezone.default_name,defaults,string,UTC,database,true,false,false,valid timezone id
+types.default_charset,defaults,string,UTF-8,database,true,false,false,supported charset
+types.default_collation,defaults,string,BINARY,database,true,false,false,supported collation
+security.bootstrap_mode,bootstrap,string,disabled,instance,false,true,true,enum disabled|unlock_required
+security.encryption.mode,catalog,string,off,instance,false,true,true,enum off|at_rest
+parser.pool.max_agents,catalog,uint64,32,instance,true,false,false,1..65535
+listener.native.max_connections,catalog,uint64,1024,instance,true,false,false,1..1048576
+audit.retention_days,catalog,uint64,30,database,true,false,false,1..3650

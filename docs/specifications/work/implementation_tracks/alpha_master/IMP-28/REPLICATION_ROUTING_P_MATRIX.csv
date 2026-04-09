@@ -1,0 +1,9 @@
+case_id,suite,required_check,expected_result,error_code
+T28-P001,P,channel_name_resolves_single_channel_uuid,pass,
+T28-P002,P,mutable_commands_require_expect_version,pass,
+T28-P003,P,oneway_peer_control_reject_and_bidirectional_origin_requirements,pass,
+T28-P004,P,ddl_conflict_tokens_map_to_canonical_enum_labels,pass,
+T28-P005,P,show_replication_fixed_shape_and_column_order,pass,
+T28-P006,P,conflict_resolution_requires_uuid_and_action_compatibility,pass,
+T28-P007,P,split_brain_illegal_state_failures_map_dialect_native,pass,
+T28-P008,P,emulated_publication_subscription_map_or_deterministic_reject,pass,

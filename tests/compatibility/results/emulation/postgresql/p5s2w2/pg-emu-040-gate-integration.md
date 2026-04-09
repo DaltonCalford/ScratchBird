@@ -1,4 +1,4 @@
-Last updated: 2026-03-28
+Last updated: 2026-04-04
 
 # PG-EMU-040 pg_regress Gate Integration
 
@@ -7,7 +7,7 @@ Last updated: 2026-03-28
 ## Prerequisites
 - `tests/compatibility/postgresql/repos/postgres/src/test/regress/GNUmakefile`: `present`
 - `tests/compatibility/postgresql/repos/postgres/src/test/regress/sql`: `present`
-- `full upstream pg build cwd configured via PG_UPSTREAM_BUILD_DIR`: `present`
+- `full upstream pg build cwd configured via PG_UPSTREAM_BUILD_DIR`: `missing`
 
 ## Command templates
 ```bash

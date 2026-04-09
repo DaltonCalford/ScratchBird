@@ -41,6 +41,7 @@
 #include "scratchbird/core/type_extractor.h"
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/index_factory.h"  // LSM Integration Phase 3: Index factory
+#include "scratchbird/core/index_params.h"
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/vnext_metrics_event_model.h"
 #include "scratchbird/core/posix_compat.h"
@@ -110,6 +111,140 @@ bool isValidSourceScopeKind(CatalogManager::SourceScopeKind kind);
 std::string encodeViewDefinitionStorage(const CatalogManager::ViewInfo& view);
 void decodeViewDefinitionStorage(const std::string& stored,
                                  CatalogManager::ViewInfo& view);
+void applyIndexParamsToInfo(const IndexParams& params,
+                            CatalogManager::IndexInfo& info)
+{
+    if (!params.physical_family.empty())
+    {
+        info.physical_family = params.physical_family;
+    }
+    if (!params.planner_family.empty())
+    {
+        info.planner_family = params.planner_family;
+    }
+    if (!params.family_mode.empty())
+    {
+        info.family_mode = params.family_mode;
+    }
+    if (params.format_version != 0)
+    {
+        info.format_version = params.format_version;
+    }
+    info.alias_origin = params.alias_origin;
+    if (params.family_options_version != 0)
+    {
+        info.family_options_version = params.family_options_version;
+    }
+    if (!params.lifecycle_model.empty())
+    {
+        info.lifecycle_model = params.lifecycle_model;
+    }
+    if (params.metrics_type != optimizer::IndexFamilyMetricsType::UNKNOWN)
+    {
+        info.metrics_type = params.metrics_type;
+    }
+    if (params.metrics_version != 0)
+    {
+        info.metrics_version = params.metrics_version;
+    }
+    if (!params.queryability_state.empty())
+    {
+        info.queryability_state = params.queryability_state;
+    }
+}
+
+auto indexParamsFromInfo(const CatalogManager::IndexInfo& info) -> IndexParams
+{
+    IndexParams params;
+    params.physical_family = info.physical_family;
+    params.planner_family = info.planner_family;
+    params.family_mode = info.family_mode;
+    params.format_version = info.format_version;
+    params.alias_origin = info.alias_origin;
+    params.family_options_version = info.family_options_version;
+    params.lifecycle_model = info.lifecycle_model;
+    params.metrics_type = info.metrics_type;
+    params.metrics_version = info.metrics_version;
+    params.queryability_state = info.queryability_state;
+    return params;
+}
+
+auto indexParamsHasMutableOptions(const IndexParams& params) -> bool
+{
+    return params.has_bloom || !params.legacy_pairs.empty() || !params.raw_options.empty();
+}
+
+auto syncIndexParamsBlob(CatalogManager* catalog,
+                         CatalogManager::IndexInfo& info,
+                         ErrorContext* ctx) -> Status
+{
+    if (catalog == nullptr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "Catalog manager missing for index params sync");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    IndexFactory::populateCanonicalMetadata(info);
+
+    std::string existing_serialized;
+    IndexParams merged = indexParamsFromInfo(info);
+    if (!isZeroUuidLocal(info.index_params_oid))
+    {
+        (void)catalog->loadStringFromToast(info.index_params_oid, 0, existing_serialized, ctx);
+        if (!existing_serialized.empty())
+        {
+            IndexParams existing_params;
+            if (parseIndexParams(existing_serialized, &existing_params))
+            {
+                if (merged.family_options_version == 0)
+                {
+                    merged.family_options_version = existing_params.family_options_version;
+                }
+                if (!indexParamsHasMutableOptions(merged) &&
+                    indexParamsHasMutableOptions(existing_params))
+                {
+                    merged.legacy_pairs = existing_params.legacy_pairs;
+                    merged.raw_options = existing_params.raw_options;
+                    merged.has_bloom = existing_params.has_bloom;
+                    merged.bloom = existing_params.bloom;
+                }
+            }
+        }
+    }
+
+    if (merged.family_options_version == 0)
+    {
+        merged.family_options_version = 1;
+    }
+    if (merged.metrics_version == 0)
+    {
+        merged.metrics_version = 1;
+    }
+    if (merged.format_version == 0)
+    {
+        merged.format_version = 1;
+    }
+
+    const std::string serialized = serializeIndexParams(merged);
+    if (!serialized.empty() && serialized == existing_serialized &&
+        !isZeroUuidLocal(info.index_params_oid))
+    {
+        applyIndexParamsToInfo(merged, info);
+        return Status::OK;
+    }
+
+    ID oid{};
+    Status status = catalog->storeStringInToast(serialized, 0, oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    info.index_params_oid = oid;
+    applyIndexParamsToInfo(merged, info);
+    return Status::OK;
+}
+
 bool isUuidV7Local(const ID& id)
 {
     std::vector<uint8_t> bytes;
@@ -1877,6 +2012,24 @@ bool isValidIndexDeltaOp(CatalogManager::IndexDeltaOp op)
     return op == IDO::INSERT || op == IDO::DELETE || op == IDO::UPDATE;
 }
 
+bool isValidIndexPageDeltaOp(CatalogManager::IndexPageDeltaOp op)
+{
+    using IPDO = CatalogManager::IndexPageDeltaOp;
+    return op == IPDO::INSERT ||
+           op == IPDO::DELETE ||
+           op == IPDO::UPDATE_SAME_KEY ||
+           op == IPDO::UPDATE_KEY_CHANGE;
+}
+
+bool isValidIndexPageDeltaMergeState(CatalogManager::IndexPageDeltaMergeState state)
+{
+    using MergeState = CatalogManager::IndexPageDeltaMergeState;
+    return state == MergeState::PENDING ||
+           state == MergeState::MERGING ||
+           state == MergeState::MERGED ||
+           state == MergeState::FAILED_FENCE;
+}
+
 bool isValidIndexHealthStatus(CatalogManager::IndexHealthStatus status)
 {
     using IHS = CatalogManager::IndexHealthStatus;
@@ -2423,6 +2576,177 @@ bool isValidBindingResourceScopeKind(CatalogManager::BindingResourceScopeKind sc
            scope_kind == SK::DATABASE ||
            scope_kind == SK::SCHEMA ||
            scope_kind == SK::RESOURCE_PATTERN;
+}
+
+bool isValidConfigCatalogValueType(config::CatalogValueType value_type)
+{
+    using VT = config::CatalogValueType;
+    return value_type == VT::BOOL ||
+           value_type == VT::INT64 ||
+           value_type == VT::UINT64 ||
+           value_type == VT::FLOAT64 ||
+           value_type == VT::STRING ||
+           value_type == VT::DURATION ||
+           value_type == VT::BYTES ||
+           value_type == VT::LIST_STRING ||
+           value_type == VT::LIST_KV;
+}
+
+bool isValidConfigCatalogScope(config::CatalogScope scope)
+{
+    using CS = config::CatalogScope;
+    return scope == CS::INSTANCE ||
+           scope == CS::DATABASE ||
+           scope == CS::SCHEMA ||
+           scope == CS::USER ||
+           scope == CS::SESSION;
+}
+
+bool isValidConfigHotApplyClass(config::CatalogHotApplyClass hot_apply_class)
+{
+    using HA = config::CatalogHotApplyClass;
+    return hot_apply_class == HA::NONE ||
+           hot_apply_class == HA::POST_COMMIT_LOCAL ||
+           hot_apply_class == HA::POST_COMMIT_CLUSTER_DISPATCH;
+}
+
+bool isValidConfigValueSource(CatalogManager::ConfigValueSource source)
+{
+    using CVS = CatalogManager::ConfigValueSource;
+    return source == CVS::CATALOG ||
+           source == CVS::BOOTSTRAP ||
+           source == CVS::SESSION_OVERRIDE;
+}
+
+bool isValidSchemaChangeClass(const std::string& change_class)
+{
+    return change_class == "METADATA_ONLY" ||
+           change_class == "EXPAND_BACKFILL_CUTOVER" ||
+           change_class == "REWRITE_REQUIRED";
+}
+
+bool isValidSchemaChangePhaseState(const std::string& phase_state)
+{
+    return phase_state == "DRAFTED" ||
+           phase_state == "EXPANDED_METADATA" ||
+           phase_state == "BACKFILL_ACTIVE" ||
+           phase_state == "CUTOVER_PENDING" ||
+           phase_state == "CUTOVER_COMMITTED" ||
+           phase_state == "CONTRACT_PENDING" ||
+           phase_state == "ROLLED_BACK" ||
+           phase_state == "ABORTED_FAIL_CLOSED";
+}
+
+bool isValidSchemaChangeEventState(const std::string& event_state)
+{
+    return event_state == "PREPARED" ||
+           event_state == "COMMITTED" ||
+           event_state == "ROLLED_BACK" ||
+           event_state == "ABORTED_FAIL_CLOSED";
+}
+
+bool isValidSchemaChangeRestartDisposition(const std::string& restart_disposition)
+{
+    return restart_disposition == "NONE" ||
+           restart_disposition == "RESUME_FROM_LAST_ROW_UUID" ||
+           restart_disposition == "RESUME_FROM_LAST_KEY" ||
+           restart_disposition == "VALIDATION_ONLY_COMPLETE";
+}
+
+bool isValidSchemaChangeGuardState(const std::string& guard_state)
+{
+    return guard_state == "READY" ||
+           guard_state == "BLOCKED" ||
+           guard_state == "CUTOVER_COMMITTED" ||
+           guard_state == "ROLLED_BACK" ||
+           guard_state == "ABORTED_FAIL_CLOSED";
+}
+
+bool isValidIndexBuildReason(const std::string& build_reason)
+{
+    return build_reason == "CREATE" ||
+           build_reason == "REBUILD" ||
+           build_reason == "RELOCATE" ||
+           build_reason == "REPAIR";
+}
+
+bool isValidIndexBuildPhaseState(const std::string& build_state)
+{
+    return build_state == "DRAFTED" ||
+           build_state == "BUILDING" ||
+           build_state == "SIDELOG_ACTIVE" ||
+           build_state == "DRAINING_PERMISSIVE" ||
+           build_state == "DRAINING_FINAL" ||
+           build_state == "VALIDATING" ||
+           build_state == "CUTOVER_PENDING" ||
+           build_state == "PUBLISHED" ||
+           build_state == "PAUSED" ||
+           build_state == "ABORTED_FAIL_CLOSED";
+}
+
+bool isValidIndexBuildRestartDisposition(const std::string& restart_disposition)
+{
+    return restart_disposition == "RESUME" ||
+           restart_disposition == "RESTART_SCAN" ||
+           restart_disposition == "FAIL_CLOSED";
+}
+
+bool isValidIndexBuildGuardState(const std::string& guard_state)
+{
+    return guard_state == "READY" ||
+           guard_state == "BLOCKED" ||
+           guard_state == "FAILED";
+}
+
+bool isValidBulkLoadLane(const std::string& ingest_lane)
+{
+    return ingest_lane == "RETAIL_MICRO_BATCH" ||
+           ingest_lane == "SORTED_EXACT_BULK" ||
+           ingest_lane == "SHADOW_LOAD_CUTOVER";
+}
+
+bool isValidBulkLoadPhaseState(const std::string& phase_state)
+{
+    return phase_state == "PLANNED" ||
+           phase_state == "RUNNING" ||
+           phase_state == "COMPLETED" ||
+           phase_state == "CUTOVER_PENDING" ||
+           phase_state == "CUTOVER_COMMITTED" ||
+           phase_state == "ROLLED_BACK" ||
+           phase_state == "ABORTED_FAIL_CLOSED";
+}
+
+bool isValidBulkLoadEventState(const std::string& event_state)
+{
+    return event_state == "PREPARED" ||
+           event_state == "COMMITTED" ||
+           event_state == "ROLLED_BACK" ||
+           event_state == "ABORTED_FAIL_CLOSED";
+}
+
+bool isValidBulkLoadRestartDisposition(const std::string& restart_disposition)
+{
+    return restart_disposition == "NONE" ||
+           restart_disposition == "RESUME_FROM_LAST_BATCH" ||
+           restart_disposition == "RESTART_FROM_BEGINNING" ||
+           restart_disposition == "VALIDATION_ONLY_COMPLETE";
+}
+
+bool isValidBulkLoadGuardState(const std::string& guard_state)
+{
+    return guard_state == "NOT_REQUIRED" ||
+           guard_state == "READY" ||
+           guard_state == "BLOCKED" ||
+           guard_state == "CUTOVER_COMMITTED" ||
+           guard_state == "ABORTED_FAIL_CLOSED";
+}
+
+bool isValidMemoryGrantFeedbackState(const std::string& state)
+{
+    return state == "STABLE" ||
+           state == "WARMING" ||
+           state == "OSCILLATING" ||
+           state == "DISABLED";
 }
 
 constexpr uint64_t kGraphActionKnownMask =
@@ -3477,6 +3801,25 @@ bool hasValidAdmissionQueueConfiguration(const CatalogManager::AdmissionPolicyCa
     }
 
     return info.max_queue_depth > 0 && info.queue_timeout_ms > 0;
+}
+
+bool hasAdmissionAcceleratorPolicyConfig(const CatalogManager::AdmissionPolicyCatalogInfo& info)
+{
+    return !info.accelerator_profile_name.empty() ||
+           info.accelerator_memory_budget_bytes != 0 ||
+           info.accelerator_pinned_residency_target_bytes != 0 ||
+           info.accelerator_concurrent_build_limit != 0 ||
+           info.accelerator_concurrent_search_limit != 0 ||
+           !info.accelerator_prewarm_policy.empty() ||
+           !info.accelerator_fallback_policy.empty() ||
+           !info.accelerator_degraded_state_override.empty();
+}
+
+bool hasAdmissionAcceleratorBindingConfig(const CatalogManager::AdmissionBindingCatalogInfo& info)
+{
+    return !info.accelerator_device_class.empty() ||
+           !info.accelerator_device_id.empty() ||
+           !info.accelerator_device_pool_id.empty();
 }
 
 bool isValidAdmissionTargetKind(CatalogManager::AdmissionTargetKind kind)
@@ -4758,6 +5101,17 @@ int bindingSubjectRank(CatalogManager::BindingSubjectType subject_type)
     return 5;
 }
 
+bool configScopeMatches(const ID* scope_uuid,
+                        bool row_has_scope_uuid,
+                        const ID& row_scope_uuid)
+{
+    if (scope_uuid == nullptr || isZeroUuidLocal(*scope_uuid))
+    {
+        return !row_has_scope_uuid || isZeroUuidLocal(row_scope_uuid);
+    }
+    return row_has_scope_uuid && row_scope_uuid == *scope_uuid;
+}
+
 bool idInVector(const std::vector<ID>& ids, const ID& id)
 {
     return std::find(ids.begin(), ids.end(), id) != ids.end();
@@ -5198,6 +5552,7 @@ bool hasTriggerNameConflictInTable(
         uint32_t index_maintenance_page;    // Page containing index_maintenance table
         uint32_t index_maintenance_deltas_page; // Page containing index_maintenance_delta table
         uint32_t index_build_deltas_page;   // Page containing index_build_delta table
+        uint32_t index_page_deltas_page;    // Page containing index_page_delta table
         uint32_t index_stats_page;          // Page containing index_stats table
         uint32_t index_usage_page;          // Page containing index_usage table
         uint32_t index_contention_page;     // Page containing index_contention table
@@ -5420,15 +5775,37 @@ bool hasTriggerNameConflictInTable(
         uint32_t quota_binding_page; // Page containing quota_binding table
         uint32_t settings_profile_page; // Page containing settings_profile table
         uint32_t settings_binding_page; // Page containing settings_binding table
+        uint32_t config_key_page; // Page containing config_key table
+        uint32_t config_value_page; // Page containing config_value table
+        uint32_t config_change_log_page; // Page containing config_change_log table
+        uint32_t listener_profile_page; // Page containing listener_profile table
+        uint32_t listener_binding_page; // Page containing listener_binding table
+        uint32_t listener_emulation_binding_page; // Page containing listener_emulation_binding table
+        uint32_t parser_pool_policy_page; // Page containing parser_pool_policy table
+        uint32_t listener_runtime_target_page; // Page containing listener_runtime_target table
+        uint32_t listener_generation_record_page; // Page containing listener_generation_record table
         uint32_t audit_sink_profile_page; // Page containing audit_sink_profile table
         uint32_t audit_export_segment_page; // Page containing audit_export_segment table
         uint32_t transaction_lineage_event_page; // Page containing transaction_lineage_event table
         uint32_t schema_epoch_page; // Page containing schema_epoch table
+        uint32_t schema_change_plan_page; // Page containing schema_change_plan table
+        uint32_t schema_change_event_page; // Page containing schema_change_event table
+        uint32_t schema_change_backfill_progress_page; // Page containing schema_change_backfill_progress table
+        uint32_t schema_change_cutover_guard_page; // Page containing schema_change_cutover_guard table
+        uint32_t index_build_plan_page; // Page containing index_build_plan table
+        uint32_t index_build_event_page; // Page containing index_build_event table
+        uint32_t index_build_progress_page; // Page containing index_build_progress table
+        uint32_t index_build_cutover_guard_page; // Page containing index_build_cutover_guard table
+        uint32_t bulk_load_plan_page; // Page containing bulk_load_plan table
+        uint32_t bulk_load_event_page; // Page containing bulk_load_event table
+        uint32_t bulk_load_progress_page; // Page containing bulk_load_progress table
+        uint32_t bulk_load_cutover_guard_page; // Page containing bulk_load_cutover_guard table
+        uint32_t memory_grant_feedback_page; // Page containing memory_grant_feedback table
         uint32_t page_audit_finding_page; // Page containing page_audit_finding table
         uint32_t shadow_capture_manifest_page; // Page containing shadow_capture_manifest table
         uint32_t forensic_snapshot_capsule_page; // Page containing forensic_snapshot_capsule table
 
-        uint8_t reserved[2872];       // Padding for 4KB page
+        uint8_t reserved[2784];       // Padding for 4KB page
     };
 
     // Database record on disk
@@ -6335,6 +6712,8 @@ bool hasTriggerNameConflictInTable(
         uint64_t reclaimed_version_count;
         uint64_t reclaimed_bytes;
         uint64_t index_backlog_count;
+        uint64_t index_backlog_pages;
+        uint64_t index_backlog_bytes;
         uint32_t cursor_crc32c;
         uint32_t padding;
     };
@@ -6821,6 +7200,194 @@ bool hasTriggerNameConflictInTable(
         ID tenant_scope_oid;
         ID resource_scope_value_oid;
         ID settings_profile_id;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct ConfigKeyCatalogRecord
+    {
+        uint32_t key_id;
+        uint8_t value_type; // config::CatalogValueType
+        uint8_t scope; // config::CatalogScope
+        uint8_t is_restart_required;
+        uint8_t is_mutable;
+        uint8_t is_bootstrap_only;
+        uint8_t is_cluster_managed;
+        uint8_t hot_apply_class; // config::CatalogHotApplyClass
+        uint8_t is_sensitive;
+        uint8_t is_valid;
+        uint8_t reserved0[3];
+        char key_name[128];
+        ID default_value_oid;
+        ID min_value_oid;
+        ID max_value_oid;
+        ID allowed_values_oid;
+        ID description_oid;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct ConfigValueCatalogRecord
+    {
+        ID config_value_id;
+        uint32_t key_id;
+        uint8_t has_scope_uuid;
+        uint8_t source; // ConfigValueSource
+        uint8_t pending_restart;
+        uint8_t is_valid;
+        uint8_t reserved0[4];
+        ID scope_uuid;
+        ID value_text_oid;
+        uint64_t config_generation;
+        uint64_t effective_txid;
+        ID updated_by;
+        uint64_t updated_at;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct ConfigChangeLogCatalogRecord
+    {
+        uint64_t change_id;
+        uint32_t key_id;
+        uint8_t has_scope_uuid;
+        uint8_t is_valid;
+        uint8_t reserved0[2];
+        ID scope_uuid;
+        ID old_value_text_oid;
+        ID new_value_text_oid;
+        ID change_reason_oid;
+        uint64_t config_generation;
+        ID changed_by;
+        uint64_t changed_at;
+        uint32_t padding;
+    };
+
+    struct ListenerProfileCatalogRecord
+    {
+        ID listener_profile_id;
+        char profile_name[128];
+        char protocol_family[64];
+        char desired_state[32];
+        uint8_t enabled;
+        uint8_t manager_fronted;
+        uint8_t has_owner_database_uuid;
+        uint8_t is_valid;
+        uint8_t reserved0[4];
+        ID owner_database_uuid;
+        uint64_t applied_generation;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct ListenerBindingCatalogRecord
+    {
+        ID listener_binding_id;
+        ID listener_profile_id;
+        char bind_address[128];
+        char bind_transport[32];
+        char bind_scope[32];
+        uint16_t bind_port;
+        uint8_t is_primary;
+        uint8_t is_valid;
+        uint64_t configuration_generation;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct ListenerEmulationBindingCatalogRecord
+    {
+        ID listener_emulation_binding_id;
+        ID listener_profile_id;
+        char emulation_family[64];
+        char protocol_surface[64];
+        uint8_t enabled;
+        uint8_t has_parser_pool_policy_uuid;
+        uint8_t is_valid;
+        uint8_t reserved0[5];
+        ID parser_pool_policy_uuid;
+        uint64_t configuration_generation;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct ParserPoolPolicyCatalogRecord
+    {
+        ID parser_pool_policy_id;
+        char policy_name[128];
+        char parser_library_family[64];
+        char workload_guardrail_class[64];
+        uint16_t min_workers;
+        uint16_t preferred_workers;
+        uint16_t max_workers;
+        uint16_t queue_max;
+        uint16_t missed_heartbeat_threshold;
+        uint16_t reserved0;
+        uint64_t queue_timeout_ms;
+        uint64_t idle_timeout_ms;
+        uint64_t spawn_backoff_ms;
+        uint64_t health_interval_ms;
+        uint64_t warm_replenish_timeout_ms;
+        uint64_t memory_guardrail_bytes;
+        uint64_t configuration_generation;
+        uint8_t is_valid;
+        uint8_t reserved1[7];
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct ListenerRuntimeTargetCatalogRecord
+    {
+        ID listener_runtime_target_id;
+        ID listener_profile_id;
+        char target_kind[64];
+        uint8_t has_target_database_uuid;
+        uint8_t has_target_server_uuid;
+        uint8_t has_inner_listener_profile_uuid;
+        uint8_t has_pending_generation;
+        uint8_t has_last_applied_generation;
+        uint8_t has_last_refused_generation;
+        uint8_t has_last_error_code;
+        uint8_t has_last_error_detail_uuid;
+        uint8_t is_valid;
+        uint8_t reserved0[7];
+        ID target_database_uuid;
+        ID target_server_uuid;
+        ID inner_listener_profile_uuid;
+        uint64_t current_generation;
+        uint64_t pending_generation;
+        uint64_t last_applied_generation;
+        uint64_t last_refused_generation;
+        ID last_error_code_oid;
+        ID last_error_detail_uuid;
+        uint64_t last_observed_at;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct ListenerGenerationRecordCatalogRecord
+    {
+        ID listener_generation_id;
+        ID target_database_uuid;
+        ID listener_profile_id;
+        uint8_t has_refused_generation;
+        uint8_t has_last_instruction_uuid;
+        uint8_t is_valid;
+        uint8_t reserved0[5];
+        uint64_t committed_generation;
+        uint64_t applied_generation;
+        uint64_t refused_generation;
+        ID drift_state_oid;
+        ID last_instruction_uuid;
+        uint64_t observed_at;
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t padding;
@@ -7437,14 +8004,22 @@ bool hasTriggerNameConflictInTable(
     {
         ID policy_id;
         char policy_name[128];
+        char accelerator_profile_name[64];
+        char accelerator_prewarm_policy[32];
+        char accelerator_fallback_policy[32];
+        char accelerator_degraded_state_override[32];
         uint32_t max_concurrent_sessions;
         uint32_t max_concurrent_queries;
         uint32_t max_queue_depth;
+        uint32_t accelerator_concurrent_build_limit;
+        uint32_t accelerator_concurrent_search_limit;
         uint8_t cpu_reject_pct;
         uint8_t mem_reject_pct;
         uint8_t io_reject_pct;
         uint8_t reject_mode;           // AdmissionRejectMode
         uint32_t queue_timeout_ms;
+        uint64_t accelerator_memory_budget_bytes;
+        uint64_t accelerator_pinned_residency_target_bytes;
         uint8_t is_enabled;
         uint8_t is_valid;
         uint8_t reserved0[6];
@@ -7457,6 +8032,9 @@ bool hasTriggerNameConflictInTable(
     {
         ID binding_id;
         ID policy_id;
+        char accelerator_device_class[32];
+        char accelerator_device_id[64];
+        char accelerator_device_pool_id[64];
         uint8_t target_kind;           // AdmissionTargetKind
         uint8_t has_target_uuid;
         uint8_t has_class_id;
@@ -10123,6 +10701,32 @@ bool hasTriggerNameConflictInTable(
         uint32_t padding;
     };
 
+    // Canonical index_page_delta catalog record (CAT-016)
+    struct IndexPageDeltaRecord
+    {
+        ID page_delta_id;
+        ID index_id;
+        ID target_locality_key_oid;
+        ID logical_row_uuid;
+        uint8_t delta_op;
+        uint8_t merge_state;
+        uint8_t is_valid;
+        uint8_t has_old_tid;
+        uint8_t has_new_tid;
+        uint8_t reserved0[3];
+        uint64_t old_tid_gpid;
+        uint16_t old_tid_slot;
+        uint8_t reserved1[6];
+        uint64_t new_tid_gpid;
+        uint16_t new_tid_slot;
+        uint8_t reserved2[6];
+        ID normalized_key_oid;
+        ID normalized_old_key_oid;
+        uint64_t created_xid;
+        uint64_t created_time;
+        uint32_t padding;
+    };
+
     // Canonical index_stats catalog record (CAT-017)
     struct IndexStatsRecord
     {
@@ -10223,7 +10827,9 @@ bool hasTriggerNameConflictInTable(
         uint64_t last_diag_scan_txid;
         uint64_t last_diag_scan_time;
         uint8_t diagnostic_status;
-        uint8_t reserved1[3];
+        uint8_t cleanup_repair_required;
+        uint8_t is_valid;
+        uint8_t reserved1;
         uint32_t diagnostic_error_count;
         uint32_t checksum_errors;
         uint32_t order_errors;
@@ -10233,8 +10839,12 @@ bool hasTriggerNameConflictInTable(
         uint32_t in_memory_errors;
         uint64_t pages_scanned;
         uint64_t bytes_scanned;
-        uint8_t is_valid;
-        uint8_t reserved2[7];
+        uint64_t cleanup_backlog_count;
+        uint64_t cleanup_backlog_pages;
+        uint64_t cleanup_backlog_bytes;
+        uint64_t cleanup_sweep_generation;
+        uint64_t cleanup_checkpoint_generation;
+        uint64_t cleanup_last_published_time;
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t padding;
@@ -10451,6 +11061,227 @@ bool hasTriggerNameConflictInTable(
         uint8_t has_parent_schema_epoch_uuid;
         uint8_t is_valid;
         uint8_t reserved0[5];
+    };
+
+    struct SchemaChangePlanRecord
+    {
+        ID schema_change_plan_uuid;
+        ID object_uuid;
+        ID requested_by_uuid;
+        ID refusal_detail_uuid;
+        ID object_type_oid;
+        ID requested_operation_oid;
+        ID change_class_oid;
+        ID phase_state_oid;
+        ID rollback_class_oid;
+        ID refusal_reason_code_oid;
+        uint64_t requested_at;
+        uint64_t baseline_schema_epoch;
+        uint64_t expanded_schema_epoch;
+        uint64_t cutover_schema_epoch;
+        uint8_t has_expanded_schema_epoch;
+        uint8_t has_cutover_schema_epoch;
+        uint8_t has_refusal_detail_uuid;
+        uint8_t is_valid;
+        uint8_t reserved0[4];
+    };
+
+    struct SchemaChangeEventRecord
+    {
+        ID schema_change_event_uuid;
+        ID schema_change_plan_uuid;
+        ID phase_from_oid;
+        ID phase_to_oid;
+        ID event_state_oid;
+        ID event_code_oid;
+        ID event_detail_uuid;
+        uint64_t event_seq;
+        uint64_t event_time;
+        uint8_t has_phase_from;
+        uint8_t has_event_detail_uuid;
+        uint8_t is_valid;
+        uint8_t reserved0[5];
+    };
+
+    struct SchemaChangeBackfillProgressRecord
+    {
+        ID schema_change_backfill_progress_uuid;
+        ID schema_change_plan_uuid;
+        ID last_resume_row_uuid;
+        ID last_resume_key_json_oid;
+        ID restart_disposition_oid;
+        uint64_t worker_generation;
+        uint64_t scanned_row_count;
+        uint64_t written_row_count;
+        uint64_t validated_row_count;
+        uint64_t last_heartbeat_at;
+        uint8_t has_last_resume_row_uuid;
+        uint8_t has_last_resume_key_json;
+        uint8_t partial_chunk_rewind_required;
+        uint8_t has_last_heartbeat_at;
+        uint8_t is_valid;
+        uint8_t reserved0[3];
+    };
+
+    struct SchemaChangeCutoverGuardRecord
+    {
+        ID schema_change_cutover_guard_uuid;
+        ID schema_change_plan_uuid;
+        ID guard_state_oid;
+        uint64_t expected_pre_cutover_schema_epoch;
+        uint64_t validation_manifest_hash;
+        uint64_t expected_security_epoch;
+        uint64_t checked_at;
+        uint8_t dependency_refresh_complete;
+        uint8_t has_expected_security_epoch;
+        uint8_t is_valid;
+        uint8_t reserved0[5];
+    };
+
+    struct IndexBuildPlanRecord
+    {
+        ID index_build_plan_uuid;
+        ID logical_index_id;
+        ID shadow_index_uuid;
+        ID build_reason_oid;
+        ID build_state_oid;
+        ID resume_payload_json_oid;
+        ID resume_anchor_row_uuid;
+        uint64_t baseline_schema_epoch;
+        uint64_t build_snapshot_xid;
+        uint8_t has_resume_anchor_row_uuid;
+        uint8_t has_resume_payload_json;
+        uint8_t is_valid;
+        uint8_t reserved0[5];
+    };
+
+    struct IndexBuildEventRecord
+    {
+        ID index_build_event_uuid;
+        ID index_build_plan_uuid;
+        ID phase_from_oid;
+        ID phase_to_oid;
+        ID event_code_oid;
+        uint64_t event_seq;
+        uint64_t event_time;
+        uint8_t has_phase_from;
+        uint8_t is_valid;
+        uint8_t reserved0[6];
+    };
+
+    struct IndexBuildProgressRecord
+    {
+        ID index_build_progress_uuid;
+        ID index_build_plan_uuid;
+        ID last_resume_row_uuid;
+        ID restart_disposition_oid;
+        uint64_t rows_scanned;
+        uint64_t rows_applied;
+        uint64_t side_log_records_applied;
+        uint8_t has_last_resume_row_uuid;
+        uint8_t partial_chunk_rewind_required;
+        uint8_t is_valid;
+        uint8_t reserved0[5];
+    };
+
+    struct IndexBuildCutoverGuardRecord
+    {
+        ID index_build_cutover_guard_uuid;
+        ID index_build_plan_uuid;
+        ID guard_state_oid;
+        uint64_t expected_schema_epoch;
+        uint64_t validation_manifest_hash;
+        uint64_t checked_at;
+        uint8_t side_log_drained;
+        uint8_t is_valid;
+        uint8_t reserved0[6];
+    };
+
+    struct BulkLoadPlanRecord
+    {
+        ID bulk_load_plan_uuid;
+        ID object_uuid;
+        ID requested_by_uuid;
+        ID ingest_lane_oid;
+        ID load_kind_oid;
+        ID source_format_oid;
+        ID phase_state_oid;
+        uint64_t requested_at;
+        uint64_t expected_row_count;
+        uint8_t has_expected_row_count;
+        uint8_t is_valid;
+        uint8_t reserved0[6];
+    };
+
+    struct BulkLoadEventRecord
+    {
+        ID bulk_load_event_uuid;
+        ID bulk_load_plan_uuid;
+        ID phase_from_oid;
+        ID phase_to_oid;
+        ID event_state_oid;
+        ID event_code_oid;
+        uint64_t event_seq;
+        uint64_t event_time;
+        uint8_t has_phase_from;
+        uint8_t is_valid;
+        uint8_t reserved0[6];
+    };
+
+    struct BulkLoadProgressRecord
+    {
+        ID bulk_load_progress_uuid;
+        ID bulk_load_plan_uuid;
+        ID restart_disposition_oid;
+        uint64_t worker_generation;
+        uint64_t scanned_row_count;
+        uint64_t written_row_count;
+        uint64_t validated_row_count;
+        uint64_t last_heartbeat_at;
+        uint8_t partial_chunk_rewind_required;
+        uint8_t has_last_heartbeat_at;
+        uint8_t is_valid;
+        uint8_t reserved0[5];
+    };
+
+    struct BulkLoadCutoverGuardRecord
+    {
+        ID bulk_load_cutover_guard_uuid;
+        ID bulk_load_plan_uuid;
+        ID guard_state_oid;
+        uint64_t expected_pre_cutover_schema_epoch;
+        uint64_t validation_manifest_hash;
+        uint64_t checked_at;
+        uint8_t dependency_refresh_complete;
+        uint8_t is_valid;
+        uint8_t reserved0[6];
+    };
+
+    struct MemoryGrantFeedbackRecord
+    {
+        ID grant_feedback_uuid;
+        uint64_t grant_key_hash;
+        ID database_uuid;
+        ID schema_root_uuid;
+        char operator_kind[64];
+        uint64_t sample_count;
+        uint64_t last_grant_bytes;
+        uint64_t p50_bytes;
+        uint64_t p90_bytes;
+        uint64_t peak_bytes;
+        uint64_t spill_count;
+        uint64_t cancel_count;
+        uint64_t oscillation_count;
+        uint8_t underuse_streak;
+        int8_t last_adjustment_direction;
+        uint8_t oscillation_disable_count;
+        char state[32];
+        uint64_t updated_at;
+        uint8_t is_valid;
+        uint8_t reserved0[4];
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
     };
 
     // UDR (User-Defined Resource) record on disk (Phase 3 - Stored Code Tables)
@@ -11637,6 +12468,12 @@ bool hasTriggerNameConflictInTable(
         status = db_->write_page(index_build_deltas_table_page_, page_buffer.get(), ctx);
         if (status != Status::OK) return status;
 
+        status = pm->allocatePage(index_page_deltas_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = index_page_deltas_table_page_;
+        status = db_->write_page(index_page_deltas_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
         // CAT-017: Index telemetry extension catalog families
         status = pm->allocatePage(index_stats_table_page_, ctx);
         if (status != Status::OK) return status;
@@ -11837,6 +12674,60 @@ bool hasTriggerNameConflictInTable(
         if (status != Status::OK) return status;
         heap->header.page_id = settings_binding_table_page_;
         status = db_->write_page(settings_binding_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(config_key_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = config_key_table_page_;
+        status = db_->write_page(config_key_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(config_value_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = config_value_table_page_;
+        status = db_->write_page(config_value_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(config_change_log_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = config_change_log_table_page_;
+        status = db_->write_page(config_change_log_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(listener_profile_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = listener_profile_table_page_;
+        status = db_->write_page(listener_profile_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(listener_binding_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = listener_binding_table_page_;
+        status = db_->write_page(listener_binding_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(listener_emulation_binding_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = listener_emulation_binding_table_page_;
+        status = db_->write_page(listener_emulation_binding_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(parser_pool_policy_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = parser_pool_policy_table_page_;
+        status = db_->write_page(parser_pool_policy_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(listener_runtime_target_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = listener_runtime_target_table_page_;
+        status = db_->write_page(listener_runtime_target_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(listener_generation_record_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = listener_generation_record_table_page_;
+        status = db_->write_page(listener_generation_record_table_page_, page_buffer.get(), ctx);
         if (status != Status::OK) return status;
 
         status = pm->allocatePage(auth_mapping_table_page_, ctx);
@@ -12809,7 +13700,7 @@ bool hasTriggerNameConflictInTable(
             bool force_database_uuid;
         };
 
-        static constexpr std::array<BootstrapSchemaNode, 43> kBootstrapSchemas = {{
+        static constexpr std::array<BootstrapSchemaNode, 44> kBootstrapSchemas = {{
             {"sys", "sys", nullptr, false},
             {"connections", "connections", nullptr, false},
             {"users", "users", nullptr, false},
@@ -12822,6 +13713,7 @@ bool hasTriggerNameConflictInTable(
             {"sys.information", "information", "sys", false},
             {"sys.security", "security", "sys", false},
             {"sys.system", "system", "sys", false},
+            {"sys.config", "config", "sys", false},
             {"sys.schema", "schema", "sys", false},
             {"sys.cluster", "cluster", "sys", false},
             {"sys.connections", "connections", "sys", false},
@@ -13544,6 +14436,11 @@ bool hasTriggerNameConflictInTable(
                 {
                     return status;
                 }
+                status = backfill_catalog_page(index_page_deltas_table_page_, "index_page_delta");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
                 status = backfill_catalog_page(index_stats_table_page_, "index_stats");
                 if (status != Status::OK)
                 {
@@ -13705,6 +14602,54 @@ bool hasTriggerNameConflictInTable(
                     return status;
                 }
                 status = backfill_catalog_page(settings_binding_table_page_, "settings_binding");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(config_key_table_page_, "config_key");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(config_value_table_page_, "config_value");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(config_change_log_table_page_, "config_change_log");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(listener_profile_table_page_, "listener_profile");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(listener_binding_table_page_, "listener_binding");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(listener_emulation_binding_table_page_,
+                                               "listener_emulation_binding");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(parser_pool_policy_table_page_, "parser_pool_policy");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(listener_runtime_target_table_page_,
+                                               "listener_runtime_target");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(listener_generation_record_table_page_,
+                                               "listener_generation_record");
                 if (status != Status::OK)
                 {
                     return status;
@@ -16233,6 +17178,54 @@ bool hasTriggerNameConflictInTable(
         return Status::NOT_FOUND;
     }
 
+    auto CatalogManager::deleteToastValue(const ID& oid, uint64_t xmax,
+                                          ErrorContext* ctx) -> Status
+    {
+        if (isZeroUuidLocal(oid))
+        {
+            return Status::OK;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(toast_fallback_mutex_);
+            auto fallback_it = toast_fallback_cache_.find(oid);
+            if (fallback_it != toast_fallback_cache_.end())
+            {
+                toast_fallback_cache_.erase(fallback_it);
+                return Status::OK;
+            }
+        }
+
+        if (policy_toast_manager_)
+        {
+            auto toast_ready = [&]() -> bool
+            {
+                CatalogManager::TableInfo toast_info;
+                ErrorContext toast_ctx;
+                const ID& toast_table_id = policy_toast_manager_->toastTableId();
+                if (isZeroUuidLocal(toast_table_id))
+                {
+                    return false;
+                }
+                return getTable(toast_table_id, toast_info, &toast_ctx) == Status::OK;
+            };
+
+            if (!toast_ready())
+            {
+                ErrorContext init_ctx;
+                policy_toast_manager_.reset();
+                initializePolicyToast(&init_ctx);
+            }
+
+            if (policy_toast_manager_ && toast_ready())
+            {
+                return policy_toast_manager_->deleteToastValue(oid, xmax, ctx);
+            }
+        }
+
+        return Status::OK;
+    }
+
     auto CatalogManager::initializePolicyToastIfNeeded(ErrorContext* ctx) -> Status
     {
         if (policy_toast_manager_)
@@ -17332,6 +18325,13 @@ bool hasTriggerNameConflictInTable(
 
         for (const auto& idx : indexes)
         {
+            if (idx.state != static_cast<uint8_t>(IndexState::ACTIVE))
+            {
+                // Shadow rebuild keeps multiple physical index versions alive under one
+                // logical name. Generic object-name resolution must only expose the
+                // published ACTIVE version; version-aware lookup stays on index_cache_.
+                continue;
+            }
             auto table_it = table_by_id.find(idx.table_id);
             if (table_it == table_by_id.end())
             {
@@ -20577,6 +21577,7 @@ bool hasTriggerNameConflictInTable(
         index.is_unique = is_unique;
         index.column_ids = column_ids;
         index.include_column_ids = include_column_ids;
+        index.collation_id = 100;
         index.index_params_oid = ID{}; // Will be set later when index params are added
         index.expression_oid = ID{};
         index.predicate_oid = ID{};
@@ -20591,6 +21592,13 @@ bool hasTriggerNameConflictInTable(
         index.retired_xid = 0; // Not retired
         index.build_started_time = index.created_time;
         index.build_completed_time = index.created_time; // Immediately complete
+        IndexFactory::populateCanonicalMetadata(index);
+        status = syncIndexParamsBlob(this, index, ctx);
+        if (status != Status::OK)
+        {
+            pm->freePageGlobal(root_gpid, ctx);
+            return status;
+        }
 
         // Write index record
         status = writeIndexRecord(index, ctx);
@@ -20826,6 +21834,7 @@ bool hasTriggerNameConflictInTable(
         index.is_unique = is_unique;
         index.column_ids = column_ids;
         index.include_column_ids = include_column_ids;
+        index.collation_id = 100;
         index.index_params_oid = ID{};
         index.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
                                  std::chrono::system_clock::now().time_since_epoch())
@@ -20838,6 +21847,7 @@ bool hasTriggerNameConflictInTable(
         index.retired_xid = 0; // Not retired
         index.build_started_time = index.created_time;
         index.build_completed_time = index.created_time; // Immediately complete
+        IndexFactory::populateCanonicalMetadata(index);
 
         // Task 17: Set expression/predicate data
         index.is_expression_index = !expression_data.empty();
@@ -20876,6 +21886,13 @@ bool hasTriggerNameConflictInTable(
                 pm->freePageGlobal(root_gpid, ctx);
                 return toast_status;
             }
+        }
+
+        status = syncIndexParamsBlob(this, index, ctx);
+        if (status != Status::OK)
+        {
+            pm->freePageGlobal(root_gpid, ctx);
+            return status;
         }
 
         // Write index record
@@ -21148,6 +22165,7 @@ bool hasTriggerNameConflictInTable(
         root->index_maintenance_page = index_maintenance_table_page_;
         root->index_maintenance_deltas_page = index_maintenance_deltas_table_page_;
         root->index_build_deltas_page = index_build_deltas_table_page_;
+        root->index_page_deltas_page = index_page_deltas_table_page_;
         root->index_stats_page = index_stats_table_page_;
         root->index_usage_page = index_usage_table_page_;
         root->index_contention_page = index_contention_table_page_;
@@ -21186,6 +22204,15 @@ bool hasTriggerNameConflictInTable(
         root->quota_binding_page = quota_binding_table_page_;
         root->settings_profile_page = settings_profile_table_page_;
         root->settings_binding_page = settings_binding_table_page_;
+        root->config_key_page = config_key_table_page_;
+        root->config_value_page = config_value_table_page_;
+        root->config_change_log_page = config_change_log_table_page_;
+        root->listener_profile_page = listener_profile_table_page_;
+        root->listener_binding_page = listener_binding_table_page_;
+        root->listener_emulation_binding_page = listener_emulation_binding_table_page_;
+        root->parser_pool_policy_page = parser_pool_policy_table_page_;
+        root->listener_runtime_target_page = listener_runtime_target_table_page_;
+        root->listener_generation_record_page = listener_generation_record_table_page_;
         root->auth_mapping_page = auth_mapping_table_page_;
         root->role_setting_page = role_setting_table_page_;
         root->security_label_page = security_label_table_page_;
@@ -21355,6 +22382,19 @@ bool hasTriggerNameConflictInTable(
         root->audit_export_segment_page = audit_export_segment_table_page_;
         root->transaction_lineage_event_page = transaction_lineage_event_table_page_;
         root->schema_epoch_page = schema_epoch_table_page_;
+        root->schema_change_plan_page = schema_change_plan_table_page_;
+        root->schema_change_event_page = schema_change_event_table_page_;
+        root->schema_change_backfill_progress_page = schema_change_backfill_progress_table_page_;
+        root->schema_change_cutover_guard_page = schema_change_cutover_guard_table_page_;
+        root->index_build_plan_page = index_build_plan_table_page_;
+        root->index_build_event_page = index_build_event_table_page_;
+        root->index_build_progress_page = index_build_progress_table_page_;
+        root->index_build_cutover_guard_page = index_build_cutover_guard_table_page_;
+        root->bulk_load_plan_page = bulk_load_plan_table_page_;
+        root->bulk_load_event_page = bulk_load_event_table_page_;
+        root->bulk_load_progress_page = bulk_load_progress_table_page_;
+        root->bulk_load_cutover_guard_page = bulk_load_cutover_guard_table_page_;
+        root->memory_grant_feedback_page = memory_grant_feedback_table_page_;
         root->page_audit_finding_page = page_audit_finding_table_page_;
         root->shadow_capture_manifest_page = shadow_capture_manifest_table_page_;
         root->forensic_snapshot_capsule_page = forensic_snapshot_capsule_table_page_;
@@ -21487,6 +22527,7 @@ bool hasTriggerNameConflictInTable(
         index_maintenance_table_page_ = root->index_maintenance_page;
         index_maintenance_deltas_table_page_ = root->index_maintenance_deltas_page;
         index_build_deltas_table_page_ = root->index_build_deltas_page;
+        index_page_deltas_table_page_ = root->index_page_deltas_page;
         index_stats_table_page_ = root->index_stats_page;
         index_usage_table_page_ = root->index_usage_page;
         index_contention_table_page_ = root->index_contention_page;
@@ -21525,6 +22566,15 @@ bool hasTriggerNameConflictInTable(
         quota_binding_table_page_ = root->quota_binding_page;
         settings_profile_table_page_ = root->settings_profile_page;
         settings_binding_table_page_ = root->settings_binding_page;
+        config_key_table_page_ = root->config_key_page;
+        config_value_table_page_ = root->config_value_page;
+        config_change_log_table_page_ = root->config_change_log_page;
+        listener_profile_table_page_ = root->listener_profile_page;
+        listener_binding_table_page_ = root->listener_binding_page;
+        listener_emulation_binding_table_page_ = root->listener_emulation_binding_page;
+        parser_pool_policy_table_page_ = root->parser_pool_policy_page;
+        listener_runtime_target_table_page_ = root->listener_runtime_target_page;
+        listener_generation_record_table_page_ = root->listener_generation_record_page;
         auth_mapping_table_page_ = root->auth_mapping_page;
         role_setting_table_page_ = root->role_setting_page;
         security_label_table_page_ = root->security_label_page;
@@ -21694,6 +22744,19 @@ bool hasTriggerNameConflictInTable(
         audit_export_segment_table_page_ = root->audit_export_segment_page;
         transaction_lineage_event_table_page_ = root->transaction_lineage_event_page;
         schema_epoch_table_page_ = root->schema_epoch_page;
+        schema_change_plan_table_page_ = root->schema_change_plan_page;
+        schema_change_event_table_page_ = root->schema_change_event_page;
+        schema_change_backfill_progress_table_page_ = root->schema_change_backfill_progress_page;
+        schema_change_cutover_guard_table_page_ = root->schema_change_cutover_guard_page;
+        index_build_plan_table_page_ = root->index_build_plan_page;
+        index_build_event_table_page_ = root->index_build_event_page;
+        index_build_progress_table_page_ = root->index_build_progress_page;
+        index_build_cutover_guard_table_page_ = root->index_build_cutover_guard_page;
+        bulk_load_plan_table_page_ = root->bulk_load_plan_page;
+        bulk_load_event_table_page_ = root->bulk_load_event_page;
+        bulk_load_progress_table_page_ = root->bulk_load_progress_page;
+        bulk_load_cutover_guard_table_page_ = root->bulk_load_cutover_guard_page;
+        memory_grant_feedback_table_page_ = root->memory_grant_feedback_page;
         page_audit_finding_table_page_ = root->page_audit_finding_page;
         shadow_capture_manifest_table_page_ = root->shadow_capture_manifest_page;
         forensic_snapshot_capsule_table_page_ = root->forensic_snapshot_capsule_page;
@@ -23095,6 +24158,14 @@ bool hasTriggerNameConflictInTable(
     {
         BufferPool *bp = db_->buffer_pool();
         uint32_t current_page_id = page_id;
+        const uint32_t page_size = db_->page_size();
+        if (page_size < sizeof(CatalogHeapPage))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Catalog heap page size is invalid");
+            return Status::PAGE_CORRUPT;
+        }
+        const uint32_t max_records_per_page =
+            static_cast<uint32_t>((page_size - sizeof(CatalogHeapPage)) / sizeof(RecordType));
         uint32_t cached_tail_page_id = 0;
         {
             std::lock_guard<std::mutex> lock(heap_page_tail_mutex_);
@@ -23178,9 +24249,27 @@ bool hasTriggerNameConflictInTable(
             }
 
             auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+            if (heap->free_offset < sizeof(CatalogHeapPage) ||
+                heap->free_offset > page_size ||
+                heap->record_count > max_records_per_page)
+            {
+                Status unlock_status = bp->unlockPage(current_page_id, ctx);
+                Status unpin_status = bp->unpinPage(current_page_id, false, ctx);
+                if (unlock_status != Status::OK)
+                {
+                    return unlock_status;
+                }
+                if (unpin_status != Status::OK)
+                {
+                    return unpin_status;
+                }
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Catalog heap page header is invalid");
+                return Status::PAGE_CORRUPT;
+            }
 
             // Check if we have space on this page
-            if (heap->free_offset + sizeof(RecordType) <= db_->page_size())
+            if (heap->free_offset + sizeof(RecordType) <= page_size)
             {
                 // Write record on this page
                 auto *dest_record = reinterpret_cast<RecordType *>(
@@ -23304,6 +24393,24 @@ bool hasTriggerNameConflictInTable(
                 return status;
             }
             heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+            if (heap->free_offset < sizeof(CatalogHeapPage) ||
+                heap->free_offset > page_size ||
+                heap->record_count > max_records_per_page)
+            {
+                Status unlock_status = bp->unlockPage(saved_page_id, ctx);
+                Status unpin_status = bp->unpinPage(saved_page_id, false, ctx);
+                if (unlock_status != Status::OK)
+                {
+                    return unlock_status;
+                }
+                if (unpin_status != Status::OK)
+                {
+                    return unpin_status;
+                }
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Catalog heap page header is invalid");
+                return Status::PAGE_CORRUPT;
+            }
 
             LOG_DEBUG(STORAGE, "writeRecordToHeapPage: Linking page %u -> %u", saved_page_id, new_page_id);
 
@@ -23344,6 +24451,14 @@ bool hasTriggerNameConflictInTable(
     {
         BufferPool *bp = db_->buffer_pool();
         uint32_t current_page_id = page_id;
+        const uint32_t page_size = db_->page_size();
+        if (page_size < sizeof(CatalogHeapPage))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Catalog heap page size is invalid");
+            return Status::PAGE_CORRUPT;
+        }
+        const uint32_t max_records_per_page =
+            static_cast<uint32_t>((page_size - sizeof(CatalogHeapPage)) / sizeof(RecordType));
 
         // Search/insert across the full overflow chain.
         while (current_page_id != 0)
@@ -23365,11 +24480,47 @@ bool hasTriggerNameConflictInTable(
             }
 
             auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+            if (heap->free_offset < sizeof(CatalogHeapPage) ||
+                heap->free_offset > page_size ||
+                heap->record_count > max_records_per_page)
+            {
+                Status unlock_status = bp->unlockPage(current_page_id, ctx);
+                Status unpin_status = bp->unpinPage(current_page_id, false, ctx);
+                if (unlock_status != Status::OK)
+                {
+                    return unlock_status;
+                }
+                if (unpin_status != Status::OK)
+                {
+                    return unpin_status;
+                }
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Catalog heap page header is invalid");
+                return Status::PAGE_CORRUPT;
+            }
             uint32_t offset = sizeof(CatalogHeapPage);
 
             // PHASE 1: update in-place if record already exists on this page.
             for (uint32_t i = 0; i < heap->record_count; i++)
             {
+                if (offset + sizeof(RecordType) > heap->free_offset ||
+                    offset + sizeof(RecordType) > page_size)
+                {
+                    Status unlock_status = bp->unlockPage(current_page_id, ctx);
+                    Status unpin_status = bp->unpinPage(current_page_id, false, ctx);
+                    if (unlock_status != Status::OK)
+                    {
+                        return unlock_status;
+                    }
+                    if (unpin_status != Status::OK)
+                    {
+                        return unpin_status;
+                    }
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                      "Catalog heap page record layout is invalid");
+                    return Status::PAGE_CORRUPT;
+                }
+
                 auto *record = reinterpret_cast<RecordType *>(
                     reinterpret_cast<uint8_t *>(page_buffer) + offset);
 
@@ -23387,7 +24538,7 @@ bool hasTriggerNameConflictInTable(
             }
 
             const bool has_space =
-                (heap->free_offset + sizeof(RecordType) <= db_->page_size());
+                (heap->free_offset + sizeof(RecordType) <= page_size);
             const uint32_t next_page = heap->next_page;
 
             // PHASE 2: append into the current tail page when space is available.
@@ -23444,6 +24595,14 @@ bool hasTriggerNameConflictInTable(
     {
         BufferPool *bp = db_->buffer_pool();
         uint32_t current_page_id = page_id;
+        const uint32_t page_size = db_->page_size();
+        if (page_size < sizeof(CatalogHeapPage))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Catalog heap page size is invalid");
+            return Status::PAGE_CORRUPT;
+        }
+        const uint32_t max_records_per_page =
+            static_cast<uint32_t>((page_size - sizeof(CatalogHeapPage)) / sizeof(RecordType));
 
         while (current_page_id != 0)
         {
@@ -23456,10 +24615,36 @@ bool hasTriggerNameConflictInTable(
             }
 
             auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+            if (heap->free_offset < sizeof(CatalogHeapPage) ||
+                heap->free_offset > page_size ||
+                heap->record_count > max_records_per_page)
+            {
+                Status unpin_status = bp->unpinPage(current_page_id, false, ctx);
+                if (unpin_status != Status::OK)
+                {
+                    return unpin_status;
+                }
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Catalog heap page header is invalid");
+                return Status::PAGE_CORRUPT;
+            }
             uint32_t offset = sizeof(CatalogHeapPage);
 
             for (uint32_t i = 0; i < heap->record_count; i++)
             {
+                if (offset + sizeof(RecordType) > heap->free_offset ||
+                    offset + sizeof(RecordType) > page_size)
+                {
+                    Status unpin_status = bp->unpinPage(current_page_id, false, ctx);
+                    if (unpin_status != Status::OK)
+                    {
+                        return unpin_status;
+                    }
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                      "Catalog heap page record layout is invalid");
+                    return Status::PAGE_CORRUPT;
+                }
+
                 auto *record =
                     reinterpret_cast<RecordType *>(reinterpret_cast<uint8_t *>(page_buffer) + offset);
 
@@ -24164,7 +25349,6 @@ bool hasTriggerNameConflictInTable(
                                            ErrorContext *ctx) -> Status
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
-        ID new_oid{};
 
         auto predicate = [&index_id](const IndexRecord& record) {
             return record.index_id == index_id && record.is_valid == 1;
@@ -24176,31 +25360,92 @@ bool hasTriggerNameConflictInTable(
             return result.status;
         }
 
+        auto it = index_cache_.find(index_id);
+        if (it == index_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Index metadata cache entry not found");
+            return Status::NOT_FOUND;
+        }
+
+        IndexInfo updated_info = it->second;
+        IndexFactory::populateCanonicalMetadata(updated_info);
+
+        IndexParams merged = indexParamsFromInfo(updated_info);
+        IndexParams existing_params;
+        std::string existing_serialized;
+        if (!isZeroUuidLocal(result.record.index_params_oid))
+        {
+            if (loadStringFromToast(result.record.index_params_oid, 0, existing_serialized, ctx) ==
+                Status::OK)
+            {
+                (void)parseIndexParams(existing_serialized, &existing_params);
+            }
+        }
+        if (indexParamsHasMutableOptions(existing_params))
+        {
+            merged.legacy_pairs = existing_params.legacy_pairs;
+            merged.raw_options = existing_params.raw_options;
+            merged.has_bloom = existing_params.has_bloom;
+            merged.bloom = existing_params.bloom;
+        }
+
         if (!index_params.empty())
         {
-            uint64_t xmin = 0;
-            Status status = storeStringInToast(index_params, xmin, new_oid, ctx);
-            if (status != Status::OK)
+            IndexParams requested;
+            if (parseIndexParams(index_params, &requested))
             {
-                return status;
+                if (!requested.raw_options.empty())
+                {
+                    merged.raw_options = requested.raw_options;
+                }
+                if (!requested.legacy_pairs.empty())
+                {
+                    for (const auto& [key, value] : requested.legacy_pairs)
+                    {
+                        merged.legacy_pairs[key] = value;
+                    }
+                }
+                if (requested.has_bloom)
+                {
+                    merged.has_bloom = true;
+                    merged.bloom = requested.bloom;
+                }
             }
+        }
+
+        const bool had_existing_options = indexParamsHasMutableOptions(existing_params);
+        const bool has_new_options = indexParamsHasMutableOptions(merged);
+        if (has_new_options && had_existing_options)
+        {
+            merged.family_options_version =
+                static_cast<uint16_t>(std::max<uint32_t>(1, updated_info.family_options_version) + 1);
+        }
+        else if (has_new_options)
+        {
+            merged.family_options_version = std::max<uint16_t>(1, updated_info.family_options_version);
+        }
+
+        const std::string serialized = serializeIndexParams(merged);
+        ID new_oid{};
+        Status status = storeStringInToast(serialized, 0, new_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
         }
 
         IndexRecord updated = result.record;
         updated.index_params_oid = new_oid;
 
-        Status status = updateRecordInHeapPage<IndexRecord>(
+        status = updateRecordInHeapPage<IndexRecord>(
             indexes_table_page_, predicate, updated, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        auto it = index_cache_.find(index_id);
-        if (it != index_cache_.end())
-        {
-            it->second.index_params_oid = new_oid;
-        }
+        updated_info.index_params_oid = new_oid;
+        applyIndexParamsToInfo(merged, updated_info);
+        it->second = updated_info;
 
         return Status::OK;
     }
@@ -24354,6 +25599,10 @@ bool hasTriggerNameConflictInTable(
             record.type_precision = col.type_precision;
             record.type_scale = col.type_scale;
             record.max_length = col.max_length;
+            const uint16_t physical_type =
+                (col.physical_data_type != 0) ? col.physical_data_type : col.data_type;
+            record.padding =
+                (physical_type != 0 && physical_type != col.data_type) ? physical_type : 0u;
             record.domain_id = col.domain_id;
             record.is_array = col.is_array ? 1 : 0;
             record.array_size = col.array_size;
@@ -24423,6 +25672,9 @@ bool hasTriggerNameConflictInTable(
             info.column_name = record.column_name;
             info.ordinal = record.ordinal;
             info.data_type = record.data_type;
+            info.physical_data_type =
+                (record.padding != 0) ? static_cast<uint16_t>(record.padding & 0xFFFFu)
+                                      : record.data_type;
             info.type_precision = record.type_precision;
             info.type_scale = record.type_scale;
             info.max_length = record.max_length;
@@ -24473,9 +25725,16 @@ bool hasTriggerNameConflictInTable(
 
     auto CatalogManager::writeIndexRecord(const IndexInfo &index, ErrorContext *ctx) -> Status
     {
+        IndexInfo normalized = index;
+        Status params_status = syncIndexParamsBlob(this, normalized, ctx);
+        if (params_status != Status::OK)
+        {
+            return params_status;
+        }
+
         // Phase 3: Validate index name UTF-8 storage capacity
         Status validation = UTF8Utils::validateStorageCapacity(
-            index.index_name,
+            normalized.index_name,
             CatalogConstants::MAX_IDENTIFIER_CHARS,
             CatalogConstants::MAX_IDENTIFIER_STORAGE,
             ctx
@@ -24486,45 +25745,45 @@ bool hasTriggerNameConflictInTable(
 
         IndexRecord record;
         memset(&record, 0, sizeof(IndexRecord)); // Initialize all fields to zero
-        record.index_id = index.index_id;
-        record.table_id = index.table_id;
+        record.index_id = normalized.index_id;
+        record.table_id = normalized.table_id;
 
         // Phase 3: Safe UTF-8 copy (already validated to fit)
-        std::memcpy(record.index_name, index.index_name.c_str(), index.index_name.size());
-        record.index_name[index.index_name.size()] = '\0';
-        record.owner_id = index.owner_id;
-        record.root_gpid = index.root_gpid;
-        record.index_type = static_cast<uint8_t>(index.index_type);
-        record.is_unique = static_cast<uint8_t>(index.is_unique);
-        record.column_count = index.column_ids.size();
-        for (size_t i = 0; i < index.column_ids.size(); ++i)
+        std::memcpy(record.index_name, normalized.index_name.c_str(), normalized.index_name.size());
+        record.index_name[normalized.index_name.size()] = '\0';
+        record.owner_id = normalized.owner_id;
+        record.root_gpid = normalized.root_gpid;
+        record.index_type = static_cast<uint8_t>(normalized.index_type);
+        record.is_unique = static_cast<uint8_t>(normalized.is_unique);
+        record.column_count = normalized.column_ids.size();
+        for (size_t i = 0; i < normalized.column_ids.size(); ++i)
         {
-            record.column_ids[i] = index.column_ids[i];
+            record.column_ids[i] = normalized.column_ids[i];
         }
-        record.include_column_count = static_cast<uint16_t>(index.include_column_ids.size());
-        for (size_t i = 0; i < index.include_column_ids.size(); ++i)
+        record.include_column_count = static_cast<uint16_t>(normalized.include_column_ids.size());
+        for (size_t i = 0; i < normalized.include_column_ids.size(); ++i)
         {
-            record.include_column_ids[i] = index.include_column_ids[i];
+            record.include_column_ids[i] = normalized.include_column_ids[i];
         }
-        record.index_params_oid = index.index_params_oid;
-        record.expression_oid = index.expression_oid;
-        record.predicate_oid = index.predicate_oid;
-        record.created_time = index.created_time;
+        record.index_params_oid = normalized.index_params_oid;
+        record.expression_oid = normalized.expression_oid;
+        record.predicate_oid = normalized.predicate_oid;
+        record.created_time = normalized.created_time;
         record.is_valid = 1;
-        record.tablespace_id = index.tablespace_uuid;
-        if (isZeroUuidLocal(record.tablespace_id) && index.tablespace_id != 0)
+        record.tablespace_id = normalized.tablespace_uuid;
+        if (isZeroUuidLocal(record.tablespace_id) && normalized.tablespace_id != 0)
         {
-            record.tablespace_id = resolveTablespaceUuid(index.tablespace_id);
+            record.tablespace_id = resolveTablespaceUuid(normalized.tablespace_id);
         }
 
         // Plan 01 Task E: Shadow index rebuild + versioning fields
-        record.logical_index_id = index.logical_index_id;
-        record.state = index.state;
-        record.name_is_delimited = index.name_is_delimited ? 1 : 0;
-        record.valid_from_xid = index.valid_from_xid;
-        record.retired_xid = index.retired_xid;
-        record.build_started_time = index.build_started_time;
-        record.build_completed_time = index.build_completed_time;
+        record.logical_index_id = normalized.logical_index_id;
+        record.state = normalized.state;
+        record.name_is_delimited = normalized.name_is_delimited ? 1 : 0;
+        record.valid_from_xid = normalized.valid_from_xid;
+        record.retired_xid = normalized.retired_xid;
+        record.build_started_time = normalized.build_started_time;
+        record.build_completed_time = normalized.build_completed_time;
 
         return writeRecordToHeapPage(indexes_table_page_, record, ctx);
     }
@@ -24589,6 +25848,22 @@ bool hasTriggerNameConflictInTable(
                     info.predicate_data.assign(blob.begin(), blob.end());
                 }
             }
+
+            if (!isZeroUuidLocal(record.index_params_oid))
+            {
+                std::string params_blob;
+                if (loadStringFromToast(record.index_params_oid, xmin, params_blob, ctx) ==
+                    Status::OK)
+                {
+                    IndexParams params;
+                    if (parseIndexParams(params_blob, &params))
+                    {
+                        applyIndexParamsToInfo(params, info);
+                    }
+                }
+            }
+
+            IndexFactory::populateCanonicalMetadata(info);
         };
         auto key_extractor = [](const IndexInfo &info) { return info.index_id; };
         return readRecordsFromHeapPage<IndexRecord, IndexInfo, ID>(
@@ -31474,8 +32749,25 @@ auto CatalogManager::listProcedures(std::vector<ProcedureInfo> &procedures_out,
 
 void* CatalogManager::getIndexPtr(const ID &index_id, IndexType *type_out)
 {
-    std::lock_guard<std::mutex> lock(index_object_mutex_);
+    {
+        std::lock_guard<std::mutex> lock(index_object_mutex_);
 
+        auto it = index_object_cache_.find(index_id);
+        if (it != index_object_cache_.end())
+        {
+            if (type_out)
+            {
+                *type_out = it->second.index_type;
+            }
+
+            return it->second.index_ptr;
+        }
+    }
+
+    ErrorContext local_ctx;
+    (void)refreshIndexObject(index_id, &local_ctx);
+
+    std::lock_guard<std::mutex> lock(index_object_mutex_);
     auto it = index_object_cache_.find(index_id);
     if (it == index_object_cache_.end())
     {
@@ -31505,6 +32797,13 @@ auto CatalogManager::refreshIndexObject(const ID &index_id, ErrorContext *ctx) -
         info = it->second;
     }
 
+    void *index_ptr = nullptr;
+    Status status = IndexFactory::openIndex(info.index_type, db_, info, &index_ptr, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
     IndexHandle previous_handle{};
     bool had_previous_handle = false;
     {
@@ -31513,8 +32812,12 @@ auto CatalogManager::refreshIndexObject(const ID &index_id, ErrorContext *ctx) -
         if (it != index_object_cache_.end())
         {
             previous_handle = it->second;
-            index_object_cache_.erase(it);
+            it->second = {index_ptr, info.index_type};
             had_previous_handle = true;
+        }
+        else
+        {
+            index_object_cache_[index_id] = {index_ptr, info.index_type};
         }
     }
 
@@ -31526,18 +32829,6 @@ auto CatalogManager::refreshIndexObject(const ID &index_id, ErrorContext *ctx) -
         {
             return close_status;
         }
-    }
-
-    void *index_ptr = nullptr;
-    Status status = IndexFactory::openIndex(info.index_type, db_, info, &index_ptr, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(index_object_mutex_);
-        index_object_cache_[index_id] = {index_ptr, info.index_type};
     }
 
     return Status::OK;
@@ -31982,9 +33273,9 @@ Status CatalogManager::dropIndexInternal(const ID &index_id, ErrorContext *ctx)
         return dropIndexInternal(index_id, ctx);
     }
 
-    Status CatalogManager::alterIndexState(const ID &index_id, IndexState state, ErrorContext *ctx)
-    {
-        std::unique_lock<CatalogMutex> lock(mutex_);
+Status CatalogManager::alterIndexState(const ID &index_id, IndexState state, ErrorContext *ctx)
+{
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
         auto it = index_cache_.find(index_id);
         if (it == index_cache_.end())
@@ -31993,10 +33284,11 @@ Status CatalogManager::dropIndexInternal(const ID &index_id, ErrorContext *ctx)
             return Status::NOT_FOUND;
         }
 
-        IndexInfo updated = it->second;
-        updated.state = static_cast<uint8_t>(state);
+    IndexInfo updated = it->second;
+    updated.state = static_cast<uint8_t>(state);
+    IndexFactory::populateCanonicalMetadata(updated);
 
-        Status status = writeIndexRecord(updated, ctx);
+    Status status = writeIndexRecord(updated, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to update index state");
@@ -32006,6 +33298,48 @@ Status CatalogManager::dropIndexInternal(const ID &index_id, ErrorContext *ctx)
         it->second = updated;
         return Status::OK;
     }
+
+Status CatalogManager::updateIndexRootGPID(const ID &index_id,
+                                           GPID root_gpid,
+                                           ErrorContext *ctx)
+{
+    std::unique_lock<CatalogMutex> lock(mutex_);
+
+    auto it = index_cache_.find(index_id);
+    if (it == index_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Index not found");
+        return Status::NOT_FOUND;
+    }
+
+    if (it->second.root_gpid == root_gpid)
+    {
+        return Status::OK;
+    }
+
+    auto predicate = [&index_id](const IndexRecord &record) {
+        return record.index_id == index_id && record.is_valid == 1;
+    };
+
+    auto result = findRecordInHeapPage<IndexRecord>(indexes_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return result.status;
+    }
+
+    IndexRecord updated = result.record;
+    updated.root_gpid = root_gpid;
+
+    Status status =
+        updateRecordInHeapPage<IndexRecord>(indexes_table_page_, predicate, updated, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    it->second.root_gpid = root_gpid;
+    return Status::OK;
+}
 
 // ============================================================================
 // Plan 01 Task E: Shadow Index Rebuild + Versioning
@@ -32089,172 +33423,301 @@ Status CatalogManager::createShadowIndex(const ID &existing_index_id, ID &shadow
     // Create a shadow index for rebuild
     // The shadow starts in BUILDING state and becomes visible only after promotion
 
-    std::unique_lock<CatalogMutex> lock(mutex_);
-
-    // Get the existing index from cache
-    auto it = index_cache_.find(existing_index_id);
-    if (it == index_cache_.end())
-    {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Existing index not found");
-        return Status::NOT_FOUND;
-    }
-
-    IndexInfo existing_index = it->second;
-
-    // Create new shadow index with same properties but BUILDING state
-    IndexInfo shadow_index = existing_index;
-    shadow_index.index_id = generateUuidV7();
-    shadow_index.state = static_cast<uint8_t>(IndexState::BUILDING);
-    shadow_index.valid_from_xid = 0; // Not yet valid
-    shadow_index.retired_xid = 0;
-    shadow_index.build_started_time = std::chrono::duration_cast<std::chrono::microseconds>(
-                                          std::chrono::system_clock::now().time_since_epoch())
-                                          .count();
-    shadow_index.build_completed_time = 0;
-    shadow_index.logical_index_id = existing_index.logical_index_id;
-    shadow_index.root_gpid = 0;
-
-    // Allocate root page for shadow index
-    PageManager *pm = db_->page_manager();
-    if (!pm)
-    {
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "PageManager not available");
-        return Status::INVALID_ARGUMENT;
-    }
-    GPID shadow_root_gpid = 0;
-    Status status = pm->allocatePageInTablespace(shadow_index.tablespace_id, &shadow_root_gpid, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
-    shadow_index.root_gpid = shadow_root_gpid;
-
-    status = writeIndexRecord(shadow_index, ctx);
-    if (status != Status::OK)
-    {
-        pm->freePageGlobal(shadow_root_gpid, ctx);
-        SET_ERROR_CONTEXT(ctx, status, "Failed to write shadow index record");
-        return status;
-    }
-
-    // Update cache
-    index_cache_[shadow_index.index_id] = shadow_index;
-
-    // Update root page to persist catalog metadata
-    status = writeCatalogRoot(ctx);
-    if (status == Status::OK)
-    {
-        db_->sync(ctx);
-    }
-
-    // Instantiate actual index object
-    void *index_ptr = nullptr;
-    status = IndexFactory::createIndex(shadow_index.index_type, db_, shadow_index, &index_ptr, ctx);
-    if (status != Status::OK)
-    {
-        index_cache_.erase(shadow_index.index_id);
-        pm->freePageGlobal(shadow_root_gpid, ctx);
-        return status;
-    }
+    IndexInfo published_shadow_index{};
+    uint64_t build_snapshot_xid = 0;
 
     {
-        std::lock_guard<std::mutex> lock(index_object_mutex_);
-        index_object_cache_[shadow_index.index_id] = {index_ptr, shadow_index.index_type};
-    }
+        std::unique_lock<CatalogMutex> lock(mutex_);
 
-    ID dep_id;
-    status = createDependency(
-        shadow_index.index_id, ObjectType::INDEX,
-        shadow_index.table_id, ObjectType::TABLE,
-        DependencyType::AUTO,
-        dep_id,
-        ctx
-    );
-    if (status != Status::OK)
-    {
+        // Get the existing index from cache
+        auto it = index_cache_.find(existing_index_id);
+        if (it == index_cache_.end())
         {
-            std::lock_guard<std::mutex> lock(index_object_mutex_);
-            index_object_cache_.erase(shadow_index.index_id);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Existing index not found");
+            return Status::NOT_FOUND;
         }
-        index_cache_.erase(shadow_index.index_id);
-        pm->freePageGlobal(shadow_root_gpid, ctx);
-        LOG_ERROR(CATALOG, "Failed to create dependency for shadow index");
+
+        IndexInfo existing_index = it->second;
+
+        // Create new shadow index with same properties but BUILDING state
+        IndexInfo shadow_index = existing_index;
+        shadow_index.index_id = generateUuidV7();
+        shadow_index.state = static_cast<uint8_t>(IndexState::BUILDING);
+        shadow_index.valid_from_xid = 0; // Not yet valid
+        shadow_index.retired_xid = 0;
+        shadow_index.build_started_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                                              std::chrono::system_clock::now().time_since_epoch())
+                                              .count();
+        shadow_index.build_completed_time = 0;
+        shadow_index.logical_index_id = existing_index.logical_index_id;
+        shadow_index.root_gpid = 0;
+        IndexFactory::populateCanonicalMetadata(shadow_index);
+
+        // Allocate root page for shadow index
+        PageManager *pm = db_->page_manager();
+        if (!pm)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "PageManager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+        GPID shadow_root_gpid = 0;
+        Status status =
+            pm->allocatePageInTablespace(shadow_index.tablespace_id, &shadow_root_gpid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        shadow_index.root_gpid = shadow_root_gpid;
+
+        status = writeIndexRecord(shadow_index, ctx);
+        if (status != Status::OK)
+        {
+            pm->freePageGlobal(shadow_root_gpid, ctx);
+            SET_ERROR_CONTEXT(ctx, status, "Failed to write shadow index record");
+            return status;
+        }
+
+        // Update cache
+        index_cache_[shadow_index.index_id] = shadow_index;
+
+        // Update root page to persist catalog metadata
+        status = writeCatalogRoot(ctx);
+        if (status == Status::OK)
+        {
+            db_->sync(ctx);
+        }
+
+        // Instantiate actual index object
+        void *index_ptr = nullptr;
+        status = IndexFactory::createIndex(shadow_index.index_type, db_, shadow_index, &index_ptr, ctx);
+        if (status != Status::OK)
+        {
+            index_cache_.erase(shadow_index.index_id);
+            pm->freePageGlobal(shadow_root_gpid, ctx);
+            return status;
+        }
+
+        {
+            std::lock_guard<std::mutex> index_object_lock(index_object_mutex_);
+            index_object_cache_[shadow_index.index_id] = {index_ptr, shadow_index.index_type};
+        }
+
+        ID dep_id;
+        status = createDependency(
+            shadow_index.index_id, ObjectType::INDEX,
+            shadow_index.table_id, ObjectType::TABLE,
+            DependencyType::AUTO,
+            dep_id,
+            ctx
+        );
+        if (status != Status::OK)
+        {
+            {
+                std::lock_guard<std::mutex> index_object_lock(index_object_mutex_);
+                index_object_cache_.erase(shadow_index.index_id);
+            }
+            index_cache_.erase(shadow_index.index_id);
+            pm->freePageGlobal(shadow_root_gpid, ctx);
+            LOG_ERROR(CATALOG, "Failed to create dependency for shadow index");
+            return status;
+        }
+
+        shadow_index.dependency_id = dep_id;
+        index_cache_[shadow_index.index_id] = shadow_index;
+        published_shadow_index = shadow_index;
+        build_snapshot_xid = db_->transaction_manager()->getCurrentXid();
+        shadow_index_id_out = shadow_index.index_id;
+    }
+
+    IndexBuildPlanCatalogInfo plan{};
+    plan.logical_index_id = published_shadow_index.logical_index_id;
+    plan.build_reason = "REBUILD";
+    plan.build_state = "DRAFTED";
+    plan.shadow_index_uuid = published_shadow_index.index_id;
+    plan.baseline_schema_epoch = 0;
+    plan.build_snapshot_xid = build_snapshot_xid;
+    Status status = appendIndexBuildPlanCatalogEntry(plan, ctx);
+    if (status != Status::OK)
+    {
         return status;
     }
 
-    shadow_index.dependency_id = dep_id;
-    index_cache_[shadow_index.index_id] = shadow_index;
+    IndexBuildEventCatalogInfo drafted_event{};
+    drafted_event.index_build_plan_uuid = plan.index_build_plan_uuid;
+    drafted_event.event_seq = 1;
+    drafted_event.phase_to = "DRAFTED";
+    drafted_event.event_code = "SHADOW_INDEX_CREATED";
+    status = appendIndexBuildEventCatalogEntry(drafted_event, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
 
-    shadow_index_id_out = shadow_index.index_id;
-    return Status::OK;
+    status = updateIndexBuildPlanCatalogState(plan.index_build_plan_uuid, "BUILDING", ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    IndexBuildEventCatalogInfo building_event{};
+    building_event.index_build_plan_uuid = plan.index_build_plan_uuid;
+    building_event.event_seq = 2;
+    building_event.has_phase_from = true;
+    building_event.phase_from = "DRAFTED";
+    building_event.phase_to = "BUILDING";
+    building_event.event_code = "BUILD_STARTED";
+    status = appendIndexBuildEventCatalogEntry(building_event, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    IndexBuildProgressCatalogInfo progress{};
+    progress.index_build_plan_uuid = plan.index_build_plan_uuid;
+    progress.restart_disposition = "RESUME";
+    status = upsertIndexBuildProgressCatalogEntry(progress, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    IndexBuildCutoverGuardCatalogInfo guard{};
+    guard.index_build_plan_uuid = plan.index_build_plan_uuid;
+    guard.guard_state = "BLOCKED";
+    guard.side_log_drained = false;
+    return upsertIndexBuildCutoverGuardCatalogEntry(guard, ctx);
 }
 
 Status CatalogManager::promoteShadowIndex(const ID &shadow_index_id, ErrorContext *ctx)
 {
     // Promote shadow index to ACTIVE and retire old versions
 
-    std::unique_lock<CatalogMutex> lock(mutex_);
-
-    // Get shadow index from cache
-    auto it = index_cache_.find(shadow_index_id);
-    if (it == index_cache_.end())
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Shadow index not found");
-        return Status::NOT_FOUND;
-    }
+        std::unique_lock<CatalogMutex> lock(mutex_);
 
-    IndexInfo shadow_index = it->second;
-
-    // Verify it's in BUILDING state
-    if (shadow_index.state != static_cast<uint8_t>(IndexState::BUILDING))
-    {
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Index is not in BUILDING state");
-        return Status::INVALID_ARGUMENT;
-    }
-
-    // Get current XID for versioning
-    uint64_t current_xid = db_->transaction_manager()->getCurrentXid();
-    Status status;
-
-    // Find and retire old active versions with same logical_index_id
-    for (auto &[index_id, index_info] : index_cache_)
-    {
-        if (index_info.logical_index_id == shadow_index.logical_index_id &&
-            index_info.index_id != shadow_index_id &&
-            index_info.state == static_cast<uint8_t>(IndexState::ACTIVE))
+        // Get shadow index from cache
+        auto it = index_cache_.find(shadow_index_id);
+        if (it == index_cache_.end())
         {
-            // Retire this version
-            index_info.state = static_cast<uint8_t>(IndexState::RETIRED);
-            index_info.retired_xid = current_xid;
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Shadow index not found");
+            return Status::NOT_FOUND;
+        }
 
-            // Persist the update
-            status = writeIndexRecord(index_info, ctx);
-            if (status != Status::OK)
+        IndexInfo shadow_index = it->second;
+
+        // Verify it's in BUILDING state
+        if (shadow_index.state != static_cast<uint8_t>(IndexState::BUILDING))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Index is not in BUILDING state");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Get current XID for versioning
+        uint64_t current_xid = db_->transaction_manager()->getCurrentXid();
+        Status status;
+
+        // Find and retire old active versions with same logical_index_id
+        for (auto &[index_id, index_info] : index_cache_)
+        {
+            if (index_info.logical_index_id == shadow_index.logical_index_id &&
+                index_info.index_id != shadow_index_id &&
+                index_info.state == static_cast<uint8_t>(IndexState::ACTIVE))
             {
-                SET_ERROR_CONTEXT(ctx, status, "Failed to retire old index version");
-                return status;
+                // Retire this version
+                index_info.state = static_cast<uint8_t>(IndexState::RETIRED);
+                index_info.retired_xid = current_xid;
+                IndexFactory::populateCanonicalMetadata(index_info);
+
+                // Persist the update
+                status = writeIndexRecord(index_info, ctx);
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to retire old index version");
+                    return status;
+                }
             }
         }
+
+        // Promote shadow to ACTIVE
+        shadow_index.state = static_cast<uint8_t>(IndexState::ACTIVE);
+        shadow_index.valid_from_xid = current_xid;
+        shadow_index.build_completed_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                                                std::chrono::system_clock::now().time_since_epoch())
+                                                .count();
+        IndexFactory::populateCanonicalMetadata(shadow_index);
+
+        status = writeIndexRecord(shadow_index, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to promote shadow index");
+            return status;
+        }
+
+        // Update cache
+        index_cache_[shadow_index_id] = shadow_index;
     }
 
-    // Promote shadow to ACTIVE
-    shadow_index.state = static_cast<uint8_t>(IndexState::ACTIVE);
-    shadow_index.valid_from_xid = current_xid;
-    shadow_index.build_completed_time = std::chrono::duration_cast<std::chrono::microseconds>(
-                                            std::chrono::system_clock::now().time_since_epoch())
-                                            .count();
-
-    status = writeIndexRecord(shadow_index, ctx);
+    std::vector<IndexBuildPlanCatalogInfo> plans;
+    Status status = listIndexBuildPlanCatalogEntries(plans, ctx);
     if (status != Status::OK)
     {
-        SET_ERROR_CONTEXT(ctx, status, "Failed to promote shadow index");
         return status;
     }
 
-    // Update cache
-    index_cache_[shadow_index_id] = shadow_index;
+    auto plan_it = std::find_if(
+        plans.begin(),
+        plans.end(),
+        [&shadow_index_id](const IndexBuildPlanCatalogInfo& plan) {
+            return plan.shadow_index_uuid == shadow_index_id && plan.build_state == "BUILDING";
+        });
+    if (plan_it == plans.end())
+    {
+        return Status::OK;
+    }
 
-    return Status::OK;
+    IndexBuildEventCatalogInfo pending_event{};
+    pending_event.index_build_plan_uuid = plan_it->index_build_plan_uuid;
+    pending_event.event_seq = 3;
+    pending_event.has_phase_from = true;
+    pending_event.phase_from = "BUILDING";
+    pending_event.phase_to = "CUTOVER_PENDING";
+    pending_event.event_code = "CUTOVER_REQUESTED";
+    status = appendIndexBuildEventCatalogEntry(pending_event, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    status = updateIndexBuildPlanCatalogState(plan_it->index_build_plan_uuid, "CUTOVER_PENDING", ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    IndexBuildCutoverGuardCatalogInfo guard{};
+    guard.index_build_plan_uuid = plan_it->index_build_plan_uuid;
+    guard.guard_state = "READY";
+    guard.side_log_drained = true;
+    status = upsertIndexBuildCutoverGuardCatalogEntry(guard, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    IndexBuildEventCatalogInfo published_event{};
+    published_event.index_build_plan_uuid = plan_it->index_build_plan_uuid;
+    published_event.event_seq = 4;
+    published_event.has_phase_from = true;
+    published_event.phase_from = "CUTOVER_PENDING";
+    published_event.phase_to = "PUBLISHED";
+    published_event.event_code = "SHADOW_PROMOTED";
+    status = appendIndexBuildEventCatalogEntry(published_event, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    return updateIndexBuildPlanCatalogState(plan_it->index_build_plan_uuid, "PUBLISHED", ctx);
 }
 
 Status CatalogManager::gcRetiredIndexes(uint64_t *indexes_removed_out, ErrorContext *ctx)
@@ -35334,9 +36797,17 @@ Status CatalogManager::alterColumnType(const ID &table_id, const std::string &co
                 record->is_valid == 1)
             {
                 // Update type information
+                const uint16_t persisted_physical_type =
+                    (record->padding != 0) ? static_cast<uint16_t>(record->padding & 0xFFFFu)
+                                           : record->data_type;
                 record->data_type = static_cast<uint16_t>(new_type);
                 record->type_precision = new_precision;
                 record->type_scale = new_scale;
+                record->padding =
+                    (persisted_physical_type != 0 &&
+                     persisted_physical_type != static_cast<uint16_t>(new_type))
+                        ? static_cast<uint32_t>(persisted_physical_type)
+                        : 0u;
                 if (new_charset_id.has_value())
                 {
                     record->charset_id = resolveCharsetUuid(new_charset_id.value());
@@ -35367,6 +36838,35 @@ Status CatalogManager::alterColumnType(const ID &table_id, const std::string &co
     {
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Column record not found on disk");
         return Status::NOT_FOUND;
+    }
+
+    auto cache_it = column_cache_.find(table_id);
+    if (cache_it != column_cache_.end())
+    {
+        for (auto& col : cache_it->second)
+        {
+            if (IdentifierUtils::namesMatch(column_name, false /*search_delimited*/,
+                                            col.column_name, col.name_is_delimited))
+            {
+                col.data_type = static_cast<uint16_t>(new_type);
+                col.physical_data_type =
+                    (col.physical_data_type != 0) ? col.physical_data_type
+                                                  : static_cast<uint16_t>(old_type);
+                col.type_precision = new_precision;
+                col.type_scale = new_scale;
+                col.max_length = new_precision;
+                if (new_charset_id.has_value())
+                {
+                    col.charset = new_charset_id.value();
+                    col.charset_uuid = resolveCharsetUuid(new_charset_id.value());
+                }
+                if (new_collation_id.has_value())
+                {
+                    col.collation_id = new_collation_id.value();
+                }
+                break;
+            }
+        }
     }
 
     return Status::OK;
@@ -48708,7 +50208,10 @@ auto CatalogManager::closeSession(const ID& session_id, ErrorContext* ctx) -> St
     Status status = deleteRecordFromHeapPage<SessionRecord>(sessions_table_page_, predicate, ctx);
     if (status != Status::OK && status != Status::NOT_FOUND)
     {
-        SET_ERROR_CONTEXT(ctx, status, "Failed to close session");
+        if (ctx != nullptr && ctx->message[0] == '\0')
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to close session");
+        }
         return status;
     }
 
@@ -62726,6 +64229,224 @@ auto CatalogManager::deleteIndexBuildDeltaCatalogEntry(const ID& build_delta_id,
     return updateRecordInHeapPage(index_build_deltas_table_page_, result.slot_index, updated, ctx);
 }
 
+auto CatalogManager::upsertIndexPageDeltaCatalogEntry(const IndexPageDeltaCatalogInfo& info,
+                                                      ID& page_delta_id_out,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.index_id) ||
+        isZeroUuidLocal(info.target_locality_key_id) ||
+        isZeroUuidLocal(info.logical_row_uuid) ||
+        info.created_xid == 0)
+    {
+        SET_ERROR_CONTEXT(
+            ctx,
+            Status::INVALID_ARGUMENT,
+            "index_page_delta.index_id, target_locality_key_id, logical_row_uuid, and created_xid are required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidIndexPageDeltaOp(info.delta_op))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "index_page_delta.delta_op is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidIndexPageDeltaMergeState(info.merge_state))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "index_page_delta.merge_state is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    const bool op_needs_new_tid =
+        info.delta_op == IndexPageDeltaOp::INSERT ||
+        info.delta_op == IndexPageDeltaOp::UPDATE_SAME_KEY ||
+        info.delta_op == IndexPageDeltaOp::UPDATE_KEY_CHANGE;
+    const bool op_needs_old_tid =
+        info.delta_op == IndexPageDeltaOp::DELETE ||
+        info.delta_op == IndexPageDeltaOp::UPDATE_SAME_KEY ||
+        info.delta_op == IndexPageDeltaOp::UPDATE_KEY_CHANGE;
+    const bool op_needs_new_key =
+        info.delta_op == IndexPageDeltaOp::INSERT ||
+        info.delta_op == IndexPageDeltaOp::UPDATE_SAME_KEY ||
+        info.delta_op == IndexPageDeltaOp::UPDATE_KEY_CHANGE;
+    const bool op_needs_old_key =
+        info.delta_op == IndexPageDeltaOp::UPDATE_KEY_CHANGE;
+
+    if ((op_needs_new_tid && !info.has_new_tid) ||
+        (op_needs_old_tid && !info.has_old_tid))
+    {
+        SET_ERROR_CONTEXT(ctx,
+                          Status::INVALID_ARGUMENT,
+                          "index_page_delta operation is missing required old/new tid fields");
+        return Status::INVALID_ARGUMENT;
+    }
+    if ((op_needs_new_key && isZeroUuidLocal(info.normalized_key_id)) ||
+        (op_needs_old_key && isZeroUuidLocal(info.normalized_old_key_id)))
+    {
+        SET_ERROR_CONTEXT(ctx,
+                          Status::INVALID_ARGUMENT,
+                          "index_page_delta operation is missing required normalized key payload ids");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto index_predicate = [&info](const IndexRecord& rec) {
+        return rec.is_valid == 1 && rec.index_id == info.index_id;
+    };
+    auto index_result =
+        findRecordInHeapPage<IndexRecord>(indexes_table_page_, index_predicate, ctx);
+    if (index_result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "index_page_delta.index_id not found");
+        return Status::NOT_FOUND;
+    }
+
+    ID page_delta_id = info.page_delta_id;
+    if (isZeroUuidLocal(page_delta_id))
+    {
+        page_delta_id = generateUuidV7();
+    }
+    page_delta_id_out = page_delta_id;
+
+    IndexPageDeltaRecord rec{};
+    rec.page_delta_id = page_delta_id;
+    rec.index_id = info.index_id;
+    rec.target_locality_key_oid = info.target_locality_key_id;
+    rec.logical_row_uuid = info.logical_row_uuid;
+    rec.delta_op = static_cast<uint8_t>(info.delta_op);
+    rec.merge_state = static_cast<uint8_t>(info.merge_state);
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.has_old_tid = info.has_old_tid ? 1 : 0;
+    rec.has_new_tid = info.has_new_tid ? 1 : 0;
+    rec.old_tid_gpid = info.old_tid_gpid;
+    rec.old_tid_slot = info.old_tid_slot;
+    rec.new_tid_gpid = info.new_tid_gpid;
+    rec.new_tid_slot = info.new_tid_slot;
+    rec.normalized_key_oid = info.normalized_key_id;
+    rec.normalized_old_key_oid = info.normalized_old_key_id;
+    rec.created_xid = info.created_xid;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+
+    auto matcher = [&page_delta_id](const IndexPageDeltaRecord& row) {
+        return row.page_delta_id == page_delta_id && row.is_valid == 1;
+    };
+    return updateRecordInHeapPage(index_page_deltas_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getIndexPageDeltaCatalogEntry(const ID& page_delta_id,
+                                                   IndexPageDeltaCatalogInfo& info_out,
+                                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&page_delta_id](const IndexPageDeltaRecord& rec) {
+        return rec.page_delta_id == page_delta_id && rec.is_valid == 1;
+    };
+    auto result =
+        findRecordInHeapPage<IndexPageDeltaRecord>(index_page_deltas_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "index_page_delta row not found");
+        return Status::NOT_FOUND;
+    }
+
+    info_out = IndexPageDeltaCatalogInfo{};
+    info_out.page_delta_id = result.record.page_delta_id;
+    info_out.index_id = result.record.index_id;
+    info_out.target_locality_key_id = result.record.target_locality_key_oid;
+    info_out.logical_row_uuid = result.record.logical_row_uuid;
+    info_out.delta_op = static_cast<IndexPageDeltaOp>(result.record.delta_op);
+    info_out.merge_state = static_cast<IndexPageDeltaMergeState>(result.record.merge_state);
+    if (!isValidIndexPageDeltaOp(info_out.delta_op))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid index_page_delta.delta_op");
+        return Status::PAGE_CORRUPT;
+    }
+    if (!isValidIndexPageDeltaMergeState(info_out.merge_state))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid index_page_delta.merge_state");
+        return Status::PAGE_CORRUPT;
+    }
+    info_out.has_old_tid = result.record.has_old_tid != 0;
+    info_out.has_new_tid = result.record.has_new_tid != 0;
+    info_out.old_tid_gpid = result.record.old_tid_gpid;
+    info_out.old_tid_slot = result.record.old_tid_slot;
+    info_out.new_tid_gpid = result.record.new_tid_gpid;
+    info_out.new_tid_slot = result.record.new_tid_slot;
+    info_out.normalized_key_id = result.record.normalized_key_oid;
+    info_out.normalized_old_key_id = result.record.normalized_old_key_oid;
+    info_out.created_xid = result.record.created_xid;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    return Status::OK;
+}
+
+auto CatalogManager::listIndexPageDeltaCatalogEntries(const ID& index_id,
+                                                      std::vector<IndexPageDeltaCatalogInfo>& rows_out,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    auto filter = [&index_id](const IndexPageDeltaRecord& rec) {
+        if (rec.is_valid != 1)
+        {
+            return false;
+        }
+        return isZeroUuidLocal(index_id) || rec.index_id == index_id;
+    };
+    auto converter = [](const IndexPageDeltaRecord& rec, IndexPageDeltaCatalogInfo& info) {
+        info = IndexPageDeltaCatalogInfo{};
+        info.page_delta_id = rec.page_delta_id;
+        info.index_id = rec.index_id;
+        info.target_locality_key_id = rec.target_locality_key_oid;
+        info.logical_row_uuid = rec.logical_row_uuid;
+        info.delta_op = static_cast<IndexPageDeltaOp>(rec.delta_op);
+        info.merge_state = static_cast<IndexPageDeltaMergeState>(rec.merge_state);
+        info.has_old_tid = rec.has_old_tid != 0;
+        info.has_new_tid = rec.has_new_tid != 0;
+        info.old_tid_gpid = rec.old_tid_gpid;
+        info.old_tid_slot = rec.old_tid_slot;
+        info.new_tid_gpid = rec.new_tid_gpid;
+        info.new_tid_slot = rec.new_tid_slot;
+        info.normalized_key_id = rec.normalized_key_oid;
+        info.normalized_old_key_id = rec.normalized_old_key_oid;
+        info.created_xid = rec.created_xid;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+    };
+    Status status = readRecordsToVector<IndexPageDeltaRecord, IndexPageDeltaCatalogInfo>(
+        index_page_deltas_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::sort(rows_out.begin(),
+              rows_out.end(),
+              [](const IndexPageDeltaCatalogInfo& lhs, const IndexPageDeltaCatalogInfo& rhs) {
+                  if (lhs.created_time != rhs.created_time)
+                  {
+                      return lhs.created_time < rhs.created_time;
+                  }
+                  return lhs.page_delta_id.toString() < rhs.page_delta_id.toString();
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteIndexPageDeltaCatalogEntry(const ID& page_delta_id,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&page_delta_id](const IndexPageDeltaRecord& rec) {
+        return rec.page_delta_id == page_delta_id && rec.is_valid == 1;
+    };
+    auto result =
+        findRecordInHeapPage<IndexPageDeltaRecord>(index_page_deltas_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    IndexPageDeltaRecord updated = result.record;
+    updated.is_valid = 0;
+    return updateRecordInHeapPage(index_page_deltas_table_page_, result.slot_index, updated, ctx);
+}
+
 // ============================================================================
 // Canonical index telemetry extension catalog CRUD operations (CAT-017)
 // ============================================================================
@@ -63513,6 +65234,13 @@ auto CatalogManager::upsertIndexHealthCatalogEntry(const IndexHealthCatalogInfo&
     rec.in_memory_errors = info.in_memory_errors;
     rec.pages_scanned = info.pages_scanned;
     rec.bytes_scanned = info.bytes_scanned;
+    rec.cleanup_backlog_count = info.cleanup_backlog_count;
+    rec.cleanup_backlog_pages = info.cleanup_backlog_pages;
+    rec.cleanup_backlog_bytes = info.cleanup_backlog_bytes;
+    rec.cleanup_sweep_generation = info.cleanup_sweep_generation;
+    rec.cleanup_checkpoint_generation = info.cleanup_checkpoint_generation;
+    rec.cleanup_last_published_time = info.cleanup_last_published_time;
+    rec.cleanup_repair_required = info.cleanup_repair_required ? 1 : 0;
     rec.is_valid = info.is_valid ? 1 : 0;
     rec.last_modified_time = (info.last_modified_time == 0) ? now : info.last_modified_time;
 
@@ -63582,6 +65310,13 @@ auto CatalogManager::getIndexHealthCatalogEntry(const ID& index_id,
     info_out.in_memory_errors = result.record.in_memory_errors;
     info_out.pages_scanned = result.record.pages_scanned;
     info_out.bytes_scanned = result.record.bytes_scanned;
+    info_out.cleanup_backlog_count = result.record.cleanup_backlog_count;
+    info_out.cleanup_backlog_pages = result.record.cleanup_backlog_pages;
+    info_out.cleanup_backlog_bytes = result.record.cleanup_backlog_bytes;
+    info_out.cleanup_sweep_generation = result.record.cleanup_sweep_generation;
+    info_out.cleanup_checkpoint_generation = result.record.cleanup_checkpoint_generation;
+    info_out.cleanup_last_published_time = result.record.cleanup_last_published_time;
+    info_out.cleanup_repair_required = result.record.cleanup_repair_required != 0;
     info_out.is_valid = result.record.is_valid == 1;
     info_out.created_time = result.record.created_time;
     info_out.last_modified_time = result.record.last_modified_time;
@@ -63615,6 +65350,13 @@ auto CatalogManager::listIndexHealthCatalogEntries(std::vector<IndexHealthCatalo
         info.in_memory_errors = rec.in_memory_errors;
         info.pages_scanned = rec.pages_scanned;
         info.bytes_scanned = rec.bytes_scanned;
+        info.cleanup_backlog_count = rec.cleanup_backlog_count;
+        info.cleanup_backlog_pages = rec.cleanup_backlog_pages;
+        info.cleanup_backlog_bytes = rec.cleanup_backlog_bytes;
+        info.cleanup_sweep_generation = rec.cleanup_sweep_generation;
+        info.cleanup_checkpoint_generation = rec.cleanup_checkpoint_generation;
+        info.cleanup_last_published_time = rec.cleanup_last_published_time;
+        info.cleanup_repair_required = rec.cleanup_repair_required != 0;
         info.is_valid = rec.is_valid == 1;
         info.created_time = rec.created_time;
         info.last_modified_time = rec.last_modified_time;
@@ -65588,6 +67330,2766 @@ auto CatalogManager::getLatestSchemaEpochCatalogEntry(const ID& database_id,
     return Status::OK;
 }
 
+auto CatalogManager::appendSchemaChangePlanCatalogEntry(SchemaChangePlanCatalogInfo& info,
+                                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.object_uuid) ||
+        info.object_type.empty() ||
+        info.requested_operation.empty() ||
+        !isValidSchemaChangeClass(info.change_class) ||
+        !isValidSchemaChangePhaseState(info.phase_state) ||
+        info.rollback_class.empty())
+    {
+        SET_ERROR_CONTEXT(
+            ctx,
+            Status::INVALID_ARGUMENT,
+            "schema_change_plan requires object identity, operation, valid change_class, valid phase_state, and rollback_class");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto validate_text = [&](const std::string& text, size_t capacity, const char* label) -> Status {
+        ErrorContext local_ctx;
+        Status status = UTF8Utils::validateStorageCapacity(text, capacity, capacity, &local_ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, label);
+        }
+        return status;
+    };
+    Status status = validate_text(info.object_type, 64, "schema_change_plan.object_type too long");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = validate_text(
+        info.requested_operation, 128, "schema_change_plan.requested_operation too long");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = validate_text(info.change_class, 64, "schema_change_plan.change_class too long");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = validate_text(info.phase_state, 64, "schema_change_plan.phase_state too long");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = validate_text(info.rollback_class, 64, "schema_change_plan.rollback_class too long");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (!info.refusal_reason_code.empty())
+    {
+        status = validate_text(
+            info.refusal_reason_code, 64, "schema_change_plan.refusal_reason_code too long");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    if (isZeroUuidLocal(info.schema_change_plan_uuid))
+    {
+        info.schema_change_plan_uuid = generateUuidV7();
+    }
+
+    bool page_changed = false;
+    status = ensureStandaloneCatalogRuntimePage(schema_change_plan_table_page_, page_changed, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (page_changed)
+    {
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto duplicate = findRecordInHeapPage<SchemaChangePlanRecord>(
+        schema_change_plan_table_page_,
+        [&info](const SchemaChangePlanRecord& row) {
+            return row.is_valid == 1 && row.schema_change_plan_uuid == info.schema_change_plan_uuid;
+        },
+        ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "schema_change_plan rows are immutable");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
+
+    SchemaChangePlanRecord rec{};
+    rec.schema_change_plan_uuid = info.schema_change_plan_uuid;
+    rec.object_uuid = info.object_uuid;
+    rec.requested_by_uuid = info.requested_by_uuid;
+    rec.refusal_detail_uuid = info.has_refusal_detail_uuid ? info.refusal_detail_uuid : ID{};
+    rec.requested_at = info.requested_at == 0 ? catalogNowTicks() : info.requested_at;
+    rec.baseline_schema_epoch = info.baseline_schema_epoch;
+    rec.expanded_schema_epoch =
+        info.has_expanded_schema_epoch ? info.expanded_schema_epoch : 0;
+    rec.cutover_schema_epoch = info.has_cutover_schema_epoch ? info.cutover_schema_epoch : 0;
+    rec.has_expanded_schema_epoch = info.has_expanded_schema_epoch ? 1 : 0;
+    rec.has_cutover_schema_epoch = info.has_cutover_schema_epoch ? 1 : 0;
+    rec.has_refusal_detail_uuid = info.has_refusal_detail_uuid ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+
+    auto store_text = [&](const std::string& text, ID& oid) -> Status {
+        if (text.empty())
+        {
+            oid = ID{};
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        return storeStringInToast(text, xmin, oid, ctx);
+    };
+    status = store_text(info.object_type, rec.object_type_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.requested_operation, rec.requested_operation_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.change_class, rec.change_class_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.phase_state, rec.phase_state_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.rollback_class, rec.rollback_class_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.refusal_reason_code, rec.refusal_reason_code_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    info.requested_at = rec.requested_at;
+    return writeRecordToHeapPage(schema_change_plan_table_page_, rec, ctx);
+}
+
+auto CatalogManager::getSchemaChangePlanCatalogEntry(const ID& schema_change_plan_uuid,
+                                                     SchemaChangePlanCatalogInfo& info_out,
+                                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (schema_change_plan_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto result = findRecordInHeapPage<SchemaChangePlanRecord>(
+        schema_change_plan_table_page_,
+        [&schema_change_plan_uuid](const SchemaChangePlanRecord& row) {
+            return row.is_valid == 1 && row.schema_change_plan_uuid == schema_change_plan_uuid;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto load_text = [&](const ID& oid, std::string& out, const char* label) -> Status {
+        out.clear();
+        if (isZeroUuidLocal(oid))
+        {
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        Status status = loadStringFromToast(oid, xmin, out, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, label);
+            return Status::PAGE_CORRUPT;
+        }
+        return Status::OK;
+    };
+
+    info_out = SchemaChangePlanCatalogInfo{};
+    info_out.schema_change_plan_uuid = result.record.schema_change_plan_uuid;
+    info_out.object_uuid = result.record.object_uuid;
+    info_out.requested_by_uuid = result.record.requested_by_uuid;
+    info_out.requested_at = result.record.requested_at;
+    info_out.baseline_schema_epoch = result.record.baseline_schema_epoch;
+    info_out.has_expanded_schema_epoch = result.record.has_expanded_schema_epoch != 0;
+    info_out.expanded_schema_epoch = result.record.expanded_schema_epoch;
+    info_out.has_cutover_schema_epoch = result.record.has_cutover_schema_epoch != 0;
+    info_out.cutover_schema_epoch = result.record.cutover_schema_epoch;
+    info_out.has_refusal_detail_uuid = result.record.has_refusal_detail_uuid != 0;
+    info_out.refusal_detail_uuid =
+        info_out.has_refusal_detail_uuid ? result.record.refusal_detail_uuid : ID{};
+    info_out.is_valid = result.record.is_valid == 1;
+
+    Status status = load_text(
+        result.record.object_type_oid, info_out.object_type, "schema_change_plan.object_type invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_text(result.record.requested_operation_oid,
+                       info_out.requested_operation,
+                       "schema_change_plan.requested_operation invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_text(result.record.change_class_oid,
+                       info_out.change_class,
+                       "schema_change_plan.change_class invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_text(result.record.phase_state_oid,
+                       info_out.phase_state,
+                       "schema_change_plan.phase_state invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_text(result.record.rollback_class_oid,
+                       info_out.rollback_class,
+                       "schema_change_plan.rollback_class invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_text(result.record.refusal_reason_code_oid,
+                       info_out.refusal_reason_code,
+                       "schema_change_plan.refusal_reason invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (!isValidSchemaChangeClass(info_out.change_class) ||
+        !isValidSchemaChangePhaseState(info_out.phase_state))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "schema_change_plan enum value invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listSchemaChangePlanCatalogEntries(
+    std::vector<SchemaChangePlanCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (schema_change_plan_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    std::vector<SchemaChangePlanRecord> records;
+    auto filter = [](const SchemaChangePlanRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const SchemaChangePlanRecord& row, SchemaChangePlanRecord& out) { out = row; };
+    Status status = readRecordsToVector<SchemaChangePlanRecord, SchemaChangePlanRecord>(
+        schema_change_plan_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        SchemaChangePlanCatalogInfo info{};
+        auto load_text = [&](const ID& oid, std::string& out, const char* label) -> Status {
+            out.clear();
+            if (isZeroUuidLocal(oid))
+            {
+                return Status::OK;
+            }
+            uint64_t xmin = 0;
+            Status load_status = loadStringFromToast(oid, xmin, out, ctx);
+            if (load_status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, label);
+                return Status::PAGE_CORRUPT;
+            }
+            return Status::OK;
+        };
+
+        info.schema_change_plan_uuid = rec.schema_change_plan_uuid;
+        info.object_uuid = rec.object_uuid;
+        info.requested_by_uuid = rec.requested_by_uuid;
+        info.requested_at = rec.requested_at;
+        info.baseline_schema_epoch = rec.baseline_schema_epoch;
+        info.has_expanded_schema_epoch = rec.has_expanded_schema_epoch != 0;
+        info.expanded_schema_epoch = rec.expanded_schema_epoch;
+        info.has_cutover_schema_epoch = rec.has_cutover_schema_epoch != 0;
+        info.cutover_schema_epoch = rec.cutover_schema_epoch;
+        info.has_refusal_detail_uuid = rec.has_refusal_detail_uuid != 0;
+        info.refusal_detail_uuid = info.has_refusal_detail_uuid ? rec.refusal_detail_uuid : ID{};
+        info.is_valid = rec.is_valid == 1;
+        status = load_text(rec.object_type_oid, info.object_type, "schema_change_plan.object_type invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.requested_operation_oid,
+                           info.requested_operation,
+                           "schema_change_plan.requested_operation invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.change_class_oid,
+                           info.change_class,
+                           "schema_change_plan.change_class invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.phase_state_oid,
+                           info.phase_state,
+                           "schema_change_plan.phase_state invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.rollback_class_oid,
+                           info.rollback_class,
+                           "schema_change_plan.rollback_class invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.refusal_reason_code_oid,
+                           info.refusal_reason_code,
+                           "schema_change_plan.refusal_reason invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (!isValidSchemaChangeClass(info.change_class) ||
+            !isValidSchemaChangePhaseState(info.phase_state))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "schema_change_plan enum value invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const SchemaChangePlanCatalogInfo& lhs, const SchemaChangePlanCatalogInfo& rhs) {
+                  if (lhs.requested_at != rhs.requested_at)
+                  {
+                      return lhs.requested_at > rhs.requested_at;
+                  }
+                  return compareUuidBytesLocal(lhs.schema_change_plan_uuid, rhs.schema_change_plan_uuid) > 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::appendSchemaChangeEventCatalogEntry(SchemaChangeEventCatalogInfo& info,
+                                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.schema_change_plan_uuid) ||
+        info.phase_to.empty() ||
+        !isValidSchemaChangePhaseState(info.phase_to) ||
+        !isValidSchemaChangeEventState(info.event_state))
+    {
+        SET_ERROR_CONTEXT(
+            ctx,
+            Status::INVALID_ARGUMENT,
+            "schema_change_event requires plan uuid, valid phase_to, and valid event_state");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.has_phase_from && !isValidSchemaChangePhaseState(info.phase_from))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "schema_change_event phase_from invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto plan_result = findRecordInHeapPage<SchemaChangePlanRecord>(
+        schema_change_plan_table_page_,
+        [&info](const SchemaChangePlanRecord& row) {
+            return row.is_valid == 1 && row.schema_change_plan_uuid == info.schema_change_plan_uuid;
+        },
+        ctx);
+    if (plan_result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "schema_change_event references missing plan");
+        return Status::NOT_FOUND;
+    }
+
+    if (isZeroUuidLocal(info.schema_change_event_uuid))
+    {
+        info.schema_change_event_uuid = generateUuidV7();
+    }
+
+    bool page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(schema_change_event_table_page_, page_changed, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (page_changed)
+    {
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto duplicate_seq = findRecordInHeapPage<SchemaChangeEventRecord>(
+        schema_change_event_table_page_,
+        [&info](const SchemaChangeEventRecord& row) {
+            return row.is_valid == 1 &&
+                   row.schema_change_plan_uuid == info.schema_change_plan_uuid &&
+                   row.event_seq == info.event_seq;
+        },
+        ctx);
+    if (duplicate_seq.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "schema_change_event event_seq must be unique per plan");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate_seq.status != Status::NOT_FOUND)
+    {
+        return duplicate_seq.status;
+    }
+
+    SchemaChangeEventRecord rec{};
+    rec.schema_change_event_uuid = info.schema_change_event_uuid;
+    rec.schema_change_plan_uuid = info.schema_change_plan_uuid;
+    rec.event_seq = info.event_seq;
+    rec.event_time = info.event_time == 0 ? catalogNowTicks() : info.event_time;
+    rec.has_phase_from = info.has_phase_from ? 1 : 0;
+    rec.has_event_detail_uuid = info.has_event_detail_uuid ? 1 : 0;
+    rec.event_detail_uuid = info.has_event_detail_uuid ? info.event_detail_uuid : ID{};
+    rec.is_valid = info.is_valid ? 1 : 0;
+
+    auto store_text = [&](const std::string& text, ID& oid) -> Status {
+        if (text.empty())
+        {
+            oid = ID{};
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        return storeStringInToast(text, xmin, oid, ctx);
+    };
+    status = store_text(info.phase_from, rec.phase_from_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.phase_to, rec.phase_to_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.event_state, rec.event_state_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.event_code, rec.event_code_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    info.event_time = rec.event_time;
+    return writeRecordToHeapPage(schema_change_event_table_page_, rec, ctx);
+}
+
+auto CatalogManager::listSchemaChangeEventCatalogEntries(
+    const ID& schema_change_plan_uuid,
+    std::vector<SchemaChangeEventCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (schema_change_event_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    auto load_text = [&](const ID& oid, std::string& out, const char* label) -> Status {
+        out.clear();
+        if (isZeroUuidLocal(oid))
+        {
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        Status status = loadStringFromToast(oid, xmin, out, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, label);
+            return Status::PAGE_CORRUPT;
+        }
+        return Status::OK;
+    };
+
+    std::vector<SchemaChangeEventRecord> records;
+    auto filter = [&schema_change_plan_uuid](const SchemaChangeEventRecord& row) {
+        return row.is_valid == 1 &&
+               (isZeroUuidLocal(schema_change_plan_uuid) ||
+                row.schema_change_plan_uuid == schema_change_plan_uuid);
+    };
+    auto converter = [](const SchemaChangeEventRecord& row, SchemaChangeEventRecord& out) { out = row; };
+    Status status = readRecordsToVector<SchemaChangeEventRecord, SchemaChangeEventRecord>(
+        schema_change_event_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        SchemaChangeEventCatalogInfo info{};
+        info.schema_change_event_uuid = rec.schema_change_event_uuid;
+        info.schema_change_plan_uuid = rec.schema_change_plan_uuid;
+        info.event_seq = rec.event_seq;
+        info.event_time = rec.event_time;
+        info.has_phase_from = rec.has_phase_from != 0;
+        info.has_event_detail_uuid = rec.has_event_detail_uuid != 0;
+        info.event_detail_uuid = info.has_event_detail_uuid ? rec.event_detail_uuid : ID{};
+        info.is_valid = rec.is_valid == 1;
+        status = load_text(rec.phase_from_oid, info.phase_from, "schema_change_event.phase_from invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.phase_to_oid, info.phase_to, "schema_change_event.phase_to invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.event_state_oid, info.event_state, "schema_change_event.event_state invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.event_code_oid, info.event_code, "schema_change_event.event_code invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (!isValidSchemaChangePhaseState(info.phase_to) ||
+            (info.has_phase_from && !isValidSchemaChangePhaseState(info.phase_from)) ||
+            !isValidSchemaChangeEventState(info.event_state))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "schema_change_event enum value invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const SchemaChangeEventCatalogInfo& lhs, const SchemaChangeEventCatalogInfo& rhs) {
+                  if (lhs.event_seq != rhs.event_seq)
+                  {
+                      return lhs.event_seq < rhs.event_seq;
+                  }
+                  return compareUuidBytesLocal(lhs.schema_change_event_uuid, rhs.schema_change_event_uuid) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::upsertSchemaChangeBackfillProgressCatalogEntry(
+    const SchemaChangeBackfillProgressCatalogInfo& info,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.schema_change_plan_uuid) ||
+        info.restart_disposition.empty() ||
+        !isValidSchemaChangeRestartDisposition(info.restart_disposition))
+    {
+        SET_ERROR_CONTEXT(
+            ctx,
+            Status::INVALID_ARGUMENT,
+            "schema_change_backfill_progress requires plan uuid and valid restart_disposition");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto plan_result = findRecordInHeapPage<SchemaChangePlanRecord>(
+        schema_change_plan_table_page_,
+        [&info](const SchemaChangePlanRecord& row) {
+            return row.is_valid == 1 && row.schema_change_plan_uuid == info.schema_change_plan_uuid;
+        },
+        ctx);
+    if (plan_result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "schema_change_backfill_progress references missing plan");
+        return Status::NOT_FOUND;
+    }
+
+    bool page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(
+        schema_change_backfill_progress_table_page_, page_changed, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (page_changed)
+    {
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    SchemaChangeBackfillProgressRecord rec{};
+    rec.schema_change_backfill_progress_uuid =
+        isZeroUuidLocal(info.schema_change_backfill_progress_uuid)
+            ? generateUuidV7()
+            : info.schema_change_backfill_progress_uuid;
+    rec.schema_change_plan_uuid = info.schema_change_plan_uuid;
+    rec.worker_generation = info.worker_generation;
+    rec.scanned_row_count = info.scanned_row_count;
+    rec.written_row_count = info.written_row_count;
+    rec.validated_row_count = info.validated_row_count;
+    rec.has_last_resume_row_uuid = info.has_last_resume_row_uuid ? 1 : 0;
+    rec.last_resume_row_uuid = info.has_last_resume_row_uuid ? info.last_resume_row_uuid : ID{};
+    rec.has_last_resume_key_json = info.has_last_resume_key_json ? 1 : 0;
+    rec.partial_chunk_rewind_required = info.partial_chunk_rewind_required ? 1 : 0;
+    rec.has_last_heartbeat_at = info.has_last_heartbeat_at ? 1 : 0;
+    rec.last_heartbeat_at = info.has_last_heartbeat_at ? info.last_heartbeat_at : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+
+    auto store_text = [&](const std::string& text, ID& oid) -> Status {
+        if (text.empty())
+        {
+            oid = ID{};
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        return storeStringInToast(text, xmin, oid, ctx);
+    };
+    status = store_text(info.last_resume_key_json, rec.last_resume_key_json_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.restart_disposition, rec.restart_disposition_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto existing = findRecordInHeapPage<SchemaChangeBackfillProgressRecord>(
+        schema_change_backfill_progress_table_page_,
+        [&info](const SchemaChangeBackfillProgressRecord& row) {
+            return row.is_valid == 1 && row.schema_change_plan_uuid == info.schema_change_plan_uuid;
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.schema_change_backfill_progress_uuid = existing.record.schema_change_backfill_progress_uuid;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const SchemaChangeBackfillProgressRecord& row) {
+        return row.is_valid == 1 && row.schema_change_plan_uuid == info.schema_change_plan_uuid;
+    };
+    return updateRecordInHeapPage(schema_change_backfill_progress_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getSchemaChangeBackfillProgressCatalogEntry(
+    const ID& schema_change_plan_uuid,
+    SchemaChangeBackfillProgressCatalogInfo& info_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (schema_change_backfill_progress_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto result = findRecordInHeapPage<SchemaChangeBackfillProgressRecord>(
+        schema_change_backfill_progress_table_page_,
+        [&schema_change_plan_uuid](const SchemaChangeBackfillProgressRecord& row) {
+            return row.is_valid == 1 && row.schema_change_plan_uuid == schema_change_plan_uuid;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto load_text = [&](const ID& oid, std::string& out, const char* label) -> Status {
+        out.clear();
+        if (isZeroUuidLocal(oid))
+        {
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        Status status = loadStringFromToast(oid, xmin, out, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, label);
+            return Status::PAGE_CORRUPT;
+        }
+        return Status::OK;
+    };
+
+    info_out = SchemaChangeBackfillProgressCatalogInfo{};
+    info_out.schema_change_backfill_progress_uuid = result.record.schema_change_backfill_progress_uuid;
+    info_out.schema_change_plan_uuid = result.record.schema_change_plan_uuid;
+    info_out.worker_generation = result.record.worker_generation;
+    info_out.scanned_row_count = result.record.scanned_row_count;
+    info_out.written_row_count = result.record.written_row_count;
+    info_out.validated_row_count = result.record.validated_row_count;
+    info_out.has_last_resume_row_uuid = result.record.has_last_resume_row_uuid != 0;
+    info_out.last_resume_row_uuid =
+        info_out.has_last_resume_row_uuid ? result.record.last_resume_row_uuid : ID{};
+    info_out.has_last_resume_key_json = result.record.has_last_resume_key_json != 0;
+    info_out.partial_chunk_rewind_required = result.record.partial_chunk_rewind_required != 0;
+    info_out.has_last_heartbeat_at = result.record.has_last_heartbeat_at != 0;
+    info_out.last_heartbeat_at = result.record.last_heartbeat_at;
+    info_out.is_valid = result.record.is_valid == 1;
+    Status status = load_text(result.record.last_resume_key_json_oid,
+                              info_out.last_resume_key_json,
+                              "schema_change_backfill_progress.last_resume_key_json invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_text(result.record.restart_disposition_oid,
+                       info_out.restart_disposition,
+                       "schema_change_backfill_progress.restart_disposition invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (!isValidSchemaChangeRestartDisposition(info_out.restart_disposition))
+    {
+        SET_ERROR_CONTEXT(
+            ctx,
+            Status::PAGE_CORRUPT,
+            "schema_change_backfill_progress restart_disposition invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::upsertSchemaChangeCutoverGuardCatalogEntry(
+    const SchemaChangeCutoverGuardCatalogInfo& info,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.schema_change_plan_uuid) ||
+        info.guard_state.empty() ||
+        !isValidSchemaChangeGuardState(info.guard_state))
+    {
+        SET_ERROR_CONTEXT(
+            ctx,
+            Status::INVALID_ARGUMENT,
+            "schema_change_cutover_guard requires plan uuid and valid guard_state");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto plan_result = findRecordInHeapPage<SchemaChangePlanRecord>(
+        schema_change_plan_table_page_,
+        [&info](const SchemaChangePlanRecord& row) {
+            return row.is_valid == 1 && row.schema_change_plan_uuid == info.schema_change_plan_uuid;
+        },
+        ctx);
+    if (plan_result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "schema_change_cutover_guard references missing plan");
+        return Status::NOT_FOUND;
+    }
+
+    bool page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(
+        schema_change_cutover_guard_table_page_, page_changed, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (page_changed)
+    {
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    SchemaChangeCutoverGuardRecord rec{};
+    rec.schema_change_cutover_guard_uuid =
+        isZeroUuidLocal(info.schema_change_cutover_guard_uuid)
+            ? generateUuidV7()
+            : info.schema_change_cutover_guard_uuid;
+    rec.schema_change_plan_uuid = info.schema_change_plan_uuid;
+    rec.expected_pre_cutover_schema_epoch = info.expected_pre_cutover_schema_epoch;
+    rec.validation_manifest_hash = info.validation_manifest_hash;
+    rec.expected_security_epoch = info.has_expected_security_epoch ? info.expected_security_epoch : 0;
+    rec.checked_at = info.checked_at == 0 ? catalogNowTicks() : info.checked_at;
+    rec.dependency_refresh_complete = info.dependency_refresh_complete ? 1 : 0;
+    rec.has_expected_security_epoch = info.has_expected_security_epoch ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+
+    uint64_t xmin = 0;
+    status = storeStringInToast(info.guard_state, xmin, rec.guard_state_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto existing = findRecordInHeapPage<SchemaChangeCutoverGuardRecord>(
+        schema_change_cutover_guard_table_page_,
+        [&info](const SchemaChangeCutoverGuardRecord& row) {
+            return row.is_valid == 1 && row.schema_change_plan_uuid == info.schema_change_plan_uuid;
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.schema_change_cutover_guard_uuid = existing.record.schema_change_cutover_guard_uuid;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const SchemaChangeCutoverGuardRecord& row) {
+        return row.is_valid == 1 && row.schema_change_plan_uuid == info.schema_change_plan_uuid;
+    };
+    return updateRecordInHeapPage(schema_change_cutover_guard_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getSchemaChangeCutoverGuardCatalogEntry(
+    const ID& schema_change_plan_uuid,
+    SchemaChangeCutoverGuardCatalogInfo& info_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (schema_change_cutover_guard_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto result = findRecordInHeapPage<SchemaChangeCutoverGuardRecord>(
+        schema_change_cutover_guard_table_page_,
+        [&schema_change_plan_uuid](const SchemaChangeCutoverGuardRecord& row) {
+            return row.is_valid == 1 && row.schema_change_plan_uuid == schema_change_plan_uuid;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = SchemaChangeCutoverGuardCatalogInfo{};
+    info_out.schema_change_cutover_guard_uuid = result.record.schema_change_cutover_guard_uuid;
+    info_out.schema_change_plan_uuid = result.record.schema_change_plan_uuid;
+    info_out.expected_pre_cutover_schema_epoch = result.record.expected_pre_cutover_schema_epoch;
+    info_out.validation_manifest_hash = result.record.validation_manifest_hash;
+    info_out.dependency_refresh_complete = result.record.dependency_refresh_complete != 0;
+    info_out.has_expected_security_epoch = result.record.has_expected_security_epoch != 0;
+    info_out.expected_security_epoch = result.record.expected_security_epoch;
+    info_out.checked_at = result.record.checked_at;
+    info_out.is_valid = result.record.is_valid == 1;
+
+    uint64_t xmin = 0;
+    Status status = loadStringFromToast(
+        result.record.guard_state_oid, xmin, info_out.guard_state, ctx);
+    if (status != Status::OK || !isValidSchemaChangeGuardState(info_out.guard_state))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "schema_change_cutover_guard guard_state invalid");
+        return Status::PAGE_CORRUPT;
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::appendIndexBuildPlanCatalogEntry(IndexBuildPlanCatalogInfo& info,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.logical_index_id) ||
+        isZeroUuidLocal(info.shadow_index_uuid) ||
+        !isValidIndexBuildReason(info.build_reason) ||
+        !isValidIndexBuildPhaseState(info.build_state))
+    {
+        SET_ERROR_CONTEXT(
+            ctx,
+            Status::INVALID_ARGUMENT,
+            "index_build_plan requires logical_index_id, shadow_index_uuid, valid build_reason, and valid build_state");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (isZeroUuidLocal(info.index_build_plan_uuid))
+    {
+        info.index_build_plan_uuid = generateUuidV7();
+    }
+
+    bool page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(index_build_plan_table_page_, page_changed, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (page_changed)
+    {
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto duplicate = findRecordInHeapPage<IndexBuildPlanRecord>(
+        index_build_plan_table_page_,
+        [&info](const IndexBuildPlanRecord& row) {
+            return row.is_valid == 1 && row.index_build_plan_uuid == info.index_build_plan_uuid;
+        },
+        ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "index_build_plan uuid already exists");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
+
+    IndexBuildPlanRecord rec{};
+    rec.index_build_plan_uuid = info.index_build_plan_uuid;
+    rec.logical_index_id = info.logical_index_id;
+    rec.shadow_index_uuid = info.shadow_index_uuid;
+    rec.resume_anchor_row_uuid =
+        info.has_resume_anchor_row_uuid ? info.resume_anchor_row_uuid : ID{};
+    rec.baseline_schema_epoch = info.baseline_schema_epoch;
+    rec.build_snapshot_xid = info.build_snapshot_xid;
+    rec.has_resume_anchor_row_uuid = info.has_resume_anchor_row_uuid ? 1 : 0;
+    rec.has_resume_payload_json = info.has_resume_payload_json ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+
+    auto store_text = [&](const std::string& text, ID& oid) -> Status {
+        if (text.empty())
+        {
+            oid = ID{};
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        return storeStringInToast(text, xmin, oid, ctx);
+    };
+    status = store_text(info.build_reason, rec.build_reason_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.build_state, rec.build_state_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.resume_payload_json, rec.resume_payload_json_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    return writeRecordToHeapPage(index_build_plan_table_page_, rec, ctx);
+}
+
+auto CatalogManager::updateIndexBuildPlanCatalogState(const ID& index_build_plan_uuid,
+                                                      const std::string& build_state,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (index_build_plan_table_page_ == 0 || isZeroUuidLocal(index_build_plan_uuid) ||
+        !isValidIndexBuildPhaseState(build_state))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "index_build_plan state update requires plan uuid and valid build_state");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto result = findRecordInHeapPage<IndexBuildPlanRecord>(
+        index_build_plan_table_page_,
+        [&index_build_plan_uuid](const IndexBuildPlanRecord& row) {
+            return row.is_valid == 1 && row.index_build_plan_uuid == index_build_plan_uuid;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    IndexBuildPlanRecord updated = result.record;
+    uint64_t xmin = 0;
+    Status status = storeStringInToast(build_state, xmin, updated.build_state_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    return updateRecordInHeapPage(index_build_plan_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::getIndexBuildPlanCatalogEntry(const ID& index_build_plan_uuid,
+                                                   IndexBuildPlanCatalogInfo& info_out,
+                                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (index_build_plan_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto result = findRecordInHeapPage<IndexBuildPlanRecord>(
+        index_build_plan_table_page_,
+        [&index_build_plan_uuid](const IndexBuildPlanRecord& row) {
+            return row.is_valid == 1 && row.index_build_plan_uuid == index_build_plan_uuid;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto load_text = [&](const ID& oid, std::string& out, const char* label) -> Status {
+        out.clear();
+        if (isZeroUuidLocal(oid))
+        {
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        Status status = loadStringFromToast(oid, xmin, out, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, label);
+            return Status::PAGE_CORRUPT;
+        }
+        return Status::OK;
+    };
+
+    info_out = IndexBuildPlanCatalogInfo{};
+    info_out.index_build_plan_uuid = result.record.index_build_plan_uuid;
+    info_out.logical_index_id = result.record.logical_index_id;
+    info_out.shadow_index_uuid = result.record.shadow_index_uuid;
+    info_out.baseline_schema_epoch = result.record.baseline_schema_epoch;
+    info_out.build_snapshot_xid = result.record.build_snapshot_xid;
+    info_out.has_resume_anchor_row_uuid = result.record.has_resume_anchor_row_uuid != 0;
+    info_out.resume_anchor_row_uuid =
+        info_out.has_resume_anchor_row_uuid ? result.record.resume_anchor_row_uuid : ID{};
+    info_out.has_resume_payload_json = result.record.has_resume_payload_json != 0;
+    info_out.is_valid = result.record.is_valid == 1;
+
+    Status status = load_text(result.record.build_reason_oid,
+                              info_out.build_reason,
+                              "index_build_plan.build_reason invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_text(result.record.build_state_oid,
+                       info_out.build_state,
+                       "index_build_plan.build_state invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_text(result.record.resume_payload_json_oid,
+                       info_out.resume_payload_json,
+                       "index_build_plan.resume_payload_json invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (!isValidIndexBuildReason(info_out.build_reason) ||
+        !isValidIndexBuildPhaseState(info_out.build_state))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "index_build_plan enum value invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listIndexBuildPlanCatalogEntries(
+    std::vector<IndexBuildPlanCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (index_build_plan_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    std::vector<IndexBuildPlanRecord> records;
+    auto filter = [](const IndexBuildPlanRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const IndexBuildPlanRecord& row, IndexBuildPlanRecord& out) { out = row; };
+    Status status = readRecordsToVector<IndexBuildPlanRecord, IndexBuildPlanRecord>(
+        index_build_plan_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        IndexBuildPlanCatalogInfo info{};
+        auto load_text = [&](const ID& oid, std::string& out, const char* label) -> Status {
+            out.clear();
+            if (isZeroUuidLocal(oid))
+            {
+                return Status::OK;
+            }
+            uint64_t xmin = 0;
+            Status load_status = loadStringFromToast(oid, xmin, out, ctx);
+            if (load_status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, label);
+                return Status::PAGE_CORRUPT;
+            }
+            return Status::OK;
+        };
+
+        info.index_build_plan_uuid = rec.index_build_plan_uuid;
+        info.logical_index_id = rec.logical_index_id;
+        info.shadow_index_uuid = rec.shadow_index_uuid;
+        info.baseline_schema_epoch = rec.baseline_schema_epoch;
+        info.build_snapshot_xid = rec.build_snapshot_xid;
+        info.has_resume_anchor_row_uuid = rec.has_resume_anchor_row_uuid != 0;
+        info.resume_anchor_row_uuid =
+            info.has_resume_anchor_row_uuid ? rec.resume_anchor_row_uuid : ID{};
+        info.has_resume_payload_json = rec.has_resume_payload_json != 0;
+        info.is_valid = rec.is_valid == 1;
+        status = load_text(rec.build_reason_oid,
+                           info.build_reason,
+                           "index_build_plan.build_reason invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.build_state_oid,
+                           info.build_state,
+                           "index_build_plan.build_state invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.resume_payload_json_oid,
+                           info.resume_payload_json,
+                           "index_build_plan.resume_payload_json invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (!isValidIndexBuildReason(info.build_reason) ||
+            !isValidIndexBuildPhaseState(info.build_state))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "index_build_plan enum value invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const IndexBuildPlanCatalogInfo& lhs, const IndexBuildPlanCatalogInfo& rhs) {
+                  if (lhs.build_snapshot_xid != rhs.build_snapshot_xid)
+                  {
+                      return lhs.build_snapshot_xid > rhs.build_snapshot_xid;
+                  }
+                  return compareUuidBytesLocal(lhs.index_build_plan_uuid, rhs.index_build_plan_uuid) > 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::appendIndexBuildEventCatalogEntry(IndexBuildEventCatalogInfo& info,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.index_build_plan_uuid) ||
+        info.phase_to.empty() ||
+        !isValidIndexBuildPhaseState(info.phase_to))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "index_build_event requires plan uuid and valid phase_to");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.has_phase_from && !isValidIndexBuildPhaseState(info.phase_from))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "index_build_event phase_from invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto plan_result = findRecordInHeapPage<IndexBuildPlanRecord>(
+        index_build_plan_table_page_,
+        [&info](const IndexBuildPlanRecord& row) {
+            return row.is_valid == 1 && row.index_build_plan_uuid == info.index_build_plan_uuid;
+        },
+        ctx);
+    if (plan_result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "index_build_event references missing plan");
+        return Status::NOT_FOUND;
+    }
+
+    if (isZeroUuidLocal(info.index_build_event_uuid))
+    {
+        info.index_build_event_uuid = generateUuidV7();
+    }
+
+    bool page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(index_build_event_table_page_, page_changed, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (page_changed)
+    {
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto duplicate_seq = findRecordInHeapPage<IndexBuildEventRecord>(
+        index_build_event_table_page_,
+        [&info](const IndexBuildEventRecord& row) {
+            return row.is_valid == 1 &&
+                   row.index_build_plan_uuid == info.index_build_plan_uuid &&
+                   row.event_seq == info.event_seq;
+        },
+        ctx);
+    if (duplicate_seq.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "index_build_event event_seq must be unique per plan");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate_seq.status != Status::NOT_FOUND)
+    {
+        return duplicate_seq.status;
+    }
+
+    IndexBuildEventRecord rec{};
+    rec.index_build_event_uuid = info.index_build_event_uuid;
+    rec.index_build_plan_uuid = info.index_build_plan_uuid;
+    rec.event_seq = info.event_seq;
+    rec.event_time = info.event_time == 0 ? catalogNowTicks() : info.event_time;
+    rec.has_phase_from = info.has_phase_from ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+
+    auto store_text = [&](const std::string& text, ID& oid) -> Status {
+        if (text.empty())
+        {
+            oid = ID{};
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        return storeStringInToast(text, xmin, oid, ctx);
+    };
+    status = store_text(info.phase_from, rec.phase_from_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.phase_to, rec.phase_to_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.event_code, rec.event_code_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    info.event_time = rec.event_time;
+    return writeRecordToHeapPage(index_build_event_table_page_, rec, ctx);
+}
+
+auto CatalogManager::listIndexBuildEventCatalogEntries(
+    const ID& index_build_plan_uuid,
+    std::vector<IndexBuildEventCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (index_build_event_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    auto load_text = [&](const ID& oid, std::string& out, const char* label) -> Status {
+        out.clear();
+        if (isZeroUuidLocal(oid))
+        {
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        Status status = loadStringFromToast(oid, xmin, out, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, label);
+            return Status::PAGE_CORRUPT;
+        }
+        return Status::OK;
+    };
+
+    std::vector<IndexBuildEventRecord> records;
+    auto filter = [&index_build_plan_uuid](const IndexBuildEventRecord& row) {
+        return row.is_valid == 1 &&
+               (isZeroUuidLocal(index_build_plan_uuid) ||
+                row.index_build_plan_uuid == index_build_plan_uuid);
+    };
+    auto converter = [](const IndexBuildEventRecord& row, IndexBuildEventRecord& out) { out = row; };
+    Status status = readRecordsToVector<IndexBuildEventRecord, IndexBuildEventRecord>(
+        index_build_event_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        IndexBuildEventCatalogInfo info{};
+        info.index_build_event_uuid = rec.index_build_event_uuid;
+        info.index_build_plan_uuid = rec.index_build_plan_uuid;
+        info.event_seq = rec.event_seq;
+        info.event_time = rec.event_time;
+        info.has_phase_from = rec.has_phase_from != 0;
+        info.is_valid = rec.is_valid == 1;
+        status = load_text(rec.phase_from_oid, info.phase_from, "index_build_event.phase_from invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.phase_to_oid, info.phase_to, "index_build_event.phase_to invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.event_code_oid, info.event_code, "index_build_event.event_code invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (!isValidIndexBuildPhaseState(info.phase_to) ||
+            (info.has_phase_from && !isValidIndexBuildPhaseState(info.phase_from)))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "index_build_event enum value invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const IndexBuildEventCatalogInfo& lhs, const IndexBuildEventCatalogInfo& rhs) {
+                  if (lhs.event_seq != rhs.event_seq)
+                  {
+                      return lhs.event_seq < rhs.event_seq;
+                  }
+                  return compareUuidBytesLocal(lhs.index_build_event_uuid, rhs.index_build_event_uuid) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::upsertIndexBuildProgressCatalogEntry(
+    const IndexBuildProgressCatalogInfo& info,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.index_build_plan_uuid) ||
+        info.restart_disposition.empty() ||
+        !isValidIndexBuildRestartDisposition(info.restart_disposition))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "index_build_progress requires plan uuid and valid restart_disposition");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto plan_result = findRecordInHeapPage<IndexBuildPlanRecord>(
+        index_build_plan_table_page_,
+        [&info](const IndexBuildPlanRecord& row) {
+            return row.is_valid == 1 && row.index_build_plan_uuid == info.index_build_plan_uuid;
+        },
+        ctx);
+    if (plan_result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "index_build_progress references missing plan");
+        return Status::NOT_FOUND;
+    }
+
+    bool page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(index_build_progress_table_page_, page_changed, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (page_changed)
+    {
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    IndexBuildProgressRecord rec{};
+    rec.index_build_progress_uuid =
+        isZeroUuidLocal(info.index_build_progress_uuid)
+            ? generateUuidV7()
+            : info.index_build_progress_uuid;
+    rec.index_build_plan_uuid = info.index_build_plan_uuid;
+    rec.last_resume_row_uuid = info.has_last_resume_row_uuid ? info.last_resume_row_uuid : ID{};
+    rec.rows_scanned = info.rows_scanned;
+    rec.rows_applied = info.rows_applied;
+    rec.side_log_records_applied = info.side_log_records_applied;
+    rec.has_last_resume_row_uuid = info.has_last_resume_row_uuid ? 1 : 0;
+    rec.partial_chunk_rewind_required = info.partial_chunk_rewind_required ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+
+    uint64_t xmin = 0;
+    status = storeStringInToast(info.restart_disposition, xmin, rec.restart_disposition_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto existing = findRecordInHeapPage<IndexBuildProgressRecord>(
+        index_build_progress_table_page_,
+        [&info](const IndexBuildProgressRecord& row) {
+            return row.is_valid == 1 && row.index_build_plan_uuid == info.index_build_plan_uuid;
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.index_build_progress_uuid = existing.record.index_build_progress_uuid;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const IndexBuildProgressRecord& row) {
+        return row.is_valid == 1 && row.index_build_plan_uuid == info.index_build_plan_uuid;
+    };
+    return updateRecordInHeapPage(index_build_progress_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getIndexBuildProgressCatalogEntry(const ID& index_build_plan_uuid,
+                                                       IndexBuildProgressCatalogInfo& info_out,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (index_build_progress_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto result = findRecordInHeapPage<IndexBuildProgressRecord>(
+        index_build_progress_table_page_,
+        [&index_build_plan_uuid](const IndexBuildProgressRecord& row) {
+            return row.is_valid == 1 && row.index_build_plan_uuid == index_build_plan_uuid;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = IndexBuildProgressCatalogInfo{};
+    info_out.index_build_progress_uuid = result.record.index_build_progress_uuid;
+    info_out.index_build_plan_uuid = result.record.index_build_plan_uuid;
+    info_out.rows_scanned = result.record.rows_scanned;
+    info_out.rows_applied = result.record.rows_applied;
+    info_out.side_log_records_applied = result.record.side_log_records_applied;
+    info_out.has_last_resume_row_uuid = result.record.has_last_resume_row_uuid != 0;
+    info_out.last_resume_row_uuid =
+        info_out.has_last_resume_row_uuid ? result.record.last_resume_row_uuid : ID{};
+    info_out.partial_chunk_rewind_required = result.record.partial_chunk_rewind_required != 0;
+    info_out.is_valid = result.record.is_valid == 1;
+
+    uint64_t xmin = 0;
+    Status status = loadStringFromToast(
+        result.record.restart_disposition_oid, xmin, info_out.restart_disposition, ctx);
+    if (status != Status::OK ||
+        !isValidIndexBuildRestartDisposition(info_out.restart_disposition))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "index_build_progress restart_disposition invalid");
+        return Status::PAGE_CORRUPT;
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::upsertIndexBuildCutoverGuardCatalogEntry(
+    const IndexBuildCutoverGuardCatalogInfo& info,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.index_build_plan_uuid) ||
+        info.guard_state.empty() ||
+        !isValidIndexBuildGuardState(info.guard_state))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "index_build_cutover_guard requires plan uuid and valid guard_state");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto plan_result = findRecordInHeapPage<IndexBuildPlanRecord>(
+        index_build_plan_table_page_,
+        [&info](const IndexBuildPlanRecord& row) {
+            return row.is_valid == 1 && row.index_build_plan_uuid == info.index_build_plan_uuid;
+        },
+        ctx);
+    if (plan_result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "index_build_cutover_guard references missing plan");
+        return Status::NOT_FOUND;
+    }
+
+    bool page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(
+        index_build_cutover_guard_table_page_, page_changed, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (page_changed)
+    {
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    IndexBuildCutoverGuardRecord rec{};
+    rec.index_build_cutover_guard_uuid =
+        isZeroUuidLocal(info.index_build_cutover_guard_uuid)
+            ? generateUuidV7()
+            : info.index_build_cutover_guard_uuid;
+    rec.index_build_plan_uuid = info.index_build_plan_uuid;
+    rec.expected_schema_epoch = info.expected_schema_epoch;
+    rec.validation_manifest_hash = info.validation_manifest_hash;
+    rec.checked_at = info.checked_at == 0 ? catalogNowTicks() : info.checked_at;
+    rec.side_log_drained = info.side_log_drained ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+
+    uint64_t xmin = 0;
+    status = storeStringInToast(info.guard_state, xmin, rec.guard_state_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto existing = findRecordInHeapPage<IndexBuildCutoverGuardRecord>(
+        index_build_cutover_guard_table_page_,
+        [&info](const IndexBuildCutoverGuardRecord& row) {
+            return row.is_valid == 1 && row.index_build_plan_uuid == info.index_build_plan_uuid;
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.index_build_cutover_guard_uuid = existing.record.index_build_cutover_guard_uuid;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const IndexBuildCutoverGuardRecord& row) {
+        return row.is_valid == 1 && row.index_build_plan_uuid == info.index_build_plan_uuid;
+    };
+    return updateRecordInHeapPage(index_build_cutover_guard_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getIndexBuildCutoverGuardCatalogEntry(
+    const ID& index_build_plan_uuid,
+    IndexBuildCutoverGuardCatalogInfo& info_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (index_build_cutover_guard_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto result = findRecordInHeapPage<IndexBuildCutoverGuardRecord>(
+        index_build_cutover_guard_table_page_,
+        [&index_build_plan_uuid](const IndexBuildCutoverGuardRecord& row) {
+            return row.is_valid == 1 && row.index_build_plan_uuid == index_build_plan_uuid;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = IndexBuildCutoverGuardCatalogInfo{};
+    info_out.index_build_cutover_guard_uuid = result.record.index_build_cutover_guard_uuid;
+    info_out.index_build_plan_uuid = result.record.index_build_plan_uuid;
+    info_out.expected_schema_epoch = result.record.expected_schema_epoch;
+    info_out.side_log_drained = result.record.side_log_drained != 0;
+    info_out.validation_manifest_hash = result.record.validation_manifest_hash;
+    info_out.checked_at = result.record.checked_at;
+    info_out.is_valid = result.record.is_valid == 1;
+
+    uint64_t xmin = 0;
+    Status status = loadStringFromToast(
+        result.record.guard_state_oid, xmin, info_out.guard_state, ctx);
+    if (status != Status::OK || !isValidIndexBuildGuardState(info_out.guard_state))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "index_build_cutover_guard guard_state invalid");
+        return Status::PAGE_CORRUPT;
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::appendBulkLoadPlanCatalogEntry(BulkLoadPlanCatalogInfo& info,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.object_uuid) ||
+        !isValidBulkLoadLane(info.ingest_lane) ||
+        info.load_kind.empty() ||
+        info.source_format.empty() ||
+        !isValidBulkLoadPhaseState(info.phase_state))
+    {
+        SET_ERROR_CONTEXT(
+            ctx,
+            Status::INVALID_ARGUMENT,
+            "bulk_load_plan requires object uuid, valid ingest_lane, load_kind, source_format, and valid phase_state");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto validate_text = [&](const std::string& text, size_t capacity, const char* label) -> Status {
+        ErrorContext local_ctx;
+        Status status = UTF8Utils::validateStorageCapacity(text, capacity, capacity, &local_ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, label);
+        }
+        return status;
+    };
+    Status status = validate_text(info.ingest_lane, 64, "bulk_load_plan.ingest_lane too long");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = validate_text(info.load_kind, 64, "bulk_load_plan.load_kind too long");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = validate_text(info.source_format, 32, "bulk_load_plan.source_format too long");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = validate_text(info.phase_state, 64, "bulk_load_plan.phase_state too long");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    if (isZeroUuidLocal(info.bulk_load_plan_uuid))
+    {
+        info.bulk_load_plan_uuid = generateUuidV7();
+    }
+
+    bool page_changed = false;
+    status = ensureStandaloneCatalogRuntimePage(bulk_load_plan_table_page_, page_changed, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (page_changed)
+    {
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto duplicate = findRecordInHeapPage<BulkLoadPlanRecord>(
+        bulk_load_plan_table_page_,
+        [&info](const BulkLoadPlanRecord& row) {
+            return row.is_valid == 1 && row.bulk_load_plan_uuid == info.bulk_load_plan_uuid;
+        },
+        ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "bulk_load_plan rows are immutable");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
+
+    BulkLoadPlanRecord rec{};
+    rec.bulk_load_plan_uuid = info.bulk_load_plan_uuid;
+    rec.object_uuid = info.object_uuid;
+    rec.requested_by_uuid = info.requested_by_uuid;
+    rec.requested_at = info.requested_at == 0 ? catalogNowTicks() : info.requested_at;
+    rec.expected_row_count = info.has_expected_row_count ? info.expected_row_count : 0;
+    rec.has_expected_row_count = info.has_expected_row_count ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+
+    auto store_text = [&](const std::string& text, ID& oid) -> Status {
+        if (text.empty())
+        {
+            oid = ID{};
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        return storeStringInToast(text, xmin, oid, ctx);
+    };
+    status = store_text(info.ingest_lane, rec.ingest_lane_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.load_kind, rec.load_kind_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.source_format, rec.source_format_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.phase_state, rec.phase_state_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    info.requested_at = rec.requested_at;
+    return writeRecordToHeapPage(bulk_load_plan_table_page_, rec, ctx);
+}
+
+auto CatalogManager::updateBulkLoadPlanCatalogPhaseState(const ID& bulk_load_plan_uuid,
+                                                         const std::string& phase_state,
+                                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(bulk_load_plan_uuid) ||
+        phase_state.empty() ||
+        !isValidBulkLoadPhaseState(phase_state))
+    {
+        SET_ERROR_CONTEXT(
+            ctx,
+            Status::INVALID_ARGUMENT,
+            "bulk_load_plan phase update requires plan uuid and valid phase_state");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (bulk_load_plan_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto existing = findRecordInHeapPage<BulkLoadPlanRecord>(
+        bulk_load_plan_table_page_,
+        [&bulk_load_plan_uuid](const BulkLoadPlanRecord& row) {
+            return row.is_valid == 1 && row.bulk_load_plan_uuid == bulk_load_plan_uuid;
+        },
+        ctx);
+    if (existing.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    ErrorContext local_ctx;
+    Status status = UTF8Utils::validateStorageCapacity(
+        phase_state, 64, 64, &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "bulk_load_plan.phase_state too long");
+        return status;
+    }
+
+    BulkLoadPlanRecord updated = existing.record;
+    uint64_t xmin = 0;
+    status = storeStringInToast(phase_state, xmin, updated.phase_state_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto matcher = [&bulk_load_plan_uuid](const BulkLoadPlanRecord& row) {
+        return row.is_valid == 1 && row.bulk_load_plan_uuid == bulk_load_plan_uuid;
+    };
+    return updateRecordInHeapPage(bulk_load_plan_table_page_, matcher, updated, ctx);
+}
+
+auto CatalogManager::getBulkLoadPlanCatalogEntry(const ID& bulk_load_plan_uuid,
+                                                 BulkLoadPlanCatalogInfo& info_out,
+                                                 ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (bulk_load_plan_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto result = findRecordInHeapPage<BulkLoadPlanRecord>(
+        bulk_load_plan_table_page_,
+        [&bulk_load_plan_uuid](const BulkLoadPlanRecord& row) {
+            return row.is_valid == 1 && row.bulk_load_plan_uuid == bulk_load_plan_uuid;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto load_text = [&](const ID& oid, std::string& out, const char* label) -> Status {
+        out.clear();
+        if (isZeroUuidLocal(oid))
+        {
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        Status status = loadStringFromToast(oid, xmin, out, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, label);
+            return Status::PAGE_CORRUPT;
+        }
+        return Status::OK;
+    };
+
+    info_out = BulkLoadPlanCatalogInfo{};
+    info_out.bulk_load_plan_uuid = result.record.bulk_load_plan_uuid;
+    info_out.object_uuid = result.record.object_uuid;
+    info_out.requested_by_uuid = result.record.requested_by_uuid;
+    info_out.requested_at = result.record.requested_at;
+    info_out.has_expected_row_count = result.record.has_expected_row_count != 0;
+    info_out.expected_row_count = result.record.expected_row_count;
+    info_out.is_valid = result.record.is_valid == 1;
+
+    Status status = load_text(result.record.ingest_lane_oid,
+                              info_out.ingest_lane,
+                              "bulk_load_plan.ingest_lane invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_text(result.record.load_kind_oid,
+                       info_out.load_kind,
+                       "bulk_load_plan.load_kind invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_text(result.record.source_format_oid,
+                       info_out.source_format,
+                       "bulk_load_plan.source_format invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_text(result.record.phase_state_oid,
+                       info_out.phase_state,
+                       "bulk_load_plan.phase_state invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (!isValidBulkLoadLane(info_out.ingest_lane) ||
+        !isValidBulkLoadPhaseState(info_out.phase_state))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "bulk_load_plan enum value invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listBulkLoadPlanCatalogEntries(
+    std::vector<BulkLoadPlanCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (bulk_load_plan_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    std::vector<BulkLoadPlanRecord> records;
+    auto filter = [](const BulkLoadPlanRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const BulkLoadPlanRecord& row, BulkLoadPlanRecord& out) { out = row; };
+    Status status = readRecordsToVector<BulkLoadPlanRecord, BulkLoadPlanRecord>(
+        bulk_load_plan_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        BulkLoadPlanCatalogInfo info{};
+        auto load_text = [&](const ID& oid, std::string& out, const char* label) -> Status {
+            out.clear();
+            if (isZeroUuidLocal(oid))
+            {
+                return Status::OK;
+            }
+            uint64_t xmin = 0;
+            Status load_status = loadStringFromToast(oid, xmin, out, ctx);
+            if (load_status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, label);
+                return Status::PAGE_CORRUPT;
+            }
+            return Status::OK;
+        };
+
+        info.bulk_load_plan_uuid = rec.bulk_load_plan_uuid;
+        info.object_uuid = rec.object_uuid;
+        info.requested_by_uuid = rec.requested_by_uuid;
+        info.requested_at = rec.requested_at;
+        info.has_expected_row_count = rec.has_expected_row_count != 0;
+        info.expected_row_count = rec.expected_row_count;
+        info.is_valid = rec.is_valid == 1;
+        status = load_text(rec.ingest_lane_oid, info.ingest_lane, "bulk_load_plan.ingest_lane invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.load_kind_oid, info.load_kind, "bulk_load_plan.load_kind invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.source_format_oid,
+                           info.source_format,
+                           "bulk_load_plan.source_format invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.phase_state_oid,
+                           info.phase_state,
+                           "bulk_load_plan.phase_state invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (!isValidBulkLoadLane(info.ingest_lane) ||
+            !isValidBulkLoadPhaseState(info.phase_state))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "bulk_load_plan enum value invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const BulkLoadPlanCatalogInfo& lhs, const BulkLoadPlanCatalogInfo& rhs) {
+                  if (lhs.requested_at != rhs.requested_at)
+                  {
+                      return lhs.requested_at > rhs.requested_at;
+                  }
+                  return compareUuidBytesLocal(lhs.bulk_load_plan_uuid, rhs.bulk_load_plan_uuid) > 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::appendBulkLoadEventCatalogEntry(BulkLoadEventCatalogInfo& info,
+                                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.bulk_load_plan_uuid) ||
+        info.phase_to.empty() ||
+        !isValidBulkLoadPhaseState(info.phase_to) ||
+        !isValidBulkLoadEventState(info.event_state))
+    {
+        SET_ERROR_CONTEXT(
+            ctx,
+            Status::INVALID_ARGUMENT,
+            "bulk_load_event requires plan uuid, valid phase_to, and valid event_state");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.has_phase_from && !isValidBulkLoadPhaseState(info.phase_from))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "bulk_load_event phase_from invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto plan_result = findRecordInHeapPage<BulkLoadPlanRecord>(
+        bulk_load_plan_table_page_,
+        [&info](const BulkLoadPlanRecord& row) {
+            return row.is_valid == 1 && row.bulk_load_plan_uuid == info.bulk_load_plan_uuid;
+        },
+        ctx);
+    if (plan_result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "bulk_load_event references missing plan");
+        return Status::NOT_FOUND;
+    }
+
+    if (isZeroUuidLocal(info.bulk_load_event_uuid))
+    {
+        info.bulk_load_event_uuid = generateUuidV7();
+    }
+
+    bool page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(bulk_load_event_table_page_, page_changed, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (page_changed)
+    {
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto duplicate_seq = findRecordInHeapPage<BulkLoadEventRecord>(
+        bulk_load_event_table_page_,
+        [&info](const BulkLoadEventRecord& row) {
+            return row.is_valid == 1 &&
+                   row.bulk_load_plan_uuid == info.bulk_load_plan_uuid &&
+                   row.event_seq == info.event_seq;
+        },
+        ctx);
+    if (duplicate_seq.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "bulk_load_event event_seq must be unique per plan");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate_seq.status != Status::NOT_FOUND)
+    {
+        return duplicate_seq.status;
+    }
+
+    BulkLoadEventRecord rec{};
+    rec.bulk_load_event_uuid = info.bulk_load_event_uuid;
+    rec.bulk_load_plan_uuid = info.bulk_load_plan_uuid;
+    rec.event_seq = info.event_seq;
+    rec.event_time = info.event_time == 0 ? catalogNowTicks() : info.event_time;
+    rec.has_phase_from = info.has_phase_from ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+
+    auto store_text = [&](const std::string& text, ID& oid) -> Status {
+        if (text.empty())
+        {
+            oid = ID{};
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        return storeStringInToast(text, xmin, oid, ctx);
+    };
+    status = store_text(info.phase_from, rec.phase_from_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.phase_to, rec.phase_to_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.event_state, rec.event_state_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_text(info.event_code, rec.event_code_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    info.event_time = rec.event_time;
+    return writeRecordToHeapPage(bulk_load_event_table_page_, rec, ctx);
+}
+
+auto CatalogManager::listBulkLoadEventCatalogEntries(
+    const ID& bulk_load_plan_uuid,
+    std::vector<BulkLoadEventCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (bulk_load_event_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    auto load_text = [&](const ID& oid, std::string& out, const char* label) -> Status {
+        out.clear();
+        if (isZeroUuidLocal(oid))
+        {
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        Status status = loadStringFromToast(oid, xmin, out, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, label);
+            return Status::PAGE_CORRUPT;
+        }
+        return Status::OK;
+    };
+
+    std::vector<BulkLoadEventRecord> records;
+    auto filter = [&bulk_load_plan_uuid](const BulkLoadEventRecord& row) {
+        return row.is_valid == 1 &&
+               (isZeroUuidLocal(bulk_load_plan_uuid) ||
+                row.bulk_load_plan_uuid == bulk_load_plan_uuid);
+    };
+    auto converter = [](const BulkLoadEventRecord& row, BulkLoadEventRecord& out) { out = row; };
+    Status status = readRecordsToVector<BulkLoadEventRecord, BulkLoadEventRecord>(
+        bulk_load_event_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        BulkLoadEventCatalogInfo info{};
+        info.bulk_load_event_uuid = rec.bulk_load_event_uuid;
+        info.bulk_load_plan_uuid = rec.bulk_load_plan_uuid;
+        info.event_seq = rec.event_seq;
+        info.event_time = rec.event_time;
+        info.has_phase_from = rec.has_phase_from != 0;
+        info.is_valid = rec.is_valid == 1;
+        status = load_text(rec.phase_from_oid, info.phase_from, "bulk_load_event.phase_from invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.phase_to_oid, info.phase_to, "bulk_load_event.phase_to invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.event_state_oid, info.event_state, "bulk_load_event.event_state invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_text(rec.event_code_oid, info.event_code, "bulk_load_event.event_code invalid");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (!isValidBulkLoadPhaseState(info.phase_to) ||
+            (info.has_phase_from && !isValidBulkLoadPhaseState(info.phase_from)) ||
+            !isValidBulkLoadEventState(info.event_state))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "bulk_load_event enum value invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const BulkLoadEventCatalogInfo& lhs, const BulkLoadEventCatalogInfo& rhs) {
+                  if (lhs.event_seq != rhs.event_seq)
+                  {
+                      return lhs.event_seq < rhs.event_seq;
+                  }
+                  return compareUuidBytesLocal(lhs.bulk_load_event_uuid, rhs.bulk_load_event_uuid) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::upsertBulkLoadProgressCatalogEntry(
+    const BulkLoadProgressCatalogInfo& info,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.bulk_load_plan_uuid) ||
+        info.restart_disposition.empty() ||
+        !isValidBulkLoadRestartDisposition(info.restart_disposition))
+    {
+        SET_ERROR_CONTEXT(
+            ctx,
+            Status::INVALID_ARGUMENT,
+            "bulk_load_progress requires plan uuid and valid restart_disposition");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto plan_result = findRecordInHeapPage<BulkLoadPlanRecord>(
+        bulk_load_plan_table_page_,
+        [&info](const BulkLoadPlanRecord& row) {
+            return row.is_valid == 1 && row.bulk_load_plan_uuid == info.bulk_load_plan_uuid;
+        },
+        ctx);
+    if (plan_result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "bulk_load_progress references missing plan");
+        return Status::NOT_FOUND;
+    }
+
+    bool page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(
+        bulk_load_progress_table_page_, page_changed, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (page_changed)
+    {
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    BulkLoadProgressRecord rec{};
+    rec.bulk_load_progress_uuid =
+        isZeroUuidLocal(info.bulk_load_progress_uuid)
+            ? generateUuidV7()
+            : info.bulk_load_progress_uuid;
+    rec.bulk_load_plan_uuid = info.bulk_load_plan_uuid;
+    rec.worker_generation = info.worker_generation;
+    rec.scanned_row_count = info.scanned_row_count;
+    rec.written_row_count = info.written_row_count;
+    rec.validated_row_count = info.validated_row_count;
+    rec.last_heartbeat_at = info.has_last_heartbeat_at ? info.last_heartbeat_at : 0;
+    rec.partial_chunk_rewind_required = info.partial_chunk_rewind_required ? 1 : 0;
+    rec.has_last_heartbeat_at = info.has_last_heartbeat_at ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+
+    uint64_t xmin = 0;
+    status = storeStringInToast(info.restart_disposition, xmin, rec.restart_disposition_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto existing = findRecordInHeapPage<BulkLoadProgressRecord>(
+        bulk_load_progress_table_page_,
+        [&info](const BulkLoadProgressRecord& row) {
+            return row.is_valid == 1 && row.bulk_load_plan_uuid == info.bulk_load_plan_uuid;
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.bulk_load_progress_uuid = existing.record.bulk_load_progress_uuid;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const BulkLoadProgressRecord& row) {
+        return row.is_valid == 1 && row.bulk_load_plan_uuid == info.bulk_load_plan_uuid;
+    };
+    return updateRecordInHeapPage(bulk_load_progress_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getBulkLoadProgressCatalogEntry(
+    const ID& bulk_load_plan_uuid,
+    BulkLoadProgressCatalogInfo& info_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (bulk_load_progress_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto result = findRecordInHeapPage<BulkLoadProgressRecord>(
+        bulk_load_progress_table_page_,
+        [&bulk_load_plan_uuid](const BulkLoadProgressRecord& row) {
+            return row.is_valid == 1 && row.bulk_load_plan_uuid == bulk_load_plan_uuid;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = BulkLoadProgressCatalogInfo{};
+    info_out.bulk_load_progress_uuid = result.record.bulk_load_progress_uuid;
+    info_out.bulk_load_plan_uuid = result.record.bulk_load_plan_uuid;
+    info_out.worker_generation = result.record.worker_generation;
+    info_out.scanned_row_count = result.record.scanned_row_count;
+    info_out.written_row_count = result.record.written_row_count;
+    info_out.validated_row_count = result.record.validated_row_count;
+    info_out.partial_chunk_rewind_required = result.record.partial_chunk_rewind_required != 0;
+    info_out.has_last_heartbeat_at = result.record.has_last_heartbeat_at != 0;
+    info_out.last_heartbeat_at = result.record.last_heartbeat_at;
+    info_out.is_valid = result.record.is_valid == 1;
+
+    uint64_t xmin = 0;
+    Status status = loadStringFromToast(
+        result.record.restart_disposition_oid, xmin, info_out.restart_disposition, ctx);
+    if (status != Status::OK ||
+        !isValidBulkLoadRestartDisposition(info_out.restart_disposition))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "bulk_load_progress restart_disposition invalid");
+        return Status::PAGE_CORRUPT;
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::upsertBulkLoadCutoverGuardCatalogEntry(
+    const BulkLoadCutoverGuardCatalogInfo& info,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.bulk_load_plan_uuid) ||
+        info.guard_state.empty() ||
+        !isValidBulkLoadGuardState(info.guard_state))
+    {
+        SET_ERROR_CONTEXT(
+            ctx,
+            Status::INVALID_ARGUMENT,
+            "bulk_load_cutover_guard requires plan uuid and valid guard_state");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto plan_result = findRecordInHeapPage<BulkLoadPlanRecord>(
+        bulk_load_plan_table_page_,
+        [&info](const BulkLoadPlanRecord& row) {
+            return row.is_valid == 1 && row.bulk_load_plan_uuid == info.bulk_load_plan_uuid;
+        },
+        ctx);
+    if (plan_result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "bulk_load_cutover_guard references missing plan");
+        return Status::NOT_FOUND;
+    }
+
+    bool page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(
+        bulk_load_cutover_guard_table_page_, page_changed, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (page_changed)
+    {
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    BulkLoadCutoverGuardRecord rec{};
+    rec.bulk_load_cutover_guard_uuid =
+        isZeroUuidLocal(info.bulk_load_cutover_guard_uuid)
+            ? generateUuidV7()
+            : info.bulk_load_cutover_guard_uuid;
+    rec.bulk_load_plan_uuid = info.bulk_load_plan_uuid;
+    rec.expected_pre_cutover_schema_epoch = info.expected_pre_cutover_schema_epoch;
+    rec.validation_manifest_hash = info.validation_manifest_hash;
+    rec.checked_at = info.checked_at == 0 ? catalogNowTicks() : info.checked_at;
+    rec.dependency_refresh_complete = info.dependency_refresh_complete ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+
+    uint64_t xmin = 0;
+    status = storeStringInToast(info.guard_state, xmin, rec.guard_state_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto existing = findRecordInHeapPage<BulkLoadCutoverGuardRecord>(
+        bulk_load_cutover_guard_table_page_,
+        [&info](const BulkLoadCutoverGuardRecord& row) {
+            return row.is_valid == 1 && row.bulk_load_plan_uuid == info.bulk_load_plan_uuid;
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.bulk_load_cutover_guard_uuid = existing.record.bulk_load_cutover_guard_uuid;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const BulkLoadCutoverGuardRecord& row) {
+        return row.is_valid == 1 && row.bulk_load_plan_uuid == info.bulk_load_plan_uuid;
+    };
+    return updateRecordInHeapPage(bulk_load_cutover_guard_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getBulkLoadCutoverGuardCatalogEntry(
+    const ID& bulk_load_plan_uuid,
+    BulkLoadCutoverGuardCatalogInfo& info_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (bulk_load_cutover_guard_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto result = findRecordInHeapPage<BulkLoadCutoverGuardRecord>(
+        bulk_load_cutover_guard_table_page_,
+        [&bulk_load_plan_uuid](const BulkLoadCutoverGuardRecord& row) {
+            return row.is_valid == 1 && row.bulk_load_plan_uuid == bulk_load_plan_uuid;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = BulkLoadCutoverGuardCatalogInfo{};
+    info_out.bulk_load_cutover_guard_uuid = result.record.bulk_load_cutover_guard_uuid;
+    info_out.bulk_load_plan_uuid = result.record.bulk_load_plan_uuid;
+    info_out.expected_pre_cutover_schema_epoch = result.record.expected_pre_cutover_schema_epoch;
+    info_out.validation_manifest_hash = result.record.validation_manifest_hash;
+    info_out.dependency_refresh_complete = result.record.dependency_refresh_complete != 0;
+    info_out.checked_at = result.record.checked_at;
+    info_out.is_valid = result.record.is_valid == 1;
+
+    uint64_t xmin = 0;
+    Status status = loadStringFromToast(
+        result.record.guard_state_oid, xmin, info_out.guard_state, ctx);
+    if (status != Status::OK || !isValidBulkLoadGuardState(info_out.guard_state))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "bulk_load_cutover_guard guard_state invalid");
+        return Status::PAGE_CORRUPT;
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::upsertMemoryGrantFeedbackCatalogEntry(
+    const MemoryGrantFeedbackCatalogInfo& info,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (info.grant_key_hash == 0 ||
+        isZeroUuidLocal(info.database_uuid) ||
+        isZeroUuidLocal(info.schema_root_uuid) ||
+        info.operator_kind.empty() ||
+        !isValidMemoryGrantFeedbackState(info.state))
+    {
+        SET_ERROR_CONTEXT(
+            ctx,
+            Status::INVALID_ARGUMENT,
+            "memory_grant_feedback requires grant_key_hash, database_uuid, schema_root_uuid, operator_kind, and valid state");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (info.p50_bytes > info.p90_bytes || info.p90_bytes > info.peak_bytes)
+    {
+        SET_ERROR_CONTEXT(
+            ctx,
+            Status::INVALID_ARGUMENT,
+            "memory_grant_feedback percentiles must satisfy p50 <= p90 <= peak");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto validate_text = [&](const std::string& text, size_t capacity, const char* label) -> Status {
+        ErrorContext local_ctx;
+        Status status = UTF8Utils::validateStorageCapacity(text, capacity, capacity, &local_ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, label);
+        }
+        return status;
+    };
+
+    Status status = validate_text(info.operator_kind,
+                                  sizeof(MemoryGrantFeedbackRecord::operator_kind) - 1,
+                                  "memory_grant_feedback.operator_kind too long");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = validate_text(info.state,
+                           sizeof(MemoryGrantFeedbackRecord::state) - 1,
+                           "memory_grant_feedback.state too long");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    bool page_changed = false;
+    status = ensureStandaloneCatalogRuntimePage(memory_grant_feedback_table_page_, page_changed, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (page_changed)
+    {
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto existing = findRecordInHeapPage<MemoryGrantFeedbackRecord>(
+        memory_grant_feedback_table_page_,
+        [&info](const MemoryGrantFeedbackRecord& row) {
+            return row.is_valid == 1 && row.grant_key_hash == info.grant_key_hash;
+        },
+        ctx);
+    if (existing.status != Status::OK && existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    MemoryGrantFeedbackCatalogInfo row = info;
+    const uint64_t now = catalogNowTicks();
+    if (existing.status == Status::OK)
+    {
+        row.grant_feedback_uuid = existing.record.grant_feedback_uuid;
+        row.created_time = existing.record.created_time;
+    }
+    else
+    {
+        if (isZeroUuidLocal(row.grant_feedback_uuid))
+        {
+            row.grant_feedback_uuid = generateUuidV7();
+        }
+        if (row.created_time == 0)
+        {
+            row.created_time = now;
+        }
+    }
+    if (row.updated_at == 0)
+    {
+        row.updated_at = now;
+    }
+    if (row.last_modified_time == 0)
+    {
+        row.last_modified_time = now;
+    }
+
+    MemoryGrantFeedbackRecord rec{};
+    rec.grant_feedback_uuid = row.grant_feedback_uuid;
+    rec.grant_key_hash = row.grant_key_hash;
+    rec.database_uuid = row.database_uuid;
+    rec.schema_root_uuid = row.schema_root_uuid;
+    rec.sample_count = row.sample_count;
+    rec.last_grant_bytes = row.last_grant_bytes;
+    rec.p50_bytes = row.p50_bytes;
+    rec.p90_bytes = row.p90_bytes;
+    rec.peak_bytes = row.peak_bytes;
+    rec.spill_count = row.spill_count;
+    rec.cancel_count = row.cancel_count;
+    rec.oscillation_count = row.oscillation_count;
+    rec.underuse_streak = row.underuse_streak;
+    rec.last_adjustment_direction = row.last_adjustment_direction;
+    rec.oscillation_disable_count = row.oscillation_disable_count;
+    rec.updated_at = row.updated_at;
+    rec.is_valid = row.is_valid ? 1 : 0;
+    rec.created_time = row.created_time;
+    rec.last_modified_time = row.last_modified_time;
+
+    std::memcpy(rec.operator_kind, row.operator_kind.c_str(), row.operator_kind.size());
+    std::memcpy(rec.state, row.state.c_str(), row.state.size());
+
+    auto matcher = [&row](const MemoryGrantFeedbackRecord& existing_row) {
+        return existing_row.is_valid == 1 && existing_row.grant_key_hash == row.grant_key_hash;
+    };
+    return updateRecordInHeapPage(memory_grant_feedback_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getMemoryGrantFeedbackCatalogEntry(
+    uint64_t grant_key_hash,
+    MemoryGrantFeedbackCatalogInfo& info_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (memory_grant_feedback_table_page_ == 0 || grant_key_hash == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto result = findRecordInHeapPage<MemoryGrantFeedbackRecord>(
+        memory_grant_feedback_table_page_,
+        [grant_key_hash](const MemoryGrantFeedbackRecord& row) {
+            return row.is_valid == 1 && row.grant_key_hash == grant_key_hash;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto load_inline_text = [&](const char* storage,
+                                size_t capacity,
+                                std::string& out,
+                                const char* label) -> Status {
+        const size_t len = strnlen(storage, capacity);
+        if (len >= capacity)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, label);
+            return Status::PAGE_CORRUPT;
+        }
+        out.assign(storage, len);
+        return Status::OK;
+    };
+
+    info_out = MemoryGrantFeedbackCatalogInfo{};
+    info_out.grant_feedback_uuid = result.record.grant_feedback_uuid;
+    info_out.grant_key_hash = result.record.grant_key_hash;
+    info_out.database_uuid = result.record.database_uuid;
+    info_out.schema_root_uuid = result.record.schema_root_uuid;
+    info_out.sample_count = result.record.sample_count;
+    info_out.last_grant_bytes = result.record.last_grant_bytes;
+    info_out.p50_bytes = result.record.p50_bytes;
+    info_out.p90_bytes = result.record.p90_bytes;
+    info_out.peak_bytes = result.record.peak_bytes;
+    info_out.spill_count = result.record.spill_count;
+    info_out.cancel_count = result.record.cancel_count;
+    info_out.oscillation_count = result.record.oscillation_count;
+    info_out.underuse_streak = result.record.underuse_streak;
+    info_out.last_adjustment_direction =
+        result.record.last_adjustment_direction;
+    info_out.oscillation_disable_count =
+        result.record.oscillation_disable_count;
+    info_out.updated_at = result.record.updated_at;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    Status status = load_inline_text(result.record.operator_kind,
+                                     sizeof(result.record.operator_kind),
+                                     info_out.operator_kind,
+                                     "memory_grant_feedback.operator_kind invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_inline_text(result.record.state,
+                              sizeof(result.record.state),
+                              info_out.state,
+                              "memory_grant_feedback.state invalid");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (!isValidMemoryGrantFeedbackState(info_out.state))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "memory_grant_feedback state invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listMemoryGrantFeedbackCatalogEntries(
+    std::vector<MemoryGrantFeedbackCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (memory_grant_feedback_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    std::vector<MemoryGrantFeedbackRecord> records;
+    auto filter = [](const MemoryGrantFeedbackRecord& row) {
+        return row.is_valid == 1;
+    };
+    auto converter = [](const MemoryGrantFeedbackRecord& row, MemoryGrantFeedbackRecord& out) {
+        out = row;
+    };
+    Status status = readRecordsToVector<MemoryGrantFeedbackRecord, MemoryGrantFeedbackRecord>(
+        memory_grant_feedback_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& record : records)
+    {
+        MemoryGrantFeedbackCatalogInfo info{};
+        info.grant_feedback_uuid = record.grant_feedback_uuid;
+        info.grant_key_hash = record.grant_key_hash;
+        info.database_uuid = record.database_uuid;
+        info.schema_root_uuid = record.schema_root_uuid;
+        info.sample_count = record.sample_count;
+        info.last_grant_bytes = record.last_grant_bytes;
+        info.p50_bytes = record.p50_bytes;
+        info.p90_bytes = record.p90_bytes;
+        info.peak_bytes = record.peak_bytes;
+        info.spill_count = record.spill_count;
+        info.cancel_count = record.cancel_count;
+        info.oscillation_count = record.oscillation_count;
+        info.underuse_streak = record.underuse_streak;
+        info.last_adjustment_direction = record.last_adjustment_direction;
+        info.oscillation_disable_count =
+            record.oscillation_disable_count;
+        info.updated_at = record.updated_at;
+        info.is_valid = record.is_valid == 1;
+        info.created_time = record.created_time;
+        info.last_modified_time = record.last_modified_time;
+
+        size_t operator_len = strnlen(record.operator_kind, sizeof(record.operator_kind));
+        size_t state_len = strnlen(record.state, sizeof(record.state));
+        if (operator_len >= sizeof(record.operator_kind) ||
+            state_len >= sizeof(record.state))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "memory_grant_feedback inline text invalid");
+            return Status::PAGE_CORRUPT;
+        }
+        info.operator_kind.assign(record.operator_kind, operator_len);
+        info.state.assign(record.state, state_len);
+        if (!isValidMemoryGrantFeedbackState(info.state))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "memory_grant_feedback state invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+        rows_out.push_back(std::move(info));
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::deleteMemoryGrantFeedbackCatalogEntry(uint64_t grant_key_hash,
+                                                           ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (memory_grant_feedback_table_page_ == 0 || grant_key_hash == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto matcher = [grant_key_hash](const MemoryGrantFeedbackRecord& row) {
+        return row.is_valid == 1 && row.grant_key_hash == grant_key_hash;
+    };
+    return deleteRecordFromHeapPage<MemoryGrantFeedbackRecord>(
+        memory_grant_feedback_table_page_, matcher, ctx);
+}
+
 auto CatalogManager::appendPageAuditFindingCatalogEntry(PageAuditFindingCatalogInfo& info,
                                                         ErrorContext* ctx) -> Status
 {
@@ -66641,6 +71143,31 @@ auto CatalogManager::upsertRuntimeTransactionCatalogEntry(const RuntimeTransacti
                                                           ErrorContext* ctx) -> Status
 {
     std::lock_guard<CatalogMutex> lock(mutex_);
+    bool transaction_page_changed = false;
+    Status status = ensureStandaloneCatalogRuntimePage(transaction_table_page_,
+                                                       transaction_page_changed,
+                                                       ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    bool remote_txn_binding_page_changed = false;
+    status = ensureStandaloneCatalogRuntimePage(remote_txn_binding_table_page_,
+                                                remote_txn_binding_page_changed,
+                                                ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (transaction_page_changed || remote_txn_binding_page_changed)
+    {
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
     if (info.txid == 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "transaction.txid is required");
@@ -67389,6 +71916,8 @@ auto CatalogManager::appendSweepCursorStateCatalogEntry(SweepCursorStateCatalogI
     rec.reclaimed_version_count = info.reclaimed_version_count;
     rec.reclaimed_bytes = info.reclaimed_bytes;
     rec.index_backlog_count = info.index_backlog_count;
+    rec.index_backlog_pages = info.index_backlog_pages;
+    rec.index_backlog_bytes = info.index_backlog_bytes;
     rec.cursor_crc32c = info.cursor_crc32c;
     return writeRecordToHeapPage(sweep_cursor_state_table_page_, rec, ctx);
 }
@@ -67425,6 +71954,8 @@ auto CatalogManager::listSweepCursorStateCatalogEntries(
         info.reclaimed_version_count = rec.reclaimed_version_count;
         info.reclaimed_bytes = rec.reclaimed_bytes;
         info.index_backlog_count = rec.index_backlog_count;
+        info.index_backlog_pages = rec.index_backlog_pages;
+        info.index_backlog_bytes = rec.index_backlog_bytes;
         info.cursor_crc32c = rec.cursor_crc32c;
         info.is_valid = rec.is_valid == 1;
     };
@@ -74937,6 +79468,2059 @@ auto CatalogManager::resolveSettingsPolicy(const SettingsResolutionRequest& requ
     return Status::OK;
 }
 
+auto CatalogManager::upsertConfigKeyCatalogEntry(const ConfigKeyCatalogInfo& info,
+                                                 ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (info.key_id == 0 || info.key_name.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "config_key requires key_id and key_name");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidConfigCatalogValueType(info.value_type) ||
+        !isValidConfigCatalogScope(info.scope) ||
+        !isValidConfigHotApplyClass(info.hot_apply_class))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "config_key enum value is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    ErrorContext local_ctx;
+    Status status = UTF8Utils::validateStorageCapacity(
+        info.key_name, sizeof(ConfigKeyCatalogRecord{}.key_name),
+        sizeof(ConfigKeyCatalogRecord{}.key_name), &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "config_key.key_name too long");
+        return status;
+    }
+
+    auto duplicate_predicate = [&info](const ConfigKeyCatalogRecord& row) {
+        return row.is_valid == 1 &&
+               row.key_id != info.key_id &&
+               fixedNameFromBuffer(row.key_name, sizeof(row.key_name)) == info.key_name;
+    };
+    auto duplicate = findRecordInHeapPage<ConfigKeyCatalogRecord>(
+        config_key_table_page_, duplicate_predicate, ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "UNIQUE(key_name) violated");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
+
+    ConfigKeyCatalogRecord rec{};
+    rec.key_id = info.key_id;
+    rec.value_type = static_cast<uint8_t>(info.value_type);
+    rec.scope = static_cast<uint8_t>(info.scope);
+    rec.is_restart_required = info.is_restart_required ? 1 : 0;
+    rec.is_mutable = info.is_mutable ? 1 : 0;
+    rec.is_bootstrap_only = info.is_bootstrap_only ? 1 : 0;
+    rec.is_cluster_managed = info.is_cluster_managed ? 1 : 0;
+    rec.hot_apply_class = static_cast<uint8_t>(info.hot_apply_class);
+    rec.is_sensitive = info.is_sensitive ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    std::strncpy(rec.key_name,
+                 UTF8Utils::truncateToBytes(info.key_name, sizeof(rec.key_name)).c_str(),
+                 sizeof(rec.key_name) - 1);
+
+    auto store_optional = [&](const std::string& text, ID& oid) -> Status {
+        if (text.empty())
+        {
+            oid = ID{};
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        return storeStringInToast(text, xmin, oid, ctx);
+    };
+
+    status = store_optional(info.default_value, rec.default_value_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_optional(info.min_value, rec.min_value_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_optional(info.max_value, rec.max_value_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_optional(info.allowed_values, rec.allowed_values_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_optional(info.description, rec.description_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time =
+        (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    auto existing = findRecordInHeapPage<ConfigKeyCatalogRecord>(
+        config_key_table_page_,
+        [&info](const ConfigKeyCatalogRecord& row) {
+            return row.is_valid == 1 && row.key_id == info.key_id;
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const ConfigKeyCatalogRecord& row) {
+        return row.is_valid == 1 && row.key_id == info.key_id;
+    };
+    return updateRecordInHeapPage(config_key_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getConfigKeyCatalogEntry(uint32_t key_id,
+                                              ConfigKeyCatalogInfo& info_out,
+                                              ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ConfigKeyCatalogRecord>(
+        config_key_table_page_,
+        [key_id](const ConfigKeyCatalogRecord& row) {
+            return row.is_valid == 1 && row.key_id == key_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    if (!isValidConfigCatalogValueType(static_cast<config::CatalogValueType>(result.record.value_type)) ||
+        !isValidConfigCatalogScope(static_cast<config::CatalogScope>(result.record.scope)) ||
+        !isValidConfigHotApplyClass(
+            static_cast<config::CatalogHotApplyClass>(result.record.hot_apply_class)))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "config_key enum value invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    auto load_optional = [&](const ID& oid, std::string& out) -> Status {
+        out.clear();
+        if (isZeroUuidLocal(oid))
+        {
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        Status status = loadStringFromToast(oid, xmin, out, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "config_key payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+        return Status::OK;
+    };
+
+    info_out = ConfigKeyCatalogInfo{};
+    info_out.key_id = result.record.key_id;
+    info_out.key_name = fixedNameFromBuffer(result.record.key_name, sizeof(result.record.key_name));
+    info_out.value_type = static_cast<config::CatalogValueType>(result.record.value_type);
+    info_out.scope = static_cast<config::CatalogScope>(result.record.scope);
+    info_out.is_restart_required = result.record.is_restart_required != 0;
+    info_out.is_mutable = result.record.is_mutable != 0;
+    info_out.is_bootstrap_only = result.record.is_bootstrap_only != 0;
+    info_out.is_cluster_managed = result.record.is_cluster_managed != 0;
+    info_out.hot_apply_class = static_cast<config::CatalogHotApplyClass>(result.record.hot_apply_class);
+    info_out.is_sensitive = result.record.is_sensitive != 0;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    Status status = load_optional(result.record.default_value_oid, info_out.default_value);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_optional(result.record.min_value_oid, info_out.min_value);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_optional(result.record.max_value_oid, info_out.max_value);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_optional(result.record.allowed_values_oid, info_out.allowed_values);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    return load_optional(result.record.description_oid, info_out.description);
+}
+
+auto CatalogManager::getConfigKeyCatalogEntryByName(const std::string& key_name,
+                                                    ConfigKeyCatalogInfo& info_out,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ConfigKeyCatalogRecord>(
+        config_key_table_page_,
+        [&key_name](const ConfigKeyCatalogRecord& row) {
+            return row.is_valid == 1 &&
+                   fixedNameFromBuffer(row.key_name, sizeof(row.key_name)) == key_name;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    ConfigKeyCatalogInfo info{};
+    if (!isValidConfigCatalogValueType(static_cast<config::CatalogValueType>(result.record.value_type)) ||
+        !isValidConfigCatalogScope(static_cast<config::CatalogScope>(result.record.scope)) ||
+        !isValidConfigHotApplyClass(
+            static_cast<config::CatalogHotApplyClass>(result.record.hot_apply_class)))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "config_key enum value invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    auto load_optional = [&](const ID& oid, std::string& out) -> Status {
+        out.clear();
+        if (isZeroUuidLocal(oid))
+        {
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        Status status = loadStringFromToast(oid, xmin, out, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "config_key payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+        return Status::OK;
+    };
+
+    info.key_id = result.record.key_id;
+    info.key_name = fixedNameFromBuffer(result.record.key_name, sizeof(result.record.key_name));
+    info.value_type = static_cast<config::CatalogValueType>(result.record.value_type);
+    info.scope = static_cast<config::CatalogScope>(result.record.scope);
+    info.is_restart_required = result.record.is_restart_required != 0;
+    info.is_mutable = result.record.is_mutable != 0;
+    info.is_bootstrap_only = result.record.is_bootstrap_only != 0;
+    info.is_cluster_managed = result.record.is_cluster_managed != 0;
+    info.hot_apply_class = static_cast<config::CatalogHotApplyClass>(result.record.hot_apply_class);
+    info.is_sensitive = result.record.is_sensitive != 0;
+    info.is_valid = result.record.is_valid == 1;
+    info.created_time = result.record.created_time;
+    info.last_modified_time = result.record.last_modified_time;
+    Status status = load_optional(result.record.default_value_oid, info.default_value);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_optional(result.record.min_value_oid, info.min_value);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_optional(result.record.max_value_oid, info.max_value);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_optional(result.record.allowed_values_oid, info.allowed_values);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = load_optional(result.record.description_oid, info.description);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    info_out = std::move(info);
+    return Status::OK;
+}
+
+auto CatalogManager::listConfigKeyCatalogEntries(std::vector<ConfigKeyCatalogInfo>& rows_out,
+                                                 ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+
+    std::vector<ConfigKeyCatalogRecord> records;
+    auto filter = [](const ConfigKeyCatalogRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const ConfigKeyCatalogRecord& row, ConfigKeyCatalogRecord& out) { out = row; };
+    Status status = readRecordsToVector<ConfigKeyCatalogRecord, ConfigKeyCatalogRecord>(
+        config_key_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        if (!isValidConfigCatalogValueType(static_cast<config::CatalogValueType>(rec.value_type)) ||
+            !isValidConfigCatalogScope(static_cast<config::CatalogScope>(rec.scope)) ||
+            !isValidConfigHotApplyClass(static_cast<config::CatalogHotApplyClass>(rec.hot_apply_class)))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "config_key enum value invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+
+        auto load_optional = [&](const ID& oid, std::string& out) -> Status {
+            out.clear();
+            if (isZeroUuidLocal(oid))
+            {
+                return Status::OK;
+            }
+            uint64_t xmin = 0;
+            Status load_status = loadStringFromToast(oid, xmin, out, ctx);
+            if (load_status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "config_key payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+            return Status::OK;
+        };
+
+        ConfigKeyCatalogInfo info{};
+        info.key_id = rec.key_id;
+        info.key_name = fixedNameFromBuffer(rec.key_name, sizeof(rec.key_name));
+        info.value_type = static_cast<config::CatalogValueType>(rec.value_type);
+        info.scope = static_cast<config::CatalogScope>(rec.scope);
+        info.is_restart_required = rec.is_restart_required != 0;
+        info.is_mutable = rec.is_mutable != 0;
+        info.is_bootstrap_only = rec.is_bootstrap_only != 0;
+        info.is_cluster_managed = rec.is_cluster_managed != 0;
+        info.hot_apply_class = static_cast<config::CatalogHotApplyClass>(rec.hot_apply_class);
+        info.is_sensitive = rec.is_sensitive != 0;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        status = load_optional(rec.default_value_oid, info.default_value);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_optional(rec.min_value_oid, info.min_value);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_optional(rec.max_value_oid, info.max_value);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_optional(rec.allowed_values_oid, info.allowed_values);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_optional(rec.description_oid, info.description);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const ConfigKeyCatalogInfo& lhs, const ConfigKeyCatalogInfo& rhs) {
+                  if (lhs.key_name != rhs.key_name)
+                  {
+                      return lhs.key_name < rhs.key_name;
+                  }
+                  return lhs.key_id < rhs.key_id;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::upsertConfigValueCatalogEntry(const ConfigValueCatalogInfo& info,
+                                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (info.key_id == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "config_value requires key_id");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidConfigValueSource(info.source))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "config_value source is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto key_result = findRecordInHeapPage<ConfigKeyCatalogRecord>(
+        config_key_table_page_,
+        [&info](const ConfigKeyCatalogRecord& row) {
+            return row.is_valid == 1 && row.key_id == info.key_id;
+        },
+        ctx);
+    if (key_result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "config_value references missing key");
+        return Status::NOT_FOUND;
+    }
+
+    ConfigValueCatalogRecord rec{};
+    rec.config_value_id = isZeroUuidLocal(info.config_value_id) ? generateUuidV7() : info.config_value_id;
+    rec.key_id = info.key_id;
+    rec.has_scope_uuid = info.has_scope_uuid ? 1 : 0;
+    rec.scope_uuid = info.has_scope_uuid ? info.scope_uuid : ID{};
+    rec.source = static_cast<uint8_t>(info.source);
+    rec.pending_restart = info.pending_restart ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.config_generation = info.config_generation;
+    rec.effective_txid = info.effective_txid;
+    rec.updated_by = info.updated_by;
+    rec.updated_at = info.updated_at;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time =
+        (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    uint64_t xmin = 0;
+    Status status = storeStringInToast(info.value_text, xmin, rec.value_text_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto existing = findRecordInHeapPage<ConfigValueCatalogRecord>(
+        config_value_table_page_,
+        [&info](const ConfigValueCatalogRecord& row) {
+            return row.is_valid == 1 &&
+                   row.key_id == info.key_id &&
+                   configScopeMatches(info.has_scope_uuid ? &info.scope_uuid : nullptr,
+                                      row.has_scope_uuid != 0,
+                                      row.scope_uuid);
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.config_value_id = existing.record.config_value_id;
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const ConfigValueCatalogRecord& row) {
+        return row.is_valid == 1 &&
+               row.key_id == info.key_id &&
+               configScopeMatches(info.has_scope_uuid ? &info.scope_uuid : nullptr,
+                                  row.has_scope_uuid != 0,
+                                  row.scope_uuid);
+    };
+    return updateRecordInHeapPage(config_value_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getConfigValueCatalogEntry(uint32_t key_id,
+                                                const ID* scope_uuid,
+                                                ConfigValueCatalogInfo& info_out,
+                                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ConfigValueCatalogRecord>(
+        config_value_table_page_,
+        [key_id, scope_uuid](const ConfigValueCatalogRecord& row) {
+            return row.is_valid == 1 &&
+                   row.key_id == key_id &&
+                   configScopeMatches(scope_uuid, row.has_scope_uuid != 0, row.scope_uuid);
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    if (!isValidConfigValueSource(static_cast<ConfigValueSource>(result.record.source)))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "config_value enum value invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    info_out = ConfigValueCatalogInfo{};
+    info_out.config_value_id = result.record.config_value_id;
+    info_out.key_id = result.record.key_id;
+    info_out.has_scope_uuid = result.record.has_scope_uuid != 0;
+    info_out.scope_uuid = result.record.scope_uuid;
+    info_out.source = static_cast<ConfigValueSource>(result.record.source);
+    info_out.config_generation = result.record.config_generation;
+    info_out.effective_txid = result.record.effective_txid;
+    info_out.pending_restart = result.record.pending_restart != 0;
+    info_out.updated_by = result.record.updated_by;
+    info_out.updated_at = result.record.updated_at;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    if (!isZeroUuidLocal(result.record.value_text_oid))
+    {
+        uint64_t xmin = 0;
+        Status status = loadStringFromToast(result.record.value_text_oid, xmin, info_out.value_text, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "config_value payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listConfigValueCatalogEntries(std::vector<ConfigValueCatalogInfo>& rows_out,
+                                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+
+    std::vector<ConfigValueCatalogRecord> records;
+    auto filter = [](const ConfigValueCatalogRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const ConfigValueCatalogRecord& row, ConfigValueCatalogRecord& out) { out = row; };
+    Status status = readRecordsToVector<ConfigValueCatalogRecord, ConfigValueCatalogRecord>(
+        config_value_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        if (!isValidConfigValueSource(static_cast<ConfigValueSource>(rec.source)))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "config_value enum value invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+
+        ConfigValueCatalogInfo info{};
+        info.config_value_id = rec.config_value_id;
+        info.key_id = rec.key_id;
+        info.has_scope_uuid = rec.has_scope_uuid != 0;
+        info.scope_uuid = rec.scope_uuid;
+        info.source = static_cast<ConfigValueSource>(rec.source);
+        info.config_generation = rec.config_generation;
+        info.effective_txid = rec.effective_txid;
+        info.pending_restart = rec.pending_restart != 0;
+        info.updated_by = rec.updated_by;
+        info.updated_at = rec.updated_at;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        if (!isZeroUuidLocal(rec.value_text_oid))
+        {
+            uint64_t xmin = 0;
+            status = loadStringFromToast(rec.value_text_oid, xmin, info.value_text, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "config_value payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const ConfigValueCatalogInfo& lhs, const ConfigValueCatalogInfo& rhs) {
+                  if (lhs.key_id != rhs.key_id)
+                  {
+                      return lhs.key_id < rhs.key_id;
+                  }
+                  if (lhs.has_scope_uuid != rhs.has_scope_uuid)
+                  {
+                      return lhs.has_scope_uuid < rhs.has_scope_uuid;
+                  }
+                  if (lhs.has_scope_uuid && lhs.scope_uuid != rhs.scope_uuid)
+                  {
+                      return compareUuidBytesLocal(lhs.scope_uuid, rhs.scope_uuid) < 0;
+                  }
+                  return compareUuidBytesLocal(lhs.config_value_id, rhs.config_value_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteConfigValueCatalogEntry(uint32_t key_id,
+                                                   const ID* scope_uuid,
+                                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ConfigValueCatalogRecord>(
+        config_value_table_page_,
+        [key_id, scope_uuid](const ConfigValueCatalogRecord& row) {
+            return row.is_valid == 1 &&
+                   row.key_id == key_id &&
+                   configScopeMatches(scope_uuid, row.has_scope_uuid != 0, row.scope_uuid);
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    ConfigValueCatalogRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(config_value_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::appendConfigChangeLogCatalogEntry(const ConfigChangeLogCatalogInfo& info,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (info.key_id == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "config_change_log requires key_id");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto key_result = findRecordInHeapPage<ConfigKeyCatalogRecord>(
+        config_key_table_page_,
+        [&info](const ConfigKeyCatalogRecord& row) {
+            return row.is_valid == 1 && row.key_id == info.key_id;
+        },
+        ctx);
+    if (key_result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "config_change_log references missing key");
+        return Status::NOT_FOUND;
+    }
+
+    ConfigChangeLogCatalogRecord rec{};
+    rec.change_id = (info.change_id == 0) ? catalogNowTicks() : info.change_id;
+    {
+        ErrorContext probe_ctx;
+        while (findRecordInHeapPage<ConfigChangeLogCatalogRecord>(
+                   config_change_log_table_page_,
+                   [&rec](const ConfigChangeLogCatalogRecord& row) {
+                       return row.is_valid == 1 && row.change_id == rec.change_id;
+                   },
+                   &probe_ctx)
+                   .status == Status::OK)
+        {
+            ++rec.change_id;
+        }
+    }
+    rec.key_id = info.key_id;
+    rec.has_scope_uuid = info.has_scope_uuid ? 1 : 0;
+    rec.scope_uuid = info.has_scope_uuid ? info.scope_uuid : ID{};
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.config_generation = info.config_generation;
+    rec.changed_by = info.changed_by;
+    rec.changed_at = info.changed_at;
+
+    auto store_optional = [&](const std::string& text, ID& oid) -> Status {
+        if (text.empty())
+        {
+            oid = ID{};
+            return Status::OK;
+        }
+        uint64_t xmin = 0;
+        return storeStringInToast(text, xmin, oid, ctx);
+    };
+
+    Status status = store_optional(info.old_value_text, rec.old_value_text_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_optional(info.new_value_text, rec.new_value_text_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = store_optional(info.change_reason, rec.change_reason_oid);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    return writeRecordToHeapPage(config_change_log_table_page_, rec, ctx);
+}
+
+auto CatalogManager::listConfigChangeLogCatalogEntries(
+    std::vector<ConfigChangeLogCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+
+    std::vector<ConfigChangeLogCatalogRecord> records;
+    auto filter = [](const ConfigChangeLogCatalogRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const ConfigChangeLogCatalogRecord& row, ConfigChangeLogCatalogRecord& out) {
+        out = row;
+    };
+    Status status = readRecordsToVector<ConfigChangeLogCatalogRecord, ConfigChangeLogCatalogRecord>(
+        config_change_log_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        auto load_optional = [&](const ID& oid, std::string& out) -> Status {
+            out.clear();
+            if (isZeroUuidLocal(oid))
+            {
+                return Status::OK;
+            }
+            uint64_t xmin = 0;
+            Status load_status = loadStringFromToast(oid, xmin, out, ctx);
+            if (load_status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "config_change_log payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+            return Status::OK;
+        };
+
+        ConfigChangeLogCatalogInfo info{};
+        info.change_id = rec.change_id;
+        info.key_id = rec.key_id;
+        info.has_scope_uuid = rec.has_scope_uuid != 0;
+        info.scope_uuid = rec.scope_uuid;
+        info.config_generation = rec.config_generation;
+        info.changed_by = rec.changed_by;
+        info.changed_at = rec.changed_at;
+        info.is_valid = rec.is_valid == 1;
+        status = load_optional(rec.old_value_text_oid, info.old_value_text);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_optional(rec.new_value_text_oid, info.new_value_text);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = load_optional(rec.change_reason_oid, info.change_reason);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const ConfigChangeLogCatalogInfo& lhs, const ConfigChangeLogCatalogInfo& rhs) {
+                  if (lhs.change_id != rhs.change_id)
+                  {
+                      return lhs.change_id > rhs.change_id;
+                  }
+                  return lhs.key_id < rhs.key_id;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::upsertListenerProfileCatalogEntry(const ListenerProfileCatalogInfo& info,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (info.profile_name.empty() || info.protocol_family.empty() || info.desired_state.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "listener_profile requires profile_name, protocol_family, and desired_state");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    ErrorContext local_ctx;
+    Status status = UTF8Utils::validateStorageCapacity(
+        info.profile_name, sizeof(ListenerProfileCatalogRecord{}.profile_name),
+        sizeof(ListenerProfileCatalogRecord{}.profile_name), &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "listener_profile.profile_name too long");
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.protocol_family, sizeof(ListenerProfileCatalogRecord{}.protocol_family),
+        sizeof(ListenerProfileCatalogRecord{}.protocol_family), &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "listener_profile.protocol_family too long");
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.desired_state, sizeof(ListenerProfileCatalogRecord{}.desired_state),
+        sizeof(ListenerProfileCatalogRecord{}.desired_state), &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "listener_profile.desired_state too long");
+        return status;
+    }
+
+    const ID listener_profile_id =
+        isZeroUuidLocal(info.listener_profile_id) ? generateUuidV7() : info.listener_profile_id;
+    auto duplicate = findRecordInHeapPage<ListenerProfileCatalogRecord>(
+        listener_profile_table_page_,
+        [&info, &listener_profile_id](const ListenerProfileCatalogRecord& row) {
+            return row.is_valid == 1 &&
+                   row.listener_profile_id != listener_profile_id &&
+                   fixedNameFromBuffer(row.profile_name, sizeof(row.profile_name)) == info.profile_name;
+        },
+        ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "UNIQUE(profile_name) violated");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
+
+    ListenerProfileCatalogRecord rec{};
+    rec.listener_profile_id = listener_profile_id;
+    std::strncpy(rec.profile_name,
+                 UTF8Utils::truncateToBytes(info.profile_name, sizeof(rec.profile_name)).c_str(),
+                 sizeof(rec.profile_name) - 1);
+    std::strncpy(rec.protocol_family,
+                 UTF8Utils::truncateToBytes(info.protocol_family, sizeof(rec.protocol_family)).c_str(),
+                 sizeof(rec.protocol_family) - 1);
+    std::strncpy(rec.desired_state,
+                 UTF8Utils::truncateToBytes(info.desired_state, sizeof(rec.desired_state)).c_str(),
+                 sizeof(rec.desired_state) - 1);
+    rec.enabled = info.enabled ? 1 : 0;
+    rec.manager_fronted = info.manager_fronted ? 1 : 0;
+    rec.has_owner_database_uuid = info.has_owner_database_uuid ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.owner_database_uuid = info.has_owner_database_uuid ? info.owner_database_uuid : ID{};
+    rec.applied_generation = info.applied_generation;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time =
+        (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    auto existing = findRecordInHeapPage<ListenerProfileCatalogRecord>(
+        listener_profile_table_page_,
+        [&listener_profile_id](const ListenerProfileCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_profile_id == listener_profile_id;
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&listener_profile_id](const ListenerProfileCatalogRecord& row) {
+        return row.is_valid == 1 && row.listener_profile_id == listener_profile_id;
+    };
+    return updateRecordInHeapPage(listener_profile_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getListenerProfileCatalogEntry(const ID& listener_profile_id,
+                                                    ListenerProfileCatalogInfo& info_out,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ListenerProfileCatalogRecord>(
+        listener_profile_table_page_,
+        [&listener_profile_id](const ListenerProfileCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_profile_id == listener_profile_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = ListenerProfileCatalogInfo{};
+    info_out.listener_profile_id = result.record.listener_profile_id;
+    info_out.profile_name = fixedNameFromBuffer(result.record.profile_name, sizeof(result.record.profile_name));
+    info_out.protocol_family =
+        fixedNameFromBuffer(result.record.protocol_family, sizeof(result.record.protocol_family));
+    info_out.enabled = result.record.enabled != 0;
+    info_out.manager_fronted = result.record.manager_fronted != 0;
+    info_out.has_owner_database_uuid = result.record.has_owner_database_uuid != 0;
+    info_out.owner_database_uuid = result.record.owner_database_uuid;
+    info_out.desired_state =
+        fixedNameFromBuffer(result.record.desired_state, sizeof(result.record.desired_state));
+    info_out.applied_generation = result.record.applied_generation;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    return Status::OK;
+}
+
+auto CatalogManager::listListenerProfileCatalogEntries(
+    std::vector<ListenerProfileCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+
+    std::vector<ListenerProfileCatalogRecord> records;
+    auto filter = [](const ListenerProfileCatalogRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const ListenerProfileCatalogRecord& row, ListenerProfileCatalogRecord& out) {
+        out = row;
+    };
+    Status status = readRecordsToVector<ListenerProfileCatalogRecord, ListenerProfileCatalogRecord>(
+        listener_profile_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        ListenerProfileCatalogInfo info{};
+        info.listener_profile_id = rec.listener_profile_id;
+        info.profile_name = fixedNameFromBuffer(rec.profile_name, sizeof(rec.profile_name));
+        info.protocol_family = fixedNameFromBuffer(rec.protocol_family, sizeof(rec.protocol_family));
+        info.enabled = rec.enabled != 0;
+        info.manager_fronted = rec.manager_fronted != 0;
+        info.has_owner_database_uuid = rec.has_owner_database_uuid != 0;
+        info.owner_database_uuid = rec.owner_database_uuid;
+        info.desired_state = fixedNameFromBuffer(rec.desired_state, sizeof(rec.desired_state));
+        info.applied_generation = rec.applied_generation;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const ListenerProfileCatalogInfo& lhs, const ListenerProfileCatalogInfo& rhs) {
+                  if (lhs.profile_name != rhs.profile_name)
+                  {
+                      return lhs.profile_name < rhs.profile_name;
+                  }
+                  return compareUuidBytesLocal(lhs.listener_profile_id, rhs.listener_profile_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteListenerProfileCatalogEntry(const ID& listener_profile_id,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ListenerProfileCatalogRecord>(
+        listener_profile_table_page_,
+        [&listener_profile_id](const ListenerProfileCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_profile_id == listener_profile_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    ListenerProfileCatalogRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(listener_profile_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertListenerBindingCatalogEntry(const ListenerBindingCatalogInfo& info,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.listener_profile_id) || info.bind_address.empty() ||
+        info.bind_transport.empty() || info.bind_scope.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "listener_binding requires profile, bind_address, transport, and scope");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto profile = findRecordInHeapPage<ListenerProfileCatalogRecord>(
+        listener_profile_table_page_,
+        [&info](const ListenerProfileCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_profile_id == info.listener_profile_id;
+        },
+        ctx);
+    if (profile.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "listener_binding references missing listener_profile");
+        return Status::NOT_FOUND;
+    }
+
+    ErrorContext local_ctx;
+    Status status = UTF8Utils::validateStorageCapacity(
+        info.bind_address, sizeof(ListenerBindingCatalogRecord{}.bind_address),
+        sizeof(ListenerBindingCatalogRecord{}.bind_address), &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "listener_binding.bind_address too long");
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.bind_transport, sizeof(ListenerBindingCatalogRecord{}.bind_transport),
+        sizeof(ListenerBindingCatalogRecord{}.bind_transport), &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "listener_binding.bind_transport too long");
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.bind_scope, sizeof(ListenerBindingCatalogRecord{}.bind_scope),
+        sizeof(ListenerBindingCatalogRecord{}.bind_scope), &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "listener_binding.bind_scope too long");
+        return status;
+    }
+
+    const ID listener_binding_id =
+        isZeroUuidLocal(info.listener_binding_id) ? generateUuidV7() : info.listener_binding_id;
+    ListenerBindingCatalogRecord rec{};
+    rec.listener_binding_id = listener_binding_id;
+    rec.listener_profile_id = info.listener_profile_id;
+    std::strncpy(rec.bind_address,
+                 UTF8Utils::truncateToBytes(info.bind_address, sizeof(rec.bind_address)).c_str(),
+                 sizeof(rec.bind_address) - 1);
+    std::strncpy(rec.bind_transport,
+                 UTF8Utils::truncateToBytes(info.bind_transport, sizeof(rec.bind_transport)).c_str(),
+                 sizeof(rec.bind_transport) - 1);
+    std::strncpy(rec.bind_scope,
+                 UTF8Utils::truncateToBytes(info.bind_scope, sizeof(rec.bind_scope)).c_str(),
+                 sizeof(rec.bind_scope) - 1);
+    rec.bind_port = info.bind_port;
+    rec.is_primary = info.is_primary ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.configuration_generation = info.configuration_generation;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time =
+        (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    auto existing = findRecordInHeapPage<ListenerBindingCatalogRecord>(
+        listener_binding_table_page_,
+        [&listener_binding_id](const ListenerBindingCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_binding_id == listener_binding_id;
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&listener_binding_id](const ListenerBindingCatalogRecord& row) {
+        return row.is_valid == 1 && row.listener_binding_id == listener_binding_id;
+    };
+    return updateRecordInHeapPage(listener_binding_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getListenerBindingCatalogEntry(const ID& listener_binding_id,
+                                                    ListenerBindingCatalogInfo& info_out,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ListenerBindingCatalogRecord>(
+        listener_binding_table_page_,
+        [&listener_binding_id](const ListenerBindingCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_binding_id == listener_binding_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = ListenerBindingCatalogInfo{};
+    info_out.listener_binding_id = result.record.listener_binding_id;
+    info_out.listener_profile_id = result.record.listener_profile_id;
+    info_out.bind_address = fixedNameFromBuffer(result.record.bind_address, sizeof(result.record.bind_address));
+    info_out.bind_port = result.record.bind_port;
+    info_out.bind_transport =
+        fixedNameFromBuffer(result.record.bind_transport, sizeof(result.record.bind_transport));
+    info_out.bind_scope = fixedNameFromBuffer(result.record.bind_scope, sizeof(result.record.bind_scope));
+    info_out.is_primary = result.record.is_primary != 0;
+    info_out.configuration_generation = result.record.configuration_generation;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    return Status::OK;
+}
+
+auto CatalogManager::listListenerBindingCatalogEntries(
+    std::vector<ListenerBindingCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+
+    std::vector<ListenerBindingCatalogRecord> records;
+    auto filter = [](const ListenerBindingCatalogRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const ListenerBindingCatalogRecord& row, ListenerBindingCatalogRecord& out) {
+        out = row;
+    };
+    Status status = readRecordsToVector<ListenerBindingCatalogRecord, ListenerBindingCatalogRecord>(
+        listener_binding_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        ListenerBindingCatalogInfo info{};
+        info.listener_binding_id = rec.listener_binding_id;
+        info.listener_profile_id = rec.listener_profile_id;
+        info.bind_address = fixedNameFromBuffer(rec.bind_address, sizeof(rec.bind_address));
+        info.bind_port = rec.bind_port;
+        info.bind_transport = fixedNameFromBuffer(rec.bind_transport, sizeof(rec.bind_transport));
+        info.bind_scope = fixedNameFromBuffer(rec.bind_scope, sizeof(rec.bind_scope));
+        info.is_primary = rec.is_primary != 0;
+        info.configuration_generation = rec.configuration_generation;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const ListenerBindingCatalogInfo& lhs, const ListenerBindingCatalogInfo& rhs) {
+                  if (lhs.listener_profile_id != rhs.listener_profile_id)
+                  {
+                      return compareUuidBytesLocal(lhs.listener_profile_id, rhs.listener_profile_id) < 0;
+                  }
+                  if (lhs.is_primary != rhs.is_primary)
+                  {
+                      return lhs.is_primary > rhs.is_primary;
+                  }
+                  if (lhs.bind_port != rhs.bind_port)
+                  {
+                      return lhs.bind_port < rhs.bind_port;
+                  }
+                  return compareUuidBytesLocal(lhs.listener_binding_id, rhs.listener_binding_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteListenerBindingCatalogEntry(const ID& listener_binding_id,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ListenerBindingCatalogRecord>(
+        listener_binding_table_page_,
+        [&listener_binding_id](const ListenerBindingCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_binding_id == listener_binding_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    ListenerBindingCatalogRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(listener_binding_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertListenerEmulationBindingCatalogEntry(
+    const ListenerEmulationBindingCatalogInfo& info,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.listener_profile_id) ||
+        info.emulation_family.empty() ||
+        info.protocol_surface.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "listener_emulation_binding requires profile, family, and surface");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto profile = findRecordInHeapPage<ListenerProfileCatalogRecord>(
+        listener_profile_table_page_,
+        [&info](const ListenerProfileCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_profile_id == info.listener_profile_id;
+        },
+        ctx);
+    if (profile.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                          "listener_emulation_binding references missing listener_profile");
+        return Status::NOT_FOUND;
+    }
+    if (info.has_parser_pool_policy_uuid)
+    {
+        auto parser_policy = findRecordInHeapPage<ParserPoolPolicyCatalogRecord>(
+            parser_pool_policy_table_page_,
+            [&info](const ParserPoolPolicyCatalogRecord& row) {
+                return row.is_valid == 1 && row.parser_pool_policy_id == info.parser_pool_policy_uuid;
+            },
+            ctx);
+        if (parser_policy.status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                              "listener_emulation_binding references missing parser_pool_policy");
+            return Status::NOT_FOUND;
+        }
+    }
+
+    ErrorContext local_ctx;
+    Status status = UTF8Utils::validateStorageCapacity(
+        info.emulation_family, sizeof(ListenerEmulationBindingCatalogRecord{}.emulation_family),
+        sizeof(ListenerEmulationBindingCatalogRecord{}.emulation_family), &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "listener_emulation_binding.emulation_family too long");
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.protocol_surface, sizeof(ListenerEmulationBindingCatalogRecord{}.protocol_surface),
+        sizeof(ListenerEmulationBindingCatalogRecord{}.protocol_surface), &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "listener_emulation_binding.protocol_surface too long");
+        return status;
+    }
+
+    const ID listener_emulation_binding_id =
+        isZeroUuidLocal(info.listener_emulation_binding_id) ? generateUuidV7()
+                                                            : info.listener_emulation_binding_id;
+    ListenerEmulationBindingCatalogRecord rec{};
+    rec.listener_emulation_binding_id = listener_emulation_binding_id;
+    rec.listener_profile_id = info.listener_profile_id;
+    std::strncpy(rec.emulation_family,
+                 UTF8Utils::truncateToBytes(info.emulation_family, sizeof(rec.emulation_family)).c_str(),
+                 sizeof(rec.emulation_family) - 1);
+    std::strncpy(rec.protocol_surface,
+                 UTF8Utils::truncateToBytes(info.protocol_surface, sizeof(rec.protocol_surface)).c_str(),
+                 sizeof(rec.protocol_surface) - 1);
+    rec.enabled = info.enabled ? 1 : 0;
+    rec.has_parser_pool_policy_uuid = info.has_parser_pool_policy_uuid ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.parser_pool_policy_uuid = info.has_parser_pool_policy_uuid ? info.parser_pool_policy_uuid : ID{};
+    rec.configuration_generation = info.configuration_generation;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time =
+        (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    auto existing = findRecordInHeapPage<ListenerEmulationBindingCatalogRecord>(
+        listener_emulation_binding_table_page_,
+        [&listener_emulation_binding_id](const ListenerEmulationBindingCatalogRecord& row) {
+            return row.is_valid == 1 &&
+                   row.listener_emulation_binding_id == listener_emulation_binding_id;
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&listener_emulation_binding_id](const ListenerEmulationBindingCatalogRecord& row) {
+        return row.is_valid == 1 && row.listener_emulation_binding_id == listener_emulation_binding_id;
+    };
+    return updateRecordInHeapPage(listener_emulation_binding_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getListenerEmulationBindingCatalogEntry(
+    const ID& listener_emulation_binding_id,
+    ListenerEmulationBindingCatalogInfo& info_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ListenerEmulationBindingCatalogRecord>(
+        listener_emulation_binding_table_page_,
+        [&listener_emulation_binding_id](const ListenerEmulationBindingCatalogRecord& row) {
+            return row.is_valid == 1 &&
+                   row.listener_emulation_binding_id == listener_emulation_binding_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = ListenerEmulationBindingCatalogInfo{};
+    info_out.listener_emulation_binding_id = result.record.listener_emulation_binding_id;
+    info_out.listener_profile_id = result.record.listener_profile_id;
+    info_out.emulation_family =
+        fixedNameFromBuffer(result.record.emulation_family, sizeof(result.record.emulation_family));
+    info_out.protocol_surface =
+        fixedNameFromBuffer(result.record.protocol_surface, sizeof(result.record.protocol_surface));
+    info_out.enabled = result.record.enabled != 0;
+    info_out.has_parser_pool_policy_uuid = result.record.has_parser_pool_policy_uuid != 0;
+    info_out.parser_pool_policy_uuid = result.record.parser_pool_policy_uuid;
+    info_out.configuration_generation = result.record.configuration_generation;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    return Status::OK;
+}
+
+auto CatalogManager::listListenerEmulationBindingCatalogEntries(
+    std::vector<ListenerEmulationBindingCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+
+    std::vector<ListenerEmulationBindingCatalogRecord> records;
+    auto filter = [](const ListenerEmulationBindingCatalogRecord& row) { return row.is_valid == 1; };
+    auto converter =
+        [](const ListenerEmulationBindingCatalogRecord& row, ListenerEmulationBindingCatalogRecord& out) {
+            out = row;
+        };
+    Status status = readRecordsToVector<ListenerEmulationBindingCatalogRecord,
+                                        ListenerEmulationBindingCatalogRecord>(
+        listener_emulation_binding_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        ListenerEmulationBindingCatalogInfo info{};
+        info.listener_emulation_binding_id = rec.listener_emulation_binding_id;
+        info.listener_profile_id = rec.listener_profile_id;
+        info.emulation_family = fixedNameFromBuffer(rec.emulation_family, sizeof(rec.emulation_family));
+        info.protocol_surface = fixedNameFromBuffer(rec.protocol_surface, sizeof(rec.protocol_surface));
+        info.enabled = rec.enabled != 0;
+        info.has_parser_pool_policy_uuid = rec.has_parser_pool_policy_uuid != 0;
+        info.parser_pool_policy_uuid = rec.parser_pool_policy_uuid;
+        info.configuration_generation = rec.configuration_generation;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const ListenerEmulationBindingCatalogInfo& lhs,
+                 const ListenerEmulationBindingCatalogInfo& rhs) {
+                  if (lhs.listener_profile_id != rhs.listener_profile_id)
+                  {
+                      return compareUuidBytesLocal(lhs.listener_profile_id, rhs.listener_profile_id) < 0;
+                  }
+                  if (lhs.emulation_family != rhs.emulation_family)
+                  {
+                      return lhs.emulation_family < rhs.emulation_family;
+                  }
+                  return compareUuidBytesLocal(lhs.listener_emulation_binding_id,
+                                               rhs.listener_emulation_binding_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteListenerEmulationBindingCatalogEntry(
+    const ID& listener_emulation_binding_id,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ListenerEmulationBindingCatalogRecord>(
+        listener_emulation_binding_table_page_,
+        [&listener_emulation_binding_id](const ListenerEmulationBindingCatalogRecord& row) {
+            return row.is_valid == 1 &&
+                   row.listener_emulation_binding_id == listener_emulation_binding_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    ListenerEmulationBindingCatalogRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(listener_emulation_binding_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertParserPoolPolicyCatalogEntry(const ParserPoolPolicyCatalogInfo& info,
+                                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (info.policy_name.empty() || info.parser_library_family.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "parser_pool_policy requires policy_name and parser_library_family");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    ErrorContext local_ctx;
+    Status status = UTF8Utils::validateStorageCapacity(
+        info.policy_name, sizeof(ParserPoolPolicyCatalogRecord{}.policy_name),
+        sizeof(ParserPoolPolicyCatalogRecord{}.policy_name), &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "parser_pool_policy.policy_name too long");
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.parser_library_family, sizeof(ParserPoolPolicyCatalogRecord{}.parser_library_family),
+        sizeof(ParserPoolPolicyCatalogRecord{}.parser_library_family), &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "parser_pool_policy.parser_library_family too long");
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.workload_guardrail_class, sizeof(ParserPoolPolicyCatalogRecord{}.workload_guardrail_class),
+        sizeof(ParserPoolPolicyCatalogRecord{}.workload_guardrail_class), &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "parser_pool_policy.workload_guardrail_class too long");
+        return status;
+    }
+
+    const ID parser_pool_policy_id =
+        isZeroUuidLocal(info.parser_pool_policy_id) ? generateUuidV7() : info.parser_pool_policy_id;
+    auto duplicate = findRecordInHeapPage<ParserPoolPolicyCatalogRecord>(
+        parser_pool_policy_table_page_,
+        [&info, &parser_pool_policy_id](const ParserPoolPolicyCatalogRecord& row) {
+            return row.is_valid == 1 &&
+                   row.parser_pool_policy_id != parser_pool_policy_id &&
+                   fixedNameFromBuffer(row.policy_name, sizeof(row.policy_name)) == info.policy_name;
+        },
+        ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "UNIQUE(policy_name) violated");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
+
+    ParserPoolPolicyCatalogRecord rec{};
+    rec.parser_pool_policy_id = parser_pool_policy_id;
+    std::strncpy(rec.policy_name,
+                 UTF8Utils::truncateToBytes(info.policy_name, sizeof(rec.policy_name)).c_str(),
+                 sizeof(rec.policy_name) - 1);
+    std::strncpy(rec.parser_library_family,
+                 UTF8Utils::truncateToBytes(info.parser_library_family, sizeof(rec.parser_library_family)).c_str(),
+                 sizeof(rec.parser_library_family) - 1);
+    std::strncpy(rec.workload_guardrail_class,
+                 UTF8Utils::truncateToBytes(info.workload_guardrail_class,
+                                            sizeof(rec.workload_guardrail_class)).c_str(),
+                 sizeof(rec.workload_guardrail_class) - 1);
+    rec.min_workers = info.min_workers;
+    rec.preferred_workers = info.preferred_workers;
+    rec.max_workers = info.max_workers;
+    rec.queue_max = info.queue_max;
+    rec.missed_heartbeat_threshold = info.missed_heartbeat_threshold;
+    rec.queue_timeout_ms = info.queue_timeout_ms;
+    rec.idle_timeout_ms = info.idle_timeout_ms;
+    rec.spawn_backoff_ms = info.spawn_backoff_ms;
+    rec.health_interval_ms = info.health_interval_ms;
+    rec.warm_replenish_timeout_ms = info.warm_replenish_timeout_ms;
+    rec.memory_guardrail_bytes = info.memory_guardrail_bytes;
+    rec.configuration_generation = info.configuration_generation;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time =
+        (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    auto existing = findRecordInHeapPage<ParserPoolPolicyCatalogRecord>(
+        parser_pool_policy_table_page_,
+        [&parser_pool_policy_id](const ParserPoolPolicyCatalogRecord& row) {
+            return row.is_valid == 1 && row.parser_pool_policy_id == parser_pool_policy_id;
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&parser_pool_policy_id](const ParserPoolPolicyCatalogRecord& row) {
+        return row.is_valid == 1 && row.parser_pool_policy_id == parser_pool_policy_id;
+    };
+    return updateRecordInHeapPage(parser_pool_policy_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getParserPoolPolicyCatalogEntry(const ID& parser_pool_policy_id,
+                                                     ParserPoolPolicyCatalogInfo& info_out,
+                                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ParserPoolPolicyCatalogRecord>(
+        parser_pool_policy_table_page_,
+        [&parser_pool_policy_id](const ParserPoolPolicyCatalogRecord& row) {
+            return row.is_valid == 1 && row.parser_pool_policy_id == parser_pool_policy_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = ParserPoolPolicyCatalogInfo{};
+    info_out.parser_pool_policy_id = result.record.parser_pool_policy_id;
+    info_out.policy_name = fixedNameFromBuffer(result.record.policy_name, sizeof(result.record.policy_name));
+    info_out.parser_library_family =
+        fixedNameFromBuffer(result.record.parser_library_family, sizeof(result.record.parser_library_family));
+    info_out.min_workers = result.record.min_workers;
+    info_out.preferred_workers = result.record.preferred_workers;
+    info_out.max_workers = result.record.max_workers;
+    info_out.queue_max = result.record.queue_max;
+    info_out.queue_timeout_ms = result.record.queue_timeout_ms;
+    info_out.idle_timeout_ms = result.record.idle_timeout_ms;
+    info_out.spawn_backoff_ms = result.record.spawn_backoff_ms;
+    info_out.health_interval_ms = result.record.health_interval_ms;
+    info_out.missed_heartbeat_threshold = result.record.missed_heartbeat_threshold;
+    info_out.warm_replenish_timeout_ms = result.record.warm_replenish_timeout_ms;
+    info_out.memory_guardrail_bytes = result.record.memory_guardrail_bytes;
+    info_out.workload_guardrail_class = fixedNameFromBuffer(
+        result.record.workload_guardrail_class, sizeof(result.record.workload_guardrail_class));
+    info_out.configuration_generation = result.record.configuration_generation;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    return Status::OK;
+}
+
+auto CatalogManager::listParserPoolPolicyCatalogEntries(
+    std::vector<ParserPoolPolicyCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+
+    std::vector<ParserPoolPolicyCatalogRecord> records;
+    auto filter = [](const ParserPoolPolicyCatalogRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const ParserPoolPolicyCatalogRecord& row, ParserPoolPolicyCatalogRecord& out) {
+        out = row;
+    };
+    Status status = readRecordsToVector<ParserPoolPolicyCatalogRecord, ParserPoolPolicyCatalogRecord>(
+        parser_pool_policy_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        ParserPoolPolicyCatalogInfo info{};
+        info.parser_pool_policy_id = rec.parser_pool_policy_id;
+        info.policy_name = fixedNameFromBuffer(rec.policy_name, sizeof(rec.policy_name));
+        info.parser_library_family =
+            fixedNameFromBuffer(rec.parser_library_family, sizeof(rec.parser_library_family));
+        info.min_workers = rec.min_workers;
+        info.preferred_workers = rec.preferred_workers;
+        info.max_workers = rec.max_workers;
+        info.queue_max = rec.queue_max;
+        info.queue_timeout_ms = rec.queue_timeout_ms;
+        info.idle_timeout_ms = rec.idle_timeout_ms;
+        info.spawn_backoff_ms = rec.spawn_backoff_ms;
+        info.health_interval_ms = rec.health_interval_ms;
+        info.missed_heartbeat_threshold = rec.missed_heartbeat_threshold;
+        info.warm_replenish_timeout_ms = rec.warm_replenish_timeout_ms;
+        info.memory_guardrail_bytes = rec.memory_guardrail_bytes;
+        info.workload_guardrail_class =
+            fixedNameFromBuffer(rec.workload_guardrail_class, sizeof(rec.workload_guardrail_class));
+        info.configuration_generation = rec.configuration_generation;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const ParserPoolPolicyCatalogInfo& lhs, const ParserPoolPolicyCatalogInfo& rhs) {
+                  if (lhs.policy_name != rhs.policy_name)
+                  {
+                      return lhs.policy_name < rhs.policy_name;
+                  }
+                  return compareUuidBytesLocal(lhs.parser_pool_policy_id, rhs.parser_pool_policy_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteParserPoolPolicyCatalogEntry(const ID& parser_pool_policy_id,
+                                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ParserPoolPolicyCatalogRecord>(
+        parser_pool_policy_table_page_,
+        [&parser_pool_policy_id](const ParserPoolPolicyCatalogRecord& row) {
+            return row.is_valid == 1 && row.parser_pool_policy_id == parser_pool_policy_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    ParserPoolPolicyCatalogRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(parser_pool_policy_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertListenerRuntimeTargetCatalogEntry(
+    const ListenerRuntimeTargetCatalogInfo& info,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.listener_profile_id) || info.target_kind.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "listener_runtime_target requires profile and target_kind");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto profile = findRecordInHeapPage<ListenerProfileCatalogRecord>(
+        listener_profile_table_page_,
+        [&info](const ListenerProfileCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_profile_id == info.listener_profile_id;
+        },
+        ctx);
+    if (profile.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                          "listener_runtime_target references missing listener_profile");
+        return Status::NOT_FOUND;
+    }
+
+    ErrorContext local_ctx;
+    Status status = UTF8Utils::validateStorageCapacity(
+        info.target_kind, sizeof(ListenerRuntimeTargetCatalogRecord{}.target_kind),
+        sizeof(ListenerRuntimeTargetCatalogRecord{}.target_kind), &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "listener_runtime_target.target_kind too long");
+        return status;
+    }
+
+    const ID listener_runtime_target_id =
+        isZeroUuidLocal(info.listener_runtime_target_id) ? generateUuidV7()
+                                                         : info.listener_runtime_target_id;
+    ListenerRuntimeTargetCatalogRecord rec{};
+    rec.listener_runtime_target_id = listener_runtime_target_id;
+    rec.listener_profile_id = info.listener_profile_id;
+    std::strncpy(rec.target_kind,
+                 UTF8Utils::truncateToBytes(info.target_kind, sizeof(rec.target_kind)).c_str(),
+                 sizeof(rec.target_kind) - 1);
+    rec.has_target_database_uuid = info.has_target_database_uuid ? 1 : 0;
+    rec.has_target_server_uuid = info.has_target_server_uuid ? 1 : 0;
+    rec.has_inner_listener_profile_uuid = info.has_inner_listener_profile_uuid ? 1 : 0;
+    rec.has_pending_generation = info.has_pending_generation ? 1 : 0;
+    rec.has_last_applied_generation = info.has_last_applied_generation ? 1 : 0;
+    rec.has_last_refused_generation = info.has_last_refused_generation ? 1 : 0;
+    rec.has_last_error_code = !info.last_error_code.empty() ? 1 : 0;
+    rec.has_last_error_detail_uuid = info.has_last_error_detail_uuid ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.target_database_uuid = info.has_target_database_uuid ? info.target_database_uuid : ID{};
+    rec.target_server_uuid = info.has_target_server_uuid ? info.target_server_uuid : ID{};
+    rec.inner_listener_profile_uuid =
+        info.has_inner_listener_profile_uuid ? info.inner_listener_profile_uuid : ID{};
+    rec.current_generation = info.current_generation;
+    rec.pending_generation = info.pending_generation;
+    rec.last_applied_generation = info.last_applied_generation;
+    rec.last_refused_generation = info.last_refused_generation;
+    rec.last_error_detail_uuid = info.has_last_error_detail_uuid ? info.last_error_detail_uuid : ID{};
+    rec.last_observed_at = info.last_observed_at;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time =
+        (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    if (!info.last_error_code.empty())
+    {
+        uint64_t xmin = 0;
+        status = storeStringInToast(info.last_error_code, xmin, rec.last_error_code_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto existing = findRecordInHeapPage<ListenerRuntimeTargetCatalogRecord>(
+        listener_runtime_target_table_page_,
+        [&listener_runtime_target_id](const ListenerRuntimeTargetCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_runtime_target_id == listener_runtime_target_id;
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&listener_runtime_target_id](const ListenerRuntimeTargetCatalogRecord& row) {
+        return row.is_valid == 1 && row.listener_runtime_target_id == listener_runtime_target_id;
+    };
+    return updateRecordInHeapPage(listener_runtime_target_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getListenerRuntimeTargetCatalogEntry(
+    const ID& listener_runtime_target_id,
+    ListenerRuntimeTargetCatalogInfo& info_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ListenerRuntimeTargetCatalogRecord>(
+        listener_runtime_target_table_page_,
+        [&listener_runtime_target_id](const ListenerRuntimeTargetCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_runtime_target_id == listener_runtime_target_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = ListenerRuntimeTargetCatalogInfo{};
+    info_out.listener_runtime_target_id = result.record.listener_runtime_target_id;
+    info_out.listener_profile_id = result.record.listener_profile_id;
+    info_out.target_kind = fixedNameFromBuffer(result.record.target_kind, sizeof(result.record.target_kind));
+    info_out.has_target_database_uuid = result.record.has_target_database_uuid != 0;
+    info_out.target_database_uuid = result.record.target_database_uuid;
+    info_out.has_target_server_uuid = result.record.has_target_server_uuid != 0;
+    info_out.target_server_uuid = result.record.target_server_uuid;
+    info_out.has_inner_listener_profile_uuid = result.record.has_inner_listener_profile_uuid != 0;
+    info_out.inner_listener_profile_uuid = result.record.inner_listener_profile_uuid;
+    info_out.current_generation = result.record.current_generation;
+    info_out.has_pending_generation = result.record.has_pending_generation != 0;
+    info_out.pending_generation = result.record.pending_generation;
+    info_out.has_last_applied_generation = result.record.has_last_applied_generation != 0;
+    info_out.last_applied_generation = result.record.last_applied_generation;
+    info_out.has_last_refused_generation = result.record.has_last_refused_generation != 0;
+    info_out.last_refused_generation = result.record.last_refused_generation;
+    info_out.has_last_error_detail_uuid = result.record.has_last_error_detail_uuid != 0;
+    info_out.last_error_detail_uuid = result.record.last_error_detail_uuid;
+    info_out.last_observed_at = result.record.last_observed_at;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    if (result.record.has_last_error_code != 0 && !isZeroUuidLocal(result.record.last_error_code_oid))
+    {
+        uint64_t xmin = 0;
+        Status status = loadStringFromToast(result.record.last_error_code_oid, xmin,
+                                            info_out.last_error_code, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "listener_runtime_target payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listListenerRuntimeTargetCatalogEntries(
+    std::vector<ListenerRuntimeTargetCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+
+    std::vector<ListenerRuntimeTargetCatalogRecord> records;
+    auto filter = [](const ListenerRuntimeTargetCatalogRecord& row) { return row.is_valid == 1; };
+    auto converter =
+        [](const ListenerRuntimeTargetCatalogRecord& row, ListenerRuntimeTargetCatalogRecord& out) {
+            out = row;
+        };
+    Status status = readRecordsToVector<ListenerRuntimeTargetCatalogRecord,
+                                        ListenerRuntimeTargetCatalogRecord>(
+        listener_runtime_target_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        ListenerRuntimeTargetCatalogInfo info{};
+        info.listener_runtime_target_id = rec.listener_runtime_target_id;
+        info.listener_profile_id = rec.listener_profile_id;
+        info.target_kind = fixedNameFromBuffer(rec.target_kind, sizeof(rec.target_kind));
+        info.has_target_database_uuid = rec.has_target_database_uuid != 0;
+        info.target_database_uuid = rec.target_database_uuid;
+        info.has_target_server_uuid = rec.has_target_server_uuid != 0;
+        info.target_server_uuid = rec.target_server_uuid;
+        info.has_inner_listener_profile_uuid = rec.has_inner_listener_profile_uuid != 0;
+        info.inner_listener_profile_uuid = rec.inner_listener_profile_uuid;
+        info.current_generation = rec.current_generation;
+        info.has_pending_generation = rec.has_pending_generation != 0;
+        info.pending_generation = rec.pending_generation;
+        info.has_last_applied_generation = rec.has_last_applied_generation != 0;
+        info.last_applied_generation = rec.last_applied_generation;
+        info.has_last_refused_generation = rec.has_last_refused_generation != 0;
+        info.last_refused_generation = rec.last_refused_generation;
+        info.has_last_error_detail_uuid = rec.has_last_error_detail_uuid != 0;
+        info.last_error_detail_uuid = rec.last_error_detail_uuid;
+        info.last_observed_at = rec.last_observed_at;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        if (rec.has_last_error_code != 0 && !isZeroUuidLocal(rec.last_error_code_oid))
+        {
+            uint64_t xmin = 0;
+            status = loadStringFromToast(rec.last_error_code_oid, xmin, info.last_error_code, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "listener_runtime_target payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const ListenerRuntimeTargetCatalogInfo& lhs,
+                 const ListenerRuntimeTargetCatalogInfo& rhs) {
+                  if (lhs.listener_profile_id != rhs.listener_profile_id)
+                  {
+                      return compareUuidBytesLocal(lhs.listener_profile_id, rhs.listener_profile_id) < 0;
+                  }
+                  if (lhs.target_kind != rhs.target_kind)
+                  {
+                      return lhs.target_kind < rhs.target_kind;
+                  }
+                  return compareUuidBytesLocal(lhs.listener_runtime_target_id,
+                                               rhs.listener_runtime_target_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteListenerRuntimeTargetCatalogEntry(const ID& listener_runtime_target_id,
+                                                             ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ListenerRuntimeTargetCatalogRecord>(
+        listener_runtime_target_table_page_,
+        [&listener_runtime_target_id](const ListenerRuntimeTargetCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_runtime_target_id == listener_runtime_target_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    ListenerRuntimeTargetCatalogRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(listener_runtime_target_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertListenerGenerationRecordCatalogEntry(
+    const ListenerGenerationRecordCatalogInfo& info,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.target_database_uuid) || isZeroUuidLocal(info.listener_profile_id) ||
+        info.drift_state.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "listener_generation_record requires target_database_uuid, listener_profile_id, and drift_state");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto profile = findRecordInHeapPage<ListenerProfileCatalogRecord>(
+        listener_profile_table_page_,
+        [&info](const ListenerProfileCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_profile_id == info.listener_profile_id;
+        },
+        ctx);
+    if (profile.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                          "listener_generation_record references missing listener_profile");
+        return Status::NOT_FOUND;
+    }
+
+    const ID listener_generation_id =
+        isZeroUuidLocal(info.listener_generation_id) ? generateUuidV7() : info.listener_generation_id;
+    ListenerGenerationRecordCatalogRecord rec{};
+    rec.listener_generation_id = listener_generation_id;
+    rec.target_database_uuid = info.target_database_uuid;
+    rec.listener_profile_id = info.listener_profile_id;
+    rec.has_refused_generation = info.has_refused_generation ? 1 : 0;
+    rec.has_last_instruction_uuid = info.has_last_instruction_uuid ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.committed_generation = info.committed_generation;
+    rec.applied_generation = info.applied_generation;
+    rec.refused_generation = info.refused_generation;
+    rec.last_instruction_uuid = info.has_last_instruction_uuid ? info.last_instruction_uuid : ID{};
+    rec.observed_at = info.observed_at;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time =
+        (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    uint64_t xmin = 0;
+    Status status = storeStringInToast(info.drift_state, xmin, rec.drift_state_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto existing = findRecordInHeapPage<ListenerGenerationRecordCatalogRecord>(
+        listener_generation_record_table_page_,
+        [&listener_generation_id](const ListenerGenerationRecordCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_generation_id == listener_generation_id;
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&listener_generation_id](const ListenerGenerationRecordCatalogRecord& row) {
+        return row.is_valid == 1 && row.listener_generation_id == listener_generation_id;
+    };
+    return updateRecordInHeapPage(listener_generation_record_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getListenerGenerationRecordCatalogEntry(
+    const ID& listener_generation_id,
+    ListenerGenerationRecordCatalogInfo& info_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ListenerGenerationRecordCatalogRecord>(
+        listener_generation_record_table_page_,
+        [&listener_generation_id](const ListenerGenerationRecordCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_generation_id == listener_generation_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = ListenerGenerationRecordCatalogInfo{};
+    info_out.listener_generation_id = result.record.listener_generation_id;
+    info_out.target_database_uuid = result.record.target_database_uuid;
+    info_out.listener_profile_id = result.record.listener_profile_id;
+    info_out.committed_generation = result.record.committed_generation;
+    info_out.applied_generation = result.record.applied_generation;
+    info_out.has_refused_generation = result.record.has_refused_generation != 0;
+    info_out.refused_generation = result.record.refused_generation;
+    info_out.has_last_instruction_uuid = result.record.has_last_instruction_uuid != 0;
+    info_out.last_instruction_uuid = result.record.last_instruction_uuid;
+    info_out.observed_at = result.record.observed_at;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    if (!isZeroUuidLocal(result.record.drift_state_oid))
+    {
+        uint64_t xmin = 0;
+        Status status = loadStringFromToast(result.record.drift_state_oid, xmin,
+                                            info_out.drift_state, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "listener_generation_record payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listListenerGenerationRecordCatalogEntries(
+    std::vector<ListenerGenerationRecordCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+
+    std::vector<ListenerGenerationRecordCatalogRecord> records;
+    auto filter = [](const ListenerGenerationRecordCatalogRecord& row) { return row.is_valid == 1; };
+    auto converter =
+        [](const ListenerGenerationRecordCatalogRecord& row, ListenerGenerationRecordCatalogRecord& out) {
+            out = row;
+        };
+    Status status = readRecordsToVector<ListenerGenerationRecordCatalogRecord,
+                                        ListenerGenerationRecordCatalogRecord>(
+        listener_generation_record_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        ListenerGenerationRecordCatalogInfo info{};
+        info.listener_generation_id = rec.listener_generation_id;
+        info.target_database_uuid = rec.target_database_uuid;
+        info.listener_profile_id = rec.listener_profile_id;
+        info.committed_generation = rec.committed_generation;
+        info.applied_generation = rec.applied_generation;
+        info.has_refused_generation = rec.has_refused_generation != 0;
+        info.refused_generation = rec.refused_generation;
+        info.has_last_instruction_uuid = rec.has_last_instruction_uuid != 0;
+        info.last_instruction_uuid = rec.last_instruction_uuid;
+        info.observed_at = rec.observed_at;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        if (!isZeroUuidLocal(rec.drift_state_oid))
+        {
+            uint64_t xmin = 0;
+            status = loadStringFromToast(rec.drift_state_oid, xmin, info.drift_state, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "listener_generation_record payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const ListenerGenerationRecordCatalogInfo& lhs,
+                 const ListenerGenerationRecordCatalogInfo& rhs) {
+                  if (lhs.target_database_uuid != rhs.target_database_uuid)
+                  {
+                      return compareUuidBytesLocal(lhs.target_database_uuid, rhs.target_database_uuid) < 0;
+                  }
+                  if (lhs.listener_profile_id != rhs.listener_profile_id)
+                  {
+                      return compareUuidBytesLocal(lhs.listener_profile_id, rhs.listener_profile_id) < 0;
+                  }
+                  return compareUuidBytesLocal(lhs.listener_generation_id,
+                                               rhs.listener_generation_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteListenerGenerationRecordCatalogEntry(const ID& listener_generation_id,
+                                                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<ListenerGenerationRecordCatalogRecord>(
+        listener_generation_record_table_page_,
+        [&listener_generation_id](const ListenerGenerationRecordCatalogRecord& row) {
+            return row.is_valid == 1 && row.listener_generation_id == listener_generation_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    ListenerGenerationRecordCatalogRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(listener_generation_record_table_page_, result.slot_index, updated, ctx);
+}
+
 auto CatalogManager::upsertAuthMappingCatalogEntry(const AuthMappingCatalogInfo& info,
                                                    ErrorContext* ctx) -> Status
 {
@@ -80739,11 +87323,54 @@ auto CatalogManager::upsertAdmissionPolicyCatalogEntry(const AdmissionPolicyCata
     {
         return Status::INVALID_ARGUMENT;
     }
+    if (hasAdmissionAcceleratorPolicyConfig(info) && info.accelerator_profile_name.empty())
+    {
+        SET_ERROR_CONTEXT(ctx,
+                          Status::INVALID_ARGUMENT,
+                          "Admission policy accelerator settings require accelerator_profile_name");
+        return Status::INVALID_ARGUMENT;
+    }
 
     ErrorContext local_ctx;
     Status status = UTF8Utils::validateStorageCapacity(
         info.policy_name, sizeof(AdmissionPolicyRecord{}.policy_name),
         sizeof(AdmissionPolicyRecord{}.policy_name), &local_ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.accelerator_profile_name,
+        sizeof(AdmissionPolicyRecord{}.accelerator_profile_name),
+        sizeof(AdmissionPolicyRecord{}.accelerator_profile_name),
+        &local_ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.accelerator_prewarm_policy,
+        sizeof(AdmissionPolicyRecord{}.accelerator_prewarm_policy),
+        sizeof(AdmissionPolicyRecord{}.accelerator_prewarm_policy),
+        &local_ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.accelerator_fallback_policy,
+        sizeof(AdmissionPolicyRecord{}.accelerator_fallback_policy),
+        sizeof(AdmissionPolicyRecord{}.accelerator_fallback_policy),
+        &local_ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.accelerator_degraded_state_override,
+        sizeof(AdmissionPolicyRecord{}.accelerator_degraded_state_override),
+        sizeof(AdmissionPolicyRecord{}.accelerator_degraded_state_override),
+        &local_ctx);
     if (status != Status::OK)
     {
         return status;
@@ -80771,14 +87398,35 @@ auto CatalogManager::upsertAdmissionPolicyCatalogEntry(const AdmissionPolicyCata
     std::strncpy(rec.policy_name,
                  UTF8Utils::truncateToBytes(info.policy_name, sizeof(rec.policy_name)).c_str(),
                  sizeof(rec.policy_name) - 1);
+    std::strncpy(rec.accelerator_profile_name,
+                 UTF8Utils::truncateToBytes(info.accelerator_profile_name,
+                                            sizeof(rec.accelerator_profile_name)).c_str(),
+                 sizeof(rec.accelerator_profile_name) - 1);
+    std::strncpy(rec.accelerator_prewarm_policy,
+                 UTF8Utils::truncateToBytes(info.accelerator_prewarm_policy,
+                                            sizeof(rec.accelerator_prewarm_policy)).c_str(),
+                 sizeof(rec.accelerator_prewarm_policy) - 1);
+    std::strncpy(rec.accelerator_fallback_policy,
+                 UTF8Utils::truncateToBytes(info.accelerator_fallback_policy,
+                                            sizeof(rec.accelerator_fallback_policy)).c_str(),
+                 sizeof(rec.accelerator_fallback_policy) - 1);
+    std::strncpy(rec.accelerator_degraded_state_override,
+                 UTF8Utils::truncateToBytes(info.accelerator_degraded_state_override,
+                                            sizeof(rec.accelerator_degraded_state_override)).c_str(),
+                 sizeof(rec.accelerator_degraded_state_override) - 1);
     rec.max_concurrent_sessions = info.max_concurrent_sessions;
     rec.max_concurrent_queries = info.max_concurrent_queries;
     rec.max_queue_depth = info.max_queue_depth;
+    rec.accelerator_concurrent_build_limit = info.accelerator_concurrent_build_limit;
+    rec.accelerator_concurrent_search_limit = info.accelerator_concurrent_search_limit;
     rec.cpu_reject_pct = info.cpu_reject_pct;
     rec.mem_reject_pct = info.mem_reject_pct;
     rec.io_reject_pct = info.io_reject_pct;
     rec.reject_mode = static_cast<uint8_t>(info.reject_mode);
     rec.queue_timeout_ms = info.queue_timeout_ms;
+    rec.accelerator_memory_budget_bytes = info.accelerator_memory_budget_bytes;
+    rec.accelerator_pinned_residency_target_bytes =
+        info.accelerator_pinned_residency_target_bytes;
     rec.is_enabled = info.is_enabled ? 1 : 0;
     rec.is_valid = info.is_valid ? 1 : 0;
     rec.created_time = (info.created_time == 0) ? now : info.created_time;
@@ -80828,11 +87476,31 @@ auto CatalogManager::getAdmissionPolicyCatalogEntry(const ID& policy_id,
     info_out.max_concurrent_sessions = result.record.max_concurrent_sessions;
     info_out.max_concurrent_queries = result.record.max_concurrent_queries;
     info_out.max_queue_depth = result.record.max_queue_depth;
+    info_out.accelerator_profile_name = fixedNameFromBuffer(
+        result.record.accelerator_profile_name,
+        sizeof(result.record.accelerator_profile_name));
+    info_out.accelerator_prewarm_policy = fixedNameFromBuffer(
+        result.record.accelerator_prewarm_policy,
+        sizeof(result.record.accelerator_prewarm_policy));
+    info_out.accelerator_fallback_policy = fixedNameFromBuffer(
+        result.record.accelerator_fallback_policy,
+        sizeof(result.record.accelerator_fallback_policy));
+    info_out.accelerator_degraded_state_override = fixedNameFromBuffer(
+        result.record.accelerator_degraded_state_override,
+        sizeof(result.record.accelerator_degraded_state_override));
+    info_out.accelerator_concurrent_build_limit =
+        result.record.accelerator_concurrent_build_limit;
+    info_out.accelerator_concurrent_search_limit =
+        result.record.accelerator_concurrent_search_limit;
     info_out.cpu_reject_pct = result.record.cpu_reject_pct;
     info_out.mem_reject_pct = result.record.mem_reject_pct;
     info_out.io_reject_pct = result.record.io_reject_pct;
     info_out.reject_mode = static_cast<AdmissionRejectMode>(result.record.reject_mode);
     info_out.queue_timeout_ms = result.record.queue_timeout_ms;
+    info_out.accelerator_memory_budget_bytes =
+        result.record.accelerator_memory_budget_bytes;
+    info_out.accelerator_pinned_residency_target_bytes =
+        result.record.accelerator_pinned_residency_target_bytes;
     info_out.is_enabled = result.record.is_enabled != 0;
     info_out.created_time = result.record.created_time;
     info_out.last_modified_time = result.record.last_modified_time;
@@ -80853,11 +87521,28 @@ auto CatalogManager::listAdmissionPolicyCatalogEntries(std::vector<AdmissionPoli
         info.max_concurrent_sessions = rec.max_concurrent_sessions;
         info.max_concurrent_queries = rec.max_concurrent_queries;
         info.max_queue_depth = rec.max_queue_depth;
+        info.accelerator_profile_name = fixedNameFromBuffer(
+            rec.accelerator_profile_name,
+            sizeof(rec.accelerator_profile_name));
+        info.accelerator_prewarm_policy = fixedNameFromBuffer(
+            rec.accelerator_prewarm_policy,
+            sizeof(rec.accelerator_prewarm_policy));
+        info.accelerator_fallback_policy = fixedNameFromBuffer(
+            rec.accelerator_fallback_policy,
+            sizeof(rec.accelerator_fallback_policy));
+        info.accelerator_degraded_state_override = fixedNameFromBuffer(
+            rec.accelerator_degraded_state_override,
+            sizeof(rec.accelerator_degraded_state_override));
+        info.accelerator_concurrent_build_limit = rec.accelerator_concurrent_build_limit;
+        info.accelerator_concurrent_search_limit = rec.accelerator_concurrent_search_limit;
         info.cpu_reject_pct = rec.cpu_reject_pct;
         info.mem_reject_pct = rec.mem_reject_pct;
         info.io_reject_pct = rec.io_reject_pct;
         info.reject_mode = static_cast<AdmissionRejectMode>(rec.reject_mode);
         info.queue_timeout_ms = rec.queue_timeout_ms;
+        info.accelerator_memory_budget_bytes = rec.accelerator_memory_budget_bytes;
+        info.accelerator_pinned_residency_target_bytes =
+            rec.accelerator_pinned_residency_target_bytes;
         info.is_enabled = rec.is_enabled != 0;
         info.created_time = rec.created_time;
         info.last_modified_time = rec.last_modified_time;
@@ -80904,6 +87589,20 @@ auto CatalogManager::upsertAdmissionBindingCatalogEntry(const AdmissionBindingCa
     {
         return Status::INVALID_ARGUMENT;
     }
+    if (!info.accelerator_device_id.empty() && !info.accelerator_device_pool_id.empty())
+    {
+        SET_ERROR_CONTEXT(ctx,
+                          Status::INVALID_ARGUMENT,
+                          "Admission binding accelerator config must choose device id or device pool id");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (hasAdmissionAcceleratorBindingConfig(info) && info.accelerator_device_class.empty())
+    {
+        SET_ERROR_CONTEXT(ctx,
+                          Status::INVALID_ARGUMENT,
+                          "Admission binding accelerator settings require accelerator_device_class");
+        return Status::INVALID_ARGUMENT;
+    }
 
     auto policy_predicate = [&info](const AdmissionPolicyRecord& rec) {
         return rec.policy_id == info.policy_id && rec.is_valid == 1;
@@ -80921,6 +87620,35 @@ auto CatalogManager::upsertAdmissionBindingCatalogEntry(const AdmissionBindingCa
         {
             return Status::NOT_FOUND;
         }
+    }
+
+    ErrorContext local_ctx;
+    Status status = UTF8Utils::validateStorageCapacity(
+        info.accelerator_device_class,
+        sizeof(AdmissionBindingRecord{}.accelerator_device_class),
+        sizeof(AdmissionBindingRecord{}.accelerator_device_class),
+        &local_ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.accelerator_device_id,
+        sizeof(AdmissionBindingRecord{}.accelerator_device_id),
+        sizeof(AdmissionBindingRecord{}.accelerator_device_id),
+        &local_ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.accelerator_device_pool_id,
+        sizeof(AdmissionBindingRecord{}.accelerator_device_pool_id),
+        sizeof(AdmissionBindingRecord{}.accelerator_device_pool_id),
+        &local_ctx);
+    if (status != Status::OK)
+    {
+        return status;
     }
 
     auto duplicate_predicate = [&info](const AdmissionBindingRecord& row) {
@@ -80952,6 +87680,18 @@ auto CatalogManager::upsertAdmissionBindingCatalogEntry(const AdmissionBindingCa
     rec.target_uuid = has_target_uuid ? info.target_uuid : ID{};
     rec.class_id = has_class_id ? info.class_id : ID{};
     rec.priority = info.priority;
+    std::strncpy(rec.accelerator_device_class,
+                 UTF8Utils::truncateToBytes(info.accelerator_device_class,
+                                            sizeof(rec.accelerator_device_class)).c_str(),
+                 sizeof(rec.accelerator_device_class) - 1);
+    std::strncpy(rec.accelerator_device_id,
+                 UTF8Utils::truncateToBytes(info.accelerator_device_id,
+                                            sizeof(rec.accelerator_device_id)).c_str(),
+                 sizeof(rec.accelerator_device_id) - 1);
+    std::strncpy(rec.accelerator_device_pool_id,
+                 UTF8Utils::truncateToBytes(info.accelerator_device_pool_id,
+                                            sizeof(rec.accelerator_device_pool_id)).c_str(),
+                 sizeof(rec.accelerator_device_pool_id) - 1);
     rec.is_enabled = info.is_enabled ? 1 : 0;
     rec.is_valid = info.is_valid ? 1 : 0;
     rec.created_time = (info.created_time == 0) ? now : info.created_time;
@@ -81002,6 +87742,15 @@ auto CatalogManager::getAdmissionBindingCatalogEntry(const ID& binding_id,
     info_out.target_uuid = result.record.has_target_uuid ? result.record.target_uuid : ID{};
     info_out.class_id = result.record.has_class_id ? result.record.class_id : ID{};
     info_out.priority = result.record.priority;
+    info_out.accelerator_device_class = fixedNameFromBuffer(
+        result.record.accelerator_device_class,
+        sizeof(result.record.accelerator_device_class));
+    info_out.accelerator_device_id = fixedNameFromBuffer(
+        result.record.accelerator_device_id,
+        sizeof(result.record.accelerator_device_id));
+    info_out.accelerator_device_pool_id = fixedNameFromBuffer(
+        result.record.accelerator_device_pool_id,
+        sizeof(result.record.accelerator_device_pool_id));
     info_out.is_enabled = result.record.is_enabled != 0;
     info_out.created_time = result.record.created_time;
     info_out.last_modified_time = result.record.last_modified_time;
@@ -81030,6 +87779,15 @@ auto CatalogManager::listAdmissionBindingCatalogEntries(const ID& policy_id,
         info.target_uuid = rec.has_target_uuid ? rec.target_uuid : ID{};
         info.class_id = rec.has_class_id ? rec.class_id : ID{};
         info.priority = rec.priority;
+        info.accelerator_device_class = fixedNameFromBuffer(
+            rec.accelerator_device_class,
+            sizeof(rec.accelerator_device_class));
+        info.accelerator_device_id = fixedNameFromBuffer(
+            rec.accelerator_device_id,
+            sizeof(rec.accelerator_device_id));
+        info.accelerator_device_pool_id = fixedNameFromBuffer(
+            rec.accelerator_device_pool_id,
+            sizeof(rec.accelerator_device_pool_id));
         info.is_enabled = rec.is_enabled != 0;
         info.created_time = rec.created_time;
         info.last_modified_time = rec.last_modified_time;

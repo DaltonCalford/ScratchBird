@@ -1,0 +1,6 @@
+case_id,action,object_scope,grants_present,explicit_deny,expected_result,error_code
+T19-PE-001,select,table,direct_grant,false,allow,
+T19-PE-002,insert,table,none,false,deny,E_PERMISSION_DENIED
+T19-PE-003,update,column,grant_on_table_only,false,deny,E_COLUMN_PERMISSION_DENIED
+T19-PE-004,delete,view,grant_on_view;view_has_definer_access,false,allow,
+T19-PE-005,select,table,role_grant,true,deny,E_PERMISSION_DENIED

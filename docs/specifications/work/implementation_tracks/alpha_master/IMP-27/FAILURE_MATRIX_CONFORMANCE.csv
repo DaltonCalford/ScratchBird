@@ -1,0 +1,4 @@
+case_id,suite,required_check,expected_result,error_code
+T27-E01,E,each_state_failure_emits_expected_code,pass,
+T27-E02,E,abort_continue_behavior_matches_failure_matrix,pass,
+T27-E03,E,timeout_paths_tested_for_all_phases,pass,

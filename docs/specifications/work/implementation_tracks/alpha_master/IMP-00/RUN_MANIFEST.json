@@ -1,0 +1,19 @@
+{
+  "ticket_id": "IMP-00",
+  "section": "00_Governance_and_Invarients",
+  "wave": "W0",
+  "status": "done",
+  "started_at_utc": "2026-02-12T00:04:19Z",
+  "completed_at_utc": "2026-02-12T00:04:20Z",
+  "gate_contract": "docs/specifications/00_Governance_and_Invarients/TEST_CONTRACT.md",
+  "artifacts": [
+    "GOVERNANCE_VALIDATION_REPORT.md",
+    "GOVERNANCE_CONTRACT_CHECKSUMS.txt",
+    "CHECKSUMS.sha256",
+    "RUN_MANIFEST.json",
+    "SPEC_TRACEABILITY.csv",
+    "TEST_EVIDENCE_INDEX.md",
+    "GATE_RESULT.json",
+    "CHANGESET_LOG.md"
+  ]
+}

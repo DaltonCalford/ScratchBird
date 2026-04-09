@@ -1,0 +1,4 @@
+requirement_id,requirement_surface,authority_file,evidence_or_gate,status
+GC-01,reclaim_legality_and_publication,RECLAIM_LEGALITY_AUTHORITY_AND_DECISION_VOCABULARY.md,TEST_CONTRACT.md,canonicalized
+GC-02,sweep_resume_and_rewind,SWEEP_CURSOR_PERSISTENCE_AND_RESTART_RESUMPTION.md,TEST_CONTRACT.md,canonicalized
+GC-03,index_cleanup_after_heap_proof,GC_SWEEP_ALGORITHM.md,TEST_CONTRACT.md,canonicalized

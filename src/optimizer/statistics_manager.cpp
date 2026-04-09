@@ -687,6 +687,27 @@ namespace scratchbird::optimizer
         return lowerPlannerFamily(request);
     }
 
+    auto canonicalPhysicalFamilyName(const core::CatalogManager::IndexInfo &index_info)
+        -> std::string
+    {
+        if (!index_info.physical_family.empty())
+        {
+            return index_info.physical_family;
+        }
+        return indexTypeName(index_info.index_type);
+    }
+
+    auto canonicalPlannerFamilyName(const core::CatalogManager::IndexInfo &index_info,
+                                    const PlannerFamilyLoweringResult &lowering)
+        -> std::string
+    {
+        if (!index_info.planner_family.empty())
+        {
+            return index_info.planner_family;
+        }
+        return lowering.family_name;
+    }
+
     auto metricsTypeForLowering(const PlannerFamilyLoweringResult &lowering)
         -> IndexFamilyMetricsType
     {
@@ -730,6 +751,49 @@ namespace scratchbird::optimizer
             default:
                 return IndexFamilyMetricsType::UNKNOWN;
         }
+    }
+
+    auto canonicalMetricsType(const core::CatalogManager::IndexInfo &index_info,
+                              const PlannerFamilyLoweringResult &lowering)
+        -> IndexFamilyMetricsType
+    {
+        if (index_info.metrics_type != IndexFamilyMetricsType::UNKNOWN)
+        {
+            return index_info.metrics_type;
+        }
+        return metricsTypeForLowering(lowering);
+    }
+
+    auto parseCatalogQueryabilityState(const std::string &value)
+        -> std::optional<IndexMetricsQueryabilityState>
+    {
+        if (value.empty())
+        {
+            return std::nullopt;
+        }
+
+        std::string normalized = value;
+        std::transform(normalized.begin(),
+                       normalized.end(),
+                       normalized.begin(),
+                       [](unsigned char ch) {
+                           return static_cast<char>(std::toupper(ch));
+                       });
+
+        if (normalized == "QUERYABLE" || normalized == "ACTIVE")
+        {
+            return IndexMetricsQueryabilityState::QUERYABLE;
+        }
+        if (normalized == "BUILDING" || normalized == "RETIRED" ||
+            normalized == "INACTIVE" || normalized == "LIMITED")
+        {
+            return IndexMetricsQueryabilityState::LIMITED;
+        }
+        if (normalized == "FAILED" || normalized == "INVALID")
+        {
+            return IndexMetricsQueryabilityState::INVALID;
+        }
+        return std::nullopt;
     }
 
     auto metricsQueryabilityFromAccessState(AccessPathQueryabilityState state)
@@ -806,6 +870,81 @@ namespace scratchbird::optimizer
         return base == IndexMetricsQueryabilityState::UNKNOWN
                    ? IndexMetricsQueryabilityState::LIMITED
                    : base;
+    }
+
+    auto classifyIndexMetricsFreshness(
+        IndexMetricsQueryabilityState queryability_state,
+        IndexMetricsConfidenceClass confidence_class,
+        uint64_t publish_lag_xids,
+        uint64_t maintenance_backlog_ops,
+        uint64_t reclaim_lag_xids) -> IndexMetricsFreshnessClass
+    {
+        if (confidence_class == IndexMetricsConfidenceClass::INVALID ||
+            queryability_state == IndexMetricsQueryabilityState::INVALID)
+        {
+            return IndexMetricsFreshnessClass::UNUSABLE;
+        }
+        if (publish_lag_xids > 0 || maintenance_backlog_ops > 0 ||
+            reclaim_lag_xids > 0)
+        {
+            return IndexMetricsFreshnessClass::STALE_DEGRADED;
+        }
+        if (confidence_class == IndexMetricsConfidenceClass::LOW ||
+            queryability_state == IndexMetricsQueryabilityState::LIMITED ||
+            confidence_class == IndexMetricsConfidenceClass::UNKNOWN ||
+            queryability_state == IndexMetricsQueryabilityState::UNKNOWN)
+        {
+            return IndexMetricsFreshnessClass::AGED;
+        }
+        return IndexMetricsFreshnessClass::CURRENT;
+    }
+
+    auto classifyIndexMetricsInvalidationState(
+        IndexMetricsFreshnessClass freshness_class) -> IndexMetricsInvalidationState
+    {
+        switch (freshness_class)
+        {
+            case IndexMetricsFreshnessClass::CURRENT:
+            case IndexMetricsFreshnessClass::AGED:
+                return IndexMetricsInvalidationState::VALID;
+            case IndexMetricsFreshnessClass::STALE_DEGRADED:
+                return IndexMetricsInvalidationState::INVALIDATED_SOFT;
+            case IndexMetricsFreshnessClass::UNUSABLE:
+                return IndexMetricsInvalidationState::INVALIDATED_HARD;
+            case IndexMetricsFreshnessClass::UNKNOWN:
+            default:
+                return IndexMetricsInvalidationState::UNKNOWN;
+        }
+    }
+
+    auto classifyIndexMetricsInvalidationReason(
+        IndexMetricsQueryabilityState queryability_state,
+        IndexMetricsConfidenceClass confidence_class,
+        uint64_t publish_lag_xids,
+        uint64_t maintenance_backlog_ops,
+        uint64_t reclaim_lag_xids) -> std::string
+    {
+        if (confidence_class == IndexMetricsConfidenceClass::INVALID)
+        {
+            return "CONFIDENCE_INVALID";
+        }
+        if (queryability_state == IndexMetricsQueryabilityState::INVALID)
+        {
+            return "QUERYABILITY_INVALID";
+        }
+        if (publish_lag_xids > 0)
+        {
+            return "INDEX_STRUCTURE_CHANGE";
+        }
+        if (maintenance_backlog_ops > 0)
+        {
+            return "MAINTENANCE_EVENT";
+        }
+        if (reclaim_lag_xids > 0)
+        {
+            return "RECLAIM_PENDING";
+        }
+        return std::string();
     }
 
     // Hash function for std::vector<uint8_t> (for use in unordered_set)
@@ -2236,11 +2375,31 @@ namespace scratchbird::optimizer
             effectiveMetricsQueryability(lowering,
                                          have_health ? &health : nullptr,
                                          confidence_class);
-        const bool alias_surface = isAliasSurface(index_info.index_type);
+        const bool alias_surface =
+            !index_info.alias_origin.empty() || isAliasSurface(index_info.index_type);
         if (alias_surface &&
             queryability_state == IndexMetricsQueryabilityState::QUERYABLE)
         {
             queryability_state = IndexMetricsQueryabilityState::LIMITED;
+        }
+        if (const auto catalog_state =
+                parseCatalogQueryabilityState(index_info.queryability_state);
+            catalog_state.has_value())
+        {
+            if (*catalog_state == IndexMetricsQueryabilityState::INVALID ||
+                queryability_state == IndexMetricsQueryabilityState::INVALID)
+            {
+                queryability_state = IndexMetricsQueryabilityState::INVALID;
+            }
+            else if (*catalog_state == IndexMetricsQueryabilityState::LIMITED ||
+                     queryability_state == IndexMetricsQueryabilityState::LIMITED)
+            {
+                queryability_state = IndexMetricsQueryabilityState::LIMITED;
+            }
+            else
+            {
+                queryability_state = *catalog_state;
+            }
         }
         const char *runtime_family = runtimeIndexFamilyName(index_info.index_type);
         const char *native_metrics_mode = indexMetricsNativeMode(index_info.index_type);
@@ -2252,6 +2411,7 @@ namespace scratchbird::optimizer
         packet.physical_family = indexTypeName(index_info.index_type);
         packet.planner_family = lowering.family_name;
         packet.queryability_state = queryability_state;
+        packet.metrics_publication_epoch = current_xid;
         packet.metrics_last_refresh_xid = current_xid;
         packet.metrics_confidence_class = confidence_class;
         packet.leaf_pages = have_storage ? storage.page_count : stats.leaf_pages;
@@ -2278,6 +2438,22 @@ namespace scratchbird::optimizer
             index_info.valid_from_xid > current_xid ? (index_info.valid_from_xid - current_xid) : 0;
         packet.reclaim_lag_xids =
             index_info.retired_xid > current_xid ? (index_info.retired_xid - current_xid) : 0;
+        packet.metrics_freshness_class =
+            classifyIndexMetricsFreshness(packet.queryability_state,
+                                          packet.metrics_confidence_class,
+                                          packet.publish_lag_xids,
+                                          packet.maintenance_backlog_ops,
+                                          packet.reclaim_lag_xids);
+        packet.metrics_invalidation_state =
+            classifyIndexMetricsInvalidationState(
+                packet.metrics_freshness_class);
+        packet.metrics_invalidation_reason =
+            classifyIndexMetricsInvalidationReason(
+                packet.queryability_state,
+                packet.metrics_confidence_class,
+                packet.publish_lag_xids,
+                packet.maintenance_backlog_ops,
+                packet.reclaim_lag_xids);
         packet.family_metrics_version =
             stats.family_metrics_version == std::numeric_limits<uint32_t>::max()
                 ? stats.family_metrics_version
@@ -2293,9 +2469,16 @@ namespace scratchbird::optimizer
             {"native_metrics_mode", native_metrics_mode},
             {"semantic_contract_state", semantic_contract_state},
             {"requires_fail_closed_stronger_semantics", alias_surface},
+            {"metrics_publication_epoch", packet.metrics_publication_epoch},
             {"queryability_state", indexMetricsQueryabilityStateName(packet.queryability_state)},
             {"metrics_last_refresh_xid", packet.metrics_last_refresh_xid},
             {"metrics_confidence_class", indexMetricsConfidenceClassName(packet.metrics_confidence_class)},
+            {"freshness_class",
+             indexMetricsFreshnessClassName(packet.metrics_freshness_class)},
+            {"invalidation_state",
+             indexMetricsInvalidationStateName(
+                 packet.metrics_invalidation_state)},
+            {"invalidation_reason", packet.metrics_invalidation_reason},
             {"leaf_pages", packet.leaf_pages},
             {"height", packet.height},
             {"row_count_est", packet.row_count_est},
@@ -2607,7 +2790,12 @@ namespace scratchbird::optimizer
 
         core::CatalogManager::IndexStatsCatalogInfo stats{};
         status = catalog_->getIndexStatsCatalogEntry(index_id, stats, ctx);
-        if (status != Status::OK)
+        if (status == Status::NOT_FOUND)
+        {
+            stats = core::CatalogManager::IndexStatsCatalogInfo{};
+            stats.index_id = index_id;
+        }
+        else if (status != Status::OK)
         {
             return status;
         }
@@ -2647,9 +2835,10 @@ namespace scratchbird::optimizer
             ? existing_packet
             : IndexFamilyMetricsPacket{};
         packet.index_id = index_id;
-        packet.physical_family = indexTypeName(index_info.index_type);
-        packet.planner_family = lowering.family_name;
+        packet.physical_family = canonicalPhysicalFamilyName(index_info);
+        packet.planner_family = canonicalPlannerFamilyName(index_info, lowering);
         packet.queryability_state = queryability_state;
+        packet.metrics_publication_epoch = current_xid;
         packet.metrics_last_refresh_xid = current_xid;
         packet.metrics_confidence_class = confidence_class;
         packet.leaf_pages = have_storage ? storage.page_count : stats.leaf_pages;
@@ -2679,11 +2868,27 @@ namespace scratchbird::optimizer
             index_info.valid_from_xid > current_xid ? (index_info.valid_from_xid - current_xid) : 0;
         packet.reclaim_lag_xids =
             index_info.retired_xid > current_xid ? (index_info.retired_xid - current_xid) : 0;
+        packet.metrics_freshness_class =
+            classifyIndexMetricsFreshness(packet.queryability_state,
+                                          packet.metrics_confidence_class,
+                                          packet.publish_lag_xids,
+                                          packet.maintenance_backlog_ops,
+                                          packet.reclaim_lag_xids);
+        packet.metrics_invalidation_state =
+            classifyIndexMetricsInvalidationState(
+                packet.metrics_freshness_class);
+        packet.metrics_invalidation_reason =
+            classifyIndexMetricsInvalidationReason(
+                packet.queryability_state,
+                packet.metrics_confidence_class,
+                packet.publish_lag_xids,
+                packet.maintenance_backlog_ops,
+                packet.reclaim_lag_xids);
         packet.family_metrics_version =
             stats.family_metrics_version == std::numeric_limits<uint32_t>::max()
                 ? stats.family_metrics_version
                 : std::max<uint32_t>(1, stats.family_metrics_version + 1);
-        packet.family_metrics_type = metricsTypeForLowering(lowering);
+        packet.family_metrics_type = canonicalMetricsType(index_info, lowering);
 
         nlohmann::json payload = nlohmann::json::object();
         if (!packet.family_metrics_payload.empty())
@@ -2703,9 +2908,16 @@ namespace scratchbird::optimizer
             {"native_metrics_mode", native_metrics_mode},
             {"semantic_contract_state", semantic_contract_state},
             {"requires_fail_closed_stronger_semantics", alias_surface},
+            {"metrics_publication_epoch", packet.metrics_publication_epoch},
             {"queryability_state", indexMetricsQueryabilityStateName(packet.queryability_state)},
             {"metrics_last_refresh_xid", packet.metrics_last_refresh_xid},
             {"metrics_confidence_class", indexMetricsConfidenceClassName(packet.metrics_confidence_class)},
+            {"freshness_class",
+             indexMetricsFreshnessClassName(packet.metrics_freshness_class)},
+            {"invalidation_state",
+             indexMetricsInvalidationStateName(
+                 packet.metrics_invalidation_state)},
+            {"invalidation_reason", packet.metrics_invalidation_reason},
             {"leaf_pages", packet.leaf_pages},
             {"height", packet.height},
             {"row_count_est", packet.row_count_est},
@@ -2787,9 +2999,12 @@ namespace scratchbird::optimizer
 
         packet = IndexFamilyMetricsPacket{};
         packet.index_id = index_id;
-        packet.physical_family = indexTypeName(index_info.index_type);
-        packet.planner_family = lowering.family_name;
-        packet.queryability_state = stats.queryability_state;
+        packet.physical_family = canonicalPhysicalFamilyName(index_info);
+        packet.planner_family = canonicalPlannerFamilyName(index_info, lowering);
+        packet.queryability_state =
+            parseCatalogQueryabilityState(index_info.queryability_state)
+                .value_or(stats.queryability_state);
+        packet.metrics_publication_epoch = stats.metrics_last_refresh_xid;
         packet.metrics_last_refresh_xid = stats.metrics_last_refresh_xid;
         packet.metrics_confidence_class = stats.metrics_confidence_class;
         packet.leaf_pages = stats.leaf_pages;
@@ -2798,7 +3013,10 @@ namespace scratchbird::optimizer
         packet.bloat_ratio = stats.bloat_ratio;
         packet.correlation = stats.correlation;
         packet.family_metrics_version = stats.family_metrics_version;
-        packet.family_metrics_type = stats.family_metrics_type;
+        packet.family_metrics_type =
+            stats.family_metrics_type == IndexFamilyMetricsType::UNKNOWN
+                ? canonicalMetricsType(index_info, lowering)
+                : stats.family_metrics_type;
         packet.family_metrics_payload = stats.family_metrics_payload;
 
         if (packet.family_metrics_version == 0 ||
@@ -2840,8 +3058,55 @@ namespace scratchbird::optimizer
                         envelope.value("physical_family", packet.physical_family);
                     packet.planner_family =
                         envelope.value("planner_family", packet.planner_family);
+                    packet.metrics_publication_epoch =
+                        envelope.value("metrics_publication_epoch",
+                                       packet.metrics_publication_epoch);
+                    packet.metrics_freshness_class =
+                        indexMetricsFreshnessClassFromName(
+                            envelope.value("freshness_class",
+                                           std::string()));
+                    packet.metrics_invalidation_state =
+                        indexMetricsInvalidationStateFromName(
+                            envelope.value("invalidation_state",
+                                           std::string()));
+                    packet.metrics_invalidation_reason =
+                        envelope.value("invalidation_reason", std::string());
                 }
             }
+        }
+
+        if (packet.metrics_publication_epoch == 0)
+        {
+            packet.metrics_publication_epoch = packet.metrics_last_refresh_xid;
+        }
+        if (packet.metrics_freshness_class ==
+            IndexMetricsFreshnessClass::UNKNOWN)
+        {
+            packet.metrics_freshness_class =
+                classifyIndexMetricsFreshness(packet.queryability_state,
+                                              packet.metrics_confidence_class,
+                                              packet.publish_lag_xids,
+                                              packet.maintenance_backlog_ops,
+                                              packet.reclaim_lag_xids);
+        }
+        if (packet.metrics_invalidation_state ==
+            IndexMetricsInvalidationState::UNKNOWN)
+        {
+            packet.metrics_invalidation_state =
+                classifyIndexMetricsInvalidationState(
+                    packet.metrics_freshness_class);
+        }
+        if (packet.metrics_invalidation_reason.empty() &&
+            packet.metrics_invalidation_state !=
+                IndexMetricsInvalidationState::VALID)
+        {
+            packet.metrics_invalidation_reason =
+                classifyIndexMetricsInvalidationReason(
+                    packet.queryability_state,
+                    packet.metrics_confidence_class,
+                    packet.publish_lag_xids,
+                    packet.maintenance_backlog_ops,
+                    packet.reclaim_lag_xids);
         }
 
         return Status::OK;

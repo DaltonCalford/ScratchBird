@@ -1,0 +1,32 @@
+{
+  "ticket_id": "PP-11",
+  "title": "TOAST Pointer Canonical Binary Contract Rewrite",
+  "timestamp_utc": "2026-02-13T18:43:29Z",
+  "implementation_repo": "/home/dcalford/CliWork/ScratchBird",
+  "primary_specs": [
+    "11_TOAST_and_LOB_Storage/TOAST_POINTER_FORMAT.md",
+    "05_Page_Taxonomy_and_Binary_Layouts/HEAP_PAGE_LAYOUT.md"
+  ],
+  "changed_files": [
+    "include/scratchbird/core/toast.h",
+    "src/core/toast.cpp",
+    "src/core/garbage_collector.cpp",
+    "src/core/heap_page.cpp",
+    "src/core/storage_engine.cpp",
+    "src/core/catalog_manager.cpp",
+    "tests/unit/test_toast_operations.cpp",
+    "tests/unit/test_heap_toast_integration.cpp",
+    "tests/unit/test_toast_tip_visibility.cpp"
+  ],
+  "commands": [
+    {
+      "cmd": "cmake --build /home/dcalford/CliWork/ScratchBird/build --target scratchbird_tests -j6",
+      "result": "pass"
+    },
+    {
+      "cmd": "ctest --test-dir /home/dcalford/CliWork/ScratchBird/build -R 'HeapRecordContractTest|ToastOperationsTest|HeapToastIntegrationTest|ToastTIPVisibilityTest|HeapPageToastAPITest|MGABackVersioningTest' --output-on-failure",
+      "result": "pass"
+    }
+  ],
+  "status": "done"
+}

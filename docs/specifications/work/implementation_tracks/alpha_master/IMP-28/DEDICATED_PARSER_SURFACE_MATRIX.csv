@@ -1,0 +1,11 @@
+case_id,suite,required_check,expected_result,error_code
+T28-B001,B,native_parser_accepts_native_surface_only,pass,
+T28-B002,B,firebird_parser_accepts_firebird_profile_only,pass,
+T28-B003,B,postgresql_parser_accepts_postgresql_profile_only,pass,
+T28-B004,B,mysql_parser_accepts_mysql_profile_only,pass,
+T28-B005,B,cassandra_parser_accepts_cassandra_profile_only,pass,
+T28-B006,B,mongodb_parser_accepts_mongodb_profile_only,pass,
+T28-B007,B,neo4j_parser_accepts_neo4j_profile_only,pass,
+T28-B008,B,redis_parser_accepts_redis_profile_only,pass,
+T28-B009,B,milvus_parser_accepts_milvus_profile_only,pass,
+T28-B010,B,no_emulated_parser_falls_back_to_native,pass,

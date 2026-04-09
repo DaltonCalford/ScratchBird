@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-003",
+  "phase": "PH0",
+  "title": "Define program metrics and success criteria",
+  "status": "pending",
+  "owner": "program-management",
+  "estimate_days": 2,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

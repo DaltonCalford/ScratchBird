@@ -1,0 +1,21 @@
+# Changeset Log
+
+- Ticket: IMP-01
+- Section: 01_Configuration_Subsystem
+- Summary: Completed deterministic implementation contract pack and gate evidence for configuration subsystem.
+- Files changed:
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-01/IMPLEMENTATION_CHECKLIST.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-01/IMPLEMENTATION_NOTES.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-01/CONFIG_KEY_REGISTER.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-01/CONFIG_PRECEDENCE_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-01/BOOTSTRAP_VALIDATION_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-01/CONFIG_SQL_CONTRACT_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-01/CLUSTER_CONFIG_PROPAGATION_POLICY.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-01/TEST_RESULTS.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-01/CHECKSUMS.sha256
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-01/RUN_MANIFEST.json
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-01/SPEC_TRACEABILITY.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-01/TEST_EVIDENCE_INDEX.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-01/GATE_RESULT.json
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-01/CHANGESET_LOG.md
+- 2026-02-12: Fixed shell-interpolation text issue in IMPLEMENTATION_NOTES.md and regenerated CHECKSUMS.sha256.

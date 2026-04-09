@@ -1,0 +1,298 @@
+{
+  "metadata": {
+    "engine": "mysql",
+    "host": "localhost",
+    "port": 3306,
+    "timestamp": "20260401_142254"
+  },
+  "results": [
+    {
+      "test_name": "clustered_pk_range_scan",
+      "test_category": "mysql_optimized",
+      "engine": "mysql",
+      "duration_ms": 190.99903106689453,
+      "expected_pattern": "Index range scan on PRIMARY (clustered), sequential read",
+      "actual_pattern": "Index range scan on PRIMARY (clustered), sequential read",
+      "performance_score": 100.0,
+      "notes": "MySQL advantage: 5-20x"
+    },
+    {
+      "test_name": "clustered_pk_prefix_scan",
+      "test_category": "mysql_optimized",
+      "engine": "mysql",
+      "duration_ms": 69.44394111633301,
+      "expected_pattern": "Clustered index scan of last pages",
+      "actual_pattern": "Clustered index scan of last pages",
+      "performance_score": 100.0,
+      "notes": "MySQL advantage: 3-10x"
+    },
+    {
+      "test_name": "covering_index_lookup",
+      "test_category": "mysql_optimized",
+      "engine": "mysql",
+      "duration_ms": 166.54109954833984,
+      "expected_pattern": "Using index (covering) - no table access",
+      "actual_pattern": "Using index (covering) - no table access",
+      "performance_score": 100.0,
+      "notes": "MySQL advantage: 2-5x"
+    },
+    {
+      "test_name": "secondary_index_covering_count",
+      "test_category": "mysql_optimized",
+      "engine": "mysql",
+      "duration_ms": 334.49316024780273,
+      "expected_pattern": "Index scan on idx_type_time (covering)",
+      "actual_pattern": "Index scan on idx_type_time (covering)",
+      "performance_score": 100.0,
+      "notes": "MySQL advantage: 3-8x"
+    },
+    {
+      "test_name": "repeated_hot_page_access",
+      "test_category": "mysql_optimized",
+      "engine": "mysql",
+      "duration_ms": 137.32075691223145,
+      "expected_pattern": "All pages in buffer pool (InnoDB buffer hit 100%)",
+      "actual_pattern": "All pages in buffer pool (InnoDB buffer hit 100%)",
+      "performance_score": 100.0,
+      "notes": "MySQL advantage: 2-4x"
+    },
+    {
+      "test_name": "point_select_pk_buffer_efficiency",
+      "test_category": "mysql_optimized",
+      "engine": "mysql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: (1064, \"You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '?;\\n-- Run for id = 1 to 100000' at line 3\")",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "secondary_index_insert_buffering",
+      "test_category": "mysql_optimized",
+      "engine": "mysql",
+      "duration_ms": 313.5876655578613,
+      "expected_pattern": "Change buffer absorbs secondary index writes",
+      "actual_pattern": "Change buffer absorbs secondary index writes",
+      "performance_score": 100.0,
+      "notes": "MySQL advantage: 3-10x"
+    },
+    {
+      "test_name": "sequential_pk_insert_performance",
+      "test_category": "mysql_optimized",
+      "engine": "mysql",
+      "duration_ms": 236.6926670074463,
+      "expected_pattern": "Append-only, no page splits, minimal fragmentation",
+      "actual_pattern": "Append-only, no page splits, minimal fragmentation",
+      "performance_score": 100.0,
+      "notes": "MySQL advantage: 2-5x"
+    },
+    {
+      "test_name": "parallel_seq_scan_large_table",
+      "test_category": "pg_optimized",
+      "engine": "mysql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: (1064, \"You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '(ORDER BY amount) as median\\nFROM large_analytics\\nWHERE created_at > '2020-01-01'' at line 9\")",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "parallel_hash_join",
+      "test_category": "pg_optimized",
+      "engine": "mysql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: (1146, \"Table 'benchmark.fact_sales' doesn't exist\")",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "parallel_bitmap_heap_scan",
+      "test_category": "pg_optimized",
+      "engine": "mysql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: (1146, \"Table 'benchmark.parallel_bitmap_test' doesn't exist\")",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "gin_fulltext_search",
+      "test_category": "pg_optimized",
+      "engine": "mysql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: (1064, \"You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'rank\\nFROM documents, plainto_tsquery('english', 'special keyword') query\\nWHERE s' at line 2\")",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "gist_range_queries",
+      "test_category": "pg_optimized",
+      "engine": "mysql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: (1146, \"Table 'benchmark.reservations' doesn't exist\")",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "brin_warehouse_scan",
+      "test_category": "pg_optimized",
+      "engine": "mysql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: (1146, \"Table 'benchmark.sensor_readings' doesn't exist\")",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "partial_index_selective",
+      "test_category": "pg_optimized",
+      "engine": "mysql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: (1146, \"Table 'benchmark.orders_with_status' doesn't exist\")",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "hash_join_large_tables",
+      "test_category": "pg_optimized",
+      "engine": "mysql",
+      "duration_ms": 156.83484077453613,
+      "expected_pattern": "Slower than PostgreSQL",
+      "actual_pattern": "Hash Join (8.0+) or Block Nested Loop",
+      "performance_score": 50.0,
+      "notes": "PostgreSQL advantage: 10-100x"
+    },
+    {
+      "test_name": "merge_join_sorted",
+      "test_category": "pg_optimized",
+      "engine": "mysql",
+      "duration_ms": 245.3169822692871,
+      "expected_pattern": "Slower than PostgreSQL",
+      "actual_pattern": "Nested Loop with index lookups",
+      "performance_score": 50.0,
+      "notes": "PostgreSQL advantage: 5-10x"
+    },
+    {
+      "test_name": "toast_large_column_scan",
+      "test_category": "pg_optimized",
+      "engine": "mysql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: (1146, \"Table 'benchmark.large_objects' doesn't exist\")",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "hot_update_frequent",
+      "test_category": "pg_optimized",
+      "engine": "mysql",
+      "duration_ms": 90.91782569885254,
+      "expected_pattern": "Slower than PostgreSQL",
+      "actual_pattern": "Undo log growth, buffer pool pressure",
+      "performance_score": 50.0,
+      "notes": "PostgreSQL advantage: 3-10x"
+    },
+    {
+      "test_name": "mga_readers_dont_block",
+      "test_category": "fb_optimized",
+      "engine": "mysql",
+      "duration_ms": 78.69100570678711,
+      "expected_pattern": "Slower than Firebird",
+      "actual_pattern": "MVCC but potential lock waits on concurrent writes",
+      "performance_score": 50.0,
+      "notes": "Firebird advantage: 10-100x (under high contention)"
+    },
+    {
+      "test_name": "mga_long_running_read",
+      "test_category": "fb_optimized",
+      "engine": "mysql",
+      "duration_ms": 61.67244911193848,
+      "expected_pattern": "Slower than Firebird",
+      "actual_pattern": "Undo log management for long transactions",
+      "performance_score": 50.0,
+      "notes": "Firebird advantage: No blocking vs vacuum blocking"
+    },
+    {
+      "test_name": "mga_rollback_performance",
+      "test_category": "fb_optimized",
+      "engine": "mysql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: (1064, \"You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'ROLLBACK;\\n\\n-- MySQL: Must undo all changes from rollback segment\\n-- PostgreSQL: ' at line 7\")",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "concurrent_read_heavy",
+      "test_category": "fb_optimized",
+      "engine": "mysql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: (1064, \"You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'ROWS 100;\\n\\n-- Firebird: Each gets snapshot, no locking, scales linearly\\n-- MySQL' at line 4\")",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "concurrent_write_heavy",
+      "test_category": "fb_optimized",
+      "engine": "mysql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: (1064, \"You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ':random_id;\\n\\n-- Firebird: Versioning handles concurrent updates well\\n-- MySQL: R' at line 4\")",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "storage_compact_nulls",
+      "test_category": "fb_optimized",
+      "engine": "mysql",
+      "duration_ms": 79.18429374694824,
+      "expected_pattern": "Slower than Firebird",
+      "actual_pattern": "Less efficient NULL bitmap",
+      "performance_score": 50.0,
+      "notes": "Firebird advantage: 30-50% smaller"
+    },
+    {
+      "test_name": "storage_index_compression",
+      "test_category": "fb_optimized",
+      "engine": "mysql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: (1064, \"You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'STARTING WITH 'USA-NY-001';\\n\\n-- Firebird: Compressed index scans very fast\\n-- My' at line 2\")",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "index_selective_bitmap",
+      "test_category": "fb_optimized",
+      "engine": "mysql",
+      "duration_ms": 182.7101707458496,
+      "expected_pattern": "Slower than Firebird",
+      "actual_pattern": "Index merge (less efficient)",
+      "performance_score": 50.0,
+      "notes": "Firebird advantage: 2-3x"
+    },
+    {
+      "test_name": "index_navigational",
+      "test_category": "fb_optimized",
+      "engine": "mysql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: (1064, \"You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '20 SKIP :offset * 20 *\\nFROM navigational\\nORDER BY sort_order;\\n\\n-- Firebird: Inde' at line 2\")",
+      "performance_score": 0,
+      "notes": "Failed"
+    }
+  ],
+  "summary": {
+    "total_tests": 28,
+    "by_category": {
+      "mysql_optimized": 8,
+      "pg_optimized": 11,
+      "fb_optimized": 9
+    }
+  }
+}

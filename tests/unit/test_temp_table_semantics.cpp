@@ -211,11 +211,23 @@ protected:
         executor_ = std::make_unique<Executor>(&db_);
     }
 
-    PageHeader readPageHeaderFromFile(uint32_t page_id)
+    PageHeader readPageHeaderFromFile(GPID gpid)
     {
         PageHeader header{};
         std::vector<uint8_t> buffer(db_.page_size());
-        const int fd = ::open(db_path_.c_str(), O_RDWR);
+        const uint16_t tablespace_id = getTablespaceID(gpid);
+        const uint32_t page_id = static_cast<uint32_t>(getPageNumber(gpid));
+        int fd = -1;
+        bool close_fd = false;
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            fd = ::open(db_path_.c_str(), O_RDWR);
+            close_fd = true;
+        }
+        else
+        {
+            fd = db_.getTablespaceFd(tablespace_id);
+        }
         EXPECT_GE(fd, 0) << std::strerror(errno);
         if (fd < 0)
         {
@@ -230,7 +242,10 @@ protected:
         {
             std::memcpy(&header, buffer.data(), sizeof(header));
         }
-        ::close(fd);
+        if (close_fd)
+        {
+            ::close(fd);
+        }
         return header;
     }
 
@@ -404,10 +419,10 @@ TEST_F(TempTableExecutorTest, TempTablePagesCarryTemporaryWorkMarkerWithoutDurab
     status = catalog_->getTable(temp_schema.schema_id, "temp_flush_marker", table_info, &ctx);
     ASSERT_EQ(status, Status::OK) << ctx.message;
 
-    const uint32_t page_id = static_cast<uint32_t>(getPageNumber(table_info.root_gpid));
-    ASSERT_EQ(db_.buffer_pool()->flushPage(page_id, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(db_.buffer_pool()->flushPageGlobal(table_info.root_gpid, &ctx), Status::OK)
+        << ctx.message;
 
-    const auto header = readPageHeaderFromFile(page_id);
+    const auto header = readPageHeaderFromFile(table_info.root_gpid);
     EXPECT_NE(header.flags & static_cast<uint16_t>(PAGE_FLAG_TEMPORARY_WORK), 0u);
     EXPECT_EQ(header.flush_generation, 0u);
     EXPECT_EQ(header.checkpoint_generation, 0u);

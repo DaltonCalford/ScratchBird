@@ -11,8 +11,8 @@
 namespace scratchbird::optimizer
 {
 
-    inline constexpr uint32_t kRuntimePlanPayloadVersion = 23;
-    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v24";
+    inline constexpr uint32_t kRuntimePlanPayloadVersion = 25;
+    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v26";
     inline constexpr const char *kOptimizerProofSurfaceContractId =
         "sb_optimizer_proof_surface/v1";
     inline constexpr const char *kAdaptiveFeedbackCalibrationStoreContractId =
@@ -38,6 +38,16 @@ namespace scratchbird::optimizer
         std::string literal_text;
     };
 
+    struct RuntimePlanCandidateRefusal
+    {
+        std::string family;
+        std::string candidate_label;
+        std::string refusal_class;
+        std::string refusal_cause_domain;
+        std::string refusal_reason_code;
+        std::string refusal_detail;
+    };
+
     struct RuntimePlanRelation
     {
         size_t source_relation_index = 0;
@@ -55,6 +65,7 @@ namespace scratchbird::optimizer
         std::vector<std::string> candidate_scan_families;
         std::vector<std::string> candidate_family_identity_signatures;
         std::vector<std::string> candidate_family_statistics_signatures;
+        std::vector<RuntimePlanCandidateRefusal> candidate_family_refusals;
         AccessPathExactnessClass exactness_class = AccessPathExactnessClass::UNKNOWN;
         bool requires_recheck = false;
         std::string mga_family_visibility_state;
@@ -64,7 +75,11 @@ namespace scratchbird::optimizer
         AccessPathVisibilityEnforcement visibility_enforcement =
             AccessPathVisibilityEnforcement::UNKNOWN;
         uint32_t family_metrics_version = 0;
+        uint64_t metrics_publication_epoch = 0;
         std::string metrics_confidence_class;
+        std::string metrics_freshness_class;
+        std::string metrics_invalidation_state;
+        std::string metrics_invalidation_reason;
         AccessPathQueryabilityState queryability_state =
             AccessPathQueryabilityState::UNKNOWN;
         std::string native_trust_class;
@@ -247,6 +262,14 @@ namespace scratchbird::optimizer
         uint32_t spill_passes = 0;
         uint64_t spill_bytes = 0;
         std::string spill_policy;
+        bool adaptive_join_enabled = false;
+        std::string planned_build_side;
+        std::string adaptive_alternative_build_side;
+        uint64_t adaptive_probe_sample_rows = 0;
+        double adaptive_flip_ratio_threshold = 0.0;
+        bool adaptive_join_flip_taken = false;
+        uint64_t adaptive_join_sample_rows = 0;
+        std::string adaptive_join_selected_build_side;
         bool parallel_eligible = false;
         bool parallel_enabled = false;
         uint32_t parallel_workers_planned = 0;
@@ -260,6 +283,10 @@ namespace scratchbird::optimizer
         uint64_t rows_examined = 0;
         uint64_t rows_filtered = 0;
         uint64_t loop_count = 0;
+        uint64_t memoize_hits = 0;
+        uint64_t memoize_misses = 0;
+        uint64_t memoize_evictions = 0;
+        uint64_t memoize_entries = 0;
     };
 
     struct RuntimePlanTraceEntry

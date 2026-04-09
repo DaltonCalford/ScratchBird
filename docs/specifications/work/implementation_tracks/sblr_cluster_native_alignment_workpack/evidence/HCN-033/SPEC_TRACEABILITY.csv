@@ -1,0 +1,3 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+SB-CLUSTER-SWS-MGA-01.md,gc-safe-horizon-formula,"include/scratchbird/core/cluster_write_safety.h;src/core/cluster_write_safety.cpp","GC_SAFE_HORIZON_FORMULA_AUDIT.csv;TEST_RESULTS.md",pass,"Implemented gc_safe_horizon = min(OST, RWM) when both boundaries are present"
+SB-CLUSTER-SWS-MGA-01.md,mga-visibility-reclaim-guard,"src/core/cluster_write_safety.cpp::GcSafeHorizonCalculator::canReclaimVersion","SWEEP_BLOCKING_TEST_RESULTS.md;FOLLOWER_LAG_GC_GUARD_RESULTS.md",pass,"Versions at/above safe horizon are blocked from reclaim"

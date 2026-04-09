@@ -1,0 +1,5 @@
+suite_id,requirement_id,check,method,expected_result,reject_condition,evidence_artifact
+T31-G4,IMP-31-REQ-G4-01,Verifier and bind correctness,VM verifier harness,Verifier and bind behavior deterministic and correct,Verifier/bind mismatch,TEST_RESULTS.md#T31-G4
+T31-G4,IMP-31-REQ-G4-02,Optimizer determinism,Plan determinism harness,Equivalent inputs yield equivalent plans,Plan nondeterminism for same inputs,TEST_RESULTS.md#T31-G4
+T31-G4,IMP-31-REQ-G4-03,Native artifact lifecycle and fallback,Compiler lifecycle harness,Compile/load/fallback lifecycle meets contract,Artifact lifecycle or fallback violation,TEST_RESULTS.md#T31-G4
+T31-G4,IMP-31-REQ-G4-04,Cache invalidation correctness,Cache invalidation harness,Invalidation occurs on all required boundaries,Stale cache outcome,TEST_RESULTS.md#T31-G4

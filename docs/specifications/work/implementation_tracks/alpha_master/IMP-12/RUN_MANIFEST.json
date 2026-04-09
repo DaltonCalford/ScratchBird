@@ -1,0 +1,29 @@
+{
+  "ticket_id": "IMP-12",
+  "section": "12_Temporary_Tables",
+  "wave": "W1",
+  "status": "done",
+  "started_at_utc": "2026-02-12T00:30:13Z",
+  "completed_at_utc": "2026-02-12T00:30:13Z",
+  "gate_contract": "docs/specifications/12_Temporary_Tables/TEST_CONTRACT.md",
+  "artifacts": [
+    "IMPLEMENTATION_CHECKLIST.md",
+    "IMPLEMENTATION_NOTES.md",
+    "TEMP_LIFECYCLE_MATRIX.csv",
+    "TEMP_SCOPE_ISOLATION_MATRIX.csv",
+    "TEMP_ON_COMMIT_POLICY_MATRIX.csv",
+    "TEMP_RESTART_SEMANTICS_MATRIX.csv",
+    "TEMP_LOCK_CONFLICT_MATRIX.csv",
+    "NEGATIVE_BOUNDARY_MATRIX.csv",
+    "PERFORMANCE_BUDGET_MATRIX.csv",
+    "COMPATIBILITY_PARITY_MATRIX.csv",
+    "TEST_RESULTS.md",
+    "CHECKSUMS.sha256",
+    "RUN_MANIFEST.json",
+    "SPEC_TRACEABILITY.csv",
+    "TEST_EVIDENCE_INDEX.md",
+    "GATE_RESULT.json",
+    "CHANGESET_LOG.md"
+  ],
+  "mode": "specification_contract_validation"
+}

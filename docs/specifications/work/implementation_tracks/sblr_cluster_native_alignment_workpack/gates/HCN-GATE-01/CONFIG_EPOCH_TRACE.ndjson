@@ -1,0 +1,6 @@
+{"ts":"2026-02-26T18:28:47Z","ticket":"HCN-010","event":"ticket_done","cluster_config_epoch":"metadata-surface-added"}
+{"ts":"2026-02-26T18:28:47Z","ticket":"HCN-011","event":"ticket_done","cluster_config_epoch":"time-source-injected"}
+{"ts":"2026-02-26T18:28:47Z","ticket":"HCN-012","event":"ticket_done","cluster_config_epoch":"lock-provider-abstracted"}
+{"ts":"2026-02-26T18:28:47Z","ticket":"HCN-013","event":"ticket_done","cluster_config_epoch":"control-plane-log-catalog-contracts-pass"}
+{"ts":"2026-02-26T18:28:47Z","ticket":"HCN-014","event":"ticket_done","cluster_config_epoch":"membership-shard-metadata-contracts-pass"}
+{"ts":"2026-02-26T18:28:47Z","gate":"HCN-GATE-01","event":"decision","decision":"pass","blockers":[]}

@@ -47,18 +47,392 @@
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/tid_resolver.h" // Sprint 4 Task 5.4.2
 #include "scratchbird/core/index_key_extractor.h" // Phase 3 Task 3.2: Storage Layer TOAST Integration
+#include "scratchbird/core/index_key_encoding.h"
 #include "scratchbird/core/vector.h"
 #include "scratchbird/core/gpid.h"
 #include <cctype>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include <chrono>
+#include <fstream>
+#include <iomanip>
 #include <limits>
+#include <mutex>
 #include <new>
+#include <sstream>
+#include <unordered_set>
 
 namespace scratchbird::core
 {
+    struct StorageEngine::UniquePreflightIndexPlan
+    {
+        ID index_id{};
+        std::string index_name;
+        std::vector<ID> column_ids;
+        std::vector<uint16_t> column_indices;
+    };
+
+    struct StorageEngine::UniquePreflightTablePlan
+    {
+        std::vector<CatalogManager::ColumnInfo> columns;
+        std::vector<UniquePreflightIndexPlan> unique_indexes;
+        std::vector<uint16_t> unique_column_indices;
+    };
+
+    struct StorageEngine::UniquePreflightCacheState
+    {
+        std::unordered_map<ID, UniquePreflightTablePlan> plans;
+        std::mutex mutex;
+    };
+
+    struct StorageEngine::BulkInsertMaintenancePlanState
+    {
+        struct PendingDeferredExactInsert
+        {
+            std::vector<uint8_t> key;
+            TID tid{};
+            uint64_t xid = 0;
+        };
+
+        struct PendingGroupedExactInsert
+        {
+            std::vector<uint8_t> key;
+            TID tid{};
+            uint64_t xid = 0;
+        };
+
+        struct PendingBufferedUniqueScalarInsert
+        {
+            uint64_t encoded_order_key = 0;
+            uint8_t encoded_key_width = 0;
+            TID tid{};
+            uint64_t xid = 0;
+        };
+
+        struct VectorHash
+        {
+            size_t operator()(const std::vector<uint8_t> &v) const
+            {
+                size_t hash = 0;
+                for (uint8_t byte : v)
+                {
+                    hash = hash * 31 + byte;
+                }
+                return hash;
+            }
+        };
+
+        struct MaintenanceTarget
+        {
+            ID index_id{};
+            std::string index_name;
+            GPID root_gpid = INVALID_GPID;
+            CatalogManager::IndexType index_type =
+                CatalogManager::IndexType::BTREE;
+            bool is_unique = false;
+            ID active_maintenance_id{};
+            std::vector<uint16_t> column_indices;
+            bool deferred_exact_mode = false;
+            bool grouped_exact_mode = false;
+            bool buffered_empty_unique_mode = false;
+            bool buffered_empty_unique_fast_scalar_mode = false;
+            DataType buffered_empty_unique_fast_scalar_type = DataType::UNKNOWN;
+            std::vector<PendingDeferredExactInsert> pending_deferred_inserts;
+            std::vector<PendingGroupedExactInsert> pending_grouped_exact_inserts;
+            std::vector<PendingGroupedExactInsert> pending_buffered_unique_inserts;
+            std::vector<PendingBufferedUniqueScalarInsert>
+                pending_buffered_unique_scalar_inserts;
+            std::unordered_set<std::vector<uint8_t>, VectorHash>
+                pending_buffered_unique_keys;
+            std::unordered_set<uint64_t> pending_buffered_unique_scalar_keys;
+            uint64_t timing_end_flush_unique_prepare_entries_us = 0;
+            uint64_t timing_end_flush_unique_bulkload_sort_us = 0;
+            uint64_t timing_end_flush_unique_bulkload_leaf_build_us = 0;
+            uint64_t timing_end_flush_unique_bulkload_internal_build_us = 0;
+            uint64_t timing_end_flush_unique_bulkload_root_finalize_us = 0;
+            uint64_t timing_end_flush_unique_bulkload_total_us = 0;
+            bool end_flush_unique_bulkload_input_sorted = false;
+        };
+
+        std::vector<CatalogManager::ColumnInfo> columns;
+        std::vector<MaintenanceTarget> indexes;
+        std::unordered_set<ID, IDHash> buffered_empty_unique_index_ids;
+        uint32_t exact_index_count = 0;
+        uint32_t unique_exact_index_count = 0;
+        uint32_t active_maintenance_count = 0;
+        uint32_t deferred_exact_index_count = 0;
+        uint32_t grouped_exact_index_count = 0;
+        uint32_t buffered_empty_unique_index_count = 0;
+    };
+
     namespace
     {
+        constexpr size_t kBufferedExactMaintenanceFlushThreshold = 8192;
+        constexpr size_t kBufferedEmptyUniqueReserveHint = 131072;
+
+        [[nodiscard]] bool supportsExactKeyLookup(CatalogManager::IndexType index_type);
+        enum class ExactIndexRetirementMode : uint8_t
+        {
+            SOFT_DELETE,
+            HARD_REMOVE,
+        };
+        Status insertIntoIndex(CatalogManager::IndexType index_type,
+                               void *index_ptr,
+                               const std::vector<uint8_t> &key,
+                               const TID &tid,
+                               uint64_t xid,
+                               ErrorContext *ctx);
+        Status flushBufferedGroupedExactInserts(
+            CatalogManager *catalog_manager,
+            StorageEngine::BulkInsertMaintenancePlanState::MaintenanceTarget& target,
+            ErrorContext *ctx);
+        void rebuildPendingBufferedUniqueKeySet(
+            StorageEngine::BulkInsertMaintenancePlanState::MaintenanceTarget& target)
+        {
+            if (target.buffered_empty_unique_fast_scalar_mode)
+            {
+                target.pending_buffered_unique_scalar_keys.clear();
+                for (const auto &pending : target.pending_buffered_unique_scalar_inserts)
+                {
+                    target.pending_buffered_unique_scalar_keys.insert(
+                        pending.encoded_order_key);
+                }
+                return;
+            }
+            target.pending_buffered_unique_keys.clear();
+            for (const auto &pending : target.pending_buffered_unique_inserts)
+            {
+                target.pending_buffered_unique_keys.insert(pending.key);
+            }
+        }
+
+        [[nodiscard]] bool supportsBufferedEmptyUniqueFastScalarKey(DataType type)
+        {
+            switch (type)
+            {
+                case DataType::BOOLEAN:
+                case DataType::INT8:
+                case DataType::UINT8:
+                case DataType::INT16:
+                case DataType::UINT16:
+                case DataType::INT32:
+                case DataType::UINT32:
+                case DataType::INT64:
+                case DataType::UINT64:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        auto tryBuildBufferedEmptyUniqueScalarOrderKey(
+            const uint8_t *tuple_data,
+            const std::vector<size_t> &column_offsets,
+            const std::vector<size_t> &column_sizes,
+            const std::vector<CatalogManager::ColumnInfo> &columns,
+            uint16_t column_index,
+            uint64_t *order_key_out,
+            uint8_t *key_width_out,
+            ErrorContext *ctx) -> Status
+        {
+            if (tuple_data == nullptr || order_key_out == nullptr ||
+                key_width_out == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::INVALID_ARGUMENT,
+                                  "Buffered unique scalar key extraction requires input and output storage");
+                return Status::INVALID_ARGUMENT;
+            }
+            if (column_index >= column_offsets.size() || column_index >= column_sizes.size() ||
+                column_index >= columns.size())
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::INVALID_ARGUMENT,
+                                  "Buffered unique scalar key extraction received an out-of-range column");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            const DataType type =
+                static_cast<DataType>(columns[column_index].data_type);
+            if (!supportsBufferedEmptyUniqueFastScalarKey(type))
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::INVALID_ARGUMENT,
+                                  "Buffered unique scalar key extraction does not support this type");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            const size_t expected_width = index_key_encoding::fixedWidth(type);
+            if (expected_width == 0 || column_sizes[column_index] != expected_width)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::INVALID_ARGUMENT,
+                                  "Buffered unique scalar key extraction received an unexpected fixed width");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            const uint8_t *col_data = tuple_data + column_offsets[column_index];
+            *key_width_out = static_cast<uint8_t>(expected_width);
+
+            switch (type)
+            {
+                case DataType::BOOLEAN:
+                    *order_key_out = static_cast<uint64_t>(col_data[0] != 0 ? 1u : 0u);
+                    return Status::OK;
+                case DataType::INT8:
+                    *order_key_out = static_cast<uint64_t>(col_data[0] ^ 0x80u);
+                    return Status::OK;
+                case DataType::UINT8:
+                    *order_key_out = static_cast<uint64_t>(col_data[0]);
+                    return Status::OK;
+                case DataType::INT16:
+                case DataType::UINT16:
+                {
+                    uint16_t raw = static_cast<uint16_t>(col_data[0]) |
+                                   (static_cast<uint16_t>(col_data[1]) << 8);
+                    if (type == DataType::INT16)
+                    {
+                        raw ^= 0x8000u;
+                    }
+                    *order_key_out = static_cast<uint64_t>(raw);
+                    return Status::OK;
+                }
+                case DataType::INT32:
+                case DataType::UINT32:
+                {
+                    uint32_t raw = static_cast<uint32_t>(col_data[0]) |
+                                   (static_cast<uint32_t>(col_data[1]) << 8) |
+                                   (static_cast<uint32_t>(col_data[2]) << 16) |
+                                   (static_cast<uint32_t>(col_data[3]) << 24);
+                    if (type == DataType::INT32)
+                    {
+                        raw ^= 0x80000000u;
+                    }
+                    *order_key_out = static_cast<uint64_t>(raw);
+                    return Status::OK;
+                }
+                case DataType::INT64:
+                case DataType::UINT64:
+                {
+                    uint64_t raw = 0;
+                    for (size_t i = 0; i < 8; ++i)
+                    {
+                        raw |= static_cast<uint64_t>(col_data[i]) << (i * 8);
+                    }
+                    if (type == DataType::INT64)
+                    {
+                        raw ^= 0x8000000000000000ull;
+                    }
+                    *order_key_out = raw;
+                    return Status::OK;
+                }
+                default:
+                    break;
+            }
+
+            SET_ERROR_CONTEXT(ctx,
+                              Status::INVALID_ARGUMENT,
+                              "Buffered unique scalar key extraction hit an unsupported type");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        void encodeBufferedUniqueScalarOrderKey(uint64_t order_key,
+                                                uint8_t key_width,
+                                                std::vector<uint8_t> *encoded_out)
+        {
+            if (encoded_out == nullptr)
+            {
+                return;
+            }
+            encoded_out->clear();
+            encoded_out->reserve(key_width);
+            for (int shift = static_cast<int>(key_width * 8) - 8; shift >= 0; shift -= 8)
+            {
+                encoded_out->push_back(
+                    static_cast<uint8_t>((order_key >> shift) & 0xFFu));
+            }
+        }
+        [[nodiscard]] bool isStructurallyEmptyBTreeIndex(Database *db,
+                                                         GPID root_gpid)
+        {
+            if (db == nullptr || root_gpid == INVALID_GPID)
+            {
+                return false;
+            }
+
+            BufferPool *buffer_pool = db->buffer_pool();
+            if (buffer_pool == nullptr)
+            {
+                return false;
+            }
+
+            void *root_page_ptr = nullptr;
+            ErrorContext probe_ctx;
+            Status status =
+                buffer_pool->pinPageGlobal(root_gpid, &root_page_ptr, &probe_ctx);
+            if (status != Status::OK || root_page_ptr == nullptr)
+            {
+                return false;
+            }
+
+            const auto *root_page =
+                reinterpret_cast<const SBBTreePage *>(root_page_ptr);
+            const bool is_empty =
+                root_page->btr_level == 0 && root_page->btr_count == 0 &&
+                root_page->btr_left_sibling == 0 &&
+                root_page->btr_right_sibling == 0 &&
+                root_page->btr_rightmost_child == 0;
+            buffer_pool->unpinPageGlobal(root_gpid, false, &probe_ctx);
+            return is_empty;
+        }
+        Status retireExactIndexEntry(CatalogManager::IndexType index_type,
+                                     void *index_ptr,
+                                     const std::vector<uint8_t> &key,
+                                     const TID &tid,
+                                     uint64_t xid,
+                                     ExactIndexRetirementMode mode,
+                                     ErrorContext *ctx);
+        thread_local bool g_cold_exact_secondary_deferral_persistence_active = false;
+        thread_local std::unordered_set<ID, IDHash>
+            g_deferred_exact_secondary_merge_recursion_guard;
+
+        class ScopedColdExactSecondaryDeferralPersistence
+        {
+        public:
+            ScopedColdExactSecondaryDeferralPersistence()
+                : prior_(g_cold_exact_secondary_deferral_persistence_active)
+            {
+                g_cold_exact_secondary_deferral_persistence_active = true;
+            }
+
+            ~ScopedColdExactSecondaryDeferralPersistence()
+            {
+                g_cold_exact_secondary_deferral_persistence_active = prior_;
+            }
+
+            ScopedColdExactSecondaryDeferralPersistence(
+                const ScopedColdExactSecondaryDeferralPersistence&) = delete;
+            auto operator=(const ScopedColdExactSecondaryDeferralPersistence&)
+                -> ScopedColdExactSecondaryDeferralPersistence& = delete;
+
+        private:
+            bool prior_ = false;
+        };
+
+        [[nodiscard]] auto isZeroIdLocal(const ID& id) -> bool
+        {
+            for (uint8_t byte : id.bytes)
+            {
+                if (byte != 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         [[nodiscard]] auto lockModeNameLocal(LockMode mode) -> const char *
         {
             switch (mode)
@@ -82,6 +456,110 @@ namespace scratchbird::core
             }
 
             return "UNKNOWN";
+        }
+
+#if defined(SCRATCHBIRD_ENABLE_HOTPATH_TRACE) && SCRATCHBIRD_ENABLE_HOTPATH_TRACE
+        [[nodiscard]] auto insertTraceEnabled() -> bool
+        {
+            const char *value = std::getenv("SCRATCHBIRD_INSERT_TRACE");
+            if (value == nullptr || value[0] == '\0')
+            {
+                return false;
+            }
+
+            return std::strcmp(value, "0") != 0 &&
+                   std::strcmp(value, "false") != 0 &&
+                   std::strcmp(value, "FALSE") != 0;
+        }
+
+        [[nodiscard]] auto insertTraceFilePath() -> const char *
+        {
+            const char *path = std::getenv("SCRATCHBIRD_INSERT_TRACE_FILE");
+            if (path == nullptr || path[0] == '\0')
+            {
+                return "/tmp/scratchbird_insert_trace.log";
+            }
+            return path;
+        }
+
+        [[nodiscard]] auto updateTraceEnabled() -> bool
+        {
+            const char *value = std::getenv("SCRATCHBIRD_UPDATE_TRACE");
+            if (value == nullptr || value[0] == '\0')
+            {
+                return false;
+            }
+
+            return std::strcmp(value, "0") != 0 &&
+                   std::strcmp(value, "false") != 0 &&
+                   std::strcmp(value, "FALSE") != 0;
+        }
+
+        [[nodiscard]] auto updateTraceFilePath() -> const char *
+        {
+            const char *path = std::getenv("SCRATCHBIRD_UPDATE_TRACE_FILE");
+            if (path == nullptr || path[0] == '\0')
+            {
+                return "/tmp/scratchbird_update_trace.log";
+            }
+            return path;
+        }
+
+        void appendStorageTraceLine(const char *path, const std::string &line)
+        {
+            static std::mutex trace_mutex;
+            std::lock_guard<std::mutex> guard(trace_mutex);
+
+            std::ofstream out(path, std::ios::app);
+            if (!out.is_open())
+            {
+                return;
+            }
+
+            out << line << '\n';
+        }
+
+        void appendStorageUpdateTraceLine(const std::string &line)
+        {
+            appendStorageTraceLine(updateTraceFilePath(), line);
+        }
+#else
+        [[nodiscard]] auto insertTraceEnabled() -> bool
+        {
+            return false;
+        }
+
+        [[nodiscard]] auto insertTraceFilePath() -> const char *
+        {
+            return "";
+        }
+
+        [[nodiscard]] auto updateTraceEnabled() -> bool
+        {
+            return false;
+        }
+
+        [[nodiscard]] auto updateTraceFilePath() -> const char *
+        {
+            return "";
+        }
+
+        void appendStorageTraceLine(const char *, const std::string &)
+        {
+        }
+
+        void appendStorageUpdateTraceLine(const std::string &)
+        {
+        }
+#endif
+
+        template <typename ClockPoint>
+        [[nodiscard]] auto elapsedMicros(ClockPoint start_time) -> uint64_t
+        {
+            return static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - start_time)
+                    .count());
         }
 
         constexpr uint32_t READAHEAD_MIN_PAGES = 2;
@@ -180,6 +658,320 @@ namespace scratchbird::core
             return params_blob.find("sb.array_uniqueness=") != std::string::npos;
         }
 
+        [[nodiscard]] auto rawUniqueColumnValuesMatch(const uint8_t *old_column_data,
+                                                      size_t old_column_size,
+                                                      const uint8_t *new_column_data,
+                                                      size_t new_column_size) -> bool
+        {
+            if (old_column_size != new_column_size)
+            {
+                return false;
+            }
+
+            if (old_column_size == 0)
+            {
+                return true;
+            }
+
+            if (std::memcmp(old_column_data, new_column_data, old_column_size) == 0)
+            {
+                return true;
+            }
+
+            const bool old_is_toast_pointer =
+                ToastManager::isToastPointer(old_column_data, old_column_size);
+            const bool new_is_toast_pointer =
+                ToastManager::isToastPointer(new_column_data, new_column_size);
+            if (old_is_toast_pointer || new_is_toast_pointer)
+            {
+                return false;
+            }
+
+            return false;
+        }
+
+        [[nodiscard]] auto isActiveOnlineMaintenanceState(
+            CatalogManager::IndexMaintenanceState state) -> bool
+        {
+            using IMS = CatalogManager::IndexMaintenanceState;
+            return state == IMS::BUILDING_SHADOW ||
+                   state == IMS::APPLYING_DELTAS ||
+                   state == IMS::SWAPPING;
+        }
+
+        auto resolveActiveOnlineMaintenanceIdLocal(
+            CatalogManager *catalog_manager,
+            const CatalogManager::IndexInfo &index_info,
+            ID *maintenance_id_out) -> bool
+        {
+            if (catalog_manager == nullptr || maintenance_id_out == nullptr)
+            {
+                return false;
+            }
+
+            std::vector<CatalogManager::IndexMaintenanceCatalogInfo> maintenance_rows;
+            Status status = catalog_manager->listIndexMaintenanceCatalogEntries(
+                index_info.index_id, maintenance_rows, nullptr);
+            if (status != Status::OK)
+            {
+                return false;
+            }
+
+            const CatalogManager::IndexMaintenanceCatalogInfo *active_row = nullptr;
+            for (const auto &row : maintenance_rows)
+            {
+                if (!row.is_valid)
+                {
+                    continue;
+                }
+                if (row.maintenance_mode != CatalogManager::IndexMaintenanceMode::ONLINE)
+                {
+                    continue;
+                }
+                if (!isActiveOnlineMaintenanceState(row.maintenance_state))
+                {
+                    continue;
+                }
+                active_row = &row;
+                break;
+            }
+
+            if (active_row == nullptr)
+            {
+                return false;
+            }
+
+            *maintenance_id_out = active_row->maintenance_id;
+            return true;
+        }
+
+        auto captureImmediateOnlineMaintenanceDeltaForIndexLocal(
+            CatalogManager *catalog_manager,
+            const CatalogManager::IndexInfo &index_info,
+            const ID &maintenance_id,
+            CatalogManager::IndexDeltaOp delta_op,
+            const TID &tid,
+            uint64_t commit_txid) -> bool
+        {
+            if (catalog_manager == nullptr || isZeroIdLocal(maintenance_id))
+            {
+                return false;
+            }
+
+            constexpr uint32_t kMaxRetries = 8;
+            for (uint32_t attempt = 0; attempt < kMaxRetries; ++attempt)
+            {
+                std::vector<CatalogManager::IndexMaintenanceDeltaCatalogInfo> deltas;
+                Status status = catalog_manager->listIndexMaintenanceDeltaCatalogEntries(
+                    maintenance_id, deltas, nullptr);
+                if (status != Status::OK)
+                {
+                    return false;
+                }
+
+                uint64_t next_delta_id = 1;
+                for (const auto &row : deltas)
+                {
+                    if (row.delta_id >= next_delta_id)
+                    {
+                        next_delta_id = row.delta_id + 1;
+                    }
+                }
+
+                CatalogManager::IndexMaintenanceDeltaCatalogInfo delta{};
+                delta.maintenance_id = maintenance_id;
+                delta.delta_id = next_delta_id;
+                delta.delta_op = delta_op;
+                delta.tid_gpid = tid.gpid;
+                delta.tid_slot = tid.slot;
+                delta.commit_txid = commit_txid;
+
+                ID delta_id{};
+                ErrorContext delta_ctx;
+                status = catalog_manager->upsertIndexMaintenanceDeltaCatalogEntry(
+                    delta, delta_id, &delta_ctx);
+                if (status == Status::OK)
+                {
+                    return true;
+                }
+                if (status == Status::CONSTRAINT_VIOLATION)
+                {
+                    continue;
+                }
+
+                LOG_WARNING(
+                    CATALOG,
+                    "Failed to capture storage-engine index maintenance delta (index=%s, maintenance=%s): %s",
+                    index_info.index_id.toString().c_str(),
+                    maintenance_id.toString().c_str(),
+                    delta_ctx.message.c_str());
+                return false;
+            }
+
+            LOG_WARNING(
+                CATALOG,
+                "Failed to capture storage-engine index maintenance delta after retries (index=%s, maintenance=%s)",
+                index_info.index_id.toString().c_str(),
+                maintenance_id.toString().c_str());
+            return false;
+        }
+
+        constexpr const char *kForceColdExactDeltaEnv =
+            "SCRATCHBIRD_FORCE_COLD_EXACT_DELTA_BUFFER";
+
+        [[nodiscard]] auto forceColdExactDeltaBufferEnabledLocal() -> bool
+        {
+            const char *value = std::getenv(kForceColdExactDeltaEnv);
+            return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0;
+        }
+
+        [[nodiscard]] auto isBTreeExactRuntimeLocal(CatalogManager::IndexType index_type) -> bool
+        {
+            switch (index_type)
+            {
+                case CatalogManager::IndexType::BTREE:
+                case CatalogManager::IndexType::STL_SORT:
+                case CatalogManager::IndexType::ART:
+                case CatalogManager::IndexType::MONGODB_GEO_HAYSTACK:
+                case CatalogManager::IndexType::NEO4J_RANGE:
+                case CatalogManager::IndexType::NEO4J_POINT:
+                case CatalogManager::IndexType::REDIS_LIST:
+                case CatalogManager::IndexType::REDIS_ZSET:
+                case CatalogManager::IndexType::REDIS_STREAM:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        [[nodiscard]] auto isHashExactRuntimeLocal(CatalogManager::IndexType index_type) -> bool
+        {
+            switch (index_type)
+            {
+                case CatalogManager::IndexType::HASH:
+                case CatalogManager::IndexType::REDIS_STRING:
+                case CatalogManager::IndexType::REDIS_HASH:
+                case CatalogManager::IndexType::REDIS_SET:
+                case CatalogManager::IndexType::REDIS_HLL:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        [[nodiscard]] auto isColdExactDeltaEligibleIndexLocal(bool is_unique,
+                                                              bool is_expression_index,
+                                                              bool is_partial_index,
+                                                              CatalogManager::IndexType index_type) -> bool
+        {
+            if (is_unique || is_expression_index || is_partial_index)
+            {
+                return false;
+            }
+            return isBTreeExactRuntimeLocal(index_type) || isHashExactRuntimeLocal(index_type);
+        }
+
+        [[nodiscard]] auto fnv1a64Local(const uint8_t *data, size_t size) -> uint64_t
+        {
+            constexpr uint64_t kOffsetBasis = 1469598103934665603ULL;
+            constexpr uint64_t kPrime = 1099511628211ULL;
+            uint64_t hash = kOffsetBasis;
+            for (size_t i = 0; i < size; ++i)
+            {
+                hash ^= static_cast<uint64_t>(data[i]);
+                hash *= kPrime;
+            }
+            return hash;
+        }
+
+        [[nodiscard]] auto encodeBinaryPayloadLocal(const std::vector<uint8_t> &bytes) -> std::string
+        {
+            std::string encoded;
+            encoded.resize(sizeof(uint32_t) + bytes.size());
+            const uint32_t payload_size = static_cast<uint32_t>(bytes.size());
+            std::memcpy(encoded.data(), &payload_size, sizeof(payload_size));
+            if (!bytes.empty())
+            {
+                std::memcpy(encoded.data() + sizeof(payload_size), bytes.data(), bytes.size());
+            }
+            return encoded;
+        }
+
+        [[nodiscard]] auto decodeBinaryPayloadLocal(const std::string &encoded,
+                                                    std::vector<uint8_t> *bytes_out) -> bool
+        {
+            if (bytes_out == nullptr || encoded.size() < sizeof(uint32_t))
+            {
+                return false;
+            }
+            uint32_t payload_size = 0;
+            std::memcpy(&payload_size, encoded.data(), sizeof(payload_size));
+            if (encoded.size() != sizeof(uint32_t) + payload_size)
+            {
+                return false;
+            }
+            bytes_out->assign(encoded.begin() + static_cast<std::ptrdiff_t>(sizeof(uint32_t)),
+                              encoded.end());
+            return true;
+        }
+
+        [[nodiscard]] auto buildExactDeltaTargetLocalityKeyLocal(
+            CatalogManager::IndexType index_type,
+            const std::vector<uint8_t> &key) -> std::vector<uint8_t>
+        {
+            if (isHashExactRuntimeLocal(index_type))
+            {
+                const uint64_t hash = fnv1a64Local(key.data(), key.size());
+                std::vector<uint8_t> locality(sizeof(hash));
+                std::memcpy(locality.data(), &hash, sizeof(hash));
+                return locality;
+            }
+            return key;
+        }
+
+        [[nodiscard]] auto buildLogicalRowUuidFromTidLocal(const TID &tid) -> ID
+        {
+            ID logical_row_uuid{};
+            std::memcpy(logical_row_uuid.bytes.data(), &tid.gpid, sizeof(tid.gpid));
+            logical_row_uuid.bytes[8] = static_cast<uint8_t>(tid.slot & 0xFF);
+            logical_row_uuid.bytes[9] = static_cast<uint8_t>((tid.slot >> 8) & 0xFF);
+            logical_row_uuid.bytes[10] = 0x53;
+            logical_row_uuid.bytes[11] = 0x42;
+            logical_row_uuid.bytes[12] = 0x52;
+            logical_row_uuid.bytes[13] = 0x4F;
+            logical_row_uuid.bytes[14] = 0x57;
+            logical_row_uuid.bytes[15] = 0x01;
+            return logical_row_uuid;
+        }
+
+        [[nodiscard]] auto loadExactDeltaBlobLocal(CatalogManager *catalog_manager,
+                                                   const ID &blob_oid,
+                                                   uint64_t xmin,
+                                                   std::vector<uint8_t> *bytes_out,
+                                                   ErrorContext *ctx) -> Status
+        {
+            if (catalog_manager == nullptr || bytes_out == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Cold exact delta blob load arguments are invalid");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            std::string encoded;
+            Status status = catalog_manager->loadStringFromToast(blob_oid, xmin, encoded, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            if (!decodeBinaryPayloadLocal(encoded, bytes_out))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "Cold exact delta payload is malformed");
+                return Status::DATA_CORRUPTED;
+            }
+            return Status::OK;
+        }
+
         struct PreparedStableHeadTuple
         {
             const uint8_t *storage_tuple_data = nullptr;
@@ -274,11 +1066,215 @@ namespace scratchbird::core
 
     StorageEngine::StorageEngine(Database *db)
         : db_(db), buffer_pool_(db->buffer_pool()), page_manager_(db->page_manager()),
-          catalog_manager_(db->catalog_manager())
+          catalog_manager_(db->catalog_manager()),
+          unique_preflight_cache_state_(std::make_unique<UniquePreflightCacheState>())
     {
     }
 
     StorageEngine::~StorageEngine() = default;
+
+    auto StorageEngine::getRelationWriteHint(const ID &table_id,
+                                             uint16_t tablespace_id,
+                                             uint32_t *page_id_out) const -> bool
+    {
+        const bool zero_table_id =
+            std::all_of(table_id.bytes.begin(), table_id.bytes.end(),
+                        [](uint8_t byte) { return byte == 0; });
+        if (page_id_out == nullptr || zero_table_id)
+        {
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(relation_write_hint_mutex_);
+        const auto table_it = relation_write_hints_.find(table_id);
+        if (table_it == relation_write_hints_.end())
+        {
+            return false;
+        }
+
+        const auto hint_it = table_it->second.find(tablespace_id);
+        if (hint_it == table_it->second.end())
+        {
+            return false;
+        }
+
+        *page_id_out = hint_it->second;
+        return true;
+    }
+
+    void StorageEngine::rememberRelationWriteHint(const ID &table_id,
+                                                  uint16_t tablespace_id,
+                                                  uint32_t page_id)
+    {
+        const bool zero_table_id =
+            std::all_of(table_id.bytes.begin(), table_id.bytes.end(),
+                        [](uint8_t byte) { return byte == 0; });
+        if (zero_table_id)
+        {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(relation_write_hint_mutex_);
+        relation_write_hints_[table_id][tablespace_id] = page_id;
+    }
+
+    void StorageEngine::invalidateRelationWriteHint(const ID &table_id,
+                                                    uint16_t tablespace_id,
+                                                    uint32_t page_id)
+    {
+        const bool zero_table_id =
+            std::all_of(table_id.bytes.begin(), table_id.bytes.end(),
+                        [](uint8_t byte) { return byte == 0; });
+        if (zero_table_id)
+        {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(relation_write_hint_mutex_);
+        auto table_it = relation_write_hints_.find(table_id);
+        if (table_it == relation_write_hints_.end())
+        {
+            return;
+        }
+
+        auto hint_it = table_it->second.find(tablespace_id);
+        if (hint_it == table_it->second.end() || hint_it->second != page_id)
+        {
+            return;
+        }
+
+        table_it->second.erase(hint_it);
+        if (table_it->second.empty())
+        {
+            relation_write_hints_.erase(table_it);
+        }
+    }
+
+    auto StorageEngine::getUniquePreflightTablePlan(const ID &table_id,
+                                                    UniquePreflightTablePlan *plan_out,
+                                                    bool *cache_hit_out,
+                                                    ErrorContext *ctx) -> Status
+    {
+        if (plan_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Invalid unique preflight plan output buffer");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (unique_preflight_cache_state_ != nullptr)
+        {
+            std::lock_guard<std::mutex> lock(unique_preflight_cache_state_->mutex);
+            auto it = unique_preflight_cache_state_->plans.find(table_id);
+            if (it != unique_preflight_cache_state_->plans.end())
+            {
+                *plan_out = it->second;
+                if (cache_hit_out != nullptr)
+                {
+                    *cache_hit_out = true;
+                }
+                return Status::OK;
+            }
+        }
+
+        UniquePreflightTablePlan built_plan;
+        Status status = catalog_manager_->getColumns(table_id, built_plan.columns, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::unordered_map<ID, uint16_t> column_positions;
+        column_positions.reserve(built_plan.columns.size());
+        for (size_t i = 0; i < built_plan.columns.size(); ++i)
+        {
+            column_positions.emplace(built_plan.columns[i].column_id,
+                                     static_cast<uint16_t>(i));
+        }
+
+        std::vector<CatalogManager::IndexInfo> indexes;
+        status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx, false);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        built_plan.unique_indexes.reserve(indexes.size());
+        for (const auto &index_info : indexes)
+        {
+            if (!index_info.is_unique || index_info.is_expression_index ||
+                index_info.is_partial_index)
+            {
+                continue;
+            }
+            if (indexUsesArrayUniqueness(index_info, catalog_manager_))
+            {
+                continue;
+            }
+
+            CatalogManager::IndexType actual_index_type;
+            void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
+            if (index_ptr == nullptr || !supportsExactKeyLookup(actual_index_type))
+            {
+                continue;
+            }
+
+            UniquePreflightIndexPlan index_plan;
+            index_plan.index_id = index_info.index_id;
+            index_plan.index_name = index_info.index_name;
+            index_plan.column_ids = index_info.column_ids;
+            index_plan.column_indices.reserve(index_info.column_ids.size());
+            for (const auto &column_id : index_info.column_ids)
+            {
+                auto pos_it = column_positions.find(column_id);
+                if (pos_it == column_positions.end())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Indexed column not found in table metadata");
+                    return Status::INVALID_ARGUMENT;
+                }
+                index_plan.column_indices.push_back(pos_it->second);
+                if (std::find(built_plan.unique_column_indices.begin(),
+                              built_plan.unique_column_indices.end(),
+                              pos_it->second) == built_plan.unique_column_indices.end())
+                {
+                    built_plan.unique_column_indices.push_back(pos_it->second);
+                }
+            }
+
+            built_plan.unique_indexes.push_back(std::move(index_plan));
+        }
+
+        if (unique_preflight_cache_state_ != nullptr)
+        {
+            std::lock_guard<std::mutex> lock(unique_preflight_cache_state_->mutex);
+            auto [it, inserted] =
+                unique_preflight_cache_state_->plans.emplace(table_id, std::move(built_plan));
+            (void)inserted;
+            *plan_out = it->second;
+        }
+        else
+        {
+            *plan_out = std::move(built_plan);
+        }
+
+        if (cache_hit_out != nullptr)
+        {
+            *cache_hit_out = false;
+        }
+        return Status::OK;
+    }
+
+    void StorageEngine::invalidateUniquePreflightTablePlan(const ID &table_id)
+    {
+        if (unique_preflight_cache_state_ == nullptr)
+        {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(unique_preflight_cache_state_->mutex);
+        unique_preflight_cache_state_->plans.erase(table_id);
+    }
 
     void StorageEngine::publishFragmentationAdvisory(const ID &table_id,
                                                      uint32_t page_id,
@@ -370,11 +1366,983 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto StorageEngine::getCommitGroupMaintenanceStats() const
+        -> CommitGroupMaintenanceStats
+    {
+        CommitGroupMaintenanceStats snapshot{};
+        snapshot.batches_applied =
+            commit_group_maintenance_batches_applied_.load(std::memory_order_acquire);
+        snapshot.transactions_applied =
+            commit_group_maintenance_transactions_applied_.load(std::memory_order_acquire);
+        snapshot.deltas_applied =
+            commit_group_maintenance_deltas_applied_.load(std::memory_order_acquire);
+        snapshot.locality_groups_applied =
+            commit_group_maintenance_locality_groups_applied_.load(std::memory_order_acquire);
+        snapshot.apply_failures =
+            commit_group_maintenance_apply_failures_.load(std::memory_order_acquire);
+        return snapshot;
+    }
+
+    auto StorageEngine::drainDeferredExactSecondaryPageDeltas(
+        size_t max_indexes_per_pass,
+        DeferredExactSecondaryMergeStats* stats_out,
+        ErrorContext* ctx) -> Status
+    {
+        if (stats_out != nullptr)
+        {
+            *stats_out = DeferredExactSecondaryMergeStats{};
+        }
+
+        if (catalog_manager_ == nullptr)
+        {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::IndexPageDeltaCatalogInfo> page_deltas;
+        const ID all_indexes{};
+        Status status =
+            catalog_manager_->listIndexPageDeltaCatalogEntries(all_indexes, page_deltas, ctx);
+        if (status != Status::OK || page_deltas.empty())
+        {
+            return status;
+        }
+
+        struct PendingIndexMerge
+        {
+            ID index_id{};
+            uint64_t delta_count = 0;
+        };
+
+        std::vector<PendingIndexMerge> pending_indexes;
+        pending_indexes.reserve(page_deltas.size());
+        for (const auto& row : page_deltas)
+        {
+            if (row.merge_state == CatalogManager::IndexPageDeltaMergeState::MERGED)
+            {
+                continue;
+            }
+
+            if (!pending_indexes.empty() &&
+                pending_indexes.back().index_id == row.index_id)
+            {
+                pending_indexes.back().delta_count++;
+                continue;
+            }
+
+            PendingIndexMerge pending{};
+            pending.index_id = row.index_id;
+            pending.delta_count = 1;
+            pending_indexes.push_back(std::move(pending));
+        }
+
+        if (pending_indexes.empty())
+        {
+            return Status::OK;
+        }
+
+        uint64_t current_xid = getCurrentXid();
+
+        const size_t index_limit = max_indexes_per_pass == 0
+            ? pending_indexes.size()
+            : std::min(max_indexes_per_pass, pending_indexes.size());
+        for (size_t i = 0; i < index_limit; ++i)
+        {
+            const PendingIndexMerge& pending = pending_indexes[i];
+            if (stats_out != nullptr)
+            {
+                stats_out->indexes_considered++;
+            }
+
+            CatalogManager::IndexInfo index_info{};
+            status = catalog_manager_->getIndex(pending.index_id, index_info, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            CatalogManager::IndexType actual_index_type;
+            void* index_ptr =
+                catalog_manager_->getIndexPtr(pending.index_id, &actual_index_type);
+            if (index_ptr == nullptr)
+            {
+                continue;
+            }
+
+            status = mergeDeferredExactSecondaryPageDeltas(
+                pending.index_id,
+                index_info.is_unique,
+                index_info.is_expression_index,
+                index_info.is_partial_index,
+                static_cast<uint8_t>(actual_index_type),
+                index_ptr,
+                current_xid,
+                ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            if (stats_out != nullptr)
+            {
+                stats_out->indexes_merged++;
+                stats_out->deltas_merged += pending.delta_count;
+            }
+        }
+
+        return Status::OK;
+    }
+
+    auto StorageEngine::captureImmediateOnlineMaintenanceDelta(
+        const ID& logical_index_id,
+        const ID& maintenance_id,
+        uint8_t delta_op_value,
+        const TID& tid,
+        uint64_t commit_txid) -> bool
+    {
+        CatalogManager::IndexInfo index_info{};
+        if (catalog_manager_ == nullptr ||
+            catalog_manager_->getIndex(logical_index_id, index_info, nullptr) != Status::OK)
+        {
+            return false;
+        }
+        return captureImmediateOnlineMaintenanceDeltaForIndexLocal(
+            catalog_manager_,
+            index_info,
+            maintenance_id,
+            static_cast<CatalogManager::IndexDeltaOp>(delta_op_value),
+            tid,
+            commit_txid);
+    }
+
+    auto StorageEngine::captureQueuedOrImmediateOnlineMaintenanceDelta(
+        const ID& logical_index_id,
+        const ID& maintenance_id,
+        uint8_t delta_op_value,
+        const TID& tid,
+        uint64_t commit_txid) -> bool
+    {
+        const auto* txn_mgr = db_ ? db_->transaction_manager() : nullptr;
+        if (txn_mgr != nullptr &&
+            txn_mgr->getDurabilityMode() == DurabilityMode::GROUP_COMMIT &&
+            commit_txid != 0)
+        {
+            PendingOnlineMaintenanceDelta pending{};
+            pending.logical_index_id = logical_index_id;
+            pending.maintenance_id = maintenance_id;
+            pending.delta_op_value = delta_op_value;
+            pending.tid_gpid = tid.gpid;
+            pending.tid_slot = tid.slot;
+            pending.commit_txid = commit_txid;
+            pending.locality_key = tid.gpid;
+            std::lock_guard<std::mutex> lock(pending_commit_group_maintenance_delta_mutex_);
+            pending_commit_group_maintenance_deltas_[commit_txid].push_back(std::move(pending));
+            return true;
+        }
+
+        return captureImmediateOnlineMaintenanceDelta(logical_index_id,
+                                                     maintenance_id,
+                                                     delta_op_value,
+                                                     tid,
+                                                     commit_txid);
+    }
+
+    auto StorageEngine::maybeDeferColdExactSecondaryInsert(
+        const ID& index_id,
+        GPID root_gpid,
+        bool is_unique,
+        bool is_expression_index,
+        bool is_partial_index,
+        uint8_t actual_index_type_value,
+        const std::vector<uint8_t>& key,
+        const TID& tid,
+        uint64_t xid,
+        bool* deferred_exact_mode,
+        ErrorContext* ctx) -> bool
+    {
+        (void)key;
+        (void)tid;
+        (void)xid;
+        (void)ctx;
+        const auto actual_index_type =
+            static_cast<CatalogManager::IndexType>(actual_index_type_value);
+        if (catalog_manager_ == nullptr ||
+            g_cold_exact_secondary_deferral_persistence_active ||
+            !isColdExactDeltaEligibleIndexLocal(is_unique,
+                                               is_expression_index,
+                                               is_partial_index,
+                                               actual_index_type))
+        {
+            return false;
+        }
+
+        bool should_defer =
+            (deferred_exact_mode != nullptr && *deferred_exact_mode) ||
+            forceColdExactDeltaBufferEnabledLocal();
+        if (!should_defer)
+        {
+            std::vector<CatalogManager::IndexPageDeltaCatalogInfo> existing_rows;
+            if (catalog_manager_->listIndexPageDeltaCatalogEntries(index_id,
+                                                                   existing_rows,
+                                                                   nullptr) == Status::OK &&
+                !existing_rows.empty())
+            {
+                should_defer = true;
+            }
+        }
+
+        if (!should_defer && buffer_pool_ != nullptr && root_gpid != 0)
+        {
+            BufferPool::MgaFrameSnapshot snapshot{};
+            if (buffer_pool_->getMgaFrameSnapshotGlobal(root_gpid,
+                                                        &snapshot,
+                                                        nullptr) == Status::OK)
+            {
+                should_defer = !snapshot.resident;
+            }
+        }
+
+        if (!should_defer)
+        {
+            return false;
+        }
+
+        if (deferred_exact_mode != nullptr)
+        {
+            *deferred_exact_mode = true;
+        }
+
+        return true;
+    }
+
+    auto StorageEngine::persistDeferredExactSecondaryInsert(
+        const ID& index_id,
+        uint8_t actual_index_type_value,
+        const std::vector<uint8_t>& key,
+        const TID& tid,
+        uint64_t xid,
+        ErrorContext* ctx) -> Status
+    {
+        if (catalog_manager_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::INTERNAL_ERROR,
+                              "Catalog manager is required for deferred exact secondary persistence");
+            return Status::INTERNAL_ERROR;
+        }
+
+        const auto actual_index_type =
+            static_cast<CatalogManager::IndexType>(actual_index_type_value);
+        const std::string encoded_key = encodeBinaryPayloadLocal(key);
+        const std::vector<uint8_t> locality_key =
+            buildExactDeltaTargetLocalityKeyLocal(actual_index_type, key);
+        const std::string encoded_locality = encodeBinaryPayloadLocal(locality_key);
+        ScopedColdExactSecondaryDeferralPersistence scoped_persistence_guard;
+
+        ID normalized_key_oid{};
+        Status status =
+            catalog_manager_->storeStringInToast(encoded_key, xid, normalized_key_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        ID locality_key_oid{};
+        status = catalog_manager_->storeStringInToast(encoded_locality,
+                                                      xid,
+                                                      locality_key_oid,
+                                                      ctx);
+        if (status != Status::OK)
+        {
+            ErrorContext cleanup_ctx;
+            (void)catalog_manager_->deleteToastValue(normalized_key_oid, xid, &cleanup_ctx);
+            return status;
+        }
+
+        CatalogManager::IndexPageDeltaCatalogInfo delta{};
+        delta.index_id = index_id;
+        delta.target_locality_key_id = locality_key_oid;
+        delta.delta_op = CatalogManager::IndexPageDeltaOp::INSERT;
+        delta.logical_row_uuid = buildLogicalRowUuidFromTidLocal(tid);
+        delta.new_tid_gpid = tid.gpid;
+        delta.new_tid_slot = tid.slot;
+        delta.has_new_tid = true;
+        delta.normalized_key_id = normalized_key_oid;
+        delta.created_xid = xid;
+        delta.merge_state = CatalogManager::IndexPageDeltaMergeState::PENDING;
+        delta.created_time = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count());
+
+        ID page_delta_id{};
+        status = catalog_manager_->upsertIndexPageDeltaCatalogEntry(delta, page_delta_id, ctx);
+        if (status != Status::OK)
+        {
+            ErrorContext cleanup_ctx;
+            (void)catalog_manager_->deleteToastValue(locality_key_oid, xid, &cleanup_ctx);
+            (void)catalog_manager_->deleteToastValue(normalized_key_oid, xid, &cleanup_ctx);
+        }
+
+        return status;
+    }
+
+    void StorageEngine::publishDeferredExactCleanupDebtSnapshot(
+        const ID& index_id,
+        IndexCleanupPublicationState preferred_state,
+        uint64_t entries_removed,
+        bool repair_required)
+    {
+        if (catalog_manager_ == nullptr || isZeroIdLocal(index_id))
+        {
+            return;
+        }
+
+        CatalogManager::IndexInfo index_info{};
+        ErrorContext index_ctx;
+        Status status = catalog_manager_->getIndex(index_id, index_info, &index_ctx);
+        if (status != Status::OK)
+        {
+            LOG_WARNING(CATALOG,
+                        "Failed to load index info for deferred exact cleanup publication on index %s: %s",
+                        index_id.toString().c_str(),
+                        index_ctx.message.c_str());
+            return;
+        }
+
+        std::vector<CatalogManager::IndexPageDeltaCatalogInfo> page_deltas;
+        ErrorContext delta_ctx;
+        status = catalog_manager_->listIndexPageDeltaCatalogEntries(index_id,
+                                                                    page_deltas,
+                                                                    &delta_ctx);
+        if (status != Status::OK)
+        {
+            LOG_WARNING(CATALOG,
+                        "Failed to load deferred exact cleanup debt snapshot for index %s: %s",
+                        index_id.toString().c_str(),
+                        delta_ctx.message.c_str());
+            return;
+        }
+
+        uint64_t backlog_count = 0;
+        uint64_t backlog_pages = 0;
+        bool observed_repair_required = repair_required;
+        for (const auto& row : page_deltas)
+        {
+            if (row.merge_state == CatalogManager::IndexPageDeltaMergeState::MERGED)
+            {
+                continue;
+            }
+
+            ++backlog_count;
+            ++backlog_pages;
+            if (row.merge_state == CatalogManager::IndexPageDeltaMergeState::FAILED_FENCE)
+            {
+                observed_repair_required = true;
+            }
+        }
+
+        IndexCleanupPublicationRecord publication{};
+        publication.table_id = index_info.table_id;
+        publication.index_id = index_info.index_id;
+        publication.index_name = index_info.index_name;
+        publication.page_id = 0;
+        publication.family = IndexCleanupFamily::EXACT;
+        publication.entries_removed = entries_removed;
+        publication.backlog_count = backlog_count;
+        publication.backlog_pages = backlog_pages;
+        publication.backlog_bytes = 0;
+        publication.repair_required = observed_repair_required;
+        publication.published_at_us = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count());
+        publication.state =
+            preferred_state == IndexCleanupPublicationState::COMPLETE &&
+                backlog_count == 0 && !observed_repair_required
+            ? IndexCleanupPublicationState::COMPLETE
+            : IndexCleanupPublicationState::DEBT_PUBLISHED;
+
+        publishIndexCleanupPublication(publication);
+    }
+
+    auto StorageEngine::mergeDeferredExactSecondaryPageDeltas(
+        const ID& index_id,
+        bool is_unique,
+        bool is_expression_index,
+        bool is_partial_index,
+        uint8_t actual_index_type_value,
+        void* index_ptr,
+        uint64_t current_xid,
+        ErrorContext* ctx) -> Status
+    {
+        const auto actual_index_type =
+            static_cast<CatalogManager::IndexType>(actual_index_type_value);
+        if (catalog_manager_ == nullptr || index_ptr == nullptr ||
+            !isColdExactDeltaEligibleIndexLocal(is_unique,
+                                               is_expression_index,
+                                               is_partial_index,
+                                               actual_index_type))
+        {
+            return Status::OK;
+        }
+
+        if (g_deferred_exact_secondary_merge_recursion_guard.find(index_id) !=
+            g_deferred_exact_secondary_merge_recursion_guard.end())
+        {
+            return Status::OK;
+        }
+
+        {
+            std::unique_lock<std::mutex> lock(deferred_exact_secondary_merge_state_mutex_);
+            deferred_exact_secondary_merge_cv_.wait(lock, [this, &index_id]() {
+                return deferred_exact_secondary_indexes_in_merge_.find(index_id) ==
+                    deferred_exact_secondary_indexes_in_merge_.end();
+            });
+            deferred_exact_secondary_indexes_in_merge_.insert(index_id);
+        }
+        g_deferred_exact_secondary_merge_recursion_guard.insert(index_id);
+
+        bool merge_in_flight = true;
+        auto release_merge_ownership = [this, &index_id](bool* active) {
+            if (active == nullptr || !*active)
+            {
+                return;
+            }
+
+            g_deferred_exact_secondary_merge_recursion_guard.erase(index_id);
+            {
+                std::lock_guard<std::mutex> lock(deferred_exact_secondary_merge_state_mutex_);
+                deferred_exact_secondary_indexes_in_merge_.erase(index_id);
+            }
+            deferred_exact_secondary_merge_cv_.notify_all();
+            *active = false;
+        };
+        std::unique_ptr<bool, decltype(release_merge_ownership)> merge_guard(
+            &merge_in_flight,
+            release_merge_ownership);
+
+        std::vector<CatalogManager::IndexPageDeltaCatalogInfo> page_deltas;
+        Status status = catalog_manager_->listIndexPageDeltaCatalogEntries(index_id,
+                                                                           page_deltas,
+                                                                           ctx);
+        if (status != Status::OK || page_deltas.empty())
+        {
+            return status;
+        }
+
+        publishDeferredExactCleanupDebtSnapshot(index_id,
+                                                IndexCleanupPublicationState::DEBT_PUBLISHED,
+                                                0,
+                                                false);
+
+        uint64_t merged_row_count = 0;
+
+        for (auto& row : page_deltas)
+        {
+            if (row.merge_state == CatalogManager::IndexPageDeltaMergeState::MERGED)
+            {
+                continue;
+            }
+
+            if (row.merge_state == CatalogManager::IndexPageDeltaMergeState::FAILED_FENCE)
+            {
+                publishDeferredExactCleanupDebtSnapshot(
+                    index_id,
+                    IndexCleanupPublicationState::DEBT_PUBLISHED,
+                    merged_row_count,
+                    true);
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::INTERNAL_ERROR,
+                                  "Cold exact delta merge is fenced by a failed prior merge");
+                return Status::INTERNAL_ERROR;
+            }
+
+            row.merge_state = CatalogManager::IndexPageDeltaMergeState::MERGING;
+            ID updated_page_delta_id{};
+            status = catalog_manager_->upsertIndexPageDeltaCatalogEntry(row,
+                                                                        updated_page_delta_id,
+                                                                        ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            std::vector<uint8_t> normalized_key;
+            std::vector<uint8_t> normalized_old_key;
+            if (!isZeroIdLocal(row.normalized_key_id))
+            {
+                status = loadExactDeltaBlobLocal(catalog_manager_,
+                                                 row.normalized_key_id,
+                                                 current_xid,
+                                                 &normalized_key,
+                                                 ctx);
+                if (status != Status::OK)
+                {
+                    row.merge_state = CatalogManager::IndexPageDeltaMergeState::FAILED_FENCE;
+                    ID ignored_page_delta_id{};
+                    (void)catalog_manager_->upsertIndexPageDeltaCatalogEntry(row,
+                                                                             ignored_page_delta_id,
+                                                                             nullptr);
+                    publishDeferredExactCleanupDebtSnapshot(
+                        index_id,
+                        IndexCleanupPublicationState::DEBT_PUBLISHED,
+                        merged_row_count,
+                        true);
+                    return status;
+                }
+            }
+            if (!isZeroIdLocal(row.normalized_old_key_id))
+            {
+                status = loadExactDeltaBlobLocal(catalog_manager_,
+                                                 row.normalized_old_key_id,
+                                                 current_xid,
+                                                 &normalized_old_key,
+                                                 ctx);
+                if (status != Status::OK)
+                {
+                    row.merge_state = CatalogManager::IndexPageDeltaMergeState::FAILED_FENCE;
+                    ID ignored_page_delta_id{};
+                    (void)catalog_manager_->upsertIndexPageDeltaCatalogEntry(row,
+                                                                             ignored_page_delta_id,
+                                                                             nullptr);
+                    publishDeferredExactCleanupDebtSnapshot(
+                        index_id,
+                        IndexCleanupPublicationState::DEBT_PUBLISHED,
+                        merged_row_count,
+                        true);
+                    return status;
+                }
+            }
+
+            switch (row.delta_op)
+            {
+                case CatalogManager::IndexPageDeltaOp::INSERT:
+                {
+                    TID new_tid(row.new_tid_gpid, row.new_tid_slot);
+                    status = insertIntoIndex(actual_index_type,
+                                             index_ptr,
+                                             normalized_key,
+                                             new_tid,
+                                             row.created_xid,
+                                             ctx);
+                    break;
+                }
+                case CatalogManager::IndexPageDeltaOp::DELETE:
+                {
+                    const auto& delete_key = !normalized_old_key.empty()
+                        ? normalized_old_key
+                        : normalized_key;
+                    TID old_tid(row.old_tid_gpid, row.old_tid_slot);
+                    status = retireExactIndexEntry(actual_index_type,
+                                                   index_ptr,
+                                                   delete_key,
+                                                   old_tid,
+                                                   row.created_xid,
+                                                   ExactIndexRetirementMode::SOFT_DELETE,
+                                                   ctx);
+                    break;
+                }
+                case CatalogManager::IndexPageDeltaOp::UPDATE_SAME_KEY:
+                {
+                    status = Status::OK;
+                    break;
+                }
+                case CatalogManager::IndexPageDeltaOp::UPDATE_KEY_CHANGE:
+                {
+                    TID old_tid(row.old_tid_gpid, row.old_tid_slot);
+                    TID new_tid(row.new_tid_gpid, row.new_tid_slot);
+                    status = retireExactIndexEntry(actual_index_type,
+                                                   index_ptr,
+                                                   normalized_old_key,
+                                                   old_tid,
+                                                   row.created_xid,
+                                                   ExactIndexRetirementMode::SOFT_DELETE,
+                                                   ctx);
+                    if (status == Status::OK)
+                    {
+                        status = insertIntoIndex(actual_index_type,
+                                                 index_ptr,
+                                                 normalized_key,
+                                                 new_tid,
+                                                 row.created_xid,
+                                                 ctx);
+                    }
+                    break;
+                }
+            }
+
+            if (status != Status::OK)
+            {
+                row.merge_state = CatalogManager::IndexPageDeltaMergeState::FAILED_FENCE;
+                ID ignored_page_delta_id{};
+                (void)catalog_manager_->upsertIndexPageDeltaCatalogEntry(row,
+                                                                         ignored_page_delta_id,
+                                                                         nullptr);
+                publishDeferredExactCleanupDebtSnapshot(index_id,
+                                                        IndexCleanupPublicationState::DEBT_PUBLISHED,
+                                                        merged_row_count,
+                                                        true);
+                return status;
+            }
+
+            status = catalog_manager_->deleteIndexPageDeltaCatalogEntry(row.page_delta_id, ctx);
+            if (status != Status::OK)
+            {
+                row.merge_state = CatalogManager::IndexPageDeltaMergeState::FAILED_FENCE;
+                ID ignored_page_delta_id{};
+                (void)catalog_manager_->upsertIndexPageDeltaCatalogEntry(row,
+                                                                         ignored_page_delta_id,
+                                                                         nullptr);
+                publishDeferredExactCleanupDebtSnapshot(index_id,
+                                                        IndexCleanupPublicationState::DEBT_PUBLISHED,
+                                                        merged_row_count,
+                                                        true);
+                return status;
+            }
+
+            ErrorContext cleanup_ctx;
+            (void)catalog_manager_->deleteToastValue(row.target_locality_key_id,
+                                                     current_xid,
+                                                     &cleanup_ctx);
+            (void)catalog_manager_->deleteToastValue(row.normalized_key_id,
+                                                     current_xid,
+                                                     &cleanup_ctx);
+            (void)catalog_manager_->deleteToastValue(row.normalized_old_key_id,
+                                                     current_xid,
+                                                     &cleanup_ctx);
+            ++merged_row_count;
+        }
+
+        publishDeferredExactCleanupDebtSnapshot(index_id,
+                                                IndexCleanupPublicationState::COMPLETE,
+                                                merged_row_count,
+                                                false);
+
+        return Status::OK;
+    }
+
+    auto StorageEngine::prepareCommitGroupMaintenanceDeltas(
+        const std::vector<uint64_t>& ordered_committed_xids,
+        std::vector<uint64_t>& prepared_xids_out,
+        std::vector<ID>& inserted_delta_ids_out,
+        uint64_t* locality_groups_out,
+        uint64_t* delta_count_out,
+        ErrorContext* ctx) -> Status
+    {
+        prepared_xids_out.clear();
+        inserted_delta_ids_out.clear();
+        if (locality_groups_out != nullptr)
+        {
+            *locality_groups_out = 0;
+        }
+        if (delta_count_out != nullptr)
+        {
+            *delta_count_out = 0;
+        }
+
+        if (catalog_manager_ == nullptr || ordered_committed_xids.empty())
+        {
+            return Status::OK;
+        }
+
+        std::vector<PendingOnlineMaintenanceDelta> pending_deltas;
+        {
+            std::lock_guard<std::mutex> lock(pending_commit_group_maintenance_delta_mutex_);
+            for (uint64_t xid : ordered_committed_xids)
+            {
+                auto it = pending_commit_group_maintenance_deltas_.find(xid);
+                if (it == pending_commit_group_maintenance_deltas_.end() || it->second.empty())
+                {
+                    continue;
+                }
+                prepared_xids_out.push_back(xid);
+                pending_deltas.insert(pending_deltas.end(),
+                                      it->second.begin(),
+                                      it->second.end());
+            }
+        }
+
+        if (pending_deltas.empty())
+        {
+            prepared_xids_out.clear();
+            return Status::OK;
+        }
+
+        std::unordered_map<ID, uint64_t> next_delta_ids;
+        next_delta_ids.reserve(pending_deltas.size());
+        for (const auto& pending : pending_deltas)
+        {
+            if (next_delta_ids.find(pending.maintenance_id) != next_delta_ids.end())
+            {
+                continue;
+            }
+
+            std::vector<CatalogManager::IndexMaintenanceDeltaCatalogInfo> existing_deltas;
+            Status status = catalog_manager_->listIndexMaintenanceDeltaCatalogEntries(
+                pending.maintenance_id,
+                existing_deltas,
+                ctx);
+            if (status != Status::OK)
+            {
+                commit_group_maintenance_apply_failures_.fetch_add(1,
+                                                                   std::memory_order_relaxed);
+                return status;
+            }
+
+            uint64_t next_delta_id = 1;
+            for (const auto& existing : existing_deltas)
+            {
+                if (existing.delta_id >= next_delta_id)
+                {
+                    next_delta_id = existing.delta_id + 1;
+                }
+            }
+            next_delta_ids.emplace(pending.maintenance_id, next_delta_id);
+        }
+
+        std::unordered_set<std::string> locality_groups;
+        locality_groups.reserve(pending_deltas.size());
+
+        for (const auto& pending : pending_deltas)
+        {
+            auto next_it = next_delta_ids.find(pending.maintenance_id);
+            if (next_it == next_delta_ids.end())
+            {
+                commit_group_maintenance_apply_failures_.fetch_add(1,
+                                                                   std::memory_order_relaxed);
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::NOT_FOUND,
+                                  "Missing commit-group maintenance delta id allocator");
+                abortPreparedCommitGroupMaintenanceDeltas(inserted_delta_ids_out);
+                inserted_delta_ids_out.clear();
+                prepared_xids_out.clear();
+                return Status::NOT_FOUND;
+            }
+
+            CatalogManager::IndexMaintenanceDeltaCatalogInfo delta{};
+            delta.maintenance_id = pending.maintenance_id;
+            delta.delta_id = next_it->second++;
+            delta.delta_op = static_cast<CatalogManager::IndexDeltaOp>(
+                pending.delta_op_value);
+            delta.tid_gpid = pending.tid_gpid;
+            delta.tid_slot = pending.tid_slot;
+            delta.commit_txid = pending.commit_txid;
+
+            ID delta_id{};
+            ErrorContext delta_ctx;
+            Status status = catalog_manager_->upsertIndexMaintenanceDeltaCatalogEntry(
+                delta,
+                delta_id,
+                &delta_ctx);
+            if (status != Status::OK)
+            {
+                commit_group_maintenance_apply_failures_.fetch_add(1,
+                                                                   std::memory_order_relaxed);
+                abortPreparedCommitGroupMaintenanceDeltas(inserted_delta_ids_out);
+                inserted_delta_ids_out.clear();
+                prepared_xids_out.clear();
+                const std::string error_message =
+                    "Commit-group maintenance delta apply failed for logical_index_id=" +
+                    pending.logical_index_id.toString() + ": " + delta_ctx.message;
+                SET_ERROR_CONTEXT(
+                    ctx,
+                    status,
+                    error_message.c_str());
+                return status;
+            }
+
+            inserted_delta_ids_out.push_back(delta_id);
+            locality_groups.insert(pending.maintenance_id.toString() + "#" +
+                                   std::to_string(pending.locality_key));
+        }
+
+        if (locality_groups_out != nullptr)
+        {
+            *locality_groups_out = static_cast<uint64_t>(locality_groups.size());
+        }
+        if (delta_count_out != nullptr)
+        {
+            *delta_count_out = static_cast<uint64_t>(pending_deltas.size());
+        }
+        return Status::OK;
+    }
+
+    void StorageEngine::finalizePreparedCommitGroupMaintenanceDeltas(
+        const std::vector<uint64_t>& prepared_xids,
+        uint64_t locality_group_count,
+        uint64_t delta_count)
+    {
+        if (!prepared_xids.empty())
+        {
+            std::lock_guard<std::mutex> lock(pending_commit_group_maintenance_delta_mutex_);
+            for (uint64_t xid : prepared_xids)
+            {
+                pending_commit_group_maintenance_deltas_.erase(xid);
+            }
+        }
+
+        if (delta_count == 0)
+        {
+            return;
+        }
+
+        commit_group_maintenance_batches_applied_.fetch_add(1, std::memory_order_relaxed);
+        commit_group_maintenance_transactions_applied_.fetch_add(prepared_xids.size(),
+                                                                 std::memory_order_relaxed);
+        commit_group_maintenance_deltas_applied_.fetch_add(delta_count,
+                                                           std::memory_order_relaxed);
+        commit_group_maintenance_locality_groups_applied_.fetch_add(locality_group_count,
+                                                                    std::memory_order_relaxed);
+    }
+
+    void StorageEngine::abortPreparedCommitGroupMaintenanceDeltas(
+        const std::vector<ID>& inserted_delta_ids)
+    {
+        if (catalog_manager_ == nullptr)
+        {
+            return;
+        }
+
+        for (const auto& delta_id : inserted_delta_ids)
+        {
+            if (isZeroIdLocal(delta_id))
+            {
+                continue;
+            }
+            ErrorContext delete_ctx;
+            Status status =
+                catalog_manager_->deleteIndexMaintenanceDeltaCatalogEntry(delta_id, &delete_ctx);
+            if (status != Status::OK && status != Status::NOT_FOUND)
+            {
+                LOG_WARNING(
+                    CATALOG,
+                    "Failed to discard prepared commit-group maintenance delta %s: %s",
+                    delta_id.toString().c_str(),
+                    delete_ctx.message.c_str());
+            }
+        }
+    }
+
+    void StorageEngine::discardPendingCommitGroupMaintenanceDeltas(uint64_t xid)
+    {
+        if (xid == 0)
+        {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(pending_commit_group_maintenance_delta_mutex_);
+        pending_commit_group_maintenance_deltas_.erase(xid);
+    }
+
+    void StorageEngine::discardPendingCommitGroupMaintenanceDeltas(
+        const std::vector<uint64_t>& xids)
+    {
+        if (xids.empty())
+        {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(pending_commit_group_maintenance_delta_mutex_);
+        for (uint64_t xid : xids)
+        {
+            if (xid != 0)
+            {
+                pending_commit_group_maintenance_deltas_.erase(xid);
+            }
+        }
+    }
+
     void StorageEngine::publishIndexCleanupPublication(
         const IndexCleanupPublicationRecord& publication)
     {
-        std::lock_guard<std::mutex> lock(cleanup_publication_mutex_);
-        cleanup_publications_[publication.index_id][publication.page_id] = publication;
+        {
+            std::lock_guard<std::mutex> lock(cleanup_publication_mutex_);
+            cleanup_publications_[publication.index_id][publication.page_id] = publication;
+        }
+        refreshIndexCleanupDebtLedger(publication.index_id);
+    }
+
+    void StorageEngine::refreshIndexCleanupDebtLedger(const ID& index_id)
+    {
+        if (catalog_manager_ == nullptr || isZeroIdLocal(index_id))
+        {
+            return;
+        }
+
+        struct CleanupDebtAggregate
+        {
+            uint64_t backlog_count = 0;
+            uint64_t backlog_pages = 0;
+            uint64_t backlog_bytes = 0;
+            uint64_t sweep_generation = 0;
+            uint64_t checkpoint_generation = 0;
+            uint64_t last_published_time = 0;
+            bool repair_required = false;
+        };
+
+        CleanupDebtAggregate aggregate{};
+        {
+            std::lock_guard<std::mutex> lock(cleanup_publication_mutex_);
+            const auto it = cleanup_publications_.find(index_id);
+            if (it != cleanup_publications_.end())
+            {
+                for (const auto& [page_id, publication] : it->second)
+                {
+                    (void)page_id;
+                    aggregate.backlog_count += publication.backlog_count;
+                    aggregate.backlog_pages += publication.backlog_pages;
+                    aggregate.backlog_bytes += publication.backlog_bytes;
+                    aggregate.sweep_generation =
+                        std::max(aggregate.sweep_generation, publication.sweep_generation);
+                    aggregate.checkpoint_generation =
+                        std::max(aggregate.checkpoint_generation,
+                                 publication.checkpoint_generation);
+                    aggregate.last_published_time =
+                        std::max(aggregate.last_published_time, publication.published_at_us);
+                    aggregate.repair_required =
+                        aggregate.repair_required || publication.repair_required;
+                }
+            }
+        }
+
+        CatalogManager::IndexHealthCatalogInfo health_info{};
+        ErrorContext health_ctx;
+        Status status =
+            catalog_manager_->getIndexHealthCatalogEntry(index_id, health_info, &health_ctx);
+        if (status == Status::NOT_FOUND)
+        {
+            health_info = CatalogManager::IndexHealthCatalogInfo{};
+            health_info.index_id = index_id;
+            health_info.light_status = CatalogManager::IndexHealthStatus::HEALTHY;
+            health_info.diagnostic_status = CatalogManager::IndexHealthStatus::HEALTHY;
+        }
+        else if (status != Status::OK)
+        {
+            LOG_WARNING(CATALOG,
+                        "Failed to load durable cleanup debt ledger for index %s: %s",
+                        index_id.toString().c_str(),
+                        health_ctx.message.c_str());
+            return;
+        }
+
+        health_info.cleanup_backlog_count = aggregate.backlog_count;
+        health_info.cleanup_backlog_pages = aggregate.backlog_pages;
+        health_info.cleanup_backlog_bytes = aggregate.backlog_bytes;
+        health_info.cleanup_sweep_generation = aggregate.sweep_generation;
+        health_info.cleanup_checkpoint_generation = aggregate.checkpoint_generation;
+        health_info.cleanup_last_published_time = aggregate.last_published_time;
+        health_info.cleanup_repair_required = aggregate.repair_required;
+        health_info.last_modified_time = 0;
+
+        ErrorContext upsert_ctx;
+        status = catalog_manager_->upsertIndexHealthCatalogEntry(health_info, &upsert_ctx);
+        if (status != Status::OK)
+        {
+            LOG_WARNING(CATALOG,
+                        "Failed to persist durable cleanup debt ledger for index %s: %s",
+                        index_id.toString().c_str(),
+                        upsert_ctx.message.c_str());
+        }
     }
 
     auto StorageEngine::listIndexCleanupPublications(
@@ -450,6 +2418,64 @@ namespace scratchbird::core
             if (counter != nullptr)
             {
                 counter->inc(1.0, labels);
+            }
+        }
+
+        auto saturatingAddUint64(uint64_t base, uint64_t delta) -> uint64_t
+        {
+            const uint64_t max = std::numeric_limits<uint64_t>::max();
+            if (base > max - delta)
+            {
+                return max;
+            }
+            return base + delta;
+        }
+
+        void bumpIndexContentionCounters(CatalogManager *catalog_manager,
+                                         const ID &index_id,
+                                         uint64_t unique_conflict_delta,
+                                         uint64_t hot_key_delta)
+        {
+            if (catalog_manager == nullptr || index_id == ID{} ||
+                (unique_conflict_delta == 0 && hot_key_delta == 0))
+            {
+                return;
+            }
+
+            ErrorContext ctx;
+            CatalogManager::IndexContentionCatalogInfo contention{};
+            Status status =
+                catalog_manager->getIndexContentionCatalogEntry(index_id, contention, &ctx);
+            if (status == Status::NOT_FOUND)
+            {
+                contention = CatalogManager::IndexContentionCatalogInfo{};
+                contention.index_id = index_id;
+            }
+            else if (status != Status::OK)
+            {
+                LOG_WARNING(STORAGE,
+                            "Failed to load index contention row for index=%s: %s",
+                            index_id.toString().c_str(),
+                            ctx.message.c_str());
+                return;
+            }
+
+            contention.index_id = index_id;
+            contention.unique_key_conflict_count =
+                saturatingAddUint64(contention.unique_key_conflict_count,
+                                    unique_conflict_delta);
+            contention.hot_key_count =
+                saturatingAddUint64(contention.hot_key_count, hot_key_delta);
+
+            ErrorContext upsert_ctx;
+            status = catalog_manager->upsertIndexContentionCatalogEntry(
+                contention, &upsert_ctx);
+            if (status != Status::OK)
+            {
+                LOG_WARNING(STORAGE,
+                            "Failed to update index contention row for index=%s: %s",
+                            index_id.toString().c_str(),
+                            upsert_ctx.message.c_str());
             }
         }
 
@@ -688,6 +2714,236 @@ namespace scratchbird::core
             }
         }
 
+        Status flushBufferedGroupedExactInserts(
+            CatalogManager *catalog_manager,
+            StorageEngine::BulkInsertMaintenancePlanState::MaintenanceTarget& target,
+            ErrorContext *ctx)
+        {
+            if (catalog_manager == nullptr || target.pending_grouped_exact_inserts.empty())
+            {
+                return Status::OK;
+            }
+
+            CatalogManager::IndexType actual_index_type = target.index_type;
+            void *index_ptr = catalog_manager->getIndexPtr(target.index_id, &actual_index_type);
+            if (index_ptr == nullptr || !supportsExactKeyLookup(actual_index_type))
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::NOT_FOUND,
+                                  "Grouped exact-secondary maintenance target is unavailable");
+                return Status::NOT_FOUND;
+            }
+
+            std::stable_sort(target.pending_grouped_exact_inserts.begin(),
+                             target.pending_grouped_exact_inserts.end(),
+                             [](const auto& lhs, const auto& rhs) {
+                                 if (lhs.key != rhs.key)
+                                 {
+                                     return std::lexicographical_compare(lhs.key.begin(),
+                                                                         lhs.key.end(),
+                                                                         rhs.key.begin(),
+                                                                         rhs.key.end());
+                                 }
+                                 return lhs.tid < rhs.tid;
+                             });
+
+            size_t flushed = 0;
+            Status status = Status::OK;
+            for (; flushed < target.pending_grouped_exact_inserts.size(); ++flushed)
+            {
+                const auto& pending = target.pending_grouped_exact_inserts[flushed];
+                status = insertIntoIndex(actual_index_type,
+                                         index_ptr,
+                                         pending.key,
+                                         pending.tid,
+                                         pending.xid,
+                                         ctx);
+                if (status != Status::OK)
+                {
+                    break;
+                }
+            }
+
+            if (flushed > 0)
+            {
+                target.pending_grouped_exact_inserts.erase(
+                    target.pending_grouped_exact_inserts.begin(),
+                    target.pending_grouped_exact_inserts.begin() +
+                        static_cast<std::ptrdiff_t>(flushed));
+            }
+
+            return status;
+        }
+
+        Status flushBufferedEmptyUniqueExactInserts(
+            Database *db,
+            CatalogManager *catalog_manager,
+            StorageEngine::BulkInsertMaintenancePlanState::MaintenanceTarget& target,
+            ErrorContext *ctx)
+        {
+            const bool have_vector_rows = !target.pending_buffered_unique_inserts.empty();
+            const bool have_scalar_rows =
+                target.buffered_empty_unique_fast_scalar_mode &&
+                !target.pending_buffered_unique_scalar_inserts.empty();
+            if (db == nullptr || catalog_manager == nullptr ||
+                (!have_vector_rows && !have_scalar_rows))
+            {
+                return Status::OK;
+            }
+
+            CatalogManager::IndexType actual_index_type = target.index_type;
+            void *index_ptr =
+                catalog_manager->getIndexPtr(target.index_id, &actual_index_type);
+            if (index_ptr == nullptr || !supportsExactKeyLookup(actual_index_type))
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::NOT_FOUND,
+                                  "Buffered unique exact-secondary maintenance target is unavailable");
+                return Status::NOT_FOUND;
+            }
+
+            if (target.buffered_empty_unique_mode &&
+                actual_index_type == CatalogManager::IndexType::BTREE &&
+                isStructurallyEmptyBTreeIndex(db, target.root_gpid))
+            {
+                auto *btree = static_cast<BTree *>(index_ptr);
+                const auto prepare_entries_start =
+                    std::chrono::steady_clock::now();
+                std::vector<std::pair<std::vector<uint8_t>, TID>> entries;
+                entries.reserve(have_scalar_rows
+                                    ? target.pending_buffered_unique_scalar_inserts.size()
+                                    : target.pending_buffered_unique_inserts.size());
+                uint64_t xid = 0;
+                if (have_scalar_rows)
+                {
+                    for (const auto &pending : target.pending_buffered_unique_scalar_inserts)
+                    {
+                        std::vector<uint8_t> encoded_key;
+                        encodeBufferedUniqueScalarOrderKey(pending.encoded_order_key,
+                                                           pending.encoded_key_width,
+                                                           &encoded_key);
+                        entries.emplace_back(std::move(encoded_key), pending.tid);
+                        xid = pending.xid;
+                    }
+                }
+                else
+                {
+                    for (const auto &pending : target.pending_buffered_unique_inserts)
+                    {
+                        entries.emplace_back(pending.key, pending.tid);
+                        xid = pending.xid;
+                    }
+                }
+                target.timing_end_flush_unique_prepare_entries_us +=
+                    elapsedMicros(prepare_entries_start);
+
+                BTree::BulkLoadStats bulk_stats{};
+                const auto bulk_load_start = std::chrono::steady_clock::now();
+                Status status = btree->bulkLoad(entries, xid, ctx, &bulk_stats);
+                target.timing_end_flush_unique_bulkload_total_us +=
+                    elapsedMicros(bulk_load_start);
+                target.timing_end_flush_unique_bulkload_sort_us +=
+                    bulk_stats.sort_us;
+                target.timing_end_flush_unique_bulkload_leaf_build_us +=
+                    bulk_stats.leaf_build_us;
+                target.timing_end_flush_unique_bulkload_internal_build_us +=
+                    bulk_stats.internal_build_us;
+                target.timing_end_flush_unique_bulkload_root_finalize_us +=
+                    bulk_stats.root_finalize_us;
+                target.end_flush_unique_bulkload_input_sorted =
+                    bulk_stats.input_already_sorted;
+                if (status == Status::OK)
+                {
+                    target.pending_buffered_unique_inserts.clear();
+                    target.pending_buffered_unique_scalar_inserts.clear();
+                    target.pending_buffered_unique_keys.clear();
+                    target.pending_buffered_unique_scalar_keys.clear();
+                }
+                return status;
+            }
+
+            if (have_scalar_rows)
+            {
+                size_t flushed = 0;
+                Status status = Status::OK;
+                for (; flushed < target.pending_buffered_unique_scalar_inserts.size();
+                     ++flushed)
+                {
+                    const auto &pending =
+                        target.pending_buffered_unique_scalar_inserts[flushed];
+                    std::vector<uint8_t> encoded_key;
+                    encodeBufferedUniqueScalarOrderKey(pending.encoded_order_key,
+                                                       pending.encoded_key_width,
+                                                       &encoded_key);
+                    status = insertIntoIndex(actual_index_type,
+                                             index_ptr,
+                                             encoded_key,
+                                             pending.tid,
+                                             pending.xid,
+                                             ctx);
+                    if (status != Status::OK)
+                    {
+                        break;
+                    }
+                }
+
+                if (flushed > 0)
+                {
+                    target.pending_buffered_unique_scalar_inserts.erase(
+                        target.pending_buffered_unique_scalar_inserts.begin(),
+                        target.pending_buffered_unique_scalar_inserts.begin() +
+                            static_cast<std::ptrdiff_t>(flushed));
+                    rebuildPendingBufferedUniqueKeySet(target);
+                }
+
+                return status;
+            }
+
+            std::stable_sort(
+                target.pending_buffered_unique_inserts.begin(),
+                target.pending_buffered_unique_inserts.end(),
+                [](const auto& lhs, const auto& rhs) {
+                    if (lhs.key != rhs.key)
+                    {
+                        return std::lexicographical_compare(lhs.key.begin(),
+                                                            lhs.key.end(),
+                                                            rhs.key.begin(),
+                                                            rhs.key.end());
+                    }
+                    return lhs.tid < rhs.tid;
+                });
+
+            size_t flushed = 0;
+            Status status = Status::OK;
+            for (; flushed < target.pending_buffered_unique_inserts.size();
+                 ++flushed)
+            {
+                const auto& pending =
+                    target.pending_buffered_unique_inserts[flushed];
+                status = insertIntoIndex(actual_index_type,
+                                         index_ptr,
+                                         pending.key,
+                                         pending.tid,
+                                         pending.xid,
+                                         ctx);
+                if (status != Status::OK)
+                {
+                    break;
+                }
+            }
+
+            if (flushed > 0)
+            {
+                target.pending_buffered_unique_inserts.erase(
+                    target.pending_buffered_unique_inserts.begin(),
+                    target.pending_buffered_unique_inserts.begin() +
+                        static_cast<std::ptrdiff_t>(flushed));
+                rebuildPendingBufferedUniqueKeySet(target);
+            }
+
+            return status;
+        }
+
         Status removeFromIndex(
             CatalogManager::IndexType index_type,
             void *index_ptr,
@@ -885,12 +3141,6 @@ namespace scratchbird::core
             }
         }
 
-        enum class ExactIndexRetirementMode : uint8_t
-        {
-            SOFT_DELETE,
-            HARD_REMOVE,
-        };
-
         Status retireExactIndexEntry(CatalogManager::IndexType index_type,
                                      void *index_ptr,
                                      const std::vector<uint8_t> &key,
@@ -996,6 +3246,20 @@ namespace scratchbird::core
             return info;
         }
 
+        TypeInfo buildPhysicalTypeInfo(const CatalogManager::ColumnInfo &column)
+        {
+            const uint16_t storage_type =
+                (column.physical_data_type != 0) ? column.physical_data_type : column.data_type;
+            TypeInfo info(static_cast<DataType>(storage_type));
+            uint32_t precision = column.type_precision != 0 ? column.type_precision
+                                                            : column.max_length;
+            info.precision = precision;
+            info.scale = column.type_scale;
+            info.with_timezone = column.with_timezone;
+            info.timezone_hint = column.timezone_hint;
+            return info;
+        }
+
         Status computeColumnLayout(const uint8_t *tuple_data,
                                    uint32_t tuple_size,
                                    const std::vector<CatalogManager::ColumnInfo> &columns,
@@ -1076,7 +3340,7 @@ namespace scratchbird::core
                 }
                 else
                 {
-                    TypeInfo type_info = buildTypeInfo(columns[i]);
+                    TypeInfo type_info = buildPhysicalTypeInfo(columns[i]);
                     Status size_status = computePlainValueSize(type_info.type,
                                                                type_info,
                                                                tuple_data + current_offset,
@@ -1378,6 +3642,7 @@ namespace scratchbird::core
         IndexKeyExtractor extractor;
         return extractor.extractKey(materialized_data, materialized_size,
                                     column_offsets, column_sizes,
+                                    columns,
                                     column_indices,
                                     toast_mgr,
                                     getCurrentXid(),
@@ -1467,12 +3732,48 @@ namespace scratchbird::core
         }
 
         visible_tids->clear();
+        std::unordered_map<uint16_t, uint32_t> tablespace_page_totals;
 
         for (const auto &candidate_tid : candidate_tids)
         {
             if (exclude_tid != nullptr && candidate_tid == *exclude_tid)
             {
                 continue;
+            }
+
+            const uint16_t candidate_tablespace_id = getTablespaceID(candidate_tid);
+            uint32_t tablespace_total_pages = 0;
+            auto total_pages_it = tablespace_page_totals.find(candidate_tablespace_id);
+            if (total_pages_it == tablespace_page_totals.end())
+            {
+                ErrorContext total_pages_ctx;
+                const Status total_pages_status =
+                    page_manager_->getTablespaceTotalPages(candidate_tablespace_id,
+                                                          &tablespace_total_pages,
+                                                          &total_pages_ctx);
+                if (total_pages_status != Status::OK)
+                {
+                    if (ctx != nullptr && ctx->message.empty())
+                    {
+                        propagateErrorContext(ctx, total_pages_ctx);
+                    }
+                    return total_pages_status;
+                }
+                tablespace_page_totals.emplace(candidate_tablespace_id, tablespace_total_pages);
+            }
+            else
+            {
+                tablespace_total_pages = total_pages_it->second;
+            }
+
+            if (getPageNumber(candidate_tid) >= tablespace_total_pages)
+            {
+                const std::string message =
+                    "Index candidate stable TID " + tidToString(candidate_tid) +
+                    " exceeds tablespace " + std::to_string(candidate_tablespace_id) +
+                    " page inventory (" + std::to_string(tablespace_total_pages) + " pages)";
+                SET_ERROR_CONTEXT(ctx, Status::INDEX_CORRUPTED, message.c_str());
+                return Status::INDEX_CORRUPTED;
             }
 
             Tuple tuple{};
@@ -1527,73 +3828,121 @@ namespace scratchbird::core
                                               const uint8_t *tuple_data,
                                               uint32_t tuple_size,
                                               uint64_t current_xid,
+                                              UniquePreflightTraceStats *trace_stats,
+                                              const std::unordered_set<ID, IDHash> *skip_unique_index_ids,
+                                              bool *all_unique_indexes_skipped_out,
                                               ErrorContext *ctx) -> Status
     {
-        std::vector<CatalogManager::IndexInfo> indexes;
-        Status status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx, false);
-        if (status != Status::OK || indexes.empty())
+        using PreflightClock = std::chrono::steady_clock;
+        const auto duration_ms = [](const PreflightClock::time_point &start,
+                                    const PreflightClock::time_point &end) -> double {
+            return static_cast<double>(
+                       std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()) /
+                   1000.0;
+        };
+
+        if (trace_stats != nullptr)
         {
-            return status == Status::OK ? Status::OK : status;
+            *trace_stats = UniquePreflightTraceStats{};
+        }
+        if (all_unique_indexes_skipped_out != nullptr)
+        {
+            *all_unique_indexes_skipped_out = false;
         }
 
-        std::vector<CatalogManager::ColumnInfo> columns;
-        status = catalog_manager_->getColumns(table_id, columns, ctx);
+        UniquePreflightTablePlan table_plan;
+        bool metadata_cache_hit = false;
+        const auto metadata_start = PreflightClock::now();
+        Status status =
+            getUniquePreflightTablePlan(table_id, &table_plan, &metadata_cache_hit, ctx);
+        const auto metadata_done = PreflightClock::now();
         if (status != Status::OK)
         {
             return status;
+        }
+        if (trace_stats != nullptr)
+        {
+            trace_stats->metadata_cache_hit = metadata_cache_hit;
+            trace_stats->metadata_ms = duration_ms(metadata_start, metadata_done);
+            trace_stats->unique_index_count =
+                static_cast<uint32_t>(table_plan.unique_indexes.size());
+        }
+        if (table_plan.unique_indexes.empty())
+        {
+            return Status::OK;
+        }
+
+        bool have_unskipped_unique_index = false;
+        for (const auto &index_plan : table_plan.unique_indexes)
+        {
+            if (skip_unique_index_ids != nullptr &&
+                skip_unique_index_ids->find(index_plan.index_id) !=
+                    skip_unique_index_ids->end())
+            {
+                continue;
+            }
+            have_unskipped_unique_index = true;
+            break;
+        }
+        if (!have_unskipped_unique_index)
+        {
+            if (all_unique_indexes_skipped_out != nullptr)
+            {
+                *all_unique_indexes_skipped_out = true;
+            }
+            return Status::OK;
         }
 
         std::vector<size_t> column_offsets;
         std::vector<size_t> column_sizes;
-        status = computeColumnLayout(tuple_data, tuple_size, columns,
+        const auto layout_start = PreflightClock::now();
+        status = computeColumnLayout(tuple_data, tuple_size, table_plan.columns,
                                      db_->domain_manager(),
                                      column_offsets, column_sizes, ctx);
+        const auto layout_done = PreflightClock::now();
         if (status != Status::OK)
         {
             return status;
         }
+        if (trace_stats != nullptr)
+        {
+            trace_stats->layout_ms = duration_ms(layout_start, layout_done);
+        }
 
         IndexKeyExtractor extractor;
         ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
-        for (const auto &index_info : indexes)
+        for (const auto &index_plan : table_plan.unique_indexes)
         {
-            if (!index_info.is_unique || index_info.is_expression_index || index_info.is_partial_index)
-            {
-                continue;
-            }
-            if (indexUsesArrayUniqueness(index_info, catalog_manager_))
+            if (skip_unique_index_ids != nullptr &&
+                skip_unique_index_ids->find(index_plan.index_id) !=
+                    skip_unique_index_ids->end())
             {
                 continue;
             }
 
             CatalogManager::IndexType actual_index_type;
-            void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
+            void *index_ptr = catalog_manager_->getIndexPtr(index_plan.index_id, &actual_index_type);
             if (!index_ptr || !supportsExactKeyLookup(actual_index_type))
             {
+                invalidateUniquePreflightTablePlan(table_id);
                 continue;
             }
 
-            std::vector<uint16_t> column_indices;
-            column_indices.reserve(index_info.column_ids.size());
-            for (const auto &column_id : index_info.column_ids)
-            {
-                for (size_t i = 0; i < columns.size(); ++i)
-                {
-                    if (columns[i].column_id == column_id)
-                    {
-                        column_indices.push_back(static_cast<uint16_t>(i));
-                        break;
-                    }
-                }
-            }
-
             std::vector<uint8_t> key;
+            const auto key_extract_start = PreflightClock::now();
             status = extractor.extractKey(tuple_data, tuple_size,
                                           column_offsets, column_sizes,
-                                          column_indices,
+                                          table_plan.columns,
+                                          index_plan.column_indices,
                                           toast_mgr,
                                           current_xid,
                                           &key, ctx);
+            const auto key_extract_done = PreflightClock::now();
+            if (trace_stats != nullptr)
+            {
+                trace_stats->key_extract_ms +=
+                    duration_ms(key_extract_start, key_extract_done);
+            }
             if (status != Status::OK)
             {
                 return status;
@@ -1601,8 +3950,39 @@ namespace scratchbird::core
 
             std::vector<TID> candidate_tids;
             ErrorContext lookup_ctx;
+            const auto lookup_start = PreflightClock::now();
+            CatalogManager::IndexInfo merge_index_info{};
+            Status merge_info_status =
+                catalog_manager_->getIndex(index_plan.index_id, merge_index_info, &lookup_ctx);
+            if (merge_info_status != Status::OK)
+            {
+                invalidateUniquePreflightTablePlan(table_id);
+                continue;
+            }
+            Status merge_status = mergeDeferredExactSecondaryPageDeltas(
+                merge_index_info.index_id,
+                merge_index_info.is_unique,
+                merge_index_info.is_expression_index,
+                merge_index_info.is_partial_index,
+                static_cast<uint8_t>(actual_index_type),
+                index_ptr,
+                current_xid,
+                &lookup_ctx);
+            if (merge_status != Status::OK)
+            {
+                if (ctx != nullptr)
+                {
+                    propagateErrorContext(ctx, lookup_ctx);
+                }
+                return merge_status;
+            }
             status = searchExactIndexCandidates(actual_index_type, index_ptr, key, current_xid,
                                                 &candidate_tids, &lookup_ctx);
+            const auto lookup_done = PreflightClock::now();
+            if (trace_stats != nullptr)
+            {
+                trace_stats->exact_lookup_ms += duration_ms(lookup_start, lookup_done);
+            }
             if (status == Status::NOT_FOUND)
             {
                 continue;
@@ -1617,9 +3997,16 @@ namespace scratchbird::core
             }
 
             std::vector<TID> visible_tids;
-            status = filterIndexCandidatesByVisibleHeap(table_id, index_info.column_ids,
+            const auto visibility_start = PreflightClock::now();
+            status = filterIndexCandidatesByVisibleHeap(table_id, index_plan.column_ids,
                                                         true, key, candidate_tids, nullptr,
                                                         &visible_tids, ctx);
+            const auto visibility_done = PreflightClock::now();
+            if (trace_stats != nullptr)
+            {
+                trace_stats->visibility_ms +=
+                    duration_ms(visibility_start, visibility_done);
+            }
             if (status != Status::OK)
             {
                 return status;
@@ -1627,12 +4014,230 @@ namespace scratchbird::core
 
             if (!visible_tids.empty())
             {
+                bumpIndexContentionCounters(catalog_manager_,
+                                            index_plan.index_id,
+                                            1,
+                                            0);
                 incrementCanonicalCounter(
                     "sb_lock_unique_conflicts_total",
                     {metricDbLabel(db_), metricRelationLabel(catalog_manager_, table_id)});
-                std::string msg = "UNIQUE index violation on index '" + index_info.index_name + "'";
+                std::string msg = "UNIQUE index violation on index '" + index_plan.index_name + "'";
                 SET_ERROR_CONTEXT(ctx, Status::UNIQUE_VIOLATION, msg.c_str());
                 return Status::UNIQUE_VIOLATION;
+            }
+        }
+
+        return Status::OK;
+    }
+
+    auto StorageEngine::preflightUniqueInsertWithBulkHandle(
+        BulkInsertHandle *handle,
+        const uint8_t *tuple_data,
+        uint32_t tuple_size,
+        std::vector<BulkInsertBufferedUniquePreflightKey> *buffered_unique_keys_out,
+        ErrorContext *ctx) -> Status
+    {
+        if (handle == nullptr || !handle->initialized ||
+            handle->maintenance_plan_state == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::INVALID_ARGUMENT,
+                              "Bulk insert handle unique preflight requires an initialized maintenance plan");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        auto &plan = *handle->maintenance_plan_state;
+        if (plan.buffered_empty_unique_index_count == 0)
+        {
+            return Status::OK;
+        }
+
+        if (buffered_unique_keys_out != nullptr)
+        {
+            buffered_unique_keys_out->clear();
+            buffered_unique_keys_out->reserve(plan.buffered_empty_unique_index_count);
+        }
+
+        std::vector<size_t> column_offsets;
+        std::vector<size_t> column_sizes;
+        Status status = computeColumnLayout(tuple_data,
+                                            tuple_size,
+                                            plan.columns,
+                                            db_->domain_manager(),
+                                            column_offsets,
+                                            column_sizes,
+                                            ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        IndexKeyExtractor extractor;
+        ToastManager *toast_mgr =
+            handle->toast_mgr != nullptr
+                ? handle->toast_mgr
+                : getOrCreateToastManager(handle->table_id, ctx);
+        if (toast_mgr == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::INVALID_ARGUMENT,
+                              "Toast manager is required for buffered unique preflight");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        std::vector<std::pair<BulkInsertMaintenancePlanState::MaintenanceTarget *,
+                              std::vector<uint8_t>>>
+            inserted_keys;
+        inserted_keys.reserve(plan.buffered_empty_unique_index_count);
+        std::vector<std::pair<BulkInsertMaintenancePlanState::MaintenanceTarget *, uint64_t>>
+            inserted_scalar_keys;
+        inserted_scalar_keys.reserve(plan.buffered_empty_unique_index_count);
+        auto rollback_inserted_keys = [&]() {
+            for (auto &entry : inserted_keys)
+            {
+                if (entry.first == nullptr)
+                {
+                    continue;
+                }
+                entry.first->pending_buffered_unique_keys.erase(entry.second);
+            }
+            for (auto &entry : inserted_scalar_keys)
+            {
+                if (entry.first == nullptr)
+                {
+                    continue;
+                }
+                entry.first->pending_buffered_unique_scalar_keys.erase(entry.second);
+            }
+        };
+
+        for (size_t target_index = 0; target_index < plan.indexes.size(); ++target_index)
+        {
+            auto &target = plan.indexes[target_index];
+            if (!target.buffered_empty_unique_mode)
+            {
+                continue;
+            }
+
+            if (target.buffered_empty_unique_fast_scalar_mode)
+            {
+                uint64_t scalar_order_key = 0;
+                uint8_t scalar_key_width = 0;
+                status = tryBuildBufferedEmptyUniqueScalarOrderKey(tuple_data,
+                                                                   column_offsets,
+                                                                   column_sizes,
+                                                                   plan.columns,
+                                                                   target.column_indices.front(),
+                                                                   &scalar_order_key,
+                                                                   &scalar_key_width,
+                                                                   ctx);
+                if (status != Status::OK)
+                {
+                    rollback_inserted_keys();
+                    if (buffered_unique_keys_out != nullptr)
+                    {
+                        buffered_unique_keys_out->clear();
+                    }
+                    return status;
+                }
+
+                auto [it, inserted] =
+                    target.pending_buffered_unique_scalar_keys.insert(scalar_order_key);
+                (void)it;
+                if (!inserted)
+                {
+                    Status flush_status =
+                        flushBufferedEmptyUniqueExactInserts(db_, catalog_manager_, target, ctx);
+                    if (flush_status != Status::OK)
+                    {
+                        rollback_inserted_keys();
+                        if (buffered_unique_keys_out != nullptr)
+                        {
+                            buffered_unique_keys_out->clear();
+                        }
+                        return flush_status;
+                    }
+
+                    std::string msg =
+                        "UNIQUE index violation on index '" + target.index_name + "'";
+                    SET_ERROR_CONTEXT(ctx, Status::UNIQUE_VIOLATION, msg.c_str());
+                    rollback_inserted_keys();
+                    if (buffered_unique_keys_out != nullptr)
+                    {
+                        buffered_unique_keys_out->clear();
+                    }
+                    return Status::UNIQUE_VIOLATION;
+                }
+
+                inserted_scalar_keys.emplace_back(&target, scalar_order_key);
+                if (buffered_unique_keys_out != nullptr)
+                {
+                    BulkInsertBufferedUniquePreflightKey buffered_key{};
+                    buffered_key.target_index = target_index;
+                    buffered_key.scalar_fast = true;
+                    buffered_key.scalar_order_key = scalar_order_key;
+                    buffered_key.scalar_key_width = scalar_key_width;
+                    buffered_unique_keys_out->push_back(std::move(buffered_key));
+                }
+                continue;
+            }
+
+            std::vector<uint8_t> key;
+            status = extractor.extractKey(tuple_data,
+                                          tuple_size,
+                                          column_offsets,
+                                          column_sizes,
+                                          plan.columns,
+                                          target.column_indices,
+                                          toast_mgr,
+                                          handle->current_xid,
+                                          &key,
+                                          ctx);
+            if (status != Status::OK)
+            {
+                rollback_inserted_keys();
+                if (buffered_unique_keys_out != nullptr)
+                {
+                    buffered_unique_keys_out->clear();
+                }
+                return status;
+            }
+
+            auto [it, inserted] =
+                target.pending_buffered_unique_keys.insert(key);
+            (void)it;
+            if (!inserted)
+            {
+                Status flush_status =
+                    flushBufferedEmptyUniqueExactInserts(db_, catalog_manager_, target, ctx);
+                if (flush_status != Status::OK)
+                {
+                    rollback_inserted_keys();
+                    if (buffered_unique_keys_out != nullptr)
+                    {
+                        buffered_unique_keys_out->clear();
+                    }
+                    return flush_status;
+                }
+
+                std::string msg =
+                    "UNIQUE index violation on index '" + target.index_name + "'";
+                SET_ERROR_CONTEXT(ctx, Status::UNIQUE_VIOLATION, msg.c_str());
+                rollback_inserted_keys();
+                if (buffered_unique_keys_out != nullptr)
+                {
+                    buffered_unique_keys_out->clear();
+                }
+                return Status::UNIQUE_VIOLATION;
+            }
+
+            inserted_keys.emplace_back(&target, key);
+            if (buffered_unique_keys_out != nullptr)
+            {
+                BulkInsertBufferedUniquePreflightKey buffered_key{};
+                buffered_key.target_index = target_index;
+                buffered_key.key = key;
+                buffered_unique_keys_out->push_back(std::move(buffered_key));
             }
         }
 
@@ -1646,79 +4251,133 @@ namespace scratchbird::core
                                               uint32_t new_tuple_size,
                                               const TID &stable_tid,
                                               uint64_t current_xid,
+                                              UniquePreflightTraceStats *trace_stats,
                                               ErrorContext *ctx) -> Status
     {
-        std::vector<CatalogManager::IndexInfo> indexes;
-        Status status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx, false);
-        if (status != Status::OK || indexes.empty())
+        using PreflightClock = std::chrono::steady_clock;
+        const auto duration_ms = [](const PreflightClock::time_point &start,
+                                    const PreflightClock::time_point &end) -> double {
+            return static_cast<double>(
+                       std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()) /
+                   1000.0;
+        };
+
+        if (trace_stats != nullptr)
         {
-            return status == Status::OK ? Status::OK : status;
+            *trace_stats = UniquePreflightTraceStats{};
         }
 
-        std::vector<CatalogManager::ColumnInfo> columns;
-        status = catalog_manager_->getColumns(table_id, columns, ctx);
+        UniquePreflightTablePlan table_plan;
+        bool metadata_cache_hit = false;
+        const auto metadata_start = PreflightClock::now();
+        Status status =
+            getUniquePreflightTablePlan(table_id, &table_plan, &metadata_cache_hit, ctx);
+        const auto metadata_done = PreflightClock::now();
         if (status != Status::OK)
         {
             return status;
+        }
+        if (trace_stats != nullptr)
+        {
+            trace_stats->metadata_cache_hit = metadata_cache_hit;
+            trace_stats->metadata_ms = duration_ms(metadata_start, metadata_done);
+            trace_stats->unique_index_count =
+                static_cast<uint32_t>(table_plan.unique_indexes.size());
+        }
+        if (table_plan.unique_indexes.empty())
+        {
+            return Status::OK;
         }
 
         std::vector<size_t> old_offsets;
         std::vector<size_t> old_sizes;
         std::vector<size_t> new_offsets;
         std::vector<size_t> new_sizes;
-        status = computeColumnLayout(old_tuple_data, old_tuple_size, columns,
+        const auto layout_start = PreflightClock::now();
+        status = computeColumnLayout(old_tuple_data, old_tuple_size, table_plan.columns,
                                      db_->domain_manager(), old_offsets, old_sizes, ctx);
         if (status != Status::OK)
         {
             return status;
         }
-        status = computeColumnLayout(new_tuple_data, new_tuple_size, columns,
+        status = computeColumnLayout(new_tuple_data, new_tuple_size, table_plan.columns,
                                      db_->domain_manager(), new_offsets, new_sizes, ctx);
+        const auto layout_done = PreflightClock::now();
         if (status != Status::OK)
         {
             return status;
         }
+        if (trace_stats != nullptr)
+        {
+            trace_stats->layout_ms = duration_ms(layout_start, layout_done);
+        }
+
+        bool unique_columns_changed = false;
+        for (uint16_t column_index : table_plan.unique_column_indices)
+        {
+            if (column_index >= old_offsets.size() || column_index >= old_sizes.size() ||
+                column_index >= new_offsets.size() || column_index >= new_sizes.size())
+            {
+                invalidateUniquePreflightTablePlan(table_id);
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Unique preflight column index out of range");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            const size_t old_offset = old_offsets[column_index];
+            const size_t old_size = old_sizes[column_index];
+            const size_t new_offset = new_offsets[column_index];
+            const size_t new_size = new_sizes[column_index];
+            if (old_offset + old_size > old_tuple_size ||
+                new_offset + new_size > new_tuple_size)
+            {
+                invalidateUniquePreflightTablePlan(table_id);
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Unique preflight column bounds exceed tuple size");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            const uint8_t *old_column_data = old_tuple_data + old_offset;
+            const uint8_t *new_column_data = new_tuple_data + new_offset;
+            if (!rawUniqueColumnValuesMatch(old_column_data, old_size,
+                                            new_column_data, new_size))
+            {
+                unique_columns_changed = true;
+                break;
+            }
+        }
+
+        if (!unique_columns_changed)
+        {
+            return Status::OK;
+        }
 
         IndexKeyExtractor extractor;
         ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
-        for (const auto &index_info : indexes)
+        for (const auto &index_plan : table_plan.unique_indexes)
         {
-            if (!index_info.is_unique || index_info.is_expression_index || index_info.is_partial_index)
-            {
-                continue;
-            }
-            if (indexUsesArrayUniqueness(index_info, catalog_manager_))
-            {
-                continue;
-            }
-
             CatalogManager::IndexType actual_index_type;
-            void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
+            void *index_ptr = catalog_manager_->getIndexPtr(index_plan.index_id, &actual_index_type);
             if (!index_ptr || !supportsExactKeyLookup(actual_index_type))
             {
+                invalidateUniquePreflightTablePlan(table_id);
                 continue;
-            }
-
-            std::vector<uint16_t> column_indices;
-            column_indices.reserve(index_info.column_ids.size());
-            for (const auto &column_id : index_info.column_ids)
-            {
-                for (size_t i = 0; i < columns.size(); ++i)
-                {
-                    if (columns[i].column_id == column_id)
-                    {
-                        column_indices.push_back(static_cast<uint16_t>(i));
-                        break;
-                    }
-                }
             }
 
             std::vector<uint8_t> old_key;
             std::vector<uint8_t> new_key;
+            const auto key_extract_start = PreflightClock::now();
             status = extractor.extractKeyForUpdate(old_tuple_data, old_tuple_size, old_offsets, old_sizes,
+                                                   table_plan.columns,
                                                    new_tuple_data, new_tuple_size, new_offsets, new_sizes,
-                                                   column_indices, toast_mgr, current_xid,
+                                                   index_plan.column_indices, toast_mgr, current_xid,
                                                    &old_key, &new_key, ctx);
+            const auto key_extract_done = PreflightClock::now();
+            if (trace_stats != nullptr)
+            {
+                trace_stats->key_extract_ms +=
+                    duration_ms(key_extract_start, key_extract_done);
+            }
             if (status != Status::OK)
             {
                 return status;
@@ -1731,8 +4390,39 @@ namespace scratchbird::core
 
             std::vector<TID> candidate_tids;
             ErrorContext lookup_ctx;
+            const auto lookup_start = PreflightClock::now();
+            CatalogManager::IndexInfo merge_index_info{};
+            Status merge_info_status =
+                catalog_manager_->getIndex(index_plan.index_id, merge_index_info, &lookup_ctx);
+            if (merge_info_status != Status::OK)
+            {
+                invalidateUniquePreflightTablePlan(table_id);
+                continue;
+            }
+            Status merge_status = mergeDeferredExactSecondaryPageDeltas(
+                merge_index_info.index_id,
+                merge_index_info.is_unique,
+                merge_index_info.is_expression_index,
+                merge_index_info.is_partial_index,
+                static_cast<uint8_t>(actual_index_type),
+                index_ptr,
+                current_xid,
+                &lookup_ctx);
+            if (merge_status != Status::OK)
+            {
+                if (ctx != nullptr)
+                {
+                    propagateErrorContext(ctx, lookup_ctx);
+                }
+                return merge_status;
+            }
             status = searchExactIndexCandidates(actual_index_type, index_ptr, new_key, current_xid,
                                                 &candidate_tids, &lookup_ctx);
+            const auto lookup_done = PreflightClock::now();
+            if (trace_stats != nullptr)
+            {
+                trace_stats->exact_lookup_ms += duration_ms(lookup_start, lookup_done);
+            }
             if (status == Status::NOT_FOUND)
             {
                 continue;
@@ -1747,9 +4437,16 @@ namespace scratchbird::core
             }
 
             std::vector<TID> visible_tids;
-            status = filterIndexCandidatesByVisibleHeap(table_id, index_info.column_ids,
+            const auto visibility_start = PreflightClock::now();
+            status = filterIndexCandidatesByVisibleHeap(table_id, index_plan.column_ids,
                                                         true, new_key, candidate_tids, &stable_tid,
                                                         &visible_tids, ctx);
+            const auto visibility_done = PreflightClock::now();
+            if (trace_stats != nullptr)
+            {
+                trace_stats->visibility_ms +=
+                    duration_ms(visibility_start, visibility_done);
+            }
             if (status != Status::OK)
             {
                 return status;
@@ -1757,10 +4454,14 @@ namespace scratchbird::core
 
             if (!visible_tids.empty())
             {
+                bumpIndexContentionCounters(catalog_manager_,
+                                            index_plan.index_id,
+                                            1,
+                                            0);
                 incrementCanonicalCounter(
                     "sb_lock_unique_conflicts_total",
                     {metricDbLabel(db_), metricRelationLabel(catalog_manager_, table_id)});
-                std::string msg = "UNIQUE index violation on index '" + index_info.index_name + "'";
+                std::string msg = "UNIQUE index violation on index '" + index_plan.index_name + "'";
                 SET_ERROR_CONTEXT(ctx, Status::UNIQUE_VIOLATION, msg.c_str());
                 return Status::UNIQUE_VIOLATION;
             }
@@ -1773,6 +4474,16 @@ namespace scratchbird::core
                                     uint32_t tuple_size, uint32_t *page_id_out,
                                     uint16_t *item_id_out, ErrorContext *ctx) -> Status
     {
+        using InsertTraceClock = std::chrono::steady_clock;
+        const bool trace_enabled = insertTraceEnabled();
+        const auto total_start = InsertTraceClock::now();
+        const auto duration_ms = [](const InsertTraceClock::time_point &start,
+                                    const InsertTraceClock::time_point &end) -> double {
+            return static_cast<double>(
+                       std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()) /
+                   1000.0;
+        };
+
         // Sprint 4 Task 5.4.3: INSERT routing during ONLINE migration
 
         // Step 1: Check if table is being migrated
@@ -1783,6 +4494,7 @@ namespace scratchbird::core
             SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
             return Status::NOT_FOUND;
         }
+        const auto table_lookup_done = InsertTraceClock::now();
 
         const uint8_t *tuple_data_ptr = tuple_data;
         std::vector<uint8_t> temp_tuple_buffer;
@@ -1841,26 +4553,58 @@ namespace scratchbird::core
         ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
         // Note: toast_mgr can be nullptr if TOAST table doesn't exist
         // HeapPage will handle this gracefully by not TOASTing
+        const auto toast_lookup_done = InsertTraceClock::now();
 
-        status = preflightUniqueInsert(table_id, tuple_data_ptr, tuple_size, current_xid, ctx);
+        UniquePreflightTraceStats preflight_trace_stats{};
+        status = preflightUniqueInsert(table_id,
+                                       tuple_data_ptr,
+                                       tuple_size,
+                                       current_xid,
+                                       trace_enabled ? &preflight_trace_stats : nullptr,
+                                       nullptr,
+                                       nullptr,
+                                       ctx);
         if (status != Status::OK)
         {
             return status;
         }
+        const auto preflight_done = InsertTraceClock::now();
 
         // A stale free-space estimate can surface as PAGE_FULL after pinning.
         // Retry with a newly selected page a few times before surfacing failure.
         constexpr int kInsertRetryLimit = 4;
+        uint32_t total_pages_scanned = 0;
+        uint32_t total_heap_pages_examined = 0;
+        uint32_t find_free_attempts = 0;
+        bool allocated_new_page = false;
+        uint32_t resume_scan_page = 0;
+        bool have_resume_scan_page = false;
+        auto find_free_start = InsertTraceClock::now();
+        auto find_free_done = find_free_start;
+        auto heap_insert_start = find_free_start;
+        auto heap_insert_done = find_free_start;
         for (int attempt = 0; attempt < kInsertRetryLimit; ++attempt)
         {
-            status = findFreePage(table_id, tuple_size, &page_id, target_tablespace, ctx);
+            uint32_t pages_scanned = 0;
+            uint32_t heap_pages_examined = 0;
+            bool allocated_new_this_attempt = false;
+            status = findFreePage(table_id, tuple_size, &page_id, target_tablespace, ctx,
+                                  &pages_scanned, &heap_pages_examined,
+                                  &allocated_new_this_attempt,
+                                  have_resume_scan_page ? &resume_scan_page : nullptr);
             if (status != Status::OK)
             {
                 return status;
             }
+            total_pages_scanned += pages_scanned;
+            total_heap_pages_examined += heap_pages_examined;
+            allocated_new_page = allocated_new_page || allocated_new_this_attempt;
+            ++find_free_attempts;
+            find_free_done = InsertTraceClock::now();
 
             gpid = makeGPID(target_tablespace, static_cast<uint64_t>(page_id));
             page_buffer = nullptr;
+            heap_insert_start = InsertTraceClock::now();
             status = buffer_pool_->pinPageGlobal(gpid, &page_buffer, ctx);
             auto *page_data = static_cast<uint8_t *>(page_buffer);
             if (status != Status::OK)
@@ -1868,188 +4612,51 @@ namespace scratchbird::core
                 return status;
             }
 
-            HeapPage heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
+            HeapPage heap_page(page_data,
+                               db_->page_size(),
+                               toast_mgr,
+                               db_,
+                               table_id,
+                               target_tablespace);
+            const bool temporary_work =
+                table_info.temp_data_scope != CatalogManager::TempDataScope::NONE ||
+                table_info.temp_metadata_scope != CatalogManager::TempMetadataScope::NONE;
+            heap_page.applyOwningTableContract(temporary_work);
             status = heap_page.insertTuple(tuple_data_ptr, tuple_size, current_xid, &item_id, ctx);
+            heap_insert_done = InsertTraceClock::now();
             if (status != Status::PAGE_FULL)
             {
                 break;
             }
 
+            invalidateRelationWriteHint(table_id, target_tablespace, page_id);
+            resume_scan_page = page_id + 1;
+            have_resume_scan_page = true;
             buffer_pool_->unpinPageGlobal(gpid, false, ctx);
             gpid = INVALID_GPID;
         }
 
+        auto post_index_done = heap_insert_done;
         if (status == Status::OK)
         {
-            if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
+            status = performPostInsertMaintenance(table_id,
+                                                  table_info.tablespace_id,
+                                                  table_info.migration_in_progress,
+                                                  table_info.migration_id,
+                                                  target_tablespace,
+                                                  tuple_data_ptr,
+                                                  tuple_size,
+                                                  page_id,
+                                                  item_id,
+                                                  current_xid,
+                                                  toast_mgr,
+                                                  nullptr,
+                                                  nullptr,
+                                                  nullptr,
+                                                  ctx);
+            if (status != Status::OK)
             {
-                conn_ctx->trackTupleMutation(table_id, page_id, item_id, nullptr, 0);
-            }
-
-            // Sprint 4 Task 5.4.3: Dirty page tracking
-            // If table is migrating and we wrote to SOURCE tablespace, mark page dirty
-            if (table_info.migration_in_progress && target_tablespace == table_info.tablespace_id)
-            {
-                // Mark page as dirty in migration state (for catch-up phase)
-                catalog_manager_->markPageDirty(table_info.migration_id, page_id, ctx);
-            }
-
-            // Phase 3 Task 3.2: Update indexes with detoasted values
-            // Get all indexes for this table
-            std::vector<CatalogManager::IndexInfo> indexes;
-            Status index_status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx, false);
-
-            if (index_status == Status::OK && !indexes.empty())
-            {
-                // Get column information for extracting index keys
-                std::vector<CatalogManager::ColumnInfo> columns;
-                index_status = catalog_manager_->getColumns(table_id, columns, ctx);
-
-                if (index_status == Status::OK)
-                {
-                    // Create TID for this tuple
-                    TID tid = TID(makeGPID(target_tablespace, static_cast<uint64_t>(page_id)), item_id);
-
-                    // Create IndexKeyExtractor for detoasting
-                    IndexKeyExtractor extractor;
-
-                    std::vector<size_t> column_offsets;
-                    std::vector<size_t> column_sizes;
-                    Status layout_status = computeColumnLayout(tuple_data_ptr, tuple_size, columns,
-                                                               db_->domain_manager(),
-                                                               column_offsets, column_sizes, ctx);
-                    if (layout_status == Status::OK)
-                    {
-                        // Update each index
-                        for (const auto &index_info : indexes)
-                    {
-                        // Get index type and pointer
-                        CatalogManager::IndexType actual_index_type;
-                        void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
-
-                        if (!index_ptr)
-                        {
-                            LOG_WARNING(STORAGE, "Index %s not found in cache, skipping",
-                                        index_info.index_name.c_str());
-                            continue;
-                        }
-
-                        // TASK-DML-7: Special handling for columnstore (append-only columnar storage)
-                        if (actual_index_type == CatalogManager::IndexType::COLUMNSTORE)
-                        {
-                            auto *columnstore = static_cast<ColumnstoreIndex*>(index_ptr);
-
-                            // Insert each indexed column into columnstore
-                            for (const auto &col_id : index_info.column_ids)
-                            {
-                                // Find column index and info
-                                size_t col_idx = 0;
-                                bool found = false;
-                                for (size_t i = 0; i < columns.size(); i++)
-                                {
-                                    if (columns[i].column_id == col_id)
-                                    {
-                                        col_idx = i;
-                                        found = true;
-                                        break;
-                                    }
-                                }
-
-                                if (!found)
-                                {
-                                    LOG_WARNING(STORAGE, "Column not found for columnstore index %s",
-                                                index_info.index_name.c_str());
-                                    continue;
-                                }
-
-                                // Check if column is NULL
-                                bool is_null = (column_offsets[col_idx] == 0 && column_sizes[col_idx] == 0);
-
-                                // Get column value pointer and size
-                                const void *col_value = is_null ? nullptr : (tuple_data_ptr + column_offsets[col_idx]);
-                                size_t col_value_len = column_sizes[col_idx];
-
-                                // STOR-M1: Row-level OLTP insert into columnstore
-                                // Buffers individual rows and auto-flushes when threshold reached
-                                // Use full TID (GPID + slot) for columnstore tracking
-                                Status insert_status = columnstore->insert(
-                                    col_id,
-                                    tid,
-                                    col_value,
-                                    col_value_len,
-                                    is_null,
-                                    ctx);
-
-                                if (insert_status != Status::OK)
-                                {
-                                    LOG_WARNING(STORAGE, "Failed to insert into columnstore index %s: %s",
-                                                index_info.index_name.c_str(),
-                                                ctx ? ctx->message.c_str() : "unknown error");
-                                }
-                            }
-
-                            continue; // Columnstore handled via row-level buffering
-                        }
-
-                        // Regular index handling (key-based indexes)
-                        // Convert column IDs to column indices
-                        std::vector<uint16_t> column_indices;
-                        for (const auto &col_id : index_info.column_ids)
-                        {
-                            // Find column index by ID
-                            for (size_t i = 0; i < columns.size(); i++)
-                            {
-                                if (columns[i].column_id == col_id)
-                                {
-                                    column_indices.push_back(static_cast<uint16_t>(i));
-                                    break;
-                                }
-                            }
-                        }
-
-                        // Extract index key with automatic detoasting
-                        std::vector<uint8_t> key;
-                        Status extract_status = extractor.extractKey(
-                            tuple_data_ptr, tuple_size,
-                            column_offsets, column_sizes,
-                            column_indices,
-                            toast_mgr, current_xid,
-                            &key, ctx);
-
-                        if (extract_status != Status::OK)
-                        {
-                            LOG_WARNING(STORAGE, "Failed to extract index key for index %s: %s",
-                                        index_info.index_name.c_str(),
-                                        ctx ? ctx->message.c_str() : "unknown error");
-                            continue; // Skip this index
-                        }
-
-                        // Insert into key-based index
-                        Status insert_status = insertIntoIndex(
-                            actual_index_type, index_ptr, key, tid, current_xid, ctx);
-
-                        if (insert_status != Status::OK)
-                        {
-                            LOG_ERROR(STORAGE, "Failed to insert into %s index %s: %s",
-                                      indexTypeToString(actual_index_type).c_str(),
-                                      index_info.index_name.c_str(),
-                                      ctx ? ctx->message.c_str() : "unknown error");
-                        }
-                    }
-
-                        // Clear detoasting cache
-                        extractor.clearCache();
-                    }
-                    else
-                    {
-                        LOG_WARNING(STORAGE, "Skipping index updates due to column layout failure");
-                    }
-                }
-            }
-
-            if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
-            {
-                conn_ctx->recordTableDmlDelta(table_id, 1, 0, 0);
+                return status;
             }
 
             if (page_id_out != nullptr)
@@ -2059,6 +4666,116 @@ namespace scratchbird::core
             if (item_id_out != nullptr)
             {
                 *item_id_out = item_id;
+            }
+
+            post_index_done = InsertTraceClock::now();
+
+            if (trace_enabled)
+            {
+                LOG_INFO(STORAGE,
+                         "INSERT TRACE table=%s xid=%llu tuple_size=%u total_ms=%.3f "
+                         "table_lookup_ms=%.3f toast_lookup_ms=%.3f preflight_ms=%.3f "
+                         "preflight_cache_hit=%d preflight_index_count=%u "
+                         "preflight_metadata_ms=%.3f preflight_layout_ms=%.3f "
+                         "preflight_key_ms=%.3f preflight_lookup_ms=%.3f "
+                         "preflight_visibility_ms=%.3f "
+                         "find_free_ms=%.3f heap_insert_ms=%.3f post_index_ms=%.3f "
+                         "pages_scanned=%u heap_pages_examined=%u attempts=%u allocated_new=%d "
+                         "page_id=%u item_id=%u",
+                         table_info.table_name.c_str(),
+                         static_cast<unsigned long long>(current_xid),
+                         tuple_size,
+                         duration_ms(total_start, post_index_done),
+                         duration_ms(total_start, table_lookup_done),
+                         duration_ms(table_lookup_done, toast_lookup_done),
+                         duration_ms(toast_lookup_done, preflight_done),
+                         preflight_trace_stats.metadata_cache_hit ? 1 : 0,
+                         preflight_trace_stats.unique_index_count,
+                         preflight_trace_stats.metadata_ms,
+                         preflight_trace_stats.layout_ms,
+                         preflight_trace_stats.key_extract_ms,
+                         preflight_trace_stats.exact_lookup_ms,
+                         preflight_trace_stats.visibility_ms,
+                         duration_ms(find_free_start, find_free_done),
+                         duration_ms(heap_insert_start, heap_insert_done),
+                         duration_ms(heap_insert_done, post_index_done),
+                         total_pages_scanned,
+                         total_heap_pages_examined,
+                         find_free_attempts,
+                         allocated_new_page ? 1 : 0,
+                         page_id,
+                         item_id);
+                std::fprintf(stderr,
+                             "INSERT TRACE table=%s xid=%llu tuple_size=%u total_ms=%.3f "
+                             "table_lookup_ms=%.3f toast_lookup_ms=%.3f preflight_ms=%.3f "
+                             "preflight_cache_hit=%d preflight_index_count=%u "
+                             "preflight_metadata_ms=%.3f preflight_layout_ms=%.3f "
+                             "preflight_key_ms=%.3f preflight_lookup_ms=%.3f "
+                             "preflight_visibility_ms=%.3f "
+                             "find_free_ms=%.3f heap_insert_ms=%.3f post_index_ms=%.3f "
+                             "pages_scanned=%u heap_pages_examined=%u attempts=%u allocated_new=%d "
+                             "page_id=%u item_id=%u\n",
+                             table_info.table_name.c_str(),
+                             static_cast<unsigned long long>(current_xid),
+                             tuple_size,
+                             duration_ms(total_start, post_index_done),
+                             duration_ms(total_start, table_lookup_done),
+                             duration_ms(table_lookup_done, toast_lookup_done),
+                             duration_ms(toast_lookup_done, preflight_done),
+                             preflight_trace_stats.metadata_cache_hit ? 1 : 0,
+                             preflight_trace_stats.unique_index_count,
+                             preflight_trace_stats.metadata_ms,
+                             preflight_trace_stats.layout_ms,
+                             preflight_trace_stats.key_extract_ms,
+                             preflight_trace_stats.exact_lookup_ms,
+                             preflight_trace_stats.visibility_ms,
+                             duration_ms(find_free_start, find_free_done),
+                             duration_ms(heap_insert_start, heap_insert_done),
+                             duration_ms(heap_insert_done, post_index_done),
+                             total_pages_scanned,
+                             total_heap_pages_examined,
+                             find_free_attempts,
+                             allocated_new_page ? 1 : 0,
+                             page_id,
+                             item_id);
+                std::fflush(stderr);
+                if (FILE *trace_file = std::fopen(insertTraceFilePath(), "a"); trace_file != nullptr)
+                {
+                    std::fprintf(trace_file,
+                                 "INSERT TRACE table=%s xid=%llu tuple_size=%u total_ms=%.3f "
+                                 "table_lookup_ms=%.3f toast_lookup_ms=%.3f preflight_ms=%.3f "
+                                 "preflight_cache_hit=%d preflight_index_count=%u "
+                                 "preflight_metadata_ms=%.3f preflight_layout_ms=%.3f "
+                                 "preflight_key_ms=%.3f preflight_lookup_ms=%.3f "
+                                 "preflight_visibility_ms=%.3f "
+                                 "find_free_ms=%.3f heap_insert_ms=%.3f post_index_ms=%.3f "
+                                 "pages_scanned=%u heap_pages_examined=%u attempts=%u allocated_new=%d "
+                                 "page_id=%u item_id=%u\n",
+                                 table_info.table_name.c_str(),
+                                 static_cast<unsigned long long>(current_xid),
+                                 tuple_size,
+                                 duration_ms(total_start, post_index_done),
+                                 duration_ms(total_start, table_lookup_done),
+                                 duration_ms(table_lookup_done, toast_lookup_done),
+                                 duration_ms(toast_lookup_done, preflight_done),
+                                 preflight_trace_stats.metadata_cache_hit ? 1 : 0,
+                                 preflight_trace_stats.unique_index_count,
+                                 preflight_trace_stats.metadata_ms,
+                                 preflight_trace_stats.layout_ms,
+                                 preflight_trace_stats.key_extract_ms,
+                                 preflight_trace_stats.exact_lookup_ms,
+                                 preflight_trace_stats.visibility_ms,
+                                 duration_ms(find_free_start, find_free_done),
+                                 duration_ms(heap_insert_start, heap_insert_done),
+                                 duration_ms(heap_insert_done, post_index_done),
+                                 total_pages_scanned,
+                                 total_heap_pages_examined,
+                                 find_free_attempts,
+                                 allocated_new_page ? 1 : 0,
+                                 page_id,
+                                 item_id);
+                    std::fclose(trace_file);
+                }
             }
         }
 
@@ -2094,7 +4811,12 @@ namespace scratchbird::core
         {
             heap_start = Config::getInstance().getUInt("storage", "heap_scan_start_page", 7);
         }
-        HeapScanIterator scan(db_, this, table_id, heap_start, false);
+        HeapScanIterator scan(db_,
+                              this,
+                              table_id,
+                              heap_start,
+                              std::numeric_limits<uint32_t>::max(),
+                              false);
         Tuple tuple;
 
         Status scan_status = Status::OK;
@@ -2361,7 +5083,12 @@ namespace scratchbird::core
         // Resolve the currently visible physical version for the stable logical TID before
         // applying a delete. Rolled-back updates can leave an aborted head version in the root
         // slot while the committed row lives in the back-version chain.
-        HeapPage heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
+        HeapPage heap_page(page_data,
+                           db_->page_size(),
+                           toast_mgr,
+                           db_,
+                           table_id,
+                           tablespace_id);
 
         // Get current XID from connection context
         uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
@@ -2422,7 +5149,12 @@ namespace scratchbird::core
             delete_page_data = static_cast<uint8_t *>(delete_page_buffer);
         }
 
-        HeapPage delete_heap_page(delete_page_data, db_->page_size(), toast_mgr, db_, table_id);
+        HeapPage delete_heap_page(delete_page_data,
+                                  db_->page_size(),
+                                  toast_mgr,
+                                  db_,
+                                  table_id,
+                                  getTablespaceID(delete_target_gpid));
         status = delete_heap_page.deleteTuple(delete_target_item_id,
                                               current_xid,
                                               ctx,
@@ -2489,6 +5221,11 @@ namespace scratchbird::core
                         // Remove from each index
                         for (const auto &index_info : indexes)
                         {
+                            if (index_info.is_expression_index || index_info.is_partial_index)
+                            {
+                                continue;
+                            }
+
                             // Convert column IDs to column indices
                             std::vector<uint16_t> column_indices;
                             for (const auto &col_id : index_info.column_ids)
@@ -2508,6 +5245,7 @@ namespace scratchbird::core
                             Status extract_status = extractor.extractKey(
                                 tuple_data, tuple_length,
                                 column_offsets, column_sizes,
+                                columns,
                                 column_indices,
                                 getOrCreateToastManager(table_id, ctx),
                                 current_xid,
@@ -2527,6 +5265,25 @@ namespace scratchbird::core
                             if (index_ptr)
                             {
                                 const bool exact_lookup_family = supportsExactKeyLookup(actual_index_type);
+                                if (exact_lookup_family)
+                                {
+                                    Status merge_status = mergeDeferredExactSecondaryPageDeltas(
+                                        index_info.index_id,
+                                        index_info.is_unique,
+                                        index_info.is_expression_index,
+                                        index_info.is_partial_index,
+                                        static_cast<uint8_t>(actual_index_type),
+                                        index_ptr,
+                                        current_xid,
+                                        ctx);
+                                    if (merge_status != Status::OK)
+                                    {
+                                        LOG_WARNING(STORAGE,
+                                                    "Failed to merge deferred exact-secondary deltas before delete for index %s: %s",
+                                                    index_info.index_name.c_str(),
+                                                    ctx ? ctx->message.c_str() : "unknown error");
+                                    }
+                                }
                                 Status retire_status = exact_lookup_family
                                     ? retireExactIndexEntry(actual_index_type,
                                                             index_ptr,
@@ -2544,6 +5301,21 @@ namespace scratchbird::core
                                               indexTypeToString(actual_index_type).c_str(),
                                               index_info.index_name.c_str(),
                                               ctx ? ctx->message.c_str() : "unknown error");
+                                }
+                                else
+                                {
+                                    ID maintenance_id{};
+                                    if (resolveActiveOnlineMaintenanceIdLocal(
+                                            catalog_manager_, index_info, &maintenance_id))
+                                    {
+                                        captureQueuedOrImmediateOnlineMaintenanceDelta(
+                                            index_info.index_id,
+                                            maintenance_id,
+                                            static_cast<uint8_t>(
+                                                CatalogManager::IndexDeltaOp::DELETE),
+                                            tid,
+                                            current_xid);
+                                    }
                                 }
                             }
                             else
@@ -3114,29 +5886,43 @@ namespace scratchbird::core
     auto StorageEngine::createScan(const ID &table_id, ErrorContext *ctx)
         -> std::unique_ptr<HeapScanIterator>
     {
-        // For now, we don't need table info - just return a scanner
-        // In a real system, we'd track heap pages per table in the catalog
-
-        // For now, assume heap pages start after catalog pages
-        // In a real system, we'd track this in the catalog
         uint32_t start_page = Config::getInstance().getUInt("storage", "heap_scan_start_page", 7);
         if (!isZeroId(table_id))
         {
-            // Table-specific scans rely on table_id filtering, so scan from the start.
             start_page = 0;
         }
         else if (page_manager_ && start_page >= page_manager_->totalPages())
         {
             start_page = 0;
         }
-
         if (!isZeroId(table_id) && db_ && db_->table_stats_manager())
         {
             db_->table_stats_manager()->recordSeqScan(table_id);
         }
+        return createScanRange(table_id, start_page, std::numeric_limits<uint32_t>::max(), ctx);
+    }
+
+    auto StorageEngine::createScanRange(const ID &table_id,
+                                        uint32_t start_page,
+                                        uint32_t end_page_exclusive,
+                                        ErrorContext *ctx)
+        -> std::unique_ptr<HeapScanIterator>
+    {
+        // For now, we don't need table info - just return a scanner
+        // In a real system, we'd track heap pages per table in the catalog
+
+        if (page_manager_ && start_page >= page_manager_->totalPages())
+        {
+            start_page = 0;
+        }
 
         return std::unique_ptr<HeapScanIterator>(
-            new (std::nothrow) HeapScanIterator(db_, this, table_id, start_page, false));
+            new (std::nothrow) HeapScanIterator(db_,
+                                                this,
+                                                table_id,
+                                                start_page,
+                                                end_page_exclusive,
+                                                false));
     }
 
     auto StorageEngine::createScanAll(const ID &table_id, ErrorContext *ctx)
@@ -3153,7 +5939,12 @@ namespace scratchbird::core
         }
 
         return std::unique_ptr<HeapScanIterator>(
-            new (std::nothrow) HeapScanIterator(db_, this, table_id, start_page, true));
+            new (std::nothrow) HeapScanIterator(db_,
+                                                this,
+                                                table_id,
+                                                start_page,
+                                                std::numeric_limits<uint32_t>::max(),
+                                                true));
     }
 
     auto StorageEngine::isVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) const -> bool
@@ -3186,105 +5977,1700 @@ namespace scratchbird::core
         return config::DEFAULT_INITIAL_XID; // Default if no transaction manager
     }
 
-    auto StorageEngine::findFreePage(const ID &table_id, uint32_t tuple_size, uint32_t *page_id_out,
-                                     uint16_t tablespace_id, ErrorContext *ctx) -> Status
+    auto StorageEngine::performPostInsertMaintenance(
+        const ID &table_id,
+        uint16_t source_tablespace,
+        bool migration_in_progress,
+        const ID &migration_id,
+        uint16_t target_tablespace,
+        const uint8_t *tuple_data,
+        uint32_t tuple_size,
+        uint32_t page_id,
+        uint16_t item_id,
+        uint64_t current_xid,
+        ToastManager *toast_mgr,
+        BulkInsertHandle *timing_handle,
+        BulkInsertMaintenancePlanState *maintenance_plan,
+        const std::vector<BulkInsertBufferedUniquePreflightKey> *buffered_unique_preflight_keys,
+        ErrorContext *ctx) -> Status
     {
-        // For simplicity, we'll scan existing heap pages linearly
-        // In a real system, we'd maintain a free space map per table
-
-        if (tablespace_id == PRIMARY_TABLESPACE_ID)
-        {
-            uint32_t total_pages = page_manager_->totalPages();
-            // Start scanning after catalog pages
-            uint32_t heap_start = Config::getInstance().getUInt("storage", "heap_scan_start_page", 7);
-            for (uint32_t page_id = heap_start; page_id < total_pages; page_id++)
-            { // Arbitrary limit
-                void *page_buffer;
-                Status status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
-                auto *page_data = static_cast<uint8_t *>(page_buffer);
-
-                if (status == Status::IO_ERROR)
+        const auto accumulateHandleTiming =
+            [&](uint64_t BulkInsertHandle::*field,
+                uint64_t elapsed_us) {
+                if (timing_handle != nullptr)
                 {
-                    // Page doesn't exist, allocate it
-                    status = allocateHeapPage(table_id, tablespace_id, page_id_out, ctx);
-                    return status;
+                    timing_handle->*field += elapsed_us;
+                }
+            };
+        const auto incrementHandleCounter =
+            [&](uint64_t BulkInsertHandle::*field,
+                uint64_t delta = 1) {
+                if (timing_handle != nullptr)
+                {
+                    timing_handle->*field += delta;
+                }
+            };
+
+        if (ConnectionContext *conn_ctx = ConnectionContext::getCurrent())
+        {
+            const auto track_mutation_start_time = std::chrono::steady_clock::now();
+            conn_ctx->trackTupleMutation(table_id, page_id, item_id, nullptr, 0);
+            accumulateHandleTiming(
+                &BulkInsertHandle::timing_post_insert_track_mutation_us,
+                elapsedMicros(track_mutation_start_time));
+            incrementHandleCounter(
+                &BulkInsertHandle::timing_post_insert_track_mutation_calls);
+        }
+
+        if (migration_in_progress && target_tablespace == source_tablespace)
+        {
+            const auto migration_dirty_start_time = std::chrono::steady_clock::now();
+            catalog_manager_->markPageDirty(migration_id, page_id, ctx);
+            accumulateHandleTiming(
+                &BulkInsertHandle::timing_post_insert_migration_dirty_us,
+                elapsedMicros(migration_dirty_start_time));
+            incrementHandleCounter(
+                &BulkInsertHandle::timing_post_insert_migration_dirty_calls);
+        }
+
+        auto *plan = maintenance_plan;
+        std::shared_ptr<BulkInsertMaintenancePlanState> fallback_plan;
+        if (plan == nullptr)
+        {
+            const auto plan_build_start_time = std::chrono::steady_clock::now();
+            Status plan_status = buildBulkInsertMaintenancePlan(table_id, &fallback_plan, ctx);
+            accumulateHandleTiming(
+                &BulkInsertHandle::timing_post_insert_plan_build_us,
+                elapsedMicros(plan_build_start_time));
+            incrementHandleCounter(
+                &BulkInsertHandle::timing_post_insert_plan_build_calls);
+            if (plan_status == Status::OK)
+            {
+                plan = fallback_plan.get();
+            }
+        }
+
+        if (plan != nullptr && !plan->indexes.empty())
+        {
+            TID tid = TID(makeGPID(target_tablespace, static_cast<uint64_t>(page_id)), item_id);
+            IndexKeyExtractor extractor;
+
+            std::vector<size_t> column_offsets;
+            std::vector<size_t> column_sizes;
+            const auto layout_start_time = std::chrono::steady_clock::now();
+            Status layout_status = computeColumnLayout(tuple_data,
+                                                       tuple_size,
+                                                       plan->columns,
+                                                       db_->domain_manager(),
+                                                       column_offsets,
+                                                       column_sizes,
+                                                       ctx);
+            accumulateHandleTiming(&BulkInsertHandle::timing_post_insert_layout_us,
+                                   elapsedMicros(layout_start_time));
+            if (layout_status == Status::OK)
+            {
+                incrementHandleCounter(
+                    &BulkInsertHandle::timing_post_insert_layout_calls);
+                auto find_preflight_key = [&](size_t target_index)
+                    -> const BulkInsertBufferedUniquePreflightKey *
+                {
+                    const auto preflight_lookup_start_time =
+                        std::chrono::steady_clock::now();
+                    if (buffered_unique_preflight_keys == nullptr)
+                    {
+                        accumulateHandleTiming(
+                            &BulkInsertHandle::timing_post_insert_preflight_lookup_us,
+                            elapsedMicros(preflight_lookup_start_time));
+                        incrementHandleCounter(
+                            &BulkInsertHandle::timing_post_insert_preflight_lookup_calls);
+                        return nullptr;
+                    }
+                    for (const auto &entry : *buffered_unique_preflight_keys)
+                    {
+                        if (entry.target_index == target_index)
+                        {
+                            accumulateHandleTiming(
+                                &BulkInsertHandle::timing_post_insert_preflight_lookup_us,
+                                elapsedMicros(preflight_lookup_start_time));
+                            incrementHandleCounter(
+                                &BulkInsertHandle::timing_post_insert_preflight_lookup_calls);
+                            return &entry;
+                        }
+                    }
+                    accumulateHandleTiming(
+                        &BulkInsertHandle::timing_post_insert_preflight_lookup_us,
+                        elapsedMicros(preflight_lookup_start_time));
+                    incrementHandleCounter(
+                        &BulkInsertHandle::timing_post_insert_preflight_lookup_calls);
+                    return nullptr;
+                };
+
+                for (size_t target_index = 0; target_index < plan->indexes.size();
+                     ++target_index)
+                {
+                    auto &target = plan->indexes[target_index];
+                    CatalogManager::IndexType actual_index_type = target.index_type;
+                    const auto index_lookup_start_time =
+                        std::chrono::steady_clock::now();
+                    void *index_ptr = catalog_manager_->getIndexPtr(target.index_id,
+                                                                   &actual_index_type);
+                    accumulateHandleTiming(
+                        &BulkInsertHandle::timing_post_insert_index_lookup_us,
+                        elapsedMicros(index_lookup_start_time));
+                    incrementHandleCounter(
+                        &BulkInsertHandle::timing_post_insert_index_lookup_calls);
+                    if (!index_ptr)
+                    {
+                        LOG_WARNING(STORAGE,
+                                    "Index %s not found in cache, skipping",
+                                    target.index_id.toString().c_str());
+                        continue;
+                    }
+
+                    if (actual_index_type == CatalogManager::IndexType::COLUMNSTORE)
+                    {
+                        auto *columnstore = static_cast<ColumnstoreIndex *>(index_ptr);
+                        for (uint16_t col_idx : target.column_indices)
+                        {
+                            if (col_idx >= plan->columns.size())
+                            {
+                                continue;
+                            }
+
+                            const bool is_null =
+                                (column_offsets[col_idx] == 0 && column_sizes[col_idx] == 0);
+                            const void *col_value =
+                                is_null ? nullptr : (tuple_data + column_offsets[col_idx]);
+                            const size_t col_value_len = column_sizes[col_idx];
+
+                            const auto columnstore_insert_start_time =
+                                std::chrono::steady_clock::now();
+                            Status insert_status = columnstore->insert(
+                                plan->columns[col_idx].column_id,
+                                tid,
+                                col_value,
+                                col_value_len,
+                                is_null,
+                                ctx);
+                            accumulateHandleTiming(
+                                &BulkInsertHandle::timing_post_insert_columnstore_insert_us,
+                                elapsedMicros(columnstore_insert_start_time));
+                            incrementHandleCounter(
+                                &BulkInsertHandle::timing_post_insert_columnstore_insert_calls);
+                            if (insert_status != Status::OK)
+                            {
+                                LOG_WARNING(STORAGE,
+                                            "Failed to insert into columnstore index %s: %s",
+                                            target.index_id.toString().c_str(),
+                                            ctx ? ctx->message.c_str() : "unknown error");
+                            }
+                        }
+                        continue;
+                    }
+
+                    std::vector<uint8_t> key;
+                    const BulkInsertBufferedUniquePreflightKey *preflight_key =
+                        target.buffered_empty_unique_mode
+                            ? find_preflight_key(target_index)
+                            : nullptr;
+                    bool use_scalar_fast_key = false;
+                    uint64_t scalar_order_key = 0;
+                    uint8_t scalar_key_width = 0;
+                    Status extract_status = Status::OK;
+                    if (target.buffered_empty_unique_fast_scalar_mode &&
+                        preflight_key != nullptr &&
+                        preflight_key->scalar_fast)
+                    {
+                        use_scalar_fast_key = true;
+                        scalar_order_key = preflight_key->scalar_order_key;
+                        scalar_key_width = preflight_key->scalar_key_width;
+                    }
+                    else if (preflight_key != nullptr)
+                    {
+                        key = preflight_key->key;
+                    }
+                    else if (target.buffered_empty_unique_fast_scalar_mode)
+                    {
+                        const auto scalar_key_build_start_time =
+                            std::chrono::steady_clock::now();
+                        extract_status = tryBuildBufferedEmptyUniqueScalarOrderKey(
+                            tuple_data,
+                            column_offsets,
+                            column_sizes,
+                            plan->columns,
+                            target.column_indices.front(),
+                            &scalar_order_key,
+                            &scalar_key_width,
+                            ctx);
+                        accumulateHandleTiming(
+                            &BulkInsertHandle::timing_post_insert_scalar_key_build_us,
+                            elapsedMicros(scalar_key_build_start_time));
+                        incrementHandleCounter(
+                            &BulkInsertHandle::timing_post_insert_scalar_key_build_calls);
+                        if (extract_status == Status::OK)
+                        {
+                            use_scalar_fast_key = true;
+                        }
+                    }
+                    if (!use_scalar_fast_key && preflight_key == nullptr)
+                    {
+                        const auto key_extract_start_time =
+                            std::chrono::steady_clock::now();
+                        extract_status = extractor.extractKey(tuple_data,
+                                                              tuple_size,
+                                                              column_offsets,
+                                                              column_sizes,
+                                                              plan->columns,
+                                                              target.column_indices,
+                                                              toast_mgr,
+                                                              current_xid,
+                                                              &key,
+                                                              ctx);
+                        accumulateHandleTiming(
+                            &BulkInsertHandle::timing_post_insert_key_extract_us,
+                            elapsedMicros(key_extract_start_time));
+                        if (extract_status != Status::OK)
+                        {
+                            LOG_WARNING(STORAGE,
+                                        "Failed to extract index key for index %s: %s",
+                                        target.index_id.toString().c_str(),
+                            ctx ? ctx->message.c_str() : "unknown error");
+                            continue;
+                        }
+                        incrementHandleCounter(
+                            &BulkInsertHandle::timing_post_insert_key_extract_calls);
+                    }
+
+                    Status insert_status = Status::OK;
+                    bool use_deferred_exact = false;
+                    if (!(maintenance_plan != nullptr &&
+                          target.buffered_empty_unique_mode))
+                    {
+                        const auto defer_check_start_time =
+                            std::chrono::steady_clock::now();
+                        use_deferred_exact = maybeDeferColdExactSecondaryInsert(
+                            target.index_id,
+                            target.root_gpid,
+                            target.is_unique,
+                            false,
+                            false,
+                            static_cast<uint8_t>(actual_index_type),
+                            key,
+                            tid,
+                            current_xid,
+                            &target.deferred_exact_mode,
+                            ctx);
+                        accumulateHandleTiming(
+                            &BulkInsertHandle::timing_post_insert_defer_check_us,
+                            elapsedMicros(defer_check_start_time));
+                        incrementHandleCounter(
+                            &BulkInsertHandle::timing_post_insert_defer_check_calls);
+                    }
+                    if (maintenance_plan != nullptr && target.buffered_empty_unique_mode)
+                    {
+                        const auto enqueue_start_time =
+                            std::chrono::steady_clock::now();
+                        if (use_scalar_fast_key)
+                        {
+                            BulkInsertMaintenancePlanState::PendingBufferedUniqueScalarInsert
+                                pending{};
+                            pending.encoded_order_key = scalar_order_key;
+                            pending.encoded_key_width = scalar_key_width;
+                            pending.tid = tid;
+                            pending.xid = current_xid;
+                            target.pending_buffered_unique_scalar_inserts.push_back(
+                                std::move(pending));
+                            incrementHandleCounter(
+                                &BulkInsertHandle::timing_buffered_unique_fast_scalar_rows);
+                        }
+                        else
+                        {
+                            BulkInsertMaintenancePlanState::PendingGroupedExactInsert pending{};
+                            pending.key = key;
+                            pending.tid = tid;
+                            pending.xid = current_xid;
+                            target.pending_buffered_unique_inserts.push_back(
+                                std::move(pending));
+                        }
+                        accumulateHandleTiming(
+                            &BulkInsertHandle::timing_post_insert_buffer_enqueue_us,
+                            elapsedMicros(enqueue_start_time));
+                        incrementHandleCounter(
+                            &BulkInsertHandle::timing_post_insert_buffer_enqueue_rows);
+                    }
+                    else if (use_deferred_exact)
+                    {
+                        target.grouped_exact_mode = false;
+                        if (maintenance_plan != nullptr)
+                        {
+                            BulkInsertMaintenancePlanState::PendingDeferredExactInsert pending{};
+                            pending.key = key;
+                            pending.tid = tid;
+                            pending.xid = current_xid;
+                            target.pending_deferred_inserts.push_back(std::move(pending));
+
+                            constexpr size_t kDeferredExactFlushThreshold = 64;
+                            if (target.pending_deferred_inserts.size() >=
+                                kDeferredExactFlushThreshold)
+                            {
+                                const auto deferred_flush_start_time =
+                                    std::chrono::steady_clock::now();
+                                size_t flushed = 0;
+                                for (; flushed < target.pending_deferred_inserts.size();
+                                     ++flushed)
+                                {
+                                    const auto& buffered =
+                                        target.pending_deferred_inserts[flushed];
+                                    insert_status = persistDeferredExactSecondaryInsert(
+                                        target.index_id,
+                                        static_cast<uint8_t>(actual_index_type),
+                                        buffered.key,
+                                        buffered.tid,
+                                        buffered.xid,
+                                        ctx);
+                                    if (insert_status != Status::OK)
+                                    {
+                                        break;
+                                    }
+                                }
+                                accumulateHandleTiming(
+                                    &BulkInsertHandle::timing_post_insert_deferred_flush_us,
+                                    elapsedMicros(deferred_flush_start_time));
+                                incrementHandleCounter(
+                                    &BulkInsertHandle::timing_post_insert_deferred_flush_calls);
+
+                                if (flushed > 0)
+                                {
+                                    target.pending_deferred_inserts.erase(
+                                        target.pending_deferred_inserts.begin(),
+                                        target.pending_deferred_inserts.begin() +
+                                            static_cast<std::ptrdiff_t>(flushed));
+                                    publishDeferredExactCleanupDebtSnapshot(
+                                        target.index_id,
+                                        IndexCleanupPublicationState::DEBT_PUBLISHED,
+                                        0,
+                                        false);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            insert_status = persistDeferredExactSecondaryInsert(
+                                target.index_id,
+                                static_cast<uint8_t>(actual_index_type),
+                                key,
+                                tid,
+                                current_xid,
+                                ctx);
+                            if (insert_status == Status::OK)
+                            {
+                                publishDeferredExactCleanupDebtSnapshot(
+                                    target.index_id,
+                                    IndexCleanupPublicationState::DEBT_PUBLISHED,
+                                    0,
+                                    false);
+                            }
+                        }
+                    }
+                    else if (maintenance_plan != nullptr && target.grouped_exact_mode)
+                    {
+                        const auto enqueue_start_time =
+                            std::chrono::steady_clock::now();
+                        BulkInsertMaintenancePlanState::PendingGroupedExactInsert pending{};
+                        pending.key = key;
+                        pending.tid = tid;
+                        pending.xid = current_xid;
+                        target.pending_grouped_exact_inserts.push_back(std::move(pending));
+                        accumulateHandleTiming(
+                            &BulkInsertHandle::timing_post_insert_buffer_enqueue_us,
+                            elapsedMicros(enqueue_start_time));
+                        incrementHandleCounter(
+                            &BulkInsertHandle::timing_post_insert_buffer_enqueue_rows);
+
+                        if (target.pending_grouped_exact_inserts.size() >=
+                            kBufferedExactMaintenanceFlushThreshold)
+                        {
+                            const auto grouped_flush_start_time =
+                                std::chrono::steady_clock::now();
+                            insert_status = flushBufferedGroupedExactInserts(catalog_manager_,
+                                                                            target,
+                                                                            ctx);
+                            accumulateHandleTiming(
+                                &BulkInsertHandle::timing_post_insert_grouped_flush_us,
+                                elapsedMicros(grouped_flush_start_time));
+                            incrementHandleCounter(
+                                &BulkInsertHandle::timing_post_insert_grouped_flush_calls);
+                        }
+                    }
+                    else
+                    {
+                        const auto direct_insert_start_time =
+                            std::chrono::steady_clock::now();
+                        insert_status = insertIntoIndex(actual_index_type,
+                                                        index_ptr,
+                                                        key,
+                                                        tid,
+                                                        current_xid,
+                                                        ctx);
+                        accumulateHandleTiming(
+                            &BulkInsertHandle::timing_post_insert_direct_index_insert_us,
+                            elapsedMicros(direct_insert_start_time));
+                        incrementHandleCounter(
+                            &BulkInsertHandle::timing_post_insert_direct_index_insert_calls);
+                    }
+
+                    if (insert_status != Status::OK)
+                    {
+                        LOG_ERROR(STORAGE,
+                                  "Failed to insert into %s index %s: %s",
+                                  indexTypeToString(actual_index_type).c_str(),
+                                  target.index_id.toString().c_str(),
+                                  ctx ? ctx->message.c_str() : "unknown error");
+                    }
+                    else if (!isZeroIdLocal(target.active_maintenance_id))
+                    {
+                        const auto online_delta_start_time =
+                            std::chrono::steady_clock::now();
+                        captureQueuedOrImmediateOnlineMaintenanceDelta(
+                            target.index_id,
+                            target.active_maintenance_id,
+                            static_cast<uint8_t>(CatalogManager::IndexDeltaOp::INSERT),
+                            tid,
+                            current_xid);
+                        accumulateHandleTiming(
+                            &BulkInsertHandle::timing_post_insert_online_delta_capture_us,
+                            elapsedMicros(online_delta_start_time));
+                        incrementHandleCounter(
+                            &BulkInsertHandle::timing_post_insert_online_delta_capture_calls);
+                    }
                 }
 
-                if (status != Status::OK)
+                const auto extractor_clear_start_time =
+                    std::chrono::steady_clock::now();
+                extractor.clearCache();
+                accumulateHandleTiming(
+                    &BulkInsertHandle::timing_post_insert_extractor_clear_us,
+                    elapsedMicros(extractor_clear_start_time));
+                incrementHandleCounter(
+                    &BulkInsertHandle::timing_post_insert_extractor_clear_calls);
+            }
+            else
+            {
+                LOG_WARNING(STORAGE, "Skipping index updates due to column layout failure");
+            }
+        }
+
+        if (ConnectionContext *conn_ctx = ConnectionContext::getCurrent())
+        {
+            const auto table_dml_delta_start_time =
+                std::chrono::steady_clock::now();
+            conn_ctx->recordTableDmlDelta(table_id, 1, 0, 0);
+            accumulateHandleTiming(
+                &BulkInsertHandle::timing_post_insert_table_dml_delta_us,
+                elapsedMicros(table_dml_delta_start_time));
+            incrementHandleCounter(
+                &BulkInsertHandle::timing_post_insert_table_dml_delta_calls);
+        }
+
+        return Status::OK;
+    }
+
+    auto StorageEngine::beginBulkInsert(const ID &table_id,
+                                        BulkInsertHandle *handle,
+                                        ErrorContext *ctx) -> Status
+    {
+        const auto begin_start_time = std::chrono::steady_clock::now();
+        if (handle == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Bulk insert handle is required");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        endBulkInsert(handle, ctx);
+        *handle = BulkInsertHandle{};
+
+        CatalogManager::TableInfo table_info{};
+        Status status = catalog_manager_->getTable(table_id, table_info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        handle->table_id = table_id;
+        handle->source_tablespace = table_info.tablespace_id;
+        handle->target_tablespace = handle->source_tablespace;
+        handle->current_xid = getCurrentXid();
+        handle->migration_in_progress = table_info.migration_in_progress;
+        handle->migration_id = table_info.migration_id;
+        if (handle->migration_in_progress &&
+            handle->current_xid >= table_info.migration_xid)
+        {
+            handle->target_tablespace = table_info.migration_target_ts;
+        }
+
+        handle->toast_mgr = getOrCreateToastManager(table_id, ctx);
+
+        if (table_info.temp_data_scope != CatalogManager::TempDataScope::NONE)
+        {
+            ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
+            ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
+            if (!isZeroId(session_id))
+            {
+                handle->temp_scope = true;
+                handle->temp_session_id = session_id;
+            }
+        }
+
+        std::shared_ptr<BulkInsertMaintenancePlanState> maintenance_plan;
+        ErrorContext maintenance_ctx;
+        Status maintenance_status = buildBulkInsertMaintenancePlan(table_id,
+                                                                  &maintenance_plan,
+                                                                  &maintenance_ctx);
+        if (maintenance_status == Status::OK)
+        {
+            handle->maintenance_plan_state = std::move(maintenance_plan);
+            handle->maintenance_plan_index_count =
+                handle->maintenance_plan_state
+                    ? static_cast<uint32_t>(handle->maintenance_plan_state->indexes.size())
+                    : 0;
+            handle->maintenance_plan_exact_index_count =
+                handle->maintenance_plan_state
+                    ? handle->maintenance_plan_state->exact_index_count
+                    : 0;
+            handle->maintenance_plan_unique_exact_index_count =
+                handle->maintenance_plan_state
+                    ? handle->maintenance_plan_state->unique_exact_index_count
+                    : 0;
+            handle->maintenance_plan_active_maintenance_count =
+                handle->maintenance_plan_state
+                    ? handle->maintenance_plan_state->active_maintenance_count
+                    : 0;
+            handle->maintenance_plan_deferred_exact_index_count =
+                handle->maintenance_plan_state
+                    ? handle->maintenance_plan_state->deferred_exact_index_count
+                    : 0;
+            handle->maintenance_plan_grouped_exact_index_count =
+                handle->maintenance_plan_state
+                    ? handle->maintenance_plan_state->grouped_exact_index_count
+                    : 0;
+            handle->maintenance_plan_buffered_empty_unique_index_count =
+                handle->maintenance_plan_state
+                    ? handle->maintenance_plan_state
+                          ->buffered_empty_unique_index_count
+                    : 0;
+            handle->maintenance_plan_built = true;
+        }
+        else
+        {
+            handle->maintenance_plan_state.reset();
+            handle->maintenance_plan_index_count = 0;
+            handle->maintenance_plan_exact_index_count = 0;
+            handle->maintenance_plan_unique_exact_index_count = 0;
+            handle->maintenance_plan_active_maintenance_count = 0;
+            handle->maintenance_plan_deferred_exact_index_count = 0;
+            handle->maintenance_plan_grouped_exact_index_count = 0;
+            handle->maintenance_plan_buffered_empty_unique_index_count = 0;
+            handle->maintenance_plan_built = false;
+            LOG_DEBUG(STORAGE,
+                      "bulk insert maintenance plan fallback: table=%s status=%d msg=%s",
+                      table_id.toString().c_str(),
+                      static_cast<int>(maintenance_status),
+                      maintenance_ctx.message.c_str());
+        }
+
+        handle->initialized = true;
+        handle->timing_begin_us += elapsedMicros(begin_start_time);
+        return Status::OK;
+    }
+
+    auto StorageEngine::buildBulkInsertMaintenancePlan(
+        const ID &table_id,
+        std::shared_ptr<BulkInsertMaintenancePlanState> *plan_out,
+        ErrorContext *ctx) -> Status
+    {
+        if (plan_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::INVALID_ARGUMENT,
+                              "Bulk insert maintenance plan output is required");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        *plan_out = std::make_shared<BulkInsertMaintenancePlanState>();
+        auto &plan = **plan_out;
+
+        std::vector<CatalogManager::IndexInfo> indexes;
+        Status status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx, false);
+        if (status != Status::OK || indexes.empty())
+        {
+            return status;
+        }
+
+        status = catalog_manager_->getColumns(table_id, plan.columns, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        for (const auto &index_info : indexes)
+        {
+            if (index_info.is_expression_index || index_info.is_partial_index)
+            {
+                continue;
+            }
+
+            BulkInsertMaintenancePlanState::MaintenanceTarget target{};
+            target.index_id = index_info.index_id;
+            target.index_name = index_info.index_name;
+            target.root_gpid = index_info.root_gpid;
+            target.index_type = index_info.index_type;
+            target.is_unique = index_info.is_unique;
+
+            bool all_columns_found = true;
+            for (const auto &col_id : index_info.column_ids)
+            {
+                bool found = false;
+                for (size_t i = 0; i < plan.columns.size(); ++i)
+                {
+                    if (plan.columns[i].column_id == col_id)
+                    {
+                        target.column_indices.push_back(static_cast<uint16_t>(i));
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    all_columns_found = false;
+                    break;
+                }
+            }
+
+            if (!all_columns_found || target.column_indices.empty())
+            {
+                continue;
+            }
+
+            if (supportsExactKeyLookup(target.index_type))
+            {
+                ++plan.exact_index_count;
+                if (target.is_unique)
+                {
+                    ++plan.unique_exact_index_count;
+                }
+                std::vector<CatalogManager::IndexPageDeltaCatalogInfo> existing_rows;
+                if (catalog_manager_->listIndexPageDeltaCatalogEntries(index_info.index_id,
+                                                                       existing_rows,
+                                                                       nullptr) == Status::OK &&
+                    !existing_rows.empty())
+                {
+                    target.deferred_exact_mode = true;
+                    ++plan.deferred_exact_index_count;
+                }
+            }
+            if (resolveActiveOnlineMaintenanceIdLocal(catalog_manager_,
+                                                      index_info,
+                                                      &target.active_maintenance_id))
+            {
+                ++plan.active_maintenance_count;
+            }
+            if (supportsExactKeyLookup(target.index_type) &&
+                target.is_unique &&
+                target.index_type == CatalogManager::IndexType::BTREE &&
+                isZeroIdLocal(target.active_maintenance_id) &&
+                !target.deferred_exact_mode &&
+                isStructurallyEmptyBTreeIndex(db_, target.root_gpid))
+            {
+                target.buffered_empty_unique_mode = true;
+                const bool single_not_null_supported_scalar =
+                    target.column_indices.size() == 1 &&
+                    !plan.columns[target.column_indices.front()].nullable &&
+                    supportsBufferedEmptyUniqueFastScalarKey(
+                        static_cast<DataType>(
+                            plan.columns[target.column_indices.front()].data_type));
+                if (single_not_null_supported_scalar)
+                {
+                    target.buffered_empty_unique_fast_scalar_mode = true;
+                    target.buffered_empty_unique_fast_scalar_type =
+                        static_cast<DataType>(
+                            plan.columns[target.column_indices.front()].data_type);
+                    target.pending_buffered_unique_scalar_inserts.reserve(
+                        kBufferedEmptyUniqueReserveHint);
+                    target.pending_buffered_unique_scalar_keys.reserve(
+                        kBufferedEmptyUniqueReserveHint);
+                }
+                else
+                {
+                    target.pending_buffered_unique_inserts.reserve(
+                        kBufferedEmptyUniqueReserveHint);
+                    target.pending_buffered_unique_keys.reserve(
+                        kBufferedEmptyUniqueReserveHint);
+                }
+                plan.buffered_empty_unique_index_ids.insert(index_info.index_id);
+                ++plan.buffered_empty_unique_index_count;
+            }
+            if (supportsExactKeyLookup(target.index_type) &&
+                !target.is_unique &&
+                isZeroIdLocal(target.active_maintenance_id) &&
+                !target.deferred_exact_mode)
+            {
+                target.grouped_exact_mode = true;
+                target.pending_grouped_exact_inserts.reserve(
+                    kBufferedExactMaintenanceFlushThreshold);
+                ++plan.grouped_exact_index_count;
+            }
+
+            plan.indexes.push_back(std::move(target));
+        }
+
+        return Status::OK;
+    }
+
+    auto StorageEngine::reserveBulkInsertGrowthWindow(BulkInsertHandle *handle,
+                                                      uint32_t tuple_size,
+                                                      ErrorContext *ctx) -> Status
+    {
+        if (handle == nullptr || !handle->initialized)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Bulk insert handle is not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (handle->reserved_page_budget > 0)
+        {
+            return Status::OK;
+        }
+
+        const uint32_t page_size = db_->page_size();
+        const uint32_t usable_page_bytes =
+            page_size > sizeof(PageHeader)
+                ? page_size - static_cast<uint32_t>(sizeof(PageHeader))
+                : page_size;
+        const uint32_t tuple_footprint =
+            std::max<uint32_t>(1, tuple_size + static_cast<uint32_t>(sizeof(uint16_t) * 2));
+        const uint32_t tuples_per_page =
+            std::max<uint32_t>(1, usable_page_bytes / tuple_footprint);
+        uint32_t reservation_pages = (128U + tuples_per_page - 1U) / tuples_per_page;
+        reservation_pages = std::clamp<uint32_t>(reservation_pages, 8U, 32U);
+
+        ErrorContext reserve_ctx;
+        Status reserve_status = Status::OK;
+        const auto reserve_start_time = std::chrono::steady_clock::now();
+        if (handle->target_tablespace == PRIMARY_TABLESPACE_ID)
+        {
+            reserve_status = page_manager_->extendFile(reservation_pages, &reserve_ctx);
+        }
+        else
+        {
+            reserve_status =
+                page_manager_->preallocatePages(handle->target_tablespace,
+                                                reservation_pages,
+                                                &reserve_ctx);
+        }
+        handle->timing_reserve_growth_us += elapsedMicros(reserve_start_time);
+
+        if (reserve_status == Status::OK)
+        {
+            handle->reservation_target_pages = reservation_pages;
+            handle->reserved_page_budget = reservation_pages;
+            handle->total_reserved_pages += reservation_pages;
+            ++handle->reservation_events;
+            handle->reservation_failed = false;
+            return Status::OK;
+        }
+
+        handle->reservation_failed = true;
+        LOG_DEBUG(STORAGE,
+                  "bulk insert growth reservation skipped: table=%s tablespace=%u pages=%u status=%d msg=%s",
+                  handle->table_id.toString().c_str(),
+                  static_cast<unsigned int>(handle->target_tablespace),
+                  static_cast<unsigned int>(reservation_pages),
+                  static_cast<int>(reserve_status),
+                  reserve_ctx.message.c_str());
+        return reserve_status;
+    }
+
+    auto StorageEngine::insertTupleWithHandle(BulkInsertHandle *handle,
+                                              const uint8_t *tuple_data,
+                                              uint32_t tuple_size,
+                                              uint32_t *page_id_out,
+                                              uint16_t *item_id_out,
+                                              ErrorContext *ctx) -> Status
+    {
+        if (handle == nullptr || !handle->initialized)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Bulk insert handle is not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        const uint8_t *tuple_data_ptr = tuple_data;
+        std::vector<uint8_t> temp_tuple_buffer;
+        if (handle->temp_scope)
+        {
+            temp_tuple_buffer.assign(tuple_data, tuple_data + tuple_size);
+            if (tuple_size >= sizeof(TupleHeader))
+            {
+                auto *header = reinterpret_cast<TupleHeader *>(temp_tuple_buffer.data());
+                header->session_id = handle->temp_session_id;
+                tuple_data_ptr = temp_tuple_buffer.data();
+            }
+        }
+
+        const bool buffered_unique_preflight_active =
+            handle->maintenance_plan_state != nullptr &&
+            handle->maintenance_plan_state->buffered_empty_unique_index_count > 0;
+        std::vector<BulkInsertBufferedUniquePreflightKey>
+            buffered_unique_preflight_keys;
+        auto rollbackBufferedUniquePreflight = [&]() {
+            if (!buffered_unique_preflight_active ||
+                handle->maintenance_plan_state == nullptr)
+            {
+                return;
+            }
+
+            auto &plan = *handle->maintenance_plan_state;
+            if (!buffered_unique_preflight_keys.empty())
+            {
+                for (const auto &entry : buffered_unique_preflight_keys)
+                {
+                    if (entry.target_index >= plan.indexes.size())
+                    {
+                        continue;
+                    }
+                    if (entry.scalar_fast)
+                    {
+                        plan.indexes[entry.target_index]
+                            .pending_buffered_unique_scalar_keys.erase(
+                                entry.scalar_order_key);
+                    }
+                    else
+                    {
+                        plan.indexes[entry.target_index]
+                            .pending_buffered_unique_keys.erase(entry.key);
+                    }
+                }
+                buffered_unique_preflight_keys.clear();
+                return;
+            }
+
+            std::vector<size_t> column_offsets;
+            std::vector<size_t> column_sizes;
+            ErrorContext rollback_ctx;
+            Status rollback_status =
+                computeColumnLayout(tuple_data_ptr,
+                                    tuple_size,
+                                    plan.columns,
+                                    db_->domain_manager(),
+                                    column_offsets,
+                                    column_sizes,
+                                    &rollback_ctx);
+            if (rollback_status != Status::OK)
+            {
+                return;
+            }
+
+            IndexKeyExtractor extractor;
+            ToastManager *toast_mgr =
+                handle->toast_mgr != nullptr
+                    ? handle->toast_mgr
+                    : getOrCreateToastManager(handle->table_id, &rollback_ctx);
+            if (toast_mgr == nullptr)
+            {
+                return;
+            }
+
+            for (auto &target : plan.indexes)
+            {
+                if (!target.buffered_empty_unique_mode)
                 {
                     continue;
                 }
 
-                // Check if this is a heap page for our table
-                auto *hdr = reinterpret_cast<PageHeader *>(page_data);
-                if (hdr->page_type == PAGE_TYPE_HEAP)
+                if (target.buffered_empty_unique_fast_scalar_mode)
                 {
-                    if (!isZeroId(table_id) && !pageTableIdMatches(hdr, table_id))
+                    uint64_t scalar_order_key = 0;
+                    uint8_t scalar_key_width = 0;
+                    rollback_status = tryBuildBufferedEmptyUniqueScalarOrderKey(
+                        tuple_data_ptr,
+                        column_offsets,
+                        column_sizes,
+                        plan.columns,
+                        target.column_indices.front(),
+                        &scalar_order_key,
+                        &scalar_key_width,
+                        &rollback_ctx);
+                    (void)scalar_key_width;
+                    if (rollback_status != Status::OK)
                     {
-                        buffer_pool_->unpinPage(page_id, false, ctx);
                         continue;
                     }
-                    HeapPage heap_page(page_data, db_->page_size());
+                    target.pending_buffered_unique_scalar_keys.erase(scalar_order_key);
+                    continue;
+                }
 
-                    if (heap_page.hasFreeSpace(tuple_size + sizeof(TupleHeader)))
+                std::vector<uint8_t> key;
+                rollback_status = extractor.extractKey(tuple_data_ptr,
+                                                       tuple_size,
+                                                       column_offsets,
+                                                       column_sizes,
+                                                       plan.columns,
+                                                       target.column_indices,
+                                                       toast_mgr,
+                                                       handle->current_xid,
+                                                       &key,
+                                                       &rollback_ctx);
+                if (rollback_status != Status::OK)
+                {
+                    continue;
+                }
+                target.pending_buffered_unique_keys.erase(key);
+            }
+        };
+
+        const auto *skip_unique_index_ids =
+            buffered_unique_preflight_active
+                ? &handle->maintenance_plan_state->buffered_empty_unique_index_ids
+                : nullptr;
+        bool all_unique_indexes_skipped = false;
+        const auto unique_preflight_start_time =
+            std::chrono::steady_clock::now();
+        Status status = preflightUniqueInsert(handle->table_id,
+                                              tuple_data_ptr,
+                                              tuple_size,
+                                              handle->current_xid,
+                                              nullptr,
+                                              skip_unique_index_ids,
+                                              &all_unique_indexes_skipped,
+                                              ctx);
+        handle->timing_unique_preflight_us +=
+            elapsedMicros(unique_preflight_start_time);
+        if (status == Status::OK && all_unique_indexes_skipped)
+        {
+            ++handle->unique_preflight_bypass_rows;
+        }
+        if (status == Status::OK && buffered_unique_preflight_active)
+        {
+            const auto buffered_unique_preflight_start_time =
+                std::chrono::steady_clock::now();
+            status = preflightUniqueInsertWithBulkHandle(handle,
+                                                         tuple_data_ptr,
+                                                         tuple_size,
+                                                         &buffered_unique_preflight_keys,
+                                                         ctx);
+            handle->timing_buffered_unique_preflight_us +=
+                elapsedMicros(buffered_unique_preflight_start_time);
+        }
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto clearPinnedPage = [&](bool dirty) {
+            if (handle->pinned_gpid != INVALID_GPID)
+            {
+                buffer_pool_->unpinPageGlobal(handle->pinned_gpid, dirty, ctx);
+            }
+            handle->pinned_gpid = INVALID_GPID;
+            handle->pinned_page_id = 0;
+            handle->pinned_page_buffer = nullptr;
+            handle->pinned_page_dirty = false;
+        };
+
+        constexpr int kInsertRetryLimit = 4;
+        uint32_t page_id = 0;
+        uint16_t item_id = 0;
+        for (int attempt = 0; attempt < kInsertRetryLimit; ++attempt)
+        {
+            if (handle->pinned_gpid != INVALID_GPID && handle->pinned_page_buffer != nullptr)
+            {
+                ++handle->timing_pinned_page_reuse_hits;
+                page_id = handle->pinned_page_id;
+                HeapPage heap_page(static_cast<uint8_t *>(handle->pinned_page_buffer),
+                                   db_->page_size(),
+                                   handle->toast_mgr,
+                                   db_,
+                                   handle->table_id,
+                                   handle->target_tablespace);
+                heap_page.applyOwningTableContract(handle->temp_scope);
+                const auto heap_insert_start_time =
+                    std::chrono::steady_clock::now();
+                status = heap_page.insertTuple(tuple_data_ptr,
+                                               tuple_size,
+                                               handle->current_xid,
+                                               &item_id,
+                                               ctx);
+                handle->timing_heap_insert_us +=
+                    elapsedMicros(heap_insert_start_time);
+                if (status == Status::OK)
+                {
+                    handle->pinned_page_dirty = true;
+                    handle->have_resume_scan_page = false;
+                    rememberRelationWriteHint(handle->table_id,
+                                              handle->target_tablespace,
+                                              handle->pinned_page_id);
+                    break;
+                }
+                if (status != Status::PAGE_FULL)
+                {
+                    rollbackBufferedUniquePreflight();
+                    return status;
+                }
+
+                invalidateRelationWriteHint(handle->table_id,
+                                            handle->target_tablespace,
+                                            handle->pinned_page_id);
+                handle->resume_scan_page = handle->pinned_page_id + 1;
+                handle->have_resume_scan_page = true;
+                ++handle->timing_page_full_retries;
+                clearPinnedPage(handle->pinned_page_dirty);
+                continue;
+            }
+
+            if (handle->have_resume_scan_page && handle->reserved_page_budget == 0)
+            {
+                reserveBulkInsertGrowthWindow(handle, tuple_size, nullptr);
+            }
+
+            bool allocated_new = false;
+            const auto find_free_page_start_time =
+                std::chrono::steady_clock::now();
+            status = findFreePage(handle->table_id,
+                                  tuple_size,
+                                  &page_id,
+                                  handle->target_tablespace,
+                                  ctx,
+                                  nullptr,
+                                  nullptr,
+                                  &allocated_new,
+                                  handle->have_resume_scan_page
+                                      ? &handle->resume_scan_page
+                                      : nullptr);
+            handle->timing_find_free_page_us +=
+                elapsedMicros(find_free_page_start_time);
+            ++handle->timing_find_free_page_calls;
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            if (allocated_new)
+            {
+                ++handle->timing_new_page_allocations;
+                if (handle->reserved_page_budget > 0)
+                {
+                    --handle->reserved_page_budget;
+                    ++handle->consumed_reserved_pages;
+                }
+                else if (handle->reservation_events == 0)
+                {
+                    reserveBulkInsertGrowthWindow(handle, tuple_size, nullptr);
+                }
+            }
+
+            handle->pinned_gpid = makeGPID(handle->target_tablespace, static_cast<uint64_t>(page_id));
+            const auto pin_page_start_time = std::chrono::steady_clock::now();
+            status = buffer_pool_->pinPageGlobal(handle->pinned_gpid,
+                                                 &handle->pinned_page_buffer,
+                                                 ctx);
+            handle->timing_pin_page_us += elapsedMicros(pin_page_start_time);
+            if (status != Status::OK)
+            {
+                handle->pinned_gpid = INVALID_GPID;
+                handle->pinned_page_buffer = nullptr;
+                rollbackBufferedUniquePreflight();
+                return status;
+            }
+
+            handle->pinned_page_id = page_id;
+            handle->pinned_page_dirty = false;
+
+            HeapPage heap_page(static_cast<uint8_t *>(handle->pinned_page_buffer),
+                               db_->page_size(),
+                               handle->toast_mgr,
+                               db_,
+                               handle->table_id,
+                               handle->target_tablespace);
+            heap_page.applyOwningTableContract(handle->temp_scope);
+            const auto heap_insert_start_time =
+                std::chrono::steady_clock::now();
+            status = heap_page.insertTuple(tuple_data_ptr,
+                                           tuple_size,
+                                           handle->current_xid,
+                                           &item_id,
+                                           ctx);
+            handle->timing_heap_insert_us +=
+                elapsedMicros(heap_insert_start_time);
+            if (status == Status::OK)
+            {
+                handle->pinned_page_dirty = true;
+                handle->have_resume_scan_page = false;
+                rememberRelationWriteHint(handle->table_id,
+                                          handle->target_tablespace,
+                                          handle->pinned_page_id);
+                break;
+            }
+            if (status != Status::PAGE_FULL)
+            {
+                clearPinnedPage(handle->pinned_page_dirty);
+                rollbackBufferedUniquePreflight();
+                return status;
+            }
+
+            invalidateRelationWriteHint(handle->table_id,
+                                        handle->target_tablespace,
+                                        handle->pinned_page_id);
+            handle->resume_scan_page = handle->pinned_page_id + 1;
+            handle->have_resume_scan_page = true;
+            ++handle->timing_page_full_retries;
+            clearPinnedPage(handle->pinned_page_dirty);
+        }
+
+        if (status != Status::OK)
+        {
+            rollbackBufferedUniquePreflight();
+            return status;
+        }
+
+        const auto post_insert_maintenance_start_time =
+            std::chrono::steady_clock::now();
+        status = performPostInsertMaintenance(handle->table_id,
+                                              handle->source_tablespace,
+                                              handle->migration_in_progress,
+                                              handle->migration_id,
+                                              handle->target_tablespace,
+                                              tuple_data_ptr,
+                                              tuple_size,
+                                              page_id,
+                                              item_id,
+                                              handle->current_xid,
+                                              handle->toast_mgr,
+                                              handle,
+                                              handle->maintenance_plan_built
+                                                  ? handle->maintenance_plan_state.get()
+                                                  : nullptr,
+                                              &buffered_unique_preflight_keys,
+                                              ctx);
+        handle->timing_post_insert_maintenance_us +=
+            elapsedMicros(post_insert_maintenance_start_time);
+        if (status != Status::OK)
+        {
+            rollbackBufferedUniquePreflight();
+            return status;
+        }
+
+        ++handle->timing_rows_inserted;
+
+        if (page_id_out != nullptr)
+        {
+            *page_id_out = page_id;
+        }
+        if (item_id_out != nullptr)
+        {
+            *item_id_out = item_id;
+        }
+
+        return Status::OK;
+    }
+
+    void StorageEngine::endBulkInsert(BulkInsertHandle *handle, ErrorContext *ctx)
+    {
+        if (handle == nullptr)
+        {
+            return;
+        }
+
+        if (handle->maintenance_plan_built && handle->maintenance_plan_state)
+        {
+            for (auto& target : handle->maintenance_plan_state->indexes)
+            {
+                const auto unique_flush_start_time =
+                    std::chrono::steady_clock::now();
+                Status unique_flush_status =
+                    flushBufferedEmptyUniqueExactInserts(db_,
+                                                         catalog_manager_,
+                                                         target,
+                                                         ctx);
+                handle->timing_end_flush_unique_us +=
+                    elapsedMicros(unique_flush_start_time);
+                handle->timing_end_flush_unique_prepare_entries_us +=
+                    target.timing_end_flush_unique_prepare_entries_us;
+                handle->timing_end_flush_unique_bulkload_sort_us +=
+                    target.timing_end_flush_unique_bulkload_sort_us;
+                handle->timing_end_flush_unique_bulkload_leaf_build_us +=
+                    target.timing_end_flush_unique_bulkload_leaf_build_us;
+                handle->timing_end_flush_unique_bulkload_internal_build_us +=
+                    target.timing_end_flush_unique_bulkload_internal_build_us;
+                handle->timing_end_flush_unique_bulkload_root_finalize_us +=
+                    target.timing_end_flush_unique_bulkload_root_finalize_us;
+                handle->timing_end_flush_unique_bulkload_total_us +=
+                    target.timing_end_flush_unique_bulkload_total_us;
+                handle->timing_end_flush_unique_bulkload_input_sorted =
+                    handle->timing_end_flush_unique_bulkload_input_sorted ||
+                    target.end_flush_unique_bulkload_input_sorted;
+                if (unique_flush_status != Status::OK)
+                {
+                    LOG_ERROR(STORAGE,
+                              "Failed to flush buffered unique exact-secondary inserts for index %s: %s",
+                              target.index_id.toString().c_str(),
+                              ctx ? ctx->message.c_str() : "unknown error");
+                }
+
+                target.pending_buffered_unique_keys.clear();
+                target.pending_buffered_unique_inserts.clear();
+                target.pending_buffered_unique_scalar_keys.clear();
+                target.pending_buffered_unique_scalar_inserts.clear();
+
+                const auto grouped_flush_start_time =
+                    std::chrono::steady_clock::now();
+                Status grouped_flush_status =
+                    flushBufferedGroupedExactInserts(catalog_manager_, target, ctx);
+                handle->timing_end_flush_grouped_us +=
+                    elapsedMicros(grouped_flush_start_time);
+                if (grouped_flush_status != Status::OK)
+                {
+                    LOG_ERROR(STORAGE,
+                              "Failed to flush grouped exact-secondary inserts for index %s: %s",
+                              target.index_id.toString().c_str(),
+                              ctx ? ctx->message.c_str() : "unknown error");
+                }
+
+                size_t flushed = 0;
+                for (; flushed < target.pending_deferred_inserts.size(); ++flushed)
+                {
+                    const auto& buffered = target.pending_deferred_inserts[flushed];
+                    const auto deferred_flush_start_time =
+                        std::chrono::steady_clock::now();
+                    Status flush_status = persistDeferredExactSecondaryInsert(
+                        target.index_id,
+                        static_cast<uint8_t>(target.index_type),
+                        buffered.key,
+                        buffered.tid,
+                        buffered.xid,
+                        ctx);
+                    handle->timing_end_flush_deferred_us +=
+                        elapsedMicros(deferred_flush_start_time);
+                    if (flush_status != Status::OK)
                     {
-                        buffer_pool_->unpinPage(page_id, false, ctx);
-                        *page_id_out = page_id;
-                        return Status::OK;
+                        LOG_ERROR(STORAGE,
+                                  "Failed to flush buffered deferred exact-secondary insert for index %s: %s",
+                                  target.index_id.toString().c_str(),
+                                  ctx ? ctx->message.c_str() : "unknown error");
+                        break;
                     }
                 }
 
-                buffer_pool_->unpinPage(page_id, false, ctx);
+                if (flushed > 0)
+                {
+                    target.pending_deferred_inserts.erase(
+                        target.pending_deferred_inserts.begin(),
+                        target.pending_deferred_inserts.begin() +
+                            static_cast<std::ptrdiff_t>(flushed));
+                    publishDeferredExactCleanupDebtSnapshot(
+                        target.index_id,
+                        IndexCleanupPublicationState::DEBT_PUBLISHED,
+                        0,
+                        false);
+                }
+            }
+        }
+
+        if (handle->pinned_gpid != INVALID_GPID)
+        {
+            buffer_pool_->unpinPageGlobal(handle->pinned_gpid,
+                                          handle->pinned_page_dirty,
+                                          ctx);
+        }
+
+        if (insertTraceEnabled())
+        {
+            std::ostringstream trace_line;
+            trace_line << "STORAGE INSERT TRACE table="
+                       << handle->table_id.toString()
+                       << " begin_us=" << handle->timing_begin_us
+                       << " rows_inserted=" << handle->timing_rows_inserted
+                       << " unique_preflight_us="
+                       << handle->timing_unique_preflight_us
+                       << " buffered_unique_preflight_us="
+                       << handle->timing_buffered_unique_preflight_us
+                       << " reserve_growth_us="
+                       << handle->timing_reserve_growth_us
+                       << " find_free_page_calls="
+                       << handle->timing_find_free_page_calls
+                       << " find_free_page_us="
+                       << handle->timing_find_free_page_us
+                       << " pin_page_us=" << handle->timing_pin_page_us
+                       << " pinned_page_reuse_hits="
+                       << handle->timing_pinned_page_reuse_hits
+                       << " new_page_allocations="
+                       << handle->timing_new_page_allocations
+                       << " page_full_retries="
+                       << handle->timing_page_full_retries
+                       << " heap_insert_us=" << handle->timing_heap_insert_us
+                       << " post_insert_maintenance_us="
+                       << handle->timing_post_insert_maintenance_us
+                       << " post_insert_track_mutation_us="
+                       << handle->timing_post_insert_track_mutation_us
+                       << " post_insert_track_mutation_calls="
+                       << handle->timing_post_insert_track_mutation_calls
+                       << " post_insert_migration_dirty_us="
+                       << handle->timing_post_insert_migration_dirty_us
+                       << " post_insert_migration_dirty_calls="
+                       << handle->timing_post_insert_migration_dirty_calls
+                       << " post_insert_plan_build_us="
+                       << handle->timing_post_insert_plan_build_us
+                       << " post_insert_plan_build_calls="
+                       << handle->timing_post_insert_plan_build_calls
+                       << " post_insert_layout_us="
+                       << handle->timing_post_insert_layout_us
+                       << " post_insert_layout_calls="
+                       << handle->timing_post_insert_layout_calls
+                       << " post_insert_index_lookup_us="
+                       << handle->timing_post_insert_index_lookup_us
+                       << " post_insert_index_lookup_calls="
+                       << handle->timing_post_insert_index_lookup_calls
+                       << " post_insert_preflight_lookup_us="
+                       << handle->timing_post_insert_preflight_lookup_us
+                       << " post_insert_preflight_lookup_calls="
+                       << handle->timing_post_insert_preflight_lookup_calls
+                       << " post_insert_key_extract_us="
+                       << handle->timing_post_insert_key_extract_us
+                       << " post_insert_key_extract_calls="
+                       << handle->timing_post_insert_key_extract_calls
+                       << " post_insert_scalar_key_build_us="
+                       << handle->timing_post_insert_scalar_key_build_us
+                       << " post_insert_scalar_key_build_calls="
+                       << handle->timing_post_insert_scalar_key_build_calls
+                       << " post_insert_buffer_enqueue_us="
+                       << handle->timing_post_insert_buffer_enqueue_us
+                       << " post_insert_buffer_enqueue_rows="
+                       << handle->timing_post_insert_buffer_enqueue_rows
+                       << " post_insert_defer_check_us="
+                       << handle->timing_post_insert_defer_check_us
+                       << " post_insert_defer_check_calls="
+                       << handle->timing_post_insert_defer_check_calls
+                       << " post_insert_columnstore_insert_us="
+                       << handle->timing_post_insert_columnstore_insert_us
+                       << " post_insert_columnstore_insert_calls="
+                       << handle->timing_post_insert_columnstore_insert_calls
+                       << " end_flush_unique_us="
+                       << handle->timing_end_flush_unique_us
+                       << " end_flush_unique_prepare_entries_us="
+                       << handle->timing_end_flush_unique_prepare_entries_us
+                       << " end_flush_unique_bulkload_sort_us="
+                       << handle->timing_end_flush_unique_bulkload_sort_us
+                       << " end_flush_unique_bulkload_leaf_build_us="
+                       << handle->timing_end_flush_unique_bulkload_leaf_build_us
+                       << " end_flush_unique_bulkload_internal_build_us="
+                       << handle->timing_end_flush_unique_bulkload_internal_build_us
+                       << " end_flush_unique_bulkload_root_finalize_us="
+                       << handle->timing_end_flush_unique_bulkload_root_finalize_us
+                       << " end_flush_unique_bulkload_total_us="
+                       << handle->timing_end_flush_unique_bulkload_total_us
+                       << " end_flush_unique_bulkload_input_sorted="
+                       << (handle->timing_end_flush_unique_bulkload_input_sorted ? 1 : 0)
+                       << " end_flush_grouped_us="
+                       << handle->timing_end_flush_grouped_us
+                       << " end_flush_deferred_us="
+                       << handle->timing_end_flush_deferred_us
+                       << " post_insert_online_delta_capture_us="
+                       << handle->timing_post_insert_online_delta_capture_us
+                       << " post_insert_online_delta_capture_calls="
+                       << handle->timing_post_insert_online_delta_capture_calls
+                       << " post_insert_extractor_clear_us="
+                       << handle->timing_post_insert_extractor_clear_us
+                       << " post_insert_extractor_clear_calls="
+                       << handle->timing_post_insert_extractor_clear_calls
+                       << " post_insert_table_dml_delta_us="
+                       << handle->timing_post_insert_table_dml_delta_us
+                       << " post_insert_table_dml_delta_calls="
+                       << handle->timing_post_insert_table_dml_delta_calls;
+            appendStorageTraceLine(insertTraceFilePath(), trace_line.str());
+        }
+
+        *handle = BulkInsertHandle{};
+    }
+
+    auto StorageEngine::findFreePage(const ID &table_id, uint32_t tuple_size, uint32_t *page_id_out,
+                                     uint16_t tablespace_id, ErrorContext *ctx,
+                                     uint32_t *pages_scanned_out,
+                                     uint32_t *heap_pages_examined_out,
+                                     bool *allocated_new_out,
+                                     const uint32_t *resume_from_page_hint) -> Status
+    {
+        // For simplicity, we'll scan existing heap pages linearly
+        // In a real system, we'd maintain a free space map per table
+        uint32_t pages_scanned = 0;
+        uint32_t heap_pages_examined = 0;
+        bool allocated_new = false;
+        const auto publishSearchStats = [&]() {
+            if (pages_scanned_out != nullptr)
+            {
+                *pages_scanned_out = pages_scanned;
+            }
+            if (heap_pages_examined_out != nullptr)
+            {
+                *heap_pages_examined_out = heap_pages_examined;
+            }
+            if (allocated_new_out != nullptr)
+            {
+                *allocated_new_out = allocated_new;
+            }
+        };
+
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            constexpr uint32_t kHintedScanWindow = 4;
+            uint32_t total_pages = page_manager_->totalPages();
+            // Start scanning after catalog pages
+            uint32_t heap_start = Config::getInstance().getUInt("storage", "heap_scan_start_page", 7);
+            if (heap_start >= total_pages)
+            {
+                heap_start = 0;
+            }
+
+            uint32_t scan_start = heap_start;
+            uint32_t hinted_page = 0;
+            bool used_relation_write_hint = false;
+            if (resume_from_page_hint != nullptr)
+            {
+                hinted_page = *resume_from_page_hint;
+                if (hinted_page >= heap_start && hinted_page < total_pages)
+                {
+                    scan_start = hinted_page;
+                }
+                else if (hinted_page >= total_pages)
+                {
+                    scan_start = total_pages;
+                }
+            }
+            else if (getRelationWriteHint(table_id, tablespace_id, &hinted_page) &&
+                     hinted_page >= heap_start && hinted_page < total_pages)
+            {
+                scan_start = hinted_page;
+                used_relation_write_hint = true;
+            }
+
+            const auto scanPrimaryRange = [&](uint32_t start_page,
+                                              uint32_t end_page) -> Status {
+                for (uint32_t page_id = start_page; page_id < end_page; ++page_id)
+                {
+                    ++pages_scanned;
+                    void *page_buffer = nullptr;
+                    Status status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
+                    auto *page_data = static_cast<uint8_t *>(page_buffer);
+
+                    if (status == Status::IO_ERROR)
+                    {
+                        allocated_new = true;
+                        publishSearchStats();
+                        status = allocateHeapPage(table_id, tablespace_id, page_id_out, ctx);
+                        if (status == Status::OK)
+                        {
+                            rememberRelationWriteHint(table_id, tablespace_id, *page_id_out);
+                        }
+                        return status;
+                    }
+
+                    if (status != Status::OK)
+                    {
+                        continue;
+                    }
+
+                    auto *hdr = reinterpret_cast<PageHeader *>(page_data);
+                    if (hdr->page_type == PAGE_TYPE_HEAP)
+                    {
+                        ++heap_pages_examined;
+                        if (!isZeroId(table_id) && !pageTableIdMatches(hdr, table_id))
+                        {
+                            buffer_pool_->unpinPage(page_id, false, ctx);
+                            continue;
+                        }
+                        HeapPage heap_page(page_data, db_->page_size());
+
+                        if (heap_page.hasFreeSpace(tuple_size + sizeof(TupleHeader)))
+                        {
+                            buffer_pool_->unpinPage(page_id, false, ctx);
+                            *page_id_out = page_id;
+                            publishSearchStats();
+                            rememberRelationWriteHint(table_id, tablespace_id, page_id);
+                            return Status::OK;
+                        }
+                    }
+
+                    buffer_pool_->unpinPage(page_id, false, ctx);
+                }
+
+                return Status::NOT_FOUND;
+            };
+
+            Status scan_status = Status::NOT_FOUND;
+            if (scan_start < total_pages)
+            {
+                uint32_t scan_end = total_pages;
+                if (resume_from_page_hint != nullptr || used_relation_write_hint)
+                {
+                    scan_end = std::min(total_pages, scan_start + kHintedScanWindow);
+                }
+                scan_status = scanPrimaryRange(scan_start, scan_end);
+                if (scan_status != Status::NOT_FOUND)
+                {
+                    return scan_status;
+                }
+            }
+
+            if (resume_from_page_hint == nullptr &&
+                !used_relation_write_hint &&
+                scan_start > heap_start &&
+                scan_start < total_pages)
+            {
+                scan_status = scanPrimaryRange(heap_start, scan_start);
+                if (scan_status != Status::NOT_FOUND)
+                {
+                    return scan_status;
+                }
             }
 
             // No existing page has space, allocate a new one
-            return allocateHeapPage(table_id, tablespace_id, page_id_out, ctx);
+            allocated_new = true;
+            publishSearchStats();
+            Status status = allocateHeapPage(table_id, tablespace_id, page_id_out, ctx);
+            if (status == Status::OK)
+            {
+                rememberRelationWriteHint(table_id, tablespace_id, *page_id_out);
+            }
+            return status;
         }
 
         std::vector<GPID> allocated_pages;
+        constexpr size_t kHintedScanWindow = 4;
         Status status = page_manager_->getAllocatedPages(tablespace_id, allocated_pages, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        for (const auto &gpid : allocated_pages)
+        size_t scan_start_index = 0;
+        uint32_t hinted_page = 0;
+        const bool have_resume_hint = (resume_from_page_hint != nullptr);
+        bool used_relation_write_hint = false;
+        if (have_resume_hint)
         {
-            uint64_t page_number = getPageNumber(gpid);
-            if (page_number < 2)
-            {
-                continue;
-            }
-
-            void *page_buffer;
-            status = buffer_pool_->pinPageGlobal(gpid, &page_buffer, ctx);
-            auto *page_data = static_cast<uint8_t *>(page_buffer);
-            if (status != Status::OK)
-            {
-                continue;
-            }
-
-            auto *hdr = reinterpret_cast<PageHeader *>(page_data);
-            if (hdr->page_type == PAGE_TYPE_HEAP)
-            {
-                if (!isZeroId(table_id) && !pageTableIdMatches(hdr, table_id))
-                {
-                    buffer_pool_->unpinPageGlobal(gpid, false, ctx);
-                    continue;
-                }
-                HeapPage heap_page(page_data, db_->page_size());
-                if (heap_page.hasFreeSpace(tuple_size + sizeof(TupleHeader)))
-                {
-                    buffer_pool_->unpinPageGlobal(gpid, false, ctx);
-                    *page_id_out = static_cast<uint32_t>(page_number);
-                    return Status::OK;
-                }
-            }
-
-            buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+            hinted_page = *resume_from_page_hint;
+        }
+        else if (getRelationWriteHint(table_id, tablespace_id, &hinted_page))
+        {
+            used_relation_write_hint = true;
+            // Use persisted relation hint below.
         }
 
-        return allocateHeapPage(table_id, tablespace_id, page_id_out, ctx);
+        if (have_resume_hint || used_relation_write_hint)
+        {
+            bool found_exact = false;
+            for (size_t i = 0; i < allocated_pages.size(); ++i)
+            {
+                const uint32_t current_page =
+                    static_cast<uint32_t>(getPageNumber(allocated_pages[i]));
+                if (current_page == hinted_page)
+                {
+                    scan_start_index = i;
+                    found_exact = true;
+                    break;
+                }
+                if (current_page > hinted_page)
+                {
+                    scan_start_index = i;
+                    found_exact = true;
+                    break;
+                }
+            }
+
+            if (!found_exact && hinted_page > 0)
+            {
+                scan_start_index = allocated_pages.size();
+            }
+        }
+
+        const auto scanAllocatedRange = [&](size_t begin_index,
+                                            size_t end_index) -> Status {
+            for (size_t index = begin_index; index < end_index; ++index)
+            {
+                const auto &gpid = allocated_pages[index];
+                uint64_t page_number = getPageNumber(gpid);
+                if (page_number < 2)
+                {
+                    continue;
+                }
+
+                ++pages_scanned;
+                void *page_buffer = nullptr;
+                Status scan_status = buffer_pool_->pinPageGlobal(gpid, &page_buffer, ctx);
+                auto *page_data = static_cast<uint8_t *>(page_buffer);
+                if (scan_status != Status::OK)
+                {
+                    continue;
+                }
+
+                auto *hdr = reinterpret_cast<PageHeader *>(page_data);
+                if (hdr->page_type == PAGE_TYPE_HEAP)
+                {
+                    ++heap_pages_examined;
+                    if (!isZeroId(table_id) && !pageTableIdMatches(hdr, table_id))
+                    {
+                        buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+                        continue;
+                    }
+                    HeapPage heap_page(page_data, db_->page_size());
+                    if (heap_page.hasFreeSpace(tuple_size + sizeof(TupleHeader)))
+                    {
+                        buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+                        *page_id_out = static_cast<uint32_t>(page_number);
+                        publishSearchStats();
+                        rememberRelationWriteHint(table_id, tablespace_id,
+                                                  static_cast<uint32_t>(page_number));
+                        return Status::OK;
+                    }
+                }
+
+                buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+            }
+
+            return Status::NOT_FOUND;
+        };
+
+        size_t scan_end_index = allocated_pages.size();
+        if (have_resume_hint || used_relation_write_hint)
+        {
+            scan_end_index =
+                std::min(allocated_pages.size(), scan_start_index + kHintedScanWindow);
+        }
+        status = scanAllocatedRange(scan_start_index, scan_end_index);
+        if (status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        if (resume_from_page_hint == nullptr &&
+            !used_relation_write_hint &&
+            scan_start_index > 0)
+        {
+            status = scanAllocatedRange(0, scan_start_index);
+            if (status != Status::NOT_FOUND)
+            {
+                return status;
+            }
+        }
+
+        allocated_new = true;
+        publishSearchStats();
+        status = allocateHeapPage(table_id, tablespace_id, page_id_out, ctx);
+        if (status == Status::OK)
+        {
+            rememberRelationWriteHint(table_id, tablespace_id, *page_id_out);
+        }
+        return status;
     }
 
     auto StorageEngine::findBackVersionPlacementPage(const ID &table_id, uint32_t tuple_size,
@@ -3301,6 +7687,7 @@ namespace scratchbird::core
         }
 
         BackVersionPlacementCandidate best_candidate;
+        std::unordered_set<uint32_t> visited_pages;
 
         auto considerPinnedPage = [&](uint32_t candidate_page_id, uint8_t *page_data) -> void
         {
@@ -3333,22 +7720,151 @@ namespace scratchbird::core
             }
         };
 
+        const auto tryExactCandidatePage = [&](uint32_t candidate_page_id) -> bool
+        {
+            if (candidate_page_id == primary_page_id)
+            {
+                return false;
+            }
+
+            if (tablespace_id == PRIMARY_TABLESPACE_ID)
+            {
+                void *page_buffer = nullptr;
+                Status status = buffer_pool_->pinPage(candidate_page_id, &page_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    return false;
+                }
+
+                considerPinnedPage(candidate_page_id, static_cast<uint8_t *>(page_buffer));
+                buffer_pool_->unpinPage(candidate_page_id, false, ctx);
+            }
+            else
+            {
+                void *page_buffer = nullptr;
+                GPID candidate_gpid =
+                    makeGPID(tablespace_id, static_cast<uint64_t>(candidate_page_id));
+                Status status = buffer_pool_->pinPageGlobal(candidate_gpid, &page_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    return false;
+                }
+
+                considerPinnedPage(candidate_page_id, static_cast<uint8_t *>(page_buffer));
+                buffer_pool_->unpinPageGlobal(candidate_gpid, false, ctx);
+            }
+
+            if (!best_candidate.valid || best_candidate.page_id != candidate_page_id)
+            {
+                return false;
+            }
+
+            *page_id_out = candidate_page_id;
+            rememberRelationWriteHint(table_id, tablespace_id, *page_id_out);
+            return true;
+        };
+
         if (tablespace_id == PRIMARY_TABLESPACE_ID)
         {
             uint32_t total_pages = page_manager_->totalPages();
             uint32_t heap_start =
                 Config::getInstance().getUInt("storage", "heap_scan_start_page", 7);
-            for (uint32_t page_id = heap_start; page_id < total_pages; ++page_id)
+            const auto scanPrimaryRange = [&](uint32_t start_page, uint32_t end_page) -> void
             {
-                void *page_buffer = nullptr;
-                Status status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
-                if (status != Status::OK)
+                if (start_page >= end_page)
                 {
-                    continue;
+                    return;
                 }
 
-                considerPinnedPage(page_id, static_cast<uint8_t *>(page_buffer));
-                buffer_pool_->unpinPage(page_id, false, ctx);
+                start_page = std::max(start_page, heap_start);
+                end_page = std::min(end_page, total_pages);
+                for (uint32_t page_id = start_page; page_id < end_page; ++page_id)
+                {
+                    if (!visited_pages.insert(page_id).second)
+                    {
+                        continue;
+                    }
+
+                    void *page_buffer = nullptr;
+                    Status status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
+                    if (status != Status::OK)
+                    {
+                        continue;
+                    }
+
+                    considerPinnedPage(page_id, static_cast<uint8_t *>(page_buffer));
+                    buffer_pool_->unpinPage(page_id, false, ctx);
+                }
+            };
+
+            const auto scanPrimaryLocalityWindow = [&](uint32_t anchor_page_id) -> void
+            {
+                uint32_t extent_start =
+                    (anchor_page_id / BACK_VERSION_EXTENT_PAGES) * BACK_VERSION_EXTENT_PAGES;
+                uint32_t extent_end = extent_start + BACK_VERSION_EXTENT_PAGES;
+                scanPrimaryRange(extent_start, extent_end);
+
+                uint32_t bucket_start =
+                    (anchor_page_id / BACK_VERSION_LOCALITY_BUCKET_PAGES) *
+                    BACK_VERSION_LOCALITY_BUCKET_PAGES;
+                uint32_t bucket_end = bucket_start + BACK_VERSION_LOCALITY_BUCKET_PAGES;
+                scanPrimaryRange(bucket_start, bucket_end);
+            };
+
+            uint32_t hinted_page_id = 0;
+            if (getRelationWriteHint(table_id, tablespace_id, &hinted_page_id))
+            {
+                if (hinted_page_id >= heap_start &&
+                    hinted_page_id < total_pages &&
+                    tryExactCandidatePage(hinted_page_id))
+                {
+                    return Status::OK;
+                }
+            }
+
+            scanPrimaryLocalityWindow(primary_page_id);
+
+            if (getRelationWriteHint(table_id, tablespace_id, &hinted_page_id) &&
+                hinted_page_id >= heap_start &&
+                hinted_page_id < total_pages)
+            {
+                scanPrimaryLocalityWindow(hinted_page_id);
+            }
+
+            if (best_candidate.valid)
+            {
+                *page_id_out = best_candidate.page_id;
+                rememberRelationWriteHint(table_id, tablespace_id, *page_id_out);
+                return Status::OK;
+            }
+
+            uint32_t resume_hint = primary_page_id + 1;
+            if (getRelationWriteHint(table_id, tablespace_id, &hinted_page_id) &&
+                hinted_page_id >= heap_start &&
+                hinted_page_id < total_pages &&
+                hinted_page_id != primary_page_id)
+            {
+                resume_hint = hinted_page_id;
+            }
+
+            if (resume_hint < total_pages)
+            {
+                uint32_t fallback_page_id = 0;
+                Status fallback_status = findFreePage(table_id,
+                                                      tuple_size,
+                                                      &fallback_page_id,
+                                                      tablespace_id,
+                                                      ctx,
+                                                      nullptr,
+                                                      nullptr,
+                                                      nullptr,
+                                                      &resume_hint);
+                if (fallback_status == Status::OK && fallback_page_id != primary_page_id)
+                {
+                    *page_id_out = fallback_page_id;
+                    rememberRelationWriteHint(table_id, tablespace_id, *page_id_out);
+                    return Status::OK;
+                }
             }
         }
         else
@@ -3360,6 +7876,8 @@ namespace scratchbird::core
                 return status;
             }
 
+            std::vector<uint32_t> candidate_page_ids;
+            candidate_page_ids.reserve(allocated_pages.size());
             for (const auto &candidate_gpid : allocated_pages)
             {
                 uint32_t candidate_page_id =
@@ -3368,26 +7886,103 @@ namespace scratchbird::core
                 {
                     continue;
                 }
+                candidate_page_ids.push_back(candidate_page_id);
+            }
 
-                void *page_buffer = nullptr;
-                status = buffer_pool_->pinPageGlobal(candidate_gpid, &page_buffer, ctx);
-                if (status != Status::OK)
+            uint32_t hinted_page_id = 0;
+            if (getRelationWriteHint(table_id, tablespace_id, &hinted_page_id) &&
+                tryExactCandidatePage(hinted_page_id))
+            {
+                return Status::OK;
+            }
+
+            const auto scanGlobalCandidates = [&](uint32_t anchor_page_id,
+                                                  uint32_t radius_pages) -> void
+            {
+                uint32_t start_page =
+                    (anchor_page_id > radius_pages) ? (anchor_page_id - radius_pages) : 0;
+                uint32_t end_page = anchor_page_id + radius_pages + 1;
+                for (uint32_t candidate_page_id : candidate_page_ids)
                 {
-                    continue;
-                }
+                    if (candidate_page_id < start_page || candidate_page_id >= end_page)
+                    {
+                        continue;
+                    }
+                    if (!visited_pages.insert(candidate_page_id).second)
+                    {
+                        continue;
+                    }
 
-                considerPinnedPage(candidate_page_id, static_cast<uint8_t *>(page_buffer));
-                buffer_pool_->unpinPageGlobal(candidate_gpid, false, ctx);
+                    GPID candidate_gpid = makeGPID(tablespace_id,
+                                                   static_cast<uint64_t>(candidate_page_id));
+                    void *page_buffer = nullptr;
+                    Status scan_status =
+                        buffer_pool_->pinPageGlobal(candidate_gpid, &page_buffer, ctx);
+                    if (scan_status != Status::OK)
+                    {
+                        continue;
+                    }
+
+                    considerPinnedPage(candidate_page_id, static_cast<uint8_t *>(page_buffer));
+                    buffer_pool_->unpinPageGlobal(candidate_gpid, false, ctx);
+                }
+            };
+
+            scanGlobalCandidates(primary_page_id, BACK_VERSION_LOCALITY_BUCKET_PAGES);
+
+            if (getRelationWriteHint(table_id, tablespace_id, &hinted_page_id))
+            {
+                scanGlobalCandidates(hinted_page_id, BACK_VERSION_LOCALITY_BUCKET_PAGES);
+            }
+
+            if (best_candidate.valid)
+            {
+                *page_id_out = best_candidate.page_id;
+                rememberRelationWriteHint(table_id, tablespace_id, *page_id_out);
+                return Status::OK;
+            }
+
+            uint32_t resume_hint = primary_page_id + 1;
+            if (getRelationWriteHint(table_id, tablespace_id, &hinted_page_id) &&
+                hinted_page_id != primary_page_id)
+            {
+                resume_hint = hinted_page_id;
+            }
+
+            if (resume_hint >= 2)
+            {
+                uint32_t fallback_page_id = 0;
+                Status fallback_status = findFreePage(table_id,
+                                                      tuple_size,
+                                                      &fallback_page_id,
+                                                      tablespace_id,
+                                                      ctx,
+                                                      nullptr,
+                                                      nullptr,
+                                                      nullptr,
+                                                      &resume_hint);
+                if (fallback_status == Status::OK && fallback_page_id != primary_page_id)
+                {
+                    *page_id_out = fallback_page_id;
+                    rememberRelationWriteHint(table_id, tablespace_id, *page_id_out);
+                    return Status::OK;
+                }
             }
         }
 
         if (best_candidate.valid)
         {
             *page_id_out = best_candidate.page_id;
+            rememberRelationWriteHint(table_id, tablespace_id, *page_id_out);
             return Status::OK;
         }
 
-        return allocateHeapPage(table_id, tablespace_id, page_id_out, ctx);
+        Status status = allocateHeapPage(table_id, tablespace_id, page_id_out, ctx);
+        if (status == Status::OK)
+        {
+            rememberRelationWriteHint(table_id, tablespace_id, *page_id_out);
+        }
+        return status;
     }
 
     auto StorageEngine::allocateHeapPage(const ID &table_id, uint16_t tablespace_id,
@@ -3413,7 +8008,7 @@ namespace scratchbird::core
         // Initialize as heap page
         std::memset(page_data, 0, db_->page_size());
         uint32_t page_id = static_cast<uint32_t>(getPageNumber(gpid));
-        HeapPage heap_page(page_data, db_->page_size(), nullptr, db_, table_id);
+        HeapPage heap_page(page_data, db_->page_size(), nullptr, db_, table_id, tablespace_id);
         status = heap_page.initialize(page_id, ctx);
         if (status == Status::OK)
         {
@@ -3427,6 +8022,7 @@ namespace scratchbird::core
         {
             // Page will be marked dirty on unpin
             *page_id_out = page_id;
+            rememberRelationWriteHint(table_id, tablespace_id, page_id);
             buffer_pool_->unpinPageGlobal(gpid, true, ctx);
         }
         else
@@ -3444,9 +8040,12 @@ namespace scratchbird::core
     // HeapScanIterator implementation
 
     HeapScanIterator::HeapScanIterator(Database *db, StorageEngine *engine, const ID &table_id,
-                                       uint32_t start_page, bool ignore_visibility)
+                                       uint32_t start_page,
+                                       uint32_t end_page_exclusive,
+                                       bool ignore_visibility)
         : db_(db), engine_(engine), table_id_(table_id), current_page_(start_page),
-          current_item_(0), last_page_(0), done_(false), ignore_visibility_(ignore_visibility)
+          current_item_(0), last_page_(0), end_page_exclusive_(end_page_exclusive),
+          done_(false), ignore_visibility_(ignore_visibility)
     {
         ra_current_pages_ = READAHEAD_MIN_PAGES;
 
@@ -3478,6 +8077,40 @@ namespace scratchbird::core
         {
             db_->page_manager()->getAllocatedPages(tablespace_id_, allocated_pages_, nullptr);
         }
+
+        if (tablespace_id_ == PRIMARY_TABLESPACE_ID)
+        {
+            uint32_t available_end = 0;
+            if (db_ && db_->page_manager())
+            {
+                available_end = db_->page_manager()->totalPages();
+            }
+            if (end_page_exclusive_ == std::numeric_limits<uint32_t>::max() ||
+                end_page_exclusive_ > available_end)
+            {
+                end_page_exclusive_ = available_end;
+            }
+            if (current_page_ >= end_page_exclusive_)
+            {
+                done_ = true;
+            }
+        }
+        else
+        {
+            const uint32_t available_end = static_cast<uint32_t>(allocated_pages_.size());
+            if (end_page_exclusive_ == std::numeric_limits<uint32_t>::max() ||
+                end_page_exclusive_ > available_end)
+            {
+                end_page_exclusive_ = available_end;
+            }
+            current_page_index_ =
+                std::min<size_t>(static_cast<size_t>(start_page),
+                                 static_cast<size_t>(end_page_exclusive_));
+            if (current_page_index_ >= static_cast<size_t>(end_page_exclusive_))
+            {
+                done_ = true;
+            }
+        }
     }
 
     HeapScanIterator::~HeapScanIterator()
@@ -3504,7 +8137,7 @@ namespace scratchbird::core
 
         if (tablespace_id_ == PRIMARY_TABLESPACE_ID)
         {
-            while (current_page_ <= last_page_)
+            while (current_page_ <= last_page_ && current_page_ < end_page_exclusive_)
             {
                 // Load current page if needed
                 if (page_data_ == nullptr)
@@ -3543,7 +8176,12 @@ namespace scratchbird::core
                 }
 
                 // Scan items in current page
-                HeapPage heap_page(page_data_, db_->page_size(), nullptr, db_, table_id_);
+                HeapPage heap_page(page_data_,
+                                   db_->page_size(),
+                                   nullptr,
+                                   db_,
+                                   table_id_,
+                                   tablespace_id_);
                 ErrorContext validate_ctx;
                 Status validate_status = heap_page.validate(&validate_ctx);
                 if (validate_status != Status::OK)
@@ -3649,7 +8287,8 @@ namespace scratchbird::core
             return Status::NOT_FOUND;
         }
 
-        while (current_page_index_ < allocated_pages_.size())
+        while (current_page_index_ < allocated_pages_.size() &&
+               current_page_index_ < static_cast<size_t>(end_page_exclusive_))
         {
             if (page_data_ == nullptr)
             {
@@ -3677,7 +8316,12 @@ namespace scratchbird::core
                 continue;
             }
 
-            HeapPage heap_page(page_data_, db_->page_size(), nullptr, db_, table_id_);
+            HeapPage heap_page(page_data_,
+                               db_->page_size(),
+                               nullptr,
+                               db_,
+                               table_id_,
+                               tablespace_id_);
             ErrorContext validate_ctx;
             Status validate_status = heap_page.validate(&validate_ctx);
             if (validate_status != Status::OK)
@@ -4029,6 +8673,11 @@ namespace scratchbird::core
 
         for (const auto &index_info : indexes)
         {
+            if (index_info.is_expression_index || index_info.is_partial_index)
+            {
+                continue;
+            }
+
             extractor.clearCache();
 
             CatalogManager::IndexType actual_index_type;
@@ -4101,6 +8750,7 @@ namespace scratchbird::core
                 old_key_tuple_size,
                 old_offsets,
                 old_sizes,
+                columns,
                 new_key_tuple_data,
                 new_key_tuple_size,
                 new_offsets,
@@ -4119,12 +8769,50 @@ namespace scratchbird::core
                 continue;
             }
 
+            const bool exact_lookup_family = supportsExactKeyLookup(actual_index_type);
+            if (exact_lookup_family)
+            {
+                Status merge_status = mergeDeferredExactSecondaryPageDeltas(
+                    index_info.index_id,
+                    index_info.is_unique,
+                    index_info.is_expression_index,
+                    index_info.is_partial_index,
+                    static_cast<uint8_t>(actual_index_type),
+                    index_ptr,
+                    current_xid,
+                    ctx);
+                if (merge_status != Status::OK)
+                {
+                    LOG_WARNING(STORAGE,
+                                "Failed to merge deferred exact-secondary deltas before update for index %s: %s",
+                                index_info.index_name.c_str(),
+                                ctx ? ctx->message.c_str() : "unknown error");
+                }
+            }
+
             if (old_key == new_key)
             {
+                if (exact_lookup_family)
+                {
+                    bumpIndexContentionCounters(catalog_manager_,
+                                                index_info.index_id,
+                                                0,
+                                                1);
+                    ID maintenance_id{};
+                    if (resolveActiveOnlineMaintenanceIdLocal(
+                            catalog_manager_, index_info, &maintenance_id))
+                    {
+                        captureQueuedOrImmediateOnlineMaintenanceDelta(
+                            index_info.index_id,
+                            maintenance_id,
+                            static_cast<uint8_t>(CatalogManager::IndexDeltaOp::UPDATE),
+                            tid,
+                            current_xid);
+                    }
+                }
                 continue;
             }
 
-            const bool exact_lookup_family = supportsExactKeyLookup(actual_index_type);
             Status retire_status = exact_lookup_family
                 ? retireExactIndexEntry(actual_index_type,
                                         index_ptr,
@@ -4141,6 +8829,20 @@ namespace scratchbird::core
                             index_info.index_name.c_str(),
                             ctx ? ctx->message.c_str() : "unknown error");
             }
+            else
+            {
+                ID maintenance_id{};
+                if (resolveActiveOnlineMaintenanceIdLocal(
+                        catalog_manager_, index_info, &maintenance_id))
+                {
+                    captureQueuedOrImmediateOnlineMaintenanceDelta(
+                        index_info.index_id,
+                        maintenance_id,
+                        static_cast<uint8_t>(CatalogManager::IndexDeltaOp::DELETE),
+                        tid,
+                        current_xid);
+                }
+            }
 
             Status insert_status = insertIntoIndex(actual_index_type, index_ptr, new_key, tid,
                                                    current_xid, ctx);
@@ -4150,6 +8852,20 @@ namespace scratchbird::core
                           indexTypeToString(actual_index_type).c_str(),
                           index_info.index_name.c_str(),
                           ctx ? ctx->message.c_str() : "unknown error");
+            }
+            else
+            {
+                ID maintenance_id{};
+                if (resolveActiveOnlineMaintenanceIdLocal(
+                        catalog_manager_, index_info, &maintenance_id))
+                {
+                    captureQueuedOrImmediateOnlineMaintenanceDelta(
+                        index_info.index_id,
+                        maintenance_id,
+                        static_cast<uint8_t>(CatalogManager::IndexDeltaOp::INSERT),
+                        tid,
+                        current_xid);
+                }
             }
         }
 
@@ -4313,6 +9029,11 @@ namespace scratchbird::core
         std::vector<ID> refreshed_index_ids;
         for (const auto &index_info : indexes)
         {
+            if (index_info.is_expression_index || index_info.is_partial_index)
+            {
+                continue;
+            }
+
             CatalogManager::IndexType actual_index_type;
             void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
             if (index_ptr == nullptr)
@@ -4389,6 +9110,7 @@ namespace scratchbird::core
                                                                  current_key_tuple_size,
                                                                  current_offsets,
                                                                  current_sizes,
+                                                                 columns,
                                                                  column_indices,
                                                                  toast_mgr,
                                                                  current_xid,
@@ -4412,6 +9134,7 @@ namespace scratchbird::core
                                                                       restored_key_tuple_size,
                                                                       restored_offsets,
                                                                       restored_sizes,
+                                                                      columns,
                                                                       column_indices,
                                                                       toast_mgr,
                                                                       current_xid,
@@ -4486,6 +9209,7 @@ namespace scratchbird::core
                                              transient_key_tuple_size,
                                              transient_offsets,
                                              transient_sizes,
+                                             columns,
                                              column_indices,
                                              toast_mgr,
                                              current_xid,
@@ -4596,7 +9320,10 @@ namespace scratchbird::core
             Status refresh_status = catalog_manager_->refreshIndexObject(index_id, ctx);
             if (refresh_status != Status::OK)
             {
-                return refresh_status;
+                LOG_WARNING(STORAGE,
+                            "Failed to refresh index object after savepoint rollback; keeping live handle (status=%d, index_id=%s)",
+                            static_cast<int>(refresh_status),
+                            index_id.toString().c_str());
             }
         }
 
@@ -4607,7 +9334,9 @@ namespace scratchbird::core
     auto StorageEngine::updateTuple(const ID &table_id, uint32_t page_id, uint16_t item_id,
                                     const uint8_t *new_tuple_data, uint32_t new_tuple_size,
                                     uint32_t *new_page_id_out, uint16_t *new_item_id_out,
-                                    ErrorContext *ctx) -> Status
+                                    ErrorContext *ctx,
+                                    bool indexed_keys_unchanged,
+                                    const UnchangedKeyUpdatePlan *unchanged_key_update_plan) -> Status
     {
         // Sprint 4 Task 5.4.3: Check if table is being migrated
         CatalogManager::TableInfo table_info;
@@ -4670,6 +9399,88 @@ namespace scratchbird::core
                 }
             }
         } tuple_lock_guard{this, table_id, page_id, item_id, proc_id, ctx, true};
+
+        const bool update_trace_enabled = updateTraceEnabled();
+        const auto update_trace_start = std::chrono::steady_clock::now();
+        double unique_preflight_ms = 0.0;
+        double prepare_head_ms = 0.0;
+        double same_page_update_ms = 0.0;
+        double secondary_index_ms = 0.0;
+        double back_version_lookup_ms = 0.0;
+        double back_version_store_ms = 0.0;
+        double overwrite_primary_ms = 0.0;
+        uint32_t trace_back_version_page_id = 0;
+        bool trace_page_full = false;
+        bool trace_same_page = false;
+        bool trace_cross_page = false;
+        uint32_t trace_old_tuple_length = 0;
+        const bool trace_unchanged_key_plan_supplied = unchanged_key_update_plan != nullptr;
+        const uint32_t trace_unchanged_key_plan_exact_indexes =
+            unchanged_key_update_plan == nullptr
+                ? 0U
+                : static_cast<uint32_t>(unchanged_key_update_plan->exact_indexes.size());
+        uint32_t trace_unchanged_key_plan_active_maintenance = 0;
+        if (unchanged_key_update_plan != nullptr)
+        {
+            for (const auto &target : unchanged_key_update_plan->exact_indexes)
+            {
+                if (!isZeroIdLocal(target.maintenance_id))
+                {
+                    ++trace_unchanged_key_plan_active_maintenance;
+                }
+            }
+        }
+
+        const auto append_update_trace =
+            [&](const char *result,
+                Status trace_status,
+                uint32_t final_page_id,
+                uint16_t final_item_id) -> void
+        {
+            if (!update_trace_enabled)
+            {
+                return;
+            }
+
+            const auto elapsed_ms =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - update_trace_start)
+                    .count();
+
+            std::ostringstream line;
+            line << std::fixed << std::setprecision(3)
+                 << "STORAGE UPDATE TRACE table="
+                 << (table_info.table_name.empty() ? table_id.toString() : table_info.table_name)
+                 << " table_id=" << table_id.toString()
+                 << " page_id=" << page_id
+                 << " item_id=" << item_id
+                 << " final_page_id=" << final_page_id
+                 << " final_item_id=" << final_item_id
+                 << " old_tuple_size=" << trace_old_tuple_length
+                 << " new_tuple_size=" << new_tuple_size
+                 << " indexed_keys_unchanged=" << (indexed_keys_unchanged ? 1 : 0)
+                 << " unchanged_key_plan_supplied="
+                 << (trace_unchanged_key_plan_supplied ? 1 : 0)
+                 << " unchanged_key_plan_exact_indexes="
+                 << trace_unchanged_key_plan_exact_indexes
+                 << " unchanged_key_plan_active_maintenance="
+                 << trace_unchanged_key_plan_active_maintenance
+                 << " page_full=" << (trace_page_full ? 1 : 0)
+                 << " same_page=" << (trace_same_page ? 1 : 0)
+                 << " cross_page=" << (trace_cross_page ? 1 : 0)
+                 << " back_version_page_id=" << trace_back_version_page_id
+                 << " unique_preflight_ms=" << unique_preflight_ms
+                 << " prepare_head_ms=" << prepare_head_ms
+                 << " same_page_update_ms=" << same_page_update_ms
+                 << " back_version_lookup_ms=" << back_version_lookup_ms
+                 << " back_version_store_ms=" << back_version_store_ms
+                 << " overwrite_primary_ms=" << overwrite_primary_ms
+                 << " secondary_index_ms=" << secondary_index_ms
+                 << " total_ms=" << elapsed_ms
+                 << " status=" << static_cast<int>(trace_status)
+                 << " result=" << result;
+            appendStorageUpdateTraceLine(line.str());
+        };
 
         // Get current XID from connection context (same approach as insertTuple)
         uint64_t xmax = ConnectionContext::getCurrentTransactionId();
@@ -4734,23 +9545,93 @@ namespace scratchbird::core
             old_tuple_buffer.resize(old_tuple_length);
             memcpy(old_tuple_buffer.data(), page_data + old_offset, old_tuple_length);
         }
+        trace_old_tuple_length = old_tuple_length;
 
         TID stable_tid = TID(makeGPID(tablespace_id, static_cast<uint64_t>(page_id)), item_id);
-        Status unique_status = preflightUniqueUpdate(table_id,
-                                                     old_tuple_buffer.data(),
-                                                     old_tuple_length,
-                                                     tuple_data_ptr,
-                                                     new_tuple_size,
-                                                     stable_tid,
-                                                     xmax,
-                                                     ctx);
-        if (unique_status != Status::OK)
+        auto captureUnchangedStableTidIndexEffects = [&]()
         {
-            buffer_pool_->unpinPageGlobal(gpid, false, ctx);
-            return unique_status;
+            if (unchanged_key_update_plan != nullptr)
+            {
+                for (const auto &target : unchanged_key_update_plan->exact_indexes)
+                {
+                    bumpIndexContentionCounters(catalog_manager_, target.index_id, 0, 1);
+                    if (!isZeroIdLocal(target.maintenance_id))
+                    {
+                        captureQueuedOrImmediateOnlineMaintenanceDelta(
+                            target.index_id,
+                            target.maintenance_id,
+                            static_cast<uint8_t>(CatalogManager::IndexDeltaOp::UPDATE),
+                            stable_tid,
+                            xmax);
+                    }
+                }
+                return;
+            }
+
+            std::vector<CatalogManager::IndexInfo> indexes;
+            Status index_status =
+                catalog_manager_->listIndexesForTable(table_id, indexes, ctx, false);
+            if (index_status != Status::OK || indexes.empty())
+            {
+                return;
+            }
+
+            for (const auto &index_info : indexes)
+            {
+                if (index_info.is_expression_index || index_info.is_partial_index)
+                {
+                    continue;
+                }
+
+                CatalogManager::IndexType actual_index_type{};
+                void *index_ptr =
+                    catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
+                if (index_ptr == nullptr || !supportsExactKeyLookup(actual_index_type))
+                {
+                    continue;
+                }
+
+                bumpIndexContentionCounters(catalog_manager_, index_info.index_id, 0, 1);
+                ID maintenance_id{};
+                if (resolveActiveOnlineMaintenanceIdLocal(
+                        catalog_manager_, index_info, &maintenance_id))
+                {
+                    captureQueuedOrImmediateOnlineMaintenanceDelta(
+                        index_info.index_id,
+                        maintenance_id,
+                        static_cast<uint8_t>(CatalogManager::IndexDeltaOp::UPDATE),
+                        stable_tid,
+                        xmax);
+                }
+            }
+        };
+
+        if (!indexed_keys_unchanged)
+        {
+            const auto unique_preflight_start = std::chrono::steady_clock::now();
+            Status unique_status = preflightUniqueUpdate(table_id,
+                                                         old_tuple_buffer.data(),
+                                                         old_tuple_length,
+                                                         tuple_data_ptr,
+                                                         new_tuple_size,
+                                                         stable_tid,
+                                                         xmax,
+                                                         nullptr,
+                                                         ctx);
+            unique_preflight_ms =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - unique_preflight_start)
+                    .count();
+            if (unique_status != Status::OK)
+            {
+                append_update_trace("unique_preflight_failed", unique_status, page_id, item_id);
+                buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+                return unique_status;
+            }
         }
 
         PreparedStableHeadTuple prepared_head_tuple;
+        const auto prepare_head_start = std::chrono::steady_clock::now();
         status = prepareStableHeadTupleForMutation(tuple_data_ptr,
                                                   new_tuple_size,
                                                   new_xmin,
@@ -4758,8 +9639,13 @@ namespace scratchbird::core
                                                   toast_mgr,
                                                   &prepared_head_tuple,
                                                   ctx);
+        prepare_head_ms =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - prepare_head_start)
+                .count();
         if (status != Status::OK)
         {
+            append_update_trace("prepare_head_failed", status, page_id, item_id);
             buffer_pool_->unpinPageGlobal(gpid, false, ctx);
             return status;
         }
@@ -4785,6 +9671,7 @@ namespace scratchbird::core
         HeapPage heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
         uint16_t new_item_id;
 
+        const auto same_page_update_start = std::chrono::steady_clock::now();
         status = heap_page.updateTuple(item_id,
                                        prepared_head_tuple.storage_tuple_data,
                                        prepared_head_tuple.storage_tuple_size,
@@ -4793,22 +9680,43 @@ namespace scratchbird::core
                                        &new_item_id,
                                        ctx,
                                        defer_old_toast_cleanup);
+        same_page_update_ms =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - same_page_update_start)
+                .count();
 
         if (status == Status::OK)
         {
             // Success - new version on same page. Stable-TID secondary effects
             // now route through the shared mutation helper used by cross-page
             // updates as well.
-            updateStableTidIndexesForMutation(table_id,
-                                              tablespace_id,
-                                              page_id,
-                                              item_id,
-                                              old_tuple_buffer.data(),
-                                              old_tuple_length,
-                                              tuple_data_ptr,
-                                              new_tuple_size,
-                                              xmax,
-                                              ctx);
+            if (indexed_keys_unchanged)
+            {
+                const auto secondary_index_start = std::chrono::steady_clock::now();
+                captureUnchangedStableTidIndexEffects();
+                secondary_index_ms =
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - secondary_index_start)
+                        .count();
+            }
+            else
+            {
+                const auto secondary_index_start = std::chrono::steady_clock::now();
+                updateStableTidIndexesForMutation(table_id,
+                                                  tablespace_id,
+                                                  page_id,
+                                                  item_id,
+                                                  old_tuple_buffer.data(),
+                                                  old_tuple_length,
+                                                  tuple_data_ptr,
+                                                  new_tuple_size,
+                                                  xmax,
+                                                  ctx);
+                secondary_index_ms =
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - secondary_index_start)
+                        .count();
+            }
 
             if (new_page_id_out != nullptr)
             {
@@ -4843,10 +9751,13 @@ namespace scratchbird::core
 
             // Unpin with dirty flag
             buffer_pool_->unpinPageGlobal(gpid, true, ctx);
+            trace_same_page = true;
+            append_update_trace("same_page", Status::OK, page_id, new_item_id);
             return Status::OK;
         }
         else if (status == Status::PAGE_FULL)
         {
+            trace_page_full = true;
             // ====================================================================
             // SPRINT 0 FIX: CROSS-PAGE UPDATE USING FIREBIRD MGA
             // ====================================================================
@@ -4872,11 +9783,18 @@ namespace scratchbird::core
 
             // Step 2: Allocate page for BACK version (OLD data)
             uint32_t back_version_page_id;
+            const auto back_version_lookup_start = std::chrono::steady_clock::now();
             status = findBackVersionPlacementPage(table_id, old_length, page_id,
                                                   tablespace_id, &back_version_page_id, ctx);
+            back_version_lookup_ms =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - back_version_lookup_start)
+                    .count();
+            trace_back_version_page_id = back_version_page_id;
             if (status != Status::OK)
             {
                 cleanupPreparedHeadTuple();
+                append_update_trace("back_version_lookup_failed", status, page_id, item_id);
                 SET_ERROR_CONTEXT(ctx, status, "Failed to find free page for back version");
                 return status;
             }
@@ -4887,9 +9805,11 @@ namespace scratchbird::core
             if (back_version_page_id == page_id)
             {
                 status = allocateHeapPage(table_id, tablespace_id, &back_version_page_id, ctx);
+                trace_back_version_page_id = back_version_page_id;
                 if (status != Status::OK)
                 {
                     cleanupPreparedHeadTuple();
+                    append_update_trace("back_version_allocate_failed", status, page_id, item_id);
                     SET_ERROR_CONTEXT(ctx, status,
                                       "Failed to allocate non-primary page for back version");
                     return status;
@@ -4904,6 +9824,7 @@ namespace scratchbird::core
             if (status != Status::OK)
             {
                 cleanupPreparedHeadTuple();
+                append_update_trace("pin_back_version_failed", status, page_id, item_id);
                 SET_ERROR_CONTEXT(ctx, status, "Failed to pin page for back version");
                 return status;
             }
@@ -4915,6 +9836,7 @@ namespace scratchbird::core
             // back-version primitive instead of maintaining separate storage-side
             // mini state machines.
             uint16_t back_item_id;
+            const auto back_version_store_start = std::chrono::steady_clock::now();
             status = back_heap_page.storeBackVersionForMutation(old_tuple_buffer.data(),
                                                                 old_length,
                                                                 *old_tuple_hdr,
@@ -4925,10 +9847,15 @@ namespace scratchbird::core
                                                                 true,
                                                                 &back_item_id,
                                                                 ctx);
+            back_version_store_ms =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - back_version_store_start)
+                    .count();
             if (status != Status::OK)
             {
                 buffer_pool_->unpinPageGlobal(back_version_gpid, false, ctx);
                 cleanupPreparedHeadTuple();
+                append_update_trace("store_back_version_failed", status, page_id, item_id);
                 SET_ERROR_CONTEXT(ctx, status, "Failed to store back version");
                 return status;
             }
@@ -4954,6 +9881,7 @@ namespace scratchbird::core
             if (status != Status::OK)
             {
                 cleanupPreparedHeadTuple();
+                append_update_trace("repin_primary_failed", status, page_id, item_id);
                 SET_ERROR_CONTEXT(ctx, status, "Failed to re-pin primary page");
                 return status;
             }
@@ -4962,6 +9890,7 @@ namespace scratchbird::core
             HeapPage primary_heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
 
             // Overwrite primary tuple in-place (NEW data, back version on different page)
+            const auto overwrite_primary_start = std::chrono::steady_clock::now();
             status = primary_heap_page.overwriteTuple(item_id,
                                                       prepared_head_tuple.storage_tuple_data,
                                                       prepared_head_tuple.storage_tuple_size,
@@ -4970,25 +9899,47 @@ namespace scratchbird::core
                                                       back_version_gpid,
                                                       back_item_id,
                                                       ctx);
+            overwrite_primary_ms =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - overwrite_primary_start)
+                    .count();
 
             if (status != Status::OK)
             {
                 buffer_pool_->unpinPageGlobal(gpid, false, ctx);
                 cleanupPreparedHeadTuple();
+                append_update_trace("overwrite_primary_failed", status, page_id, item_id);
                 SET_ERROR_CONTEXT(ctx, status, "Failed to overwrite primary tuple");
                 return status;
             }
 
-            updateStableTidIndexesForMutation(table_id,
-                                              tablespace_id,
-                                              page_id,
-                                              item_id,
-                                              old_tuple_buffer.data(),
-                                              old_length,
-                                              tuple_data_ptr,
-                                              new_tuple_size,
-                                              xmax,
-                                              ctx);
+            if (indexed_keys_unchanged)
+            {
+                const auto secondary_index_start = std::chrono::steady_clock::now();
+                captureUnchangedStableTidIndexEffects();
+                secondary_index_ms =
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - secondary_index_start)
+                        .count();
+            }
+            else
+            {
+                const auto secondary_index_start = std::chrono::steady_clock::now();
+                updateStableTidIndexesForMutation(table_id,
+                                                  tablespace_id,
+                                                  page_id,
+                                                  item_id,
+                                                  old_tuple_buffer.data(),
+                                                  old_length,
+                                                  tuple_data_ptr,
+                                                  new_tuple_size,
+                                                  xmax,
+                                                  ctx);
+                secondary_index_ms =
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - secondary_index_start)
+                        .count();
+            }
 
             // Sprint 4 Task 5.4.3: Mark pages dirty if migrating
             if (is_migrating)
@@ -5036,6 +9987,8 @@ namespace scratchbird::core
                 conn_ctx->recordTableDmlDelta(table_id, 0, 1, 0);
             }
 
+            trace_cross_page = true;
+            append_update_trace("cross_page", Status::OK, page_id, item_id);
             return Status::OK;
         }
         else
@@ -5043,6 +9996,7 @@ namespace scratchbird::core
             // Other error
             cleanupPreparedHeadTuple();
             buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+            append_update_trace("update_tuple_failed", status, page_id, item_id);
             return status;
         }
     }
@@ -5092,6 +10046,20 @@ namespace scratchbird::core
         current_key_ = key;
 
         std::vector<TID> candidate_tids;
+        status = engine_->mergeDeferredExactSecondaryPageDeltas(
+            index_info.index_id,
+            index_info.is_unique,
+            index_info.is_expression_index,
+            index_info.is_partial_index,
+            static_cast<uint8_t>(actual_index_type),
+            index_ptr,
+            engine_->getCurrentXid(),
+            ctx);
+        if (status != Status::OK)
+        {
+            done_ = true;
+            return status;
+        }
         status = searchExactIndexCandidates(actual_index_type, index_ptr, key,
                                             engine_->getCurrentXid(),
                                             &candidate_tids, ctx);

@@ -1,0 +1,3 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+SB-CLUSTER-IMPLEMENTATION-WORKPLAN .md,cross-shard-write-guard-policy,"include/scratchbird/core/cluster_write_safety.h;src/core/cluster_write_safety.cpp","MULTI_SHARD_GUARD_RULES.md;TEST_RESULTS.md",pass,"Guard applies explicit policy to unique write shard set"
+SB-CLUSTER-SWS-MGA-01.md,single-writer-safety-across-shards,"src/core/cluster_write_safety.cpp::evaluateMultiShardWrite","CROSS_SHARD_WRITE_REJECT_TESTS.csv;GUARD_AUDIT_LOG.md",pass,"Cross-shard writes are blocked unless policy allows and override is explicit"

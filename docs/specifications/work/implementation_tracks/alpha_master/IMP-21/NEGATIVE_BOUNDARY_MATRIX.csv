@@ -1,0 +1,6 @@
+case_id,scenario,input,expected_result,error_code
+T21-NG-001,malformed_statement,broken_tokens,rejected,E_SYNTAX_INVALID
+T21-NG-002,unsupported_dialect_feature,feature_not_in_profile,rejected,E_DIALECT_FEATURE_UNSUPPORTED
+T21-NG-003,permission_denied_admin,non_admin_executes_admin_sql,rejected,E_PERMISSION_DENIED
+T21-NG-004,invalid_uuid_argument,bad_uuid_in_resource_or_listener_command,rejected,E_UUID_FORMAT_INVALID
+T21-NG-005,resource_exhaustion_parser_pool,pool_capacity_exceeded,rejected,E_RESOURCE_EXHAUSTED

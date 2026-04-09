@@ -1,0 +1,5 @@
+component,license,required_notice_file,package_path,status,notes
+ScratchBird,IDPL-1.0,LICENSE,/licenses,ready_with_action,Replace placeholder metadata before external release
+LLVM,Apache-2.0 WITH LLVM-exception,LICENSE.TXT,/licenses/third_party,ready,Include Apache text plus LLVM exceptions
+IDPL full text,IDPL-1.0,IDPL_1_0_FULL_TEXT.txt,/licenses,ready,Include full text in installer/legal bundle
+Notice bundle,N/A,THIRD_PARTY_NOTICE_BUNDLE.txt,/licenses/third_party,ready,Produced in HCN-003 evidence

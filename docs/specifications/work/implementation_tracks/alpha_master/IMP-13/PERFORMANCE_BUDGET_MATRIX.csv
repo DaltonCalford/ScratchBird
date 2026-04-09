@@ -1,0 +1,5 @@
+metric_id,workload,threshold_type,threshold_value,pass_condition
+T13-PF-001,operator_resolution_hot_path,p95_us,30,measured_p95<=30
+T13-PF-002,expression_eval_1k_nodes,p95_ms,6,measured_p95<=6
+T13-PF-003,cast_eval_100k_values,throughput_rows_per_sec,250000,measured_rate>=250000
+T13-PF-004,null_logic_eval_hot_path,p95_us,20,measured_p95<=20

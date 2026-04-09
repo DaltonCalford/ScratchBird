@@ -1135,6 +1135,8 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"relation_name", DataType::TEXT, false},
         {"cleanup_debt_bytes", DataType::INT64, false},
         {"retained_dead_bytes", DataType::INT64, false},
+        {"index_backlog_pages", DataType::INT64, false},
+        {"index_backlog_bytes", DataType::INT64, false},
         {"chain_scatter_bucket", DataType::TEXT, true},
         {"rewrite_recommended", DataType::BOOLEAN, false},
         {"sweep_generation", DataType::INT64, false},
@@ -4234,6 +4236,8 @@ Status SysCatalogHandler::queryMgaCleanupDebt(VirtualResultSet& results, ErrorCo
             {"relation_name", core::TypedValue::makeText(debt_row.relation_name)},
             {"cleanup_debt_bytes", core::TypedValue::makeInt64(static_cast<int64_t>(debt_row.cleanup_debt_bytes))},
             {"retained_dead_bytes", core::TypedValue::makeInt64(static_cast<int64_t>(debt_row.retained_dead_bytes))},
+            {"index_backlog_pages", core::TypedValue::makeInt64(static_cast<int64_t>(debt_row.index_backlog_pages))},
+            {"index_backlog_bytes", core::TypedValue::makeInt64(static_cast<int64_t>(debt_row.index_backlog_bytes))},
             {"chain_scatter_bucket", debt_row.has_chain_scatter_bucket
                                          ? core::TypedValue::makeText(debt_row.chain_scatter_bucket)
                                          : core::TypedValue::makeNull(DataType::TEXT)},

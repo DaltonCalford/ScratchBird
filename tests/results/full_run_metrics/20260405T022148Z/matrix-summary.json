@@ -1,0 +1,148 @@
+{
+  "run_id": "20260405T022148Z",
+  "output_root": "/home/dcalford/CliWork/ScratchBird/tests/results/full_run_metrics/20260405T022148Z",
+  "started_at_utc": "2026-04-05T02:55:17Z",
+  "completed_at_utc": "2026-04-05T02:55:17Z",
+  "duration_seconds": 995.99,
+  "engines_requested": [
+    "scratchbird",
+    "firebird",
+    "mysql",
+    "postgresql",
+    "scratchbird-firebird",
+    "scratchbird-mysql",
+    "scratchbird-postgresql",
+    "upstream-firebird",
+    "upstream-mysql",
+    "upstream-postgresql"
+  ],
+  "suites_requested": [
+    "full-gate",
+    "public-beta",
+    "regression",
+    "emulation-comparison",
+    "native-v3-inet"
+  ],
+  "result": "failed",
+  "failed_suite_runs": 4,
+  "total_suite_runs": 13,
+  "suite_runs": [
+    {
+      "engine": "scratchbird",
+      "suite": "full-gate",
+      "started_at": "2026-04-05T02:55:17Z",
+      "duration_seconds": 995.99,
+      "status": "failed",
+      "exit_code": 8,
+      "output_dir": "scratchbird/full-gate"
+    },
+    {
+      "engine": "scratchbird",
+      "suite": "public-beta",
+      "started_at": "2026-04-05T02:55:17Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "scratchbird/public-beta"
+    },
+    {
+      "engine": "firebird",
+      "suite": "regression",
+      "started_at": "2026-04-05T02:51:29Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "firebird/regression"
+    },
+    {
+      "engine": "mysql",
+      "suite": "regression",
+      "started_at": "2026-04-05T02:51:02Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "mysql/regression"
+    },
+    {
+      "engine": "postgresql",
+      "suite": "regression",
+      "started_at": "2026-04-05T02:50:31Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "postgresql/regression"
+    },
+    {
+      "engine": "scratchbird",
+      "suite": "regression",
+      "started_at": "2026-04-05T02:51:58Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "scratchbird/regression"
+    },
+    {
+      "engine": "scratchbird-firebird",
+      "suite": "emulation-comparison",
+      "started_at": "2026-04-05T02:55:17Z",
+      "duration_seconds": 0.0,
+      "status": "missing",
+      "exit_code": 1,
+      "output_dir": "scratchbird-firebird/emulation-comparison"
+    },
+    {
+      "engine": "scratchbird-mysql",
+      "suite": "emulation-comparison",
+      "started_at": "2026-04-05T02:51:02Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "scratchbird-mysql/emulation-comparison"
+    },
+    {
+      "engine": "scratchbird-postgresql",
+      "suite": "emulation-comparison",
+      "started_at": "2026-04-05T02:50:31Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "scratchbird-postgresql/emulation-comparison"
+    },
+    {
+      "engine": "upstream-firebird",
+      "suite": "emulation-comparison",
+      "started_at": "2026-04-05T02:51:29Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "upstream-firebird/emulation-comparison"
+    },
+    {
+      "engine": "upstream-mysql",
+      "suite": "emulation-comparison",
+      "started_at": "2026-04-05T02:55:17Z",
+      "duration_seconds": 0.0,
+      "status": "missing",
+      "exit_code": 1,
+      "output_dir": "upstream-mysql/emulation-comparison"
+    },
+    {
+      "engine": "upstream-postgresql",
+      "suite": "emulation-comparison",
+      "started_at": "2026-04-05T02:55:17Z",
+      "duration_seconds": 0.0,
+      "status": "missing",
+      "exit_code": 1,
+      "output_dir": "upstream-postgresql/emulation-comparison"
+    },
+    {
+      "engine": "scratchbird",
+      "suite": "native-v3-inet",
+      "started_at": "2026-04-05T02:52:48Z",
+      "duration_seconds": 0.0,
+      "status": "passed",
+      "exit_code": 0,
+      "output_dir": "scratchbird/native-v3-inet"
+    }
+  ]
+}

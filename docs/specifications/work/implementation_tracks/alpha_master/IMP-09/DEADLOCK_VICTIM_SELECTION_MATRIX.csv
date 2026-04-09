@@ -1,0 +1,6 @@
+case_id,cycle_members,victim_rule,expected_victim,expected_result,error_code
+DLK-001,tx10_tx11_tx12,youngest_txid,tx12,victim_aborted_statement,DEADLOCK_DETECTED
+DLK-002,tx20_tx20_self_convert,self_edge_detect,tx20,victim_aborted_statement,DEADLOCK_DETECTED
+DLK-003,tx30_tx31_same_txid_cost_compare,lowest_rollback_cost,tx31,victim_aborted_statement,DEADLOCK_DETECTED
+DLK-004,tie_on_txid_and_cost,owner_key_lexical_min,deterministic_owner,victim_aborted_statement,DEADLOCK_DETECTED
+DLK-005,no_cycle_detected,n/a,n/a,no_deadlock_action,NONE

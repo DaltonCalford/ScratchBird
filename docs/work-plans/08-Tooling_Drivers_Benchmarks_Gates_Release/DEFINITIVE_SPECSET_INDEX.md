@@ -1,0 +1,58 @@
+# Definitive Specset Index
+
+## Assigned Sections
+
+- docs/specifications/30_Client_Tooling/README.md
+- docs/specifications/30_Client_Tooling/TOOL_COMMAND_SURFACE_CONTRACTS.md
+- docs/specifications/30_Client_Tooling/CLIENT_ERROR_AND_RESULT_MODEL.md
+- docs/specifications/30_Client_Tooling/INSTALLER_PROFILES_AND_ARTIFACTS.md
+- docs/specifications/30_Client_Tooling/DRIVER_CPP_BASELINE_SPECIFICATION.md
+- docs/specifications/30_Client_Tooling/DRIVER_CLI_BASELINE_SPECIFICATION.md
+- docs/specifications/30_Client_Tooling/REMOTE_ADMIN_AND_DEPLOYMENT_CONTROL_SURFACE.md
+- docs/specifications/30_Client_Tooling/REMOTE_MANAGEMENT_ADMIN_SQL_COMMAND_SURFACE.md
+- docs/specifications/31_Conformance_Performance_and_Reliability_Gates/README.md
+- docs/specifications/31_Conformance_Performance_and_Reliability_Gates/PUBLIC_BETA_REQUIRED_GATE_EXECUTION_AND_FAILURE_MODEL.md
+- docs/specifications/31_Conformance_Performance_and_Reliability_Gates/PUBLIC_BETA_REQUIRED_GATE_CATEGORY_AND_STEP_MODEL.md
+- docs/specifications/31_Conformance_Performance_and_Reliability_Gates/TEST_CONTRACT.md
+- docs/specifications/31_Conformance_Performance_and_Reliability_Gates/SCRATCHBIRD_BENCHMARKS_PROJECT_AND_MATRIX_MODEL.md
+- docs/specifications/31_Conformance_Performance_and_Reliability_Gates/FULL_CLEAN_BUILD_TEST_AND_BENCHMARK_ARTIFACT_MODEL.md
+- docs/specifications/31_Conformance_Performance_and_Reliability_Gates/CLIENT_API_AND_TOOLING_GATES.md
+- docs/TEST.md
+
+## Expanded Cross-Section Optimization Authorities
+
+- docs/specifications/12_Temporary_Tables/TEMP_WORKFILE_AND_OPERATOR_SPILL_CONTRACT.md
+- docs/specifications/18_Index_Framework/DML_WRITE_PATH_AND_INDEX_OPTIMIZATION_MODEL.md
+- docs/specifications/18_Index_Framework/INDEX_FAMILY_NATIVE_METRICS_PACKET_CONTRACT.md
+- docs/specifications/18_Index_Framework/INDEX_METRICS_AND_COSTING.md
+- docs/specifications/18_Index_Framework/ORDERED_EXACT_AND_RANGE_PLANNER_SPEC.md
+- docs/specifications/18_Index_Framework/SUMMARY_BITMAP_COLUMNSTORE_PLANNER_SPEC.md
+- docs/specifications/23_SBLR_VM_Compiler_and_Executor/ACCESS_PATH_ORDERING_AND_UPPER_STAGE_PLANNING.md
+- docs/specifications/23_SBLR_VM_Compiler_and_Executor/JOIN_SEARCH_AND_METHOD_ENUMERATION.md
+- docs/specifications/33_Memory_Management/BUFFER_POOL_DOMAIN_BUDGET_AND_RESIDENCY_MODEL.md
+- docs/specifications/33_Memory_Management/MEMORY_GRANT_FEEDBACK_AND_OPERATOR_RESERVATION_MODEL.md
+- docs/specifications/34_Table_Storage_and_Access_Methods/COLUMNSTORE_ANALYTICAL_STORAGE_AND_SEGMENT_MODEL.md
+- docs/specifications/36_Query_Rewrite_and_Planner/PRIMARY_INDEX_FAMILY_PARITY_AND_METRICS_MANDATE.md
+- docs/specifications/36_Query_Rewrite_and_Planner/ALL_IMPLEMENTED_INDEX_FAMILIES_PRIMARY_CLASS_PLANNING_AND_REFUSAL_MODEL.md
+- docs/specifications/36_Query_Rewrite_and_Planner/NO_SECONDARY_INDEX_CLASS_HEURISTIC_AND_COMPLETE_CANDIDATE_ENUMERATION_MODEL.md
+- docs/specifications/36_Query_Rewrite_and_Planner/INDEX_FAMILY_STATISTICS_CONSUMPTION_AND_STALENESS_PENALTY_MODEL.md
+- docs/specifications/36_Query_Rewrite_and_Planner/FAMILY_METRICS_REFRESH_STALENESS_AND_REPLAN_TRIGGER_MODEL.md
+- docs/specifications/36_Query_Rewrite_and_Planner/IMPLEMENTED_FAMILY_WINNER_OBLIGATION_AND_REFUSAL_EXPLANATION_MODEL.md
+- docs/specifications/37_Statistics_Metadata_and_Schema_DDL/INDEX_FAMILY_METRICS_PUBLICATION_FRESHNESS_AND_INVALIDATION_MODEL.md
+- docs/specifications/37_Statistics_Metadata_and_Schema_DDL/ONLINE_SCHEMA_CHANGE_AND_BACKFILL_MODEL.md
+- docs/specifications/37_Statistics_Metadata_and_Schema_DDL/STATISTICS_COLLECTION_AND_FRESHNESS.md
+- docs/specifications/39_Backup_Restore_and_Bulk_Data_Paths/BULK_INGEST_LANES_AND_SHADOW_LOAD_CUTOVER_MODEL.md
+
+## Global Governance Inputs
+
+- docs/specifications/00_Governance_and_Invarients/WORK_PLAN_MANAGEMENT_STANDARD_AND_LIFECYCLE.md
+- docs/specifications/AUTHORITATIVE_SPEC_INVENTORY.md
+- docs/completed-work-plans/00-Beta1_Tasks/README.md
+- docs/completed-work-plans/00-Beta1_Tasks/WORKPLAN_GENERATION_INPUT.md
+
+## Required Research Order
+
+1. assigned canonical specs
+2. consumed cross-section canonical specs
+3. docs/reference local authority tree
+4. web research when local authority is insufficient

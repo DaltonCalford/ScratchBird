@@ -467,6 +467,126 @@ TEST_F(ShowSetCommandsTest, ShowSystemBytecode)
     EXPECT_TRUE(bytecodeContainsV3Opcode(bc, scratchbird::sblr::v3::Opcode::SBLR3_SHOW_SYSTEM));
 }
 
+TEST_F(ShowSetCommandsTest, ShowManagementCommandsCompileToAlterSystemOpcode)
+{
+    EXPECT_TRUE(compileSucceeds("SHOW MANAGEMENT SERVERS"));
+    EXPECT_TRUE(compileSucceeds("SHOW MANAGEMENT INSTRUCTIONS"));
+    EXPECT_TRUE(compileSucceeds("SHOW MANAGEMENT DRIFT"));
+
+    auto show_servers_bc = generateBytecode("SHOW MANAGEMENT SERVERS");
+    ASSERT_FALSE(show_servers_bc.empty());
+    EXPECT_TRUE(bytecodeContainsV3Opcode(
+        show_servers_bc, scratchbird::sblr::v3::Opcode::SBLR3_ALTER_SYSTEM));
+}
+
+TEST_F(ShowSetCommandsTest, RemoteManagementLifecycleTransitionsAreDeterministic)
+{
+    auto server_result = compileAndExecute("SHOW MANAGEMENT SERVERS");
+    ASSERT_TRUE(server_result.success()) << server_result.error();
+    ASSERT_TRUE(server_result.hasResultSet());
+    ASSERT_NE(server_result.resultSet(), nullptr);
+    ASSERT_EQ(server_result.resultSet()->rowCount(), 1u);
+
+    const std::string server_uuid = server_result.resultSet()->getValue(0, 0).toString();
+    EXPECT_FALSE(server_uuid.empty());
+    EXPECT_EQ(server_result.resultSet()->getValue(0, 3).toString(), "READY");
+    EXPECT_EQ(server_result.resultSet()->getValue(0, 16).toString(), "NONE");
+
+    auto assess_result = compileAndExecute(
+        "ALTER SYSTEM ASSESS REMOTE SET scheduler.enabled = false ON SERVER '" + server_uuid + "'");
+    ASSERT_TRUE(assess_result.success()) << assess_result.error();
+    ASSERT_TRUE(assess_result.hasResultSet());
+    ASSERT_NE(assess_result.resultSet(), nullptr);
+    ASSERT_EQ(assess_result.resultSet()->rowCount(), 1u);
+    const std::string instruction_uuid = assess_result.resultSet()->getValue(0, 0).toString();
+    EXPECT_FALSE(instruction_uuid.empty());
+    EXPECT_EQ(assess_result.resultSet()->getValue(0, 1).toString(), "ASSESSED");
+    EXPECT_EQ(assess_result.resultSet()->getValue(0, 4).toString(), "OK");
+
+    auto instructions_result = compileAndExecute("SHOW MANAGEMENT INSTRUCTIONS");
+    ASSERT_TRUE(instructions_result.success()) << instructions_result.error();
+    ASSERT_TRUE(instructions_result.hasResultSet());
+    ASSERT_NE(instructions_result.resultSet(), nullptr);
+    ASSERT_EQ(instructions_result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(instructions_result.resultSet()->getValue(0, 0).toString(), instruction_uuid);
+    EXPECT_EQ(instructions_result.resultSet()->getValue(0, 5).toString(), "ASSESSED");
+    EXPECT_EQ(instructions_result.resultSet()->getValue(0, 6).toString(), "ADMITTED");
+
+    auto apply_result = compileAndExecute(
+        "ALTER SYSTEM APPLY INSTRUCTION '" + instruction_uuid + "'");
+    ASSERT_TRUE(apply_result.success()) << apply_result.error();
+    ASSERT_TRUE(apply_result.hasResultSet());
+    ASSERT_NE(apply_result.resultSet(), nullptr);
+    ASSERT_EQ(apply_result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(apply_result.resultSet()->getValue(0, 0).toString(), instruction_uuid);
+    EXPECT_EQ(apply_result.resultSet()->getValue(0, 1).toString(), "COMPLETED");
+
+    auto drift_result = compileAndExecute("SHOW MANAGEMENT DRIFT");
+    ASSERT_TRUE(drift_result.success()) << drift_result.error();
+    ASSERT_TRUE(drift_result.hasResultSet());
+    ASSERT_NE(drift_result.resultSet(), nullptr);
+    ASSERT_EQ(drift_result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(drift_result.resultSet()->getValue(0, 0).toString(), db_->uuid().toString());
+    EXPECT_EQ(drift_result.resultSet()->getValue(0, 3).toString(), "CONSISTENT");
+    EXPECT_EQ(drift_result.resultSet()->getValue(0, 4).toString(), instruction_uuid);
+}
+
+TEST_F(ShowSetCommandsTest, RemoteManagementQuarantineAndAcknowledgeRemainDurable)
+{
+    auto server_result = compileAndExecute("SHOW MANAGEMENT SERVERS");
+    ASSERT_TRUE(server_result.success()) << server_result.error();
+    ASSERT_NE(server_result.resultSet(), nullptr);
+    const std::string server_uuid = server_result.resultSet()->getValue(0, 0).toString();
+
+    auto assess_result = compileAndExecute(
+        "ALTER SYSTEM ASSESS REMOTE SET scheduler.enabled = true ON SERVER '" + server_uuid + "'");
+    ASSERT_TRUE(assess_result.success()) << assess_result.error();
+    ASSERT_NE(assess_result.resultSet(), nullptr);
+    const std::string instruction_uuid = assess_result.resultSet()->getValue(0, 0).toString();
+
+    auto quarantine_result = compileAndExecute(
+        "ALTER SYSTEM QUARANTINE INSTRUCTION '" + instruction_uuid + "'");
+    ASSERT_TRUE(quarantine_result.success()) << quarantine_result.error();
+    ASSERT_NE(quarantine_result.resultSet(), nullptr);
+    EXPECT_EQ(quarantine_result.resultSet()->getValue(0, 1).toString(), "QUARANTINED");
+
+    auto acknowledge_result = compileAndExecute(
+        "ALTER SYSTEM ACKNOWLEDGE INSTRUCTION '" + instruction_uuid + "'");
+    ASSERT_TRUE(acknowledge_result.success()) << acknowledge_result.error();
+    ASSERT_NE(acknowledge_result.resultSet(), nullptr);
+    EXPECT_EQ(acknowledge_result.resultSet()->getValue(0, 1).toString(), "ACKNOWLEDGED");
+
+    auto instructions_result = compileAndExecute("SHOW MANAGEMENT INSTRUCTIONS");
+    ASSERT_TRUE(instructions_result.success()) << instructions_result.error();
+    ASSERT_NE(instructions_result.resultSet(), nullptr);
+    ASSERT_EQ(instructions_result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(instructions_result.resultSet()->getValue(0, 0).toString(), instruction_uuid);
+    EXPECT_EQ(instructions_result.resultSet()->getValue(0, 5).toString(), "ACKNOWLEDGED");
+    EXPECT_EQ(instructions_result.resultSet()->getValue(0, 7).toString(),
+              "REMOTE_MGMT_QUARANTINED");
+}
+
+TEST_F(ShowSetCommandsTest, RemoteManagementCancelProducesCommandStatusRow)
+{
+    auto server_result = compileAndExecute("SHOW MANAGEMENT SERVERS");
+    ASSERT_TRUE(server_result.success()) << server_result.error();
+    ASSERT_NE(server_result.resultSet(), nullptr);
+    const std::string server_uuid = server_result.resultSet()->getValue(0, 0).toString();
+
+    auto assess_result = compileAndExecute(
+        "ALTER SYSTEM ASSESS REMOTE SET scheduler.enabled = true ON SERVER '" + server_uuid + "'");
+    ASSERT_TRUE(assess_result.success()) << assess_result.error();
+    ASSERT_NE(assess_result.resultSet(), nullptr);
+    const std::string instruction_uuid = assess_result.resultSet()->getValue(0, 0).toString();
+
+    auto cancel_result = compileAndExecute(
+        "ALTER SYSTEM CANCEL INSTRUCTION '" + instruction_uuid + "'");
+    ASSERT_TRUE(cancel_result.success()) << cancel_result.error();
+    ASSERT_NE(cancel_result.resultSet(), nullptr);
+    EXPECT_EQ(cancel_result.resultSet()->getValue(0, 1).toString(), "CANCELLED");
+    EXPECT_EQ(cancel_result.resultSet()->getValue(0, 4).toString(), "OK");
+}
+
 // =============================================================================
 // SHOW SQL DIALECT Command Tests
 // =============================================================================
@@ -822,6 +942,98 @@ TEST_F(ShowSetCommandsTest, SetLocalTimeoutRequiresNumber)
 {
     EXPECT_FALSE(compileSucceeds("SET LOCAL_TIMEOUT"));
     EXPECT_FALSE(compileSucceeds("SET LOCAL_TIMEOUT abc"));
+}
+
+TEST_F(ShowSetCommandsTest, ConfigCommandsCompileToAlterSystemOpcode)
+{
+    EXPECT_TRUE(compileSucceeds("ALTER SYSTEM RESET scheduler.enabled"));
+    EXPECT_TRUE(compileSucceeds("CONFIG HISTORY"));
+    EXPECT_TRUE(compileSucceeds("CONFIG RELOAD"));
+
+    auto reset_bc = generateBytecode("ALTER SYSTEM RESET scheduler.enabled");
+    ASSERT_FALSE(reset_bc.empty());
+    EXPECT_TRUE(bytecodeContainsV3Opcode(reset_bc, scratchbird::sblr::v3::Opcode::SBLR3_ALTER_SYSTEM));
+
+    auto history_bc = generateBytecode("CONFIG HISTORY");
+    ASSERT_FALSE(history_bc.empty());
+    EXPECT_TRUE(bytecodeContainsV3Opcode(history_bc, scratchbird::sblr::v3::Opcode::SBLR3_ALTER_SYSTEM));
+
+    auto reload_bc = generateBytecode("CONFIG RELOAD");
+    ASSERT_FALSE(reload_bc.empty());
+    EXPECT_TRUE(bytecodeContainsV3Opcode(reload_bc, scratchbird::sblr::v3::Opcode::SBLR3_ALTER_SYSTEM));
+}
+
+TEST_F(ShowSetCommandsTest, ShowConfigAndHistoryUseCatalogManagedValues)
+{
+    auto show_config = [&]() -> scratchbird::sblr::ExecutionResult {
+        return compileAndExecute("SHOW CONFIG");
+    };
+    auto find_row = [](scratchbird::sblr::ResultSet* rs, const std::string& key) -> size_t {
+        for (size_t row = 0; row < rs->rowCount(); ++row)
+        {
+            if (rs->getValue(row, 0).toString() == key)
+            {
+                return row;
+            }
+        }
+        return rs->rowCount();
+    };
+
+    auto initial = show_config();
+    ASSERT_TRUE(initial.success()) << initial.error();
+    ASSERT_NE(initial.resultSet(), nullptr);
+    size_t scheduler_row = find_row(initial.resultSet(), "scheduler.enabled");
+    ASSERT_LT(scheduler_row, initial.resultSet()->rowCount());
+    EXPECT_EQ(initial.resultSet()->getValue(scheduler_row, 2).toString(), "BOOTSTRAP");
+
+    auto set_result = compileAndExecute("ALTER SYSTEM SET scheduler.enabled = false");
+    ASSERT_TRUE(set_result.success()) << set_result.error();
+    EXPECT_FALSE(scratchbird::core::Config::getInstance().getBool("scheduler", "enabled", true));
+
+    auto after_set = show_config();
+    ASSERT_TRUE(after_set.success()) << after_set.error();
+    ASSERT_NE(after_set.resultSet(), nullptr);
+    scheduler_row = find_row(after_set.resultSet(), "scheduler.enabled");
+    ASSERT_LT(scheduler_row, after_set.resultSet()->rowCount());
+    EXPECT_EQ(after_set.resultSet()->getValue(scheduler_row, 1).toString(), "false");
+    EXPECT_EQ(after_set.resultSet()->getValue(scheduler_row, 2).toString(), "CATALOG");
+
+    auto history = compileAndExecute("CONFIG HISTORY");
+    ASSERT_TRUE(history.success()) << history.error();
+    ASSERT_NE(history.resultSet(), nullptr);
+    bool saw_scheduler_change = false;
+    for (size_t row = 0; row < history.resultSet()->rowCount(); ++row)
+    {
+        if (history.resultSet()->getValue(row, 1).toString() == "scheduler.enabled" &&
+            history.resultSet()->getValue(row, 3).toString() == "false")
+        {
+            saw_scheduler_change = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(saw_scheduler_change);
+
+    auto reload = compileAndExecute("CONFIG RELOAD");
+    ASSERT_TRUE(reload.success()) << reload.error();
+    EXPECT_FALSE(scratchbird::core::Config::getInstance().getBool("scheduler", "enabled", true));
+
+    auto reset = compileAndExecute("ALTER SYSTEM RESET scheduler.enabled");
+    ASSERT_TRUE(reset.success()) << reset.error();
+
+    auto after_reset = show_config();
+    ASSERT_TRUE(after_reset.success()) << after_reset.error();
+    ASSERT_NE(after_reset.resultSet(), nullptr);
+    scheduler_row = find_row(after_reset.resultSet(), "scheduler.enabled");
+    ASSERT_LT(scheduler_row, after_reset.resultSet()->rowCount());
+    EXPECT_EQ(after_reset.resultSet()->getValue(scheduler_row, 1).toString(), "true");
+    EXPECT_EQ(after_reset.resultSet()->getValue(scheduler_row, 2).toString(), "BOOTSTRAP");
+}
+
+TEST_F(ShowSetCommandsTest, DedicatedListenerTopologyKeysRejectAlterSystemSet)
+{
+    auto result = compileAndExecute("ALTER SYSTEM SET listener.postgresql.port = 6432");
+    ASSERT_FALSE(result.success());
+    EXPECT_NE(result.error().find("dedicated listener topology keys"), std::string::npos);
 }
 
 // =============================================================================

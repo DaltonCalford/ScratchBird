@@ -1,0 +1,3 @@
+audit_item,test,status,notes
+shard_contracts,CatalogShardingExtensionContractTest.ShardingCatalogContracts,pass,Shard map/range/placement contracts persisted.
+shard_bootstrap_pages,CatalogDatabaseBootstrapTest.CreatesShardingCatalogFamilyPages,pass,Sharding catalog pages allocated and validated.

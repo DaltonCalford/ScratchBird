@@ -1,0 +1,5 @@
+suite_id,requirement_id,check,method,expected_result,reject_condition,evidence_artifact
+T31-G5,IMP-31-REQ-G5-01,Listener/parser/ipc layering integration,Integration harness,Layer contracts satisfy section 25/26/28/29 invariants,Layering contract violation,TEST_RESULTS.md#T31-G5
+T31-G5,IMP-31-REQ-G5-02,Pool scaling and failure handling integration,Integration chaos harness,Pool scaling/failure handling is deterministic and bounded,Unbounded or nondeterministic failure handling,TEST_RESULTS.md#T31-G5
+T31-G5,IMP-31-REQ-G5-03,Client profile integration,Client integration harness,All supported profiles satisfy contract surfaces,Profile contract mismatch,TEST_RESULTS.md#T31-G5
+T31-G5,IMP-31-REQ-G5-04,Resource bundle activation integration,Bundle activation harness,Activation and post-activation behavior deterministic,Activation contract violation,TEST_RESULTS.md#T31-G5

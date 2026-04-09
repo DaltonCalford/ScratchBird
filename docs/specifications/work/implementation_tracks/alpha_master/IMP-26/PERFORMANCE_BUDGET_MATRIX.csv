@@ -1,0 +1,3 @@
+case_id,suite,required_check,expected_result,error_code
+T26-F01,F,ipc_profile_throughput_target_under_64mib_frames,pass,
+T26-F02,F,sbwp_streaming_batches_with_bounded_memory,pass,

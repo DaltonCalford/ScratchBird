@@ -1,0 +1,6 @@
+case_id,suite,required_check,expected_result,error_code
+T30-B01,B,embedded_profile_execution,pass,
+T30-B02,B,shared_local_ipc_profile_execution,pass,
+T30-B03,B,network_native_profile_execution,pass,
+T30-B04,B,invalid_profile_config_rejected,reject,CLI-E-PROFILE
+T30-B05,B,network_native_reject_when_no_open_db_or_no_listener_parser_pool,reject,CLI-E-NO-SERVICE

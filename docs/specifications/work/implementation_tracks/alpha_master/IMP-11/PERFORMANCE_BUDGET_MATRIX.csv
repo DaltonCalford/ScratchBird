@@ -1,0 +1,5 @@
+metric_id,workload,threshold_type,threshold_value,pass_condition
+T11-PF-001,streaming_read_1MiB,p95_latency_ms,50,measured_p95<=50
+T11-PF-002,streaming_write_1MiB,p95_latency_ms,70,measured_p95<=70
+T11-PF-003,online_relocation_throughput,MiB_per_sec,80,measured_rate>=80
+T11-PF-004,relocation_memory_ceiling,MiB,256,measured_peak<=256

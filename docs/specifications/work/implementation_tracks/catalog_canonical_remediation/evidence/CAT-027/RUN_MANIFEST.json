@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-027",
+  "status": "completed",
+  "started_at": "2026-02-14T18:26:00Z",
+  "finished_at": "2026-02-14T18:53:30Z",
+  "owner": "codex",
+  "notes": "Implemented CAT-027 replication runtime/conflict catalog families (root wiring, allocator/backfill, deterministic CRUD contracts) with targeted bootstrap and contract tests passing."
+}

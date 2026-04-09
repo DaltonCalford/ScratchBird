@@ -1,0 +1,24 @@
+# Changeset Log
+
+- Ticket: IMP-11
+- Section: 11_TOAST_and_LOB_Storage
+- Summary: Completed deterministic implementation contract pack and gate evidence.
+- Files changed:
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/IMPLEMENTATION_CHECKLIST.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/IMPLEMENTATION_NOTES.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/LOB_READ_WRITE_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/LOB_GC_VISIBILITY_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/LOB_RELOCATION_ONLINE_WATERMARK_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/LOB_RELOCATION_OFFLINE_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/TOAST_POINTER_INTEGRITY_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/LOB_POINTER_SWAP_ROLLBACK_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/NEGATIVE_BOUNDARY_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/PERFORMANCE_BUDGET_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/COMPATIBILITY_PARITY_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/TEST_RESULTS.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/CHECKSUMS.sha256
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/RUN_MANIFEST.json
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/SPEC_TRACEABILITY.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/TEST_EVIDENCE_INDEX.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/GATE_RESULT.json
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-11/CHANGESET_LOG.md

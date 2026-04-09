@@ -1,0 +1,6 @@
+case_id,required_check,expected_result,error_code
+T25-P1-01,c00_c03_metadata_freeze_candidate_selection_fanout,pass,
+T25-P1-02,c04_speculative_retry_bounds,pass,
+T25-P1-03,c05_c06_reconciliation_repair_persistence,pass,
+T25-P1-04,c07_degraded_mode_partition_restrictions,pass,
+T25-P1-05,c08_observability_fields_with_correlation,pass,

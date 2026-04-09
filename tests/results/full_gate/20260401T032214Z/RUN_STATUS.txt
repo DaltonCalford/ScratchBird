@@ -1,0 +1,9 @@
+run_dir=tests/results/full_gate/20260401T032214Z
+configure_log=tests/results/full_gate/20260401T032214Z/configure.log
+build_log=tests/results/full_gate/20260401T032214Z/build.log
+ctest_log=tests/results/full_gate/20260401T032214Z/ctest.log
+benchmark_log=tests/results/full_gate/20260401T032214Z/benchmark.log
+configure_exit=0
+build_exit=0
+ctest_exit=0
+benchmark_exit=143

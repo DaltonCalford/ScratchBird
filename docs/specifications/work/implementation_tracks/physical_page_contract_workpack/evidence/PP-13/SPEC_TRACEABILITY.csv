@@ -1,0 +1,5 @@
+spec_clause,implementation,evidence,status
+Committed delete transactions must hard-delete TOAST chunks in TIP cleanup,src/core/garbage_collector.cpp (cleanToastChunksByTIP COMMITTED branch),TOAST_LOB_GC_VISIBILITY_MATRIX.csv,pass
+Aborted delete transactions must keep chunk visible by clearing xmax/delete flags,src/core/garbage_collector.cpp (clearChunkXmax helper + ABORTED branch),TOAST_LOB_GC_VISIBILITY_MATRIX.csv,pass
+Out-of-range xmax markers must be normalized to visible state,src/core/garbage_collector.cpp (xmax validation branch),TOAST_LOB_GC_VISIBILITY_MATRIX.csv,pass
+GC visibility contract must be regression-tested for committed and aborted deletes,tests/unit/test_toast_gc_contract.cpp,TEST_RESULTS.md,pass

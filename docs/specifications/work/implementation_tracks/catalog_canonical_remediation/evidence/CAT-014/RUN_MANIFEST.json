@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-014",
+  "status": "completed",
+  "started_at": "2026-02-14T05:35:00Z",
+  "finished_at": "2026-02-14T05:58:30Z",
+  "owner": "codex",
+  "notes": "CAT-014 complete: reserved_words/emulation_profile/parser_profile/parser_transform_entry/parser_capability_entry/parser_error_map_entry/parser_feature_precedence root wiring/backfill, CRUD contracts, and targeted C2 gate pass."
+}

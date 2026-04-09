@@ -1,0 +1,298 @@
+{
+  "metadata": {
+    "engine": "firebird",
+    "host": "localhost",
+    "port": 3050,
+    "timestamp": "20260401_142217"
+  },
+  "results": [
+    {
+      "test_name": "clustered_pk_range_scan",
+      "test_category": "mysql_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -204\\n- Dynamic SQL Error\\n- SQL error code = -204\\n- Table unknown\\n- ORDERS_CLUSTERED\\n- At line 4, column 15', -204, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "clustered_pk_prefix_scan",
+      "test_category": "mysql_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -204\\n- Dynamic SQL Error\\n- SQL error code = -204\\n- Table unknown\\n- ORDERS_CLUSTERED\\n- At line 3, column 15', -204, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "covering_index_lookup",
+      "test_category": "mysql_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -104\\n- Dynamic SQL Error\\n- SQL error code = -104\\n- Token unknown - line 9, column 1\\n- LIMIT', -104, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "secondary_index_covering_count",
+      "test_category": "mysql_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -104\\n- Dynamic SQL Error\\n- SQL error code = -104\\n- Token unknown - line 6, column 37\\n- 30', -104, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "repeated_hot_page_access",
+      "test_category": "mysql_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -204\\n- Dynamic SQL Error\\n- SQL error code = -204\\n- Table unknown\\n- HOT_DATA\\n- At line 5, column 6', -204, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "point_select_pk_buffer_efficiency",
+      "test_category": "mysql_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -204\\n- Dynamic SQL Error\\n- SQL error code = -204\\n- Table unknown\\n- LOOKUP_TABLE\\n- At line 4, column 15', -204, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "secondary_index_insert_buffering",
+      "test_category": "mysql_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -104\\n- Dynamic SQL Error\\n- SQL error code = -104\\n- Token unknown - line 10, column 14\\n- @', -104, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "sequential_pk_insert_performance",
+      "test_category": "mysql_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -104\\n- Dynamic SQL Error\\n- SQL error code = -104\\n- Token unknown - line 6, column 14\\n- @', -104, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "parallel_seq_scan_large_table",
+      "test_category": "pg_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -104\\n- Dynamic SQL Error\\n- SQL error code = -104\\n- Token unknown - line 10, column 33\\n- GROUP', -104, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "parallel_hash_join",
+      "test_category": "pg_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -204\\n- Dynamic SQL Error\\n- SQL error code = -204\\n- Table unknown\\n- FACT_SALES\\n- At line 4, column 6', -204, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "parallel_bitmap_heap_scan",
+      "test_category": "pg_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -204\\n- Dynamic SQL Error\\n- SQL error code = -204\\n- Table unknown\\n- PARALLEL_BITMAP_TEST\\n- At line 3, column 15', -204, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "gin_fulltext_search",
+      "test_category": "pg_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -104\\n- Dynamic SQL Error\\n- SQL error code = -104\\n- Token unknown - line 5, column 21\\n- @', -104, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "gist_range_queries",
+      "test_category": "pg_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -104\\n- Dynamic SQL Error\\n- SQL error code = -104\\n- Token unknown - line 4, column 14\\n- &', -104, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "brin_warehouse_scan",
+      "test_category": "pg_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -204\\n- Dynamic SQL Error\\n- SQL error code = -204\\n- Table unknown\\n- SENSOR_READINGS\\n- At line 4, column 6', -204, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "partial_index_selective",
+      "test_category": "pg_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -204\\n- Dynamic SQL Error\\n- SQL error code = -204\\n- Table unknown\\n- ORDERS_WITH_STATUS\\n- At line 3, column 15', -204, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "hash_join_large_tables",
+      "test_category": "pg_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -204\\n- Dynamic SQL Error\\n- SQL error code = -204\\n- Table unknown\\n- LARGE_TABLE_A\\n- At line 4, column 6', -204, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "merge_join_sorted",
+      "test_category": "pg_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -204\\n- Dynamic SQL Error\\n- SQL error code = -204\\n- Table unknown\\n- SORTED_A\\n- At line 4, column 6', -204, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "toast_large_column_scan",
+      "test_category": "pg_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -104\\n- Dynamic SQL Error\\n- SQL error code = -104\\n- Token unknown - line 3, column 27\\n- >', -104, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "hot_update_frequent",
+      "test_category": "pg_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -204\\n- Dynamic SQL Error\\n- SQL error code = -204\\n- Table unknown\\n- COUNTER_TABLE\\n- At line 3, column 8', -204, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "mga_readers_dont_block",
+      "test_category": "fb_optimized",
+      "engine": "firebird",
+      "duration_ms": 140.72012901306152,
+      "expected_pattern": "Consistent read snapshot, zero lock waits",
+      "actual_pattern": "Consistent read snapshot, zero lock waits",
+      "performance_score": 100.0,
+      "notes": "Firebird advantage: 10-100x (under high contention)"
+    },
+    {
+      "test_name": "mga_long_running_read",
+      "test_category": "fb_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -104\\n- Dynamic SQL Error\\n- SQL error code = -104\\n- Token unknown - line 5, column 28\\n- (', -104, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "mga_rollback_performance",
+      "test_category": "fb_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -104\\n- Dynamic SQL Error\\n- SQL error code = -104\\n- Token unknown - line 8, column 1\\n- ROLLBACK', -104, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "concurrent_read_heavy",
+      "test_category": "fb_optimized",
+      "engine": "firebird",
+      "duration_ms": 146.9285488128662,
+      "expected_pattern": "Linear scaling, no lock contention",
+      "actual_pattern": "Linear scaling, no lock contention",
+      "performance_score": 100.0,
+      "notes": "Firebird advantage: 5-10x at 100+ concurrent readers"
+    },
+    {
+      "test_name": "concurrent_write_heavy",
+      "test_category": "fb_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -206\\n- Dynamic SQL Error\\n- SQL error code = -206\\n- Column unknown\\n- RANDOM_ID\\n- At line 5, column 12', -206, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "storage_compact_nulls",
+      "test_category": "fb_optimized",
+      "engine": "firebird",
+      "duration_ms": 146.25096321105957,
+      "expected_pattern": "Compact storage (bitmap NULLs, RLE)",
+      "actual_pattern": "Compact storage (bitmap NULLs, RLE)",
+      "performance_score": 100.0,
+      "notes": "Firebird advantage: 30-50% smaller"
+    },
+    {
+      "test_name": "storage_index_compression",
+      "test_category": "fb_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -204\\n- Dynamic SQL Error\\n- SQL error code = -204\\n- Table unknown\\n- REPETITIVE_DATA\\n- At line 2, column 22', -204, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "index_selective_bitmap",
+      "test_category": "fb_optimized",
+      "engine": "firebird",
+      "duration_ms": 269.03438568115234,
+      "expected_pattern": "Bitmap AND of three compressed indexes",
+      "actual_pattern": "Bitmap AND of three compressed indexes",
+      "performance_score": 100.0,
+      "notes": "Firebird advantage: 2-3x"
+    },
+    {
+      "test_name": "index_navigational",
+      "test_category": "fb_optimized",
+      "engine": "firebird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: ('Error while preparing SQL statement:\\n- SQLCODE: -104\\n- Dynamic SQL Error\\n- SQL error code = -104\\n- Token unknown - line 3, column 22\\n- :', -104, 335544569)",
+      "performance_score": 0,
+      "notes": "Failed"
+    }
+  ],
+  "summary": {
+    "total_tests": 28,
+    "by_category": {
+      "mysql_optimized": 8,
+      "pg_optimized": 11,
+      "fb_optimized": 9
+    }
+  }
+}

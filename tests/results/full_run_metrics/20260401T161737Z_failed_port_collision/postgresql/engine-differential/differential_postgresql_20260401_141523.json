@@ -1,0 +1,298 @@
+{
+  "metadata": {
+    "engine": "postgresql",
+    "host": "localhost",
+    "port": 5433,
+    "timestamp": "20260401_141523"
+  },
+  "results": [
+    {
+      "test_name": "clustered_pk_range_scan",
+      "test_category": "mysql_optimized",
+      "engine": "postgresql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: relation \"orders_clustered\" does not exist\nLINE 4: SELECT * FROM orders_clustered \n                      ^\n",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "clustered_pk_prefix_scan",
+      "test_category": "mysql_optimized",
+      "engine": "postgresql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: relation \"orders_clustered\" does not exist\nLINE 3: SELECT * FROM orders_clustered \n                      ^\n",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "covering_index_lookup",
+      "test_category": "mysql_optimized",
+      "engine": "postgresql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: relation \"products_covering\" does not exist\nLINE 6: SELECT sku, price FROM products_covering \n                               ^\n",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "secondary_index_covering_count",
+      "test_category": "mysql_optimized",
+      "engine": "postgresql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: syntax error at or near \"30\"\nLINE 6: WHERE created_at > NOW() - INTERVAL 30 DAY\n                                            ^\n",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "repeated_hot_page_access",
+      "test_category": "mysql_optimized",
+      "engine": "postgresql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: relation \"hot_data\" does not exist\nLINE 5: FROM hot_data\n             ^\n",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "point_select_pk_buffer_efficiency",
+      "test_category": "mysql_optimized",
+      "engine": "postgresql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: syntax error at or near \";\"\nLINE 4: SELECT * FROM lookup_table WHERE id = ?;\n                                               ^\n",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "secondary_index_insert_buffering",
+      "test_category": "mysql_optimized",
+      "engine": "postgresql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: syntax error at or near \":=\"\nLINE 10: FROM (SELECT @r := @r + 1 as seq FROM (SELECT @r := 0) init,\n                         ^\n",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "sequential_pk_insert_performance",
+      "test_category": "mysql_optimized",
+      "engine": "postgresql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: syntax error at or near \":=\"\nLINE 6: FROM (SELECT @r := @r + 1 as seq FROM (SELECT @r := 0) init,\n                        ^\n",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "parallel_seq_scan_large_table",
+      "test_category": "pg_optimized",
+      "engine": "postgresql",
+      "duration_ms": 30530.50446510315,
+      "expected_pattern": "Parallel Seq Scan + Partial Aggregate + Gather Merge",
+      "actual_pattern": "Parallel Seq Scan + Partial Aggregate + Gather Merge",
+      "performance_score": 100.0,
+      "notes": "PostgreSQL advantage: 4-8x"
+    },
+    {
+      "test_name": "parallel_hash_join",
+      "test_category": "pg_optimized",
+      "engine": "postgresql",
+      "duration_ms": 30893.193006515503,
+      "expected_pattern": "Parallel Hash Join + Parallel Aggregate",
+      "actual_pattern": "Parallel Hash Join + Parallel Aggregate",
+      "performance_score": 100.0,
+      "notes": "PostgreSQL advantage: 3-6x"
+    },
+    {
+      "test_name": "parallel_bitmap_heap_scan",
+      "test_category": "pg_optimized",
+      "engine": "postgresql",
+      "duration_ms": 35347.78642654419,
+      "expected_pattern": "Parallel Bitmap Heap Scan + BitmapAnd",
+      "actual_pattern": "Parallel Bitmap Heap Scan + BitmapAnd",
+      "performance_score": 100.0,
+      "notes": "PostgreSQL advantage: 3-5x"
+    },
+    {
+      "test_name": "gin_fulltext_search",
+      "test_category": "pg_optimized",
+      "engine": "postgresql",
+      "duration_ms": 31479.382276535034,
+      "expected_pattern": "Bitmap Index Scan on idx_fts (GIN)",
+      "actual_pattern": "Bitmap Index Scan on idx_fts (GIN)",
+      "performance_score": 100.0,
+      "notes": "PostgreSQL advantage: 50-100x"
+    },
+    {
+      "test_name": "gist_range_queries",
+      "test_category": "pg_optimized",
+      "engine": "postgresql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: relation \"reservations\" does not exist\nLINE 3: SELECT * FROM reservations\n                      ^\n",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "brin_warehouse_scan",
+      "test_category": "pg_optimized",
+      "engine": "postgresql",
+      "duration_ms": 30432.174921035767,
+      "expected_pattern": "Bitmap Index Scan on idx_readings_time_brin (tiny index)",
+      "actual_pattern": "Bitmap Index Scan on idx_readings_time_brin (tiny index)",
+      "performance_score": 100.0,
+      "notes": "PostgreSQL advantage: 5-20x index size, 2-3x query"
+    },
+    {
+      "test_name": "partial_index_selective",
+      "test_category": "pg_optimized",
+      "engine": "postgresql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: relation \"orders_with_status\" does not exist\nLINE 3: SELECT * FROM orders_with_status\n                      ^\n",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "hash_join_large_tables",
+      "test_category": "pg_optimized",
+      "engine": "postgresql",
+      "duration_ms": 32363.932371139526,
+      "expected_pattern": "Hash Join (fast, single pass)",
+      "actual_pattern": "Hash Join (fast, single pass)",
+      "performance_score": 100.0,
+      "notes": "PostgreSQL advantage: 10-100x"
+    },
+    {
+      "test_name": "merge_join_sorted",
+      "test_category": "pg_optimized",
+      "engine": "postgresql",
+      "duration_ms": 20155.37691116333,
+      "expected_pattern": "Merge Join (optimal for sorted inputs)",
+      "actual_pattern": "Merge Join (optimal for sorted inputs)",
+      "performance_score": 100.0,
+      "notes": "PostgreSQL advantage: 5-10x"
+    },
+    {
+      "test_name": "toast_large_column_scan",
+      "test_category": "pg_optimized",
+      "engine": "postgresql",
+      "duration_ms": 30112.8032207489,
+      "expected_pattern": "Seq Scan (narrow, TOAST not accessed)",
+      "actual_pattern": "Seq Scan (narrow, TOAST not accessed)",
+      "performance_score": 100.0,
+      "notes": "PostgreSQL advantage: 2-5x"
+    },
+    {
+      "test_name": "hot_update_frequent",
+      "test_category": "pg_optimized",
+      "engine": "postgresql",
+      "duration_ms": 388.75555992126465,
+      "expected_pattern": "HOT update (no index touch, minimal WAL)",
+      "actual_pattern": "HOT update (no index touch, minimal WAL)",
+      "performance_score": 100.0,
+      "notes": "PostgreSQL advantage: 3-10x"
+    },
+    {
+      "test_name": "mga_readers_dont_block",
+      "test_category": "fb_optimized",
+      "engine": "postgresql",
+      "duration_ms": 49.58844184875488,
+      "expected_pattern": "Slower than Firebird",
+      "actual_pattern": "MVCC with snapshot, some visibility check overhead",
+      "performance_score": 50.0,
+      "notes": "Firebird advantage: 10-100x (under high contention)"
+    },
+    {
+      "test_name": "mga_long_running_read",
+      "test_category": "fb_optimized",
+      "engine": "postgresql",
+      "duration_ms": 44.90923881530762,
+      "expected_pattern": "Slower than Firebird",
+      "actual_pattern": "Vacuum blocked, table bloat accumulates",
+      "performance_score": 50.0,
+      "notes": "Firebird advantage: No blocking vs vacuum blocking"
+    },
+    {
+      "test_name": "mga_rollback_performance",
+      "test_category": "fb_optimized",
+      "engine": "postgresql",
+      "duration_ms": 43.07866096496582,
+      "expected_pattern": "Slower than Firebird",
+      "actual_pattern": "Transaction abort with cleanup",
+      "performance_score": 50.0,
+      "notes": "Firebird advantage: 100-1000x for large transactions"
+    },
+    {
+      "test_name": "concurrent_read_heavy",
+      "test_category": "fb_optimized",
+      "engine": "postgresql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: syntax error at or near \"ROWS\"\nLINE 5: ORDER BY id ROWS 100;\n                    ^\n",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "concurrent_write_heavy",
+      "test_category": "fb_optimized",
+      "engine": "postgresql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: syntax error at or near \":\"\nLINE 5: WHERE id = :random_id;\n                   ^\n",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "storage_compact_nulls",
+      "test_category": "fb_optimized",
+      "engine": "postgresql",
+      "duration_ms": 25.752544403076172,
+      "expected_pattern": "Slower than Firebird",
+      "actual_pattern": "Tuple header overhead (27+ bytes)",
+      "performance_score": 50.0,
+      "notes": "Firebird advantage: 30-50% smaller"
+    },
+    {
+      "test_name": "storage_index_compression",
+      "test_category": "fb_optimized",
+      "engine": "postgresql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: syntax error at or near \"STARTING\"\nLINE 3: WHERE prefix STARTING WITH 'USA-NY-001';\n                     ^\n",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "index_selective_bitmap",
+      "test_category": "fb_optimized",
+      "engine": "postgresql",
+      "duration_ms": 51.39303207397461,
+      "expected_pattern": "Slower than Firebird",
+      "actual_pattern": "BitmapAnd (good but more I/O)",
+      "performance_score": 50.0,
+      "notes": "Firebird advantage: 2-3x"
+    },
+    {
+      "test_name": "index_navigational",
+      "test_category": "fb_optimized",
+      "engine": "postgresql",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: syntax error at or near \"20\"\nLINE 3: SELECT FIRST 20 SKIP :offset * 20 *\n                     ^\n",
+      "performance_score": 0,
+      "notes": "Failed"
+    }
+  ],
+  "summary": {
+    "total_tests": 28,
+    "by_category": {
+      "mysql_optimized": 8,
+      "pg_optimized": 11,
+      "fb_optimized": 9
+    }
+  }
+}

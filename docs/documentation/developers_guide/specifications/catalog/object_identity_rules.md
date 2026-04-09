@@ -369,7 +369,7 @@ Is name qualified (contains '.')?
 
 ### References
 
-- `local_work/docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_OBJECT_PARENTAGE_AND_NAME_UNIQUENESS.md`
+- `docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_OBJECT_PARENTAGE_AND_NAME_UNIQUENESS.md`
 - Firebird SQL Reference: Identifiers
 - SQL:2016 Standard §5.2
 

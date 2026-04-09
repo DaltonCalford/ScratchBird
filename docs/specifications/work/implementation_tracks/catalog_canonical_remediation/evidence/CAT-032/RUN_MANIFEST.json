@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-032",
+  "status": "completed",
+  "started_at": "2026-02-14T22:11:00Z",
+  "finished_at": "2026-02-14T22:25:13Z",
+  "owner": "codex",
+  "notes": "Implemented engine-specific compatibility catalogs (blob_filter, trigger_message, column_drop_history) with root/backfill wiring, deterministic CRUD constraints, and focused bootstrap/contract tests."
+}

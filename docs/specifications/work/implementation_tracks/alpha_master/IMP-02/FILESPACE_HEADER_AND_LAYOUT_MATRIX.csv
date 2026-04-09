@@ -1,0 +1,11 @@
+case_id,object,condition,expected_result,error_code
+FSL-HDR-001,primary_filespace,page0 type PAGE_TYPE_DATABASE_HEADER and trailing FilespaceHeader,accept,NONE
+FSL-HDR-002,secondary_filespace,page0 type PAGE_TYPE_FILESPACE_HEADER and valid header,accept,NONE
+FSL-HDR-003,filespace_header,database_uuid mismatch,reject,DATABASE_UUID_MISMATCH
+FSL-HDR-004,filespace_header,page_size mismatch,reject,INVALID_PAGE_SIZE
+FSL-HDR-005,filespace_header,filespace_uuid all zero,reject,INVALID_FILESPACE_HEADER
+FSL-HDR-006,filespace_header,header bytes beyond defined layout non-zero,reject,INVALID_FILESPACE_HEADER
+FSL-HDR-007,multi_file_mapping,file_seq ordering contiguous,accept,NONE
+FSL-HDR-008,multi_file_mapping,file_seq missing gap,reject,INVALID_FILESPACE_HEADER
+FSL-HDR-009,shadow_header,shadow file_id non-zero and filespace_id matches primary,accept,NONE
+FSL-HDR-010,shadow_header,shadow layout differs from primary,reject,INVALID_FILESPACE_HEADER

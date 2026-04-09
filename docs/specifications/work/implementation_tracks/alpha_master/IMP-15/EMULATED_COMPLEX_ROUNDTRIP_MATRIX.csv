@@ -1,0 +1,9 @@
+case_id,emulated_engine,emulated_type,canonical_or_domain,value_roundtrip_expected,error_code
+T15-RT-001,firebird_5,array,canonical_array,lossless,
+T15-RT-002,postgresql_18,jsonb,canonical_jsonb,lossless,
+T15-RT-003,postgresql_18,range,canonical_range,lossless,
+T15-RT-004,mysql_8,enum_set,domain_backed_enum_set,lossless,
+T15-RT-005,mongodb_8,bson_document,canonical_bson,lossless,
+T15-RT-006,neo4j_5,path_like_structure,domain_backed_composite,lossless,
+T15-RT-007,cassandra_5,frozen_collections,structured_with_update_restrictions,lossless,
+T15-RT-008,milvus_2,array_of_struct,array_of_composite,lossless,

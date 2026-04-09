@@ -1,0 +1,6 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+21_V3_Dialect_Surface/NATIVE_ADMIN_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,GRM-ADMIN-KEYS,LD-002/GRAMMAR_PRODUCTION_INDEX.csv,PASS,All admin feature keys registered with family assignments
+21_V3_Dialect_Surface/NATIVE_DDL_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,GRM-DDL-KEYS,LD-002/GRAMMAR_PRODUCTION_INDEX.csv,PASS,All DDL feature keys registered
+21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,GRM-DML-KEYS,LD-002/GRAMMAR_PRODUCTION_INDEX.csv,PASS,DML plus prepared and notification keys registered
+21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,GRM-PSQL-TXN-SESSION-KEYS,LD-002/GRAMMAR_PRODUCTION_INDEX.csv,PASS,Transaction and session feature keys registered
+21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md,21_V3_Dialect_Surface,GRM-FAMILY-MAP,LD-002/GRAMMAR_PRODUCTION_INDEX.csv,PASS,Family mapping constrained to canonical FG_* set

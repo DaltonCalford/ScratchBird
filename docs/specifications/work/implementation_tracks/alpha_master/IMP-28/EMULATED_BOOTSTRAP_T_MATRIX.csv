@@ -1,0 +1,11 @@
+case_id,suite,required_check,expected_result,error_code
+T28-T001,T,preauth_database_availability_check_before_auth_success,pass,
+T28-T002,T,deny_no_open_database_maps_to_deterministic_auth_failure,pass,
+T28-T003,T,emulated_create_database_rejects_physical_db_file_creation,pass,
+T28-T004,T,emulated_create_database_maps_to_logical_bootstrap_only_when_base_open,pass,
+T28-T005,T,listener_enforces_one_parser_family_per_port,pass,
+T28-T006,T,assigned_worker_handles_one_connection_terminated_on_disconnect,pass,
+T28-T007,T,parser_teardown_zeroizes_auth_session_buffers,pass,
+T28-T008,T,first_install_no_open_database_auth_failure_all_emulated_families,pass,
+T28-T009,T,warm_pool_replenishment_after_worker_teardown,pass,
+T28-T010,T,no_emulated_family_fallback_to_native_under_failures,pass,

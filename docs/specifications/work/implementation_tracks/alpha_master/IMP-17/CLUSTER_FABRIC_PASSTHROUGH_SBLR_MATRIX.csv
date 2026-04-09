@@ -1,0 +1,5 @@
+case_id,payload_kind,expected_result,error_code
+T17-FP-001,sblr_container_with_feature_and_shape,accepted,
+T17-FP-002,sql_text_payload,rejected,E_FABRIC_SBLR_REQUIRED
+T17-FP-003,missing_sblr_artifact_ref,rejected,E_FABRIC_PAYLOAD_INVALID
+T17-FP-004,result_envelope_mapping,response_bound_to_requesting_session,

@@ -1,0 +1,8 @@
+case_id,suite,required_check,expected_result,error_code
+T23-K00,K,d00_policy_snapshot_freeze,pass,
+T23-K01,K,d01_d03_consistency_target_and_fanout_planning,pass,
+T23-K02,K,d04_speculative_retry_bounds,pass,
+T23-K03,K,d05_d06_reconciliation_repair_workflow_persistence,pass,
+T23-K04,K,d07_d09_cache_key_admission_invalidation,pass,
+T23-K05,K,d10_d11_telemetry_fields_and_redaction,pass,
+T23-K06,K,d12_degraded_mode_restrictions_and_diagnostics,pass,

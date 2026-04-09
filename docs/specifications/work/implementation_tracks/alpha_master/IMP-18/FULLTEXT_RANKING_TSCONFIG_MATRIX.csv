@@ -1,0 +1,7 @@
+case_id,check,expected_result,tolerance,error_code
+T18-FT-001,mysql_nlq_idf_score_reference,score_matches_reference,1e-4,
+T18-FT-002,pg_ts_rank_reference,score_matches_reference,1e-6,
+T18-FT-003,pg_ts_rank_cd_reference,score_matches_reference,1e-6,
+T18-FT-004,pg_tsvector_english_pipeline,stopword_and_stemming_behavior_matches,none,
+T18-FT-005,pg_tsvector_hindi_simple_pipeline,fallback_and_token_behavior_matches,none,
+T18-FT-006,pg_ts_lexize_synonym_thesaurus_ispell_hunspell,lexeme_results_match_reference,none,

@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-001",
+  "status": "completed",
+  "started_at": "2026-02-14T01:06:00Z",
+  "finished_at": "2026-02-14T01:06:00Z",
+  "owner": "Codex",
+  "notes": "Generated strict legacy-to-canonical catalog crosswalk covering 60 current legacy table slots and 20 canonical-only required tables."
+}

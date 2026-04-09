@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <sstream>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -484,4 +485,126 @@ TEST_F(ForensicReplaySessionTest, ReplayResolvesHistoricalSchemaAcrossCommittedD
         ASSERT_EQ(replay_columns.size(), 3u);
         EXPECT_EQ(replay_columns[2].column_name, "extra");
     }
+}
+
+TEST_F(ForensicReplaySessionTest, SchemaChangeCatalogTracksMetadataOnlyAndValidatedPromotion)
+{
+    ErrorContext ctx;
+
+    auto create_result = executeSQL(
+        admin_conn_.get(),
+        "CREATE TABLE schema_change_audit (id INT NOT NULL, val INT)");
+    ASSERT_TRUE(create_result.success()) << create_result.error();
+    const uint64_t create_txid = admin_conn_->getCurrentXid();
+    ASSERT_NE(create_txid, 0u);
+    ASSERT_EQ(admin_conn_->commit(&ctx), Status::OK) << ctx.message;
+
+    CatalogManager::TableInfo table_info{};
+    ASSERT_EQ(findTableByName("schema_change_audit", table_info, &ctx), Status::OK) << ctx.message;
+
+    auto insert_result = executeSQL(
+        admin_conn_.get(),
+        "INSERT INTO schema_change_audit (id, val) VALUES (1, 10)");
+    ASSERT_TRUE(insert_result.success()) << insert_result.error();
+    ASSERT_EQ(admin_conn_->commit(&ctx), Status::OK) << ctx.message;
+
+    auto set_not_null_result = executeSQL(
+        admin_conn_.get(),
+        "ALTER TABLE schema_change_audit ALTER COLUMN val SET NOT NULL");
+    ASSERT_TRUE(set_not_null_result.success()) << set_not_null_result.error();
+    const uint64_t alter_txid = admin_conn_->getCurrentXid();
+    ASSERT_NE(alter_txid, 0u);
+    ASSERT_EQ(admin_conn_->commit(&ctx), Status::OK) << ctx.message;
+
+    std::vector<CatalogManager::SchemaChangePlanCatalogInfo> plans;
+    ASSERT_EQ(catalog_->listSchemaChangePlanCatalogEntries(plans, &ctx), Status::OK) << ctx.message;
+
+    auto create_plan_it = std::find_if(
+        plans.begin(), plans.end(),
+        [&](const CatalogManager::SchemaChangePlanCatalogInfo& plan) {
+            return plan.object_uuid == table_info.table_id &&
+                   plan.requested_operation == "CREATE_TABLE";
+        });
+    ASSERT_NE(create_plan_it, plans.end());
+    EXPECT_EQ(create_plan_it->change_class, "METADATA_ONLY");
+    EXPECT_EQ(create_plan_it->phase_state, "CUTOVER_COMMITTED");
+    EXPECT_GT(create_plan_it->baseline_schema_epoch, 0u);
+    EXPECT_TRUE(create_plan_it->has_cutover_schema_epoch);
+    EXPECT_GT(create_plan_it->cutover_schema_epoch, 0u);
+
+    std::vector<CatalogManager::SchemaChangeEventCatalogInfo> create_events;
+    ASSERT_EQ(catalog_->listSchemaChangeEventCatalogEntries(
+                  create_plan_it->schema_change_plan_uuid, create_events, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(create_events.size(), 3u);
+    EXPECT_EQ(create_events[0].phase_to, "DRAFTED");
+    EXPECT_EQ(create_events[1].phase_from, "DRAFTED");
+    EXPECT_EQ(create_events[1].phase_to, "EXPANDED_METADATA");
+    EXPECT_EQ(create_events[2].phase_from, "EXPANDED_METADATA");
+    EXPECT_EQ(create_events[2].phase_to, "CUTOVER_COMMITTED");
+
+    auto set_not_null_plan_it = std::find_if(
+        plans.begin(), plans.end(),
+        [&](const CatalogManager::SchemaChangePlanCatalogInfo& plan) {
+            return plan.object_uuid == table_info.table_id &&
+                   plan.requested_operation == "ALTER_TABLE" &&
+                   plan.change_class == "EXPAND_BACKFILL_CUTOVER";
+        });
+    if (set_not_null_plan_it == plans.end())
+    {
+        std::ostringstream oss;
+        for (const auto& plan : plans)
+        {
+            oss << "[" << plan.requested_operation << ", class=" << plan.change_class
+                << ", object=" << plan.object_uuid.toString() << "]";
+        }
+        FAIL() << "missing validated-promotion plan; observed plans: " << oss.str();
+    }
+    EXPECT_EQ(set_not_null_plan_it->phase_state, "CUTOVER_COMMITTED");
+    EXPECT_GT(set_not_null_plan_it->baseline_schema_epoch, 0u);
+    EXPECT_TRUE(set_not_null_plan_it->has_cutover_schema_epoch);
+    EXPECT_GT(set_not_null_plan_it->cutover_schema_epoch,
+              set_not_null_plan_it->baseline_schema_epoch);
+
+    CatalogManager::SchemaChangeBackfillProgressCatalogInfo progress{};
+    ASSERT_EQ(catalog_->getSchemaChangeBackfillProgressCatalogEntry(
+                  set_not_null_plan_it->schema_change_plan_uuid, progress, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(progress.scanned_row_count, 1u);
+    EXPECT_EQ(progress.validated_row_count, 1u);
+    EXPECT_EQ(progress.written_row_count, 0u);
+    EXPECT_EQ(progress.restart_disposition, "VALIDATION_ONLY_COMPLETE");
+
+    CatalogManager::SchemaChangeCutoverGuardCatalogInfo guard{};
+    ASSERT_EQ(catalog_->getSchemaChangeCutoverGuardCatalogEntry(
+                  set_not_null_plan_it->schema_change_plan_uuid, guard, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(guard.expected_pre_cutover_schema_epoch,
+              set_not_null_plan_it->baseline_schema_epoch);
+    EXPECT_TRUE(guard.dependency_refresh_complete);
+    EXPECT_EQ(guard.guard_state, "READY");
+    EXPECT_NE(guard.validation_manifest_hash, 0u);
+
+    std::vector<CatalogManager::SchemaChangeEventCatalogInfo> alter_events;
+    ASSERT_EQ(catalog_->listSchemaChangeEventCatalogEntries(
+                  set_not_null_plan_it->schema_change_plan_uuid, alter_events, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(alter_events.size(), 5u);
+    EXPECT_EQ(alter_events[0].phase_to, "DRAFTED");
+    EXPECT_EQ(alter_events[1].phase_to, "EXPANDED_METADATA");
+    EXPECT_EQ(alter_events[2].phase_to, "BACKFILL_ACTIVE");
+    EXPECT_EQ(alter_events[3].phase_to, "CUTOVER_PENDING");
+    EXPECT_EQ(alter_events[4].phase_to, "CUTOVER_COMMITTED");
+
+    CatalogManager::RuntimeTransactionCatalogInfo create_row{};
+    CatalogManager::RuntimeTransactionCatalogInfo alter_row{};
+    ASSERT_EQ(catalog_->getRuntimeTransactionCatalogEntry(create_txid, create_row, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(catalog_->getRuntimeTransactionCatalogEntry(alter_txid, alter_row, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_NE(create_row.schema_epoch_uuid, alter_row.schema_epoch_uuid);
 }

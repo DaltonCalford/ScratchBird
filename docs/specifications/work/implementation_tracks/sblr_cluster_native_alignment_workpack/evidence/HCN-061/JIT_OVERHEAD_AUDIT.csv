@@ -1,0 +1,3 @@
+run_id,vm_p95_us,jit_p95_us,guard_limit_us,guard_pass,notes
+hcn061_tests,697,357,2092,pass,JIT path remained below 3x VM guard
+hcn_full_regression,748,400,2245,pass,Extended regression maintained guard margin

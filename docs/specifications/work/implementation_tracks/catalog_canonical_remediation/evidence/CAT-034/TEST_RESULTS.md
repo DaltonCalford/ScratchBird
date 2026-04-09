@@ -1,0 +1,14 @@
+# Test Results
+
+Status: `PASS`
+
+Executed:
+```bash
+./build/tests/scratchbird_tests --gtest_filter='CatalogVirtualOverlayConformanceContractTest.*'
+./build/tests/scratchbird_tests --gtest_filter='CatalogRemoteConnectorExtensionContractTest.*:CatalogReplicationRuntimeConflictExtensionContractTest.*:CatalogExtensionPublicationSubscriptionContractTest.*:CatalogClusterFabricExtensionContractTest.*:CatalogOlapCubeExtensionContractTest.*:CatalogTextSearchExtensionContractTest.*:CatalogEngineSpecificExtensionContractTest.*:CatalogSblrArtifactExtensionContractTest.*:CatalogVirtualOverlayConformanceContractTest.*:CatalogDatabaseBootstrapTest.CreatesRemoteConnectorExtensionCatalogFamilyPages:CatalogDatabaseBootstrapTest.CreatesReplicationRuntimeConflictCatalogFamilyPages:CatalogDatabaseBootstrapTest.CreatesExtensionPublicationSubscriptionCatalogFamilyPages:CatalogDatabaseBootstrapTest.CreatesClusterFabricCatalogFamilyPages:CatalogDatabaseBootstrapTest.CreatesOlapCubeCatalogFamilyPages:CatalogDatabaseBootstrapTest.CreatesTextSearchCatalogFamilyPages:CatalogDatabaseBootstrapTest.CreatesEngineSpecificCompatibilityCatalogFamilyPages:CatalogDatabaseBootstrapTest.CreatesSblrExecutionArtifactCatalogFamilyPages'
+```
+
+Observed:
+- `CatalogVirtualOverlayConformanceContractTest.VirtualOverlayConformance` passed.
+- CAT-GATE-06 bundle result: `17 passed, 0 failed`.
+- No runtime assertion failures or catalog contract regressions in C5 scope.

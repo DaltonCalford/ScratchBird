@@ -1,0 +1,14 @@
+{
+  "ticket_id": "HCN-022",
+  "title": "Pin and validate cluster schema security epochs in sessions",
+  "phase": "PH2",
+  "owner": "codex",
+  "started_utc": "2026-02-23T00:00:00Z",
+  "completed_utc": "2026-02-26T18:53:24Z",
+  "source_commit": "9e789eaad9b8e377f42f96f2ea8fec0193970f40",
+  "commands": [
+    "cmake --build build --target scratchbird_tests -j\14",
+    "./build/tests/scratchbird_tests --gtest_filter='SessionEpochPinsTest.*:CatalogSessionEpochPinningTest.*'"
+  ],
+  "notes": "Session records now persist epoch pins and expose deterministic validate/replan/reject behavior."
+}

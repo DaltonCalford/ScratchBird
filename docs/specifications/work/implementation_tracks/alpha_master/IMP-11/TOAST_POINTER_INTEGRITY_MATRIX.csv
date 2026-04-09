@@ -1,0 +1,6 @@
+case_id,check_stage,pointer_field,validation_rule,expected_result,error_code
+T11-PI-001,pre_relocation,lob_uuid,must_reference_existing_lob,pass,
+T11-PI-002,pre_relocation,logical_length_bytes,must_match_chunk_chain_length,pass,
+T11-PI-003,post_relocation,chunk_size_bytes,must_equal_target_layout_chunk_size,pass,
+T11-PI-004,post_relocation,compression_kind,must_be_in_allowed_enum,pass,
+T11-PI-005,read_time,lob_uuid,missing_reference_rejected,fail,E_TOAST_POINTER_INVALID

@@ -1,0 +1,8 @@
+case_id,suite,required_check,expected_result,error_code
+T28-N001,N,ph00_unsupported_hints_rejected_deterministically,pass,
+T28-N002,N,ph01_hint_translation_stable_serialized_order,pass,
+T28-N003,N,ph02_query_shape_key_stable_for_text_equivalent_forms,pass,
+T28-N004,N,ph03_tiebreak_propagation_respects_profile_boundaries,pass,
+T28-N005,N,ph04_plan_pin_unpin_privilege_and_mapping_deterministic,pass,
+T28-N006,N,ph05_diagnostics_expose_tiebreak_hint_metadata,pass,
+T28-N007,N,ph06_stale_hint_policy_recovery_deterministic_bounded,pass,

@@ -1,0 +1,15 @@
+{
+  "ticket_id": "PP-07",
+  "title": "Bootstrap Allocation and Reservation Rewrite",
+  "timestamp_utc": "2026-02-13T18:15:33Z",
+  "implementation_repo": "/home/dcalford/CliWork/ScratchBird",
+  "primary_specs": [
+    "06_Fixed_Bootstrap_Page_Map/BOOTSTRAP_PAGE_LAYOUTS.md"
+  ],
+  "changed_files": [
+    "include/scratchbird/core/page_manager.h",
+    "src/core/page_manager.cpp",
+    "tests/unit/test_page_management.cpp"
+  ],
+  "status": "done"
+}

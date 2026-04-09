@@ -135,6 +135,9 @@ private:
     ParserOptions options_;
     std::string active_profile_;
     std::set<std::string> capability_feature_keys_;
+    uint32_t next_anonymous_parameter_index_ = 1;
+    bool saw_anonymous_parameters_ = false;
+    bool saw_explicit_parameters_ = false;
 
     void initializeCapabilityProfile();
     bool requireFeature(const char* feature_key);
@@ -230,6 +233,7 @@ private:
     AlterJobStmt* parseAlterJob();
     AlterPolicyStmt* parseAlterPolicy();
     AlterSystemStmt* parseAlterSystem();
+    AlterSystemStmt* parseConfigCommand();
 
     // DROP statements
     Statement* parseDropSchedule();
@@ -370,6 +374,7 @@ private:
     Statement* parseDropClusterControl();
     Statement* parseClusterControlSurface();
     Statement* parseShowClusterControlSurface();
+    Statement* parseShowManagementControlSurface();
     Statement* parseShowSloControlSurface();
     Statement* parseServiceChannelSurface();
     Statement* parseCubeControlSurface();

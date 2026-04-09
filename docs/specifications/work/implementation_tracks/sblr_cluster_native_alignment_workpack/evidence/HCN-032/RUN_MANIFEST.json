@@ -1,0 +1,15 @@
+{
+  "ticket_id": "HCN-032",
+  "title": "Implement snapshot registry and per-shard CWM publication",
+  "phase": "PH3",
+  "owner": "codex",
+  "started_utc": "2026-02-23T00:00:00Z",
+  "completed_utc": "2026-02-26T19:06:43Z",
+  "source_commit": "9e789eaad9b8e377f42f96f2ea8fec0193970f40",
+  "commands": [
+    "cmake --build build --target scratchbird_tests -j\14",
+    "./build/tests/scratchbird_tests --gtest_filter='SnapshotRegistryTest.*:CommittedWatermarkPublisherTest.*'",
+    "./build/tests/scratchbird_tests --gtest_filter='FollowerApplyPipelineTest.*:ShardCommitLogPipelineTest.*'"
+  ],
+  "notes": "Snapshot registry now tracks per-session boundaries and CWM publication is monotonic with snapshot vector support."
+}

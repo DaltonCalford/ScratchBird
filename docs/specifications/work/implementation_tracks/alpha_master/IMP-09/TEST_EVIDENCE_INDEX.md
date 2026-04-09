@@ -1,0 +1,19 @@
+# Test Evidence Index
+
+- Ticket: IMP-09
+- Section: 09_Lock_Manager_Core
+- Gate Contract: docs/specifications/09_Lock_Manager_Core/TEST_CONTRACT.md
+- Evidence Files:
+  - IMPLEMENTATION_CHECKLIST.md
+  - IMPLEMENTATION_NOTES.md
+  - LOCK_COMPATIBILITY_MATRIX.csv
+  - LOCK_ACQUIRE_QUEUE_FAIRNESS_MATRIX.csv
+  - DEADLOCK_VICTIM_SELECTION_MATRIX.csv
+  - LOCK_CONVERSION_ESCALATION_MATRIX.csv
+  - LOCK_ERROR_SEMANTICS_MATRIX.csv
+  - TEST_RESULTS.md
+  - CHECKSUMS.sha256
+  - RUN_MANIFEST.json
+  - SPEC_TRACEABILITY.csv
+  - GATE_RESULT.json
+  - CHANGESET_LOG.md

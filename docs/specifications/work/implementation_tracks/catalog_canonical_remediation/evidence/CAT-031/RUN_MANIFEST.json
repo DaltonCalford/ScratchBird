@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-031",
+  "status": "completed",
+  "started_at": "2026-02-14T21:35:00Z",
+  "finished_at": "2026-02-14T22:09:17Z",
+  "owner": "codex",
+  "notes": "Implemented text-search catalog family end-to-end with root/backfill wiring, deterministic CRUD/constraints, TOAST payload contracts, and focused bootstrap/contract tests."
+}

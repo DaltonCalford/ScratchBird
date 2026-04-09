@@ -1,0 +1,4 @@
+spec_clause,implementation,evidence,status
+Startup validates canonical bootstrap page map,src/core/database.cpp (validate_bootstrap_page_map + open),BOOTSTRAP_STARTUP_VALIDATION_RESULTS.md,pass
+Startup rejects invalid fixed bootstrap references,src/core/database.cpp (validate_header canonical checks),BOOTSTRAP_STARTUP_VALIDATION_RESULTS.md,pass
+Corrupted FSM root bootstrap page is detected,tests/unit/test_page_management_edge_cases.cpp,BOOTSTRAP_STARTUP_VALIDATION_RESULTS.md,pass

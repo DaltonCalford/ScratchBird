@@ -1,0 +1,4 @@
+case_id,area,required_check,expected_result,error_code
+T18-MC-001,USAGE_METRICS,deterministic_usage_counters_fixed_workload,pass,
+T18-MC-002,CONTENTION_METRICS,lock_latch_wait_counters_increment,pass,
+T18-MC-003,COST_MODEL,lower_selectivity_produces_lower_cost,pass,

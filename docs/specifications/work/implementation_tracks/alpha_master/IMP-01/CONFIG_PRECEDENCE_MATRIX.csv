@@ -1,0 +1,11 @@
+case_id,default_value,bootstrap_value,catalog_value,session_override,effective_value,expected_source,reload_boundary_required
+CFG-PREC-001,10,20,,,20,bootstrap,false
+CFG-PREC-002,10,20,30,,30,catalog,true
+CFG-PREC-003,10,20,30,40,40,session_override,false
+CFG-PREC-004,10,,30,,30,catalog,true
+CFG-PREC-005,10,20,,40,40,session_override,false
+CFG-PREC-006,10,20,invalid,,20,last_known_good,true
+CFG-PREC-007,10,20,30,invalid,30,catalog,false
+CFG-PREC-008,10,,invalid,,10,default,false
+CFG-PREC-009,10,20,30,,30,catalog_after_mount,true
+CFG-PREC-010,10,20,30,,30,catalog_persists_after_restart,true

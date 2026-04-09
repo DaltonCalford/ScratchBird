@@ -1,0 +1,9 @@
+mode,table,original_sb_ms,current_sb_ms,best_donor_ms,best_donor,target_ceiling_ms,dominant_tickets,status
+normal,customers,2571.688,6381.866,360.600,postgresql,371.418,PP-10-003|PP-10-005|PP-10-007,open
+normal,products,1058.463,3556.917,114.174,postgresql,117.599,PP-10-003|PP-10-005|PP-10-007,open
+normal,orders,8908.923,30043.034,1299.835,postgresql,1338.830,PP-10-003|PP-10-005|PP-10-007,open
+normal,order_items,22452.574,224629.407,3009.979,postgresql,3100.278,PP-10-003|PP-10-005|PP-10-007,open
+autocommit,customers,2970.496,43917.460,350.457,postgresql,360.971,PP-10-003|PP-10-005|PP-10-007,open
+autocommit,products,1248.830,22523.622,171.818,postgresql,176.972,PP-10-003|PP-10-005|PP-10-007,open
+autocommit,orders,10453.667,130418.823,1284.446,postgresql,1322.979,PP-10-003|PP-10-005|PP-10-007,open
+autocommit,order_items,26961.534,675441.165,2957.250,postgresql,3045.967,PP-10-003|PP-10-005|PP-10-007,open

@@ -1,0 +1,8 @@
+case_id,resource_state,request,wait_policy,queue_condition,expected_result,error_code
+LQF-001,no_conflict,S,WAIT,no_older_incompatible_waiter,granted_immediate,NONE
+LQF-002,incompatible_granted_exists,X,NOWAIT,n/a,reject_immediate,LOCK_NOT_GRANTED_NOWAIT
+LQF-003,incompatible_granted_exists,X,WAIT,queued,wait_then_grant_or_fail,NONE
+LQF-004,older_incompatible_waiter_present,S,WAIT,fairness_gate_blocks,queued_not_bypassed,NONE
+LQF-005,timeout_elapsed,queued_waiter,WAIT,exceeded_timeout,dequeue_and_fail,LOCK_TIMEOUT
+LQF-006,statement_cancelled,queued_waiter,WAIT,cancel_signal,dequeue_and_fail,LOCK_CANCELLED
+LQF-007,release_unblocks_waiters,queue_ordered,WAIT,compatible_sequence,grant_in_order,NONE

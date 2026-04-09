@@ -1603,6 +1603,14 @@ void Parser::parseCopyStmt() {
         char escape = '\\';
         std::string encoding;
         bool encoding_set = false;
+        uint32_t batch_size = 0;
+        bool batch_size_set = false;
+        bool shadow_load = false;
+        bool shadow_load_set = false;
+        uint32_t max_errors = 0;
+        bool max_errors_set = false;
+        uint8_t on_error = 0;
+        bool on_error_set = false;
     };
 
     auto to_upper = [](const std::string& input) {
@@ -1705,6 +1713,14 @@ void Parser::parseCopyStmt() {
                     options.encoding_set = true;
                     advance();
                 }
+            } else if (matchIdentifierKeyword("SHADOW_LOAD")) {
+                options.shadow_load = true;
+                options.shadow_load_set = true;
+                if (matchKeyword(TokenType::KW_FALSE)) {
+                    options.shadow_load = false;
+                } else {
+                    matchKeyword(TokenType::KW_TRUE);
+                }
             } else if (matchKeyword(TokenType::KW_CSV)) {
                 options.format = CopyOptions::Format::CSV;
             } else if (matchKeyword(TokenType::KW_TEXT)) {
@@ -1753,6 +1769,14 @@ void Parser::parseCopyStmt() {
     emitString(std::string(1, options.quote));
     emitString(std::string(1, options.escape));
     emitString(options.encoding);
+    uint8_t copy_flags = 0;
+    if (options.shadow_load_set && options.shadow_load) {
+        copy_flags |= 0x1u;
+    }
+    emitByte(copy_flags);
+    emitU32(options.batch_size_set ? options.batch_size : 0);
+    emitU32(options.max_errors_set ? options.max_errors : 0);
+    emitByte(options.on_error_set ? options.on_error : 0);
 }
 
 // ============================================================================
@@ -2359,6 +2383,25 @@ parser::v3::Statement* Parser::parseCopyStmtV3() {
                 }
                 return value;
             };
+            auto parse_boolean_option = [&](const std::string& option_name, bool has_value) {
+                if (!has_value) {
+                    if (matchKeyword(TokenType::KW_TRUE) || matchKeyword(TokenType::KW_ON)) {
+                        return true;
+                    }
+                    if (matchKeyword(TokenType::KW_FALSE)) {
+                        return false;
+                    }
+                    return true;
+                }
+                if (matchKeyword(TokenType::KW_TRUE) || matchKeyword(TokenType::KW_ON)) {
+                    return true;
+                }
+                if (matchKeyword(TokenType::KW_FALSE)) {
+                    return false;
+                }
+                error("Expected TRUE/FALSE for COPY " + option_name);
+                return false;
+            };
             while (!check(TokenType::RIGHT_PAREN) && !check(TokenType::END_OF_FILE)) {
                 std::string upper;
                 if (matchKeyword(TokenType::KW_FORMAT)) {
@@ -2375,6 +2418,14 @@ parser::v3::Statement* Parser::parseCopyStmtV3() {
                     upper = "ESCAPE";
                 } else if (matchKeyword(TokenType::KW_ENCODING)) {
                     upper = "ENCODING";
+                } else if (matchIdentifierKeyword("BATCH_SIZE")) {
+                    upper = "BATCH_SIZE";
+                } else if (matchIdentifierKeyword("SHADOW_LOAD")) {
+                    upper = "SHADOW_LOAD";
+                } else if (matchIdentifierKeyword("MAX_ERRORS")) {
+                    upper = "MAX_ERRORS";
+                } else if (matchIdentifierKeyword("ON_ERROR")) {
+                    upper = "ON_ERROR";
                 } else {
                     std::string option = parseIdentifier();
                     upper.reserve(option.size());
@@ -2421,15 +2472,7 @@ parser::v3::Statement* Parser::parseCopyStmtV3() {
                     }
                     stmt->options.null_set = true;
                 } else if (upper == "HEADER") {
-                    if (!has_value) {
-                        stmt->options.header = true;
-                    } else if (matchKeyword(TokenType::KW_TRUE)) {
-                        stmt->options.header = true;
-                    } else if (matchKeyword(TokenType::KW_FALSE)) {
-                        stmt->options.header = false;
-                    } else {
-                        error("Expected TRUE/FALSE for HEADER");
-                    }
+                    stmt->options.header = parse_boolean_option("HEADER", has_value);
                     stmt->options.header_set = true;
                 } else if (upper == "QUOTE") {
                     if (!has_value) {
@@ -2449,6 +2492,40 @@ parser::v3::Statement* Parser::parseCopyStmtV3() {
                     }
                     stmt->options.encoding = parse_string_or_ident();
                     stmt->options.encoding_set = true;
+                } else if (upper == "BATCH_SIZE") {
+                    if (!check(TokenType::INTEGER_LITERAL)) {
+                        error("Expected integer literal for COPY BATCH_SIZE");
+                    }
+                    stmt->options.batch_size = current_token_.value.int_value;
+                    stmt->options.batch_size_set = true;
+                    advance();
+                } else if (upper == "SHADOW_LOAD") {
+                    stmt->options.shadow_load = parse_boolean_option("SHADOW_LOAD", has_value);
+                    stmt->options.shadow_load_set = true;
+                } else if (upper == "MAX_ERRORS") {
+                    if (!check(TokenType::INTEGER_LITERAL)) {
+                        error("Expected integer literal for COPY MAX_ERRORS");
+                    }
+                    stmt->options.max_errors = current_token_.value.int_value;
+                    stmt->options.max_errors_set = true;
+                    advance();
+                } else if (upper == "ON_ERROR") {
+                    auto value = parse_string_or_ident();
+                    if (value == parser::v3::StringPool::INVALID_ID) {
+                        error("Expected COPY ON_ERROR value");
+                    }
+                    std::string text = std::string(string_pool_.get(value));
+                    for (char& c : text) {
+                        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                    }
+                    if (text == "ABORT") {
+                        stmt->options.on_error = parser::v3::CopyOptions::OnError::ABORT;
+                    } else if (text == "SKIP") {
+                        stmt->options.on_error = parser::v3::CopyOptions::OnError::SKIP;
+                    } else {
+                        error("Unsupported COPY ON_ERROR value");
+                    }
+                    stmt->options.on_error_set = true;
                 } else {
                     error("Unsupported COPY option");
                 }
@@ -2526,6 +2603,16 @@ parser::v3::Statement* Parser::parseCopyStmtV3() {
     emitString(quote);
     emitString(escape);
     emitString(encoding);
+    uint8_t copy_flags = 0;
+    if (stmt->options.shadow_load_set && stmt->options.shadow_load) {
+        copy_flags |= 0x1u;
+    }
+    emitByte(copy_flags);
+    emitU32(stmt->options.batch_size_set ? static_cast<uint32_t>(stmt->options.batch_size) : 0);
+    emitU32(stmt->options.max_errors_set ? static_cast<uint32_t>(stmt->options.max_errors) : 0);
+    emitByte(stmt->options.on_error_set
+                 ? static_cast<uint8_t>(stmt->options.on_error)
+                 : static_cast<uint8_t>(parser::v3::CopyOptions::OnError::ABORT));
 
     return stmt;
 }

@@ -1,0 +1,7 @@
+case_id,assignment,target,value,precondition,expected_result,error_code
+T16-AS-001,set_session_language,SESSION.language,en_US,language_exists,success,
+T16-AS-002,set_session_search_path,SESSION.search_path,users.public;users.groups.dev,all_paths_resolve,success,
+T16-AS-003,set_current_schema,SESSION.current_schema_uuid,uuid_in_search_path,schema_in_path,success,
+T16-AS-004,set_read_only_var,TRANSACTION.txid,123,active_txn,rejected,E_CONTEXT_READ_ONLY
+T16-AS-005,set_language_unknown,SESSION.language,zz_ZZ,language_missing,rejected,E_CONTEXT_VALUE_UNAVAILABLE
+T16-AS-006,set_current_schema_not_in_path,SESSION.current_schema_uuid,valid_uuid_not_in_path,session_active,rejected,E_CONTEXT_VALUE_UNAVAILABLE

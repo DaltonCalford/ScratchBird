@@ -1,0 +1,5 @@
+spec_clause,implementation,evidence,status
+row_uuid stable across versions,src/core/heap_page.cpp (stable_row_uuid propagation in update/overwrite),ROW_UUID_SYSTEM_COLUMN_AUDIT.csv,pass
+system column [sb_col]row_uuid surfaces tuple header row_uuid,include/scratchbird/core/heap_page.h + src/core/heap_page.cpp (HeapPage::extractSystemColumns),ROW_UUID_SYSTEM_COLUMN_AUDIT.csv,pass
+system column [sb_col]last_edit_txid uses create_txid for live row and delete_txid for tombstone,include/scratchbird/core/heap_page.h (TupleHeader::getLastEditTxidSystem),ROW_UUID_SYSTEM_COLUMN_AUDIT.csv,pass
+engine provides deterministic read-only extraction contract for hidden system fields,src/core/heap_page.cpp (extractSystemColumns argument validation + extraction),TEST_RESULTS.md,pass

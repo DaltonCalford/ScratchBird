@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-021",
+  "phase": "PH2",
+  "title": "Implement rolling upgrade orchestration contract",
+  "status": "pending",
+  "owner": "upgrade-runtime",
+  "estimate_days": 8,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

@@ -26,6 +26,7 @@
 #include "scratchbird/server/service_controller.h"
 #include "scratchbird/server/ipc_server.h"
 #undef private
+#include "scratchbird/server/scratchbird_server.h"
 #include "test_helpers.h"
 
 #ifndef _WIN32
@@ -300,6 +301,81 @@ TEST(ServiceControllerListenerBootstrapTest,
     EXPECT_NE(std::string(ctx.message).find("Invalid UTF-8"), std::string::npos);
 }
 
+TEST(ServiceControllerListenerBootstrapTest,
+     MultiDatabaseUnownedDatabaseUsesEmbeddedDirectMode) {
+    const std::filesystem::path temp_dir =
+        scratchbird::testing::uniqueTestDbPath("embedded_direct_selection", "");
+    std::error_code ec;
+    std::filesystem::create_directories(temp_dir, ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    ServiceController controller;
+    controller.config_.mode = ServiceConfig::Mode::MULTI_DATABASE;
+    controller.config_.protocols.clear();
+
+    const std::filesystem::path analytics_db_path = temp_dir / "analytics.sbdb";
+    ErrorContext ctx;
+    ASSERT_EQ(controller.openDatabase("analytics", analytics_db_path.string(), true, &ctx), Status::OK)
+        << ctx.message;
+
+    ASSERT_EQ(controller.databases_.size(), 1U);
+    EXPECT_TRUE(controller.engine_servers_.empty());
+    EXPECT_EQ(controller.databases_[0].name, "analytics");
+    EXPECT_EQ(controller.databases_[0].path, analytics_db_path.string());
+    EXPECT_TRUE(controller.databases_[0].engine_endpoint.empty());
+    EXPECT_NE(controller.databases_[0].database, nullptr);
+    EXPECT_NE(controller.databases_[0].owned_database, nullptr);
+
+    ASSERT_EQ(controller.closeDatabase("analytics", &ctx), Status::OK) << ctx.message;
+    std::filesystem::remove_all(temp_dir, ec);
+}
+
+TEST(ServiceControllerListenerBootstrapTest,
+     MultiDatabaseListenerOwnedDatabaseUsesLocalSharedServerMode) {
+#ifdef _WIN32
+    GTEST_SKIP() << "Shared-server selector currently validated on POSIX local IPC.";
+#else
+    const std::filesystem::path temp_dir =
+        scratchbird::testing::uniqueTestDbPath("shared_server_selection", "");
+    std::error_code ec;
+    std::filesystem::create_directories(temp_dir, ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    ServiceController controller;
+    controller.config_.mode = ServiceConfig::Mode::MULTI_DATABASE;
+    controller.config_.protocols.clear();
+
+    ProtocolConfig proto;
+    proto.type = scratchbird::network::ProtocolType::NATIVE;
+    proto.bind_address = "127.0.0.1";
+    proto.port = reserveEphemeralPort();
+    ASSERT_GT(proto.port, 0);
+    proto.enabled = true;
+    proto.pool_min = 1;
+    proto.pool_max = 2;
+    proto.owner_database = "analytics";
+    controller.config_.protocols.push_back(proto);
+    controller.config_.shutdown_timeout_sec = 0;
+
+    const std::filesystem::path analytics_db_path = temp_dir / "analytics.sbdb";
+    ErrorContext ctx;
+    ASSERT_EQ(controller.openDatabase("analytics", analytics_db_path.string(), true, &ctx), Status::OK)
+        << ctx.message;
+
+    ASSERT_EQ(controller.databases_.size(), 1U);
+    ASSERT_EQ(controller.engine_servers_.size(), 1U);
+    EXPECT_EQ(controller.databases_[0].name, "analytics");
+    EXPECT_FALSE(controller.databases_[0].engine_endpoint.empty());
+    EXPECT_EQ(controller.databases_[0].engine_endpoint,
+              controller.engine_servers_[0].server->getIPCPath());
+    EXPECT_NE(controller.databases_[0].database, nullptr);
+    EXPECT_EQ(controller.databases_[0].owned_database, nullptr);
+
+    ASSERT_EQ(controller.closeDatabase("analytics", &ctx), Status::OK) << ctx.message;
+    std::filesystem::remove_all(temp_dir, ec);
+#endif
+}
+
 TEST(ServiceControllerListenerBootstrapTest, StartListenersPassesConfigFileToListenerProcess) {
 #ifdef _WIN32
     GTEST_SKIP() << "Test relies on POSIX fork/exec behavior.";
@@ -565,10 +641,20 @@ TEST(ServiceControllerListenerBootstrapTest,
     ErrorContext ctx;
     ASSERT_EQ(controller.startListeners(&ctx), Status::OK) << ctx.message;
     EXPECT_EQ(controller.listeners_.size(), 2U);
-    ASSERT_TRUE(waitForFileTokenCount(args_path,
-                                      "__invocation__",
-                                      2,
-                                      std::chrono::milliseconds(2000)));
+    ASSERT_TRUE(waitForFileContains(
+        args_path,
+        {
+            std::to_string(multi_ports[0]),
+            std::to_string(multi_ports[1]),
+            "--database-owner",
+            "main",
+            "analytics",
+            scratchbird::server::getIPCPath(main_db_path.string(),
+                                            scratchbird::server::IPCMethod::AUTO),
+            scratchbird::server::getIPCPath(analytics_db_path.string(),
+                                            scratchbird::server::IPCMethod::AUTO),
+        },
+        std::chrono::milliseconds(2000)));
 
     const std::string args = readTextFile(args_path);
     EXPECT_NE(args.find(std::to_string(multi_ports[0])), std::string::npos) << args;

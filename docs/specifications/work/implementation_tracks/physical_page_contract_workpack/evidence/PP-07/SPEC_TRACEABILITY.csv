@@ -1,0 +1,4 @@
+spec_clause,implementation,evidence,status
+Fixed bootstrap pages are reserved from free list,src/core/page_manager.cpp (initialize/reconstructFromPages),BOOTSTRAP_ALLOCATION_AUDIT.csv,pass
+Fixed bootstrap pages cannot be freed,src/core/page_manager.cpp (freePage guard),BOOTSTRAP_ALLOCATION_AUDIT.csv,pass
+FSM root page constant uses canonical bootstrap mapping,include/scratchbird/core/page_manager.h,BOOTSTRAP_ALLOCATION_AUDIT.csv,pass

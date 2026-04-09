@@ -1,0 +1,5 @@
+case_id,startup_phase,input_state,expected_result,error_code
+T12-RS-001,startup_temp_scan,temp_segments_exist,all_temp_segments_dropped,
+T12-RS-002,startup_catalog_reconcile,is_temp_global_definitions_exist,runtime_storage_roots_reinitialized_empty,
+T12-RS-003,crash_recovery,temp_rows_from_previous_lifetime,no_replay_performed,
+T12-RS-004,startup_missing_temp_filespace,sb_temp_missing,rejected,E_TEMP_STORAGE_UNAVAILABLE

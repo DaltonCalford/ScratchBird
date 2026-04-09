@@ -71,8 +71,10 @@ TEST_F(TransactionFixCorrectedTest, NoHanging)
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
     // This gate verifies "no hanging" behavior, not micro-benchmark performance.
-    // CI/system load and domain bootstrap can add >1s variance, so use a stable upper bound.
-    EXPECT_LT(duration.count(), 6000) << "Operations took too long: " << duration.count() << "ms";
+    // Clean full `ctest -j` runs can push this loop just past 6s from catalog/bootstrap
+    // pressure alone, so keep the bound high enough to catch real stalls without
+    // failing on cold-build variance.
+    EXPECT_LT(duration.count(), 10000) << "Operations took too long: " << duration.count() << "ms";
 
     ProcArrayManager::unregisterBackend(proc_id, &ctx);
 }

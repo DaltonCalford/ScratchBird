@@ -25,8 +25,10 @@
 
 #pragma once
 
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/typed_value.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/gpid.h"
 #include <algorithm>
@@ -34,6 +36,8 @@
 #include <string>
 #include <vector>
 #include <queue>
+#include <deque>
+#include <unordered_map>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -226,18 +230,34 @@ struct WorkUnit {
     uint32_t start_page = 0;
     uint32_t end_page = 0;
     uint32_t worker_id = 0;
+    uint32_t executed_by_worker_id = 0;
+    bool work_stolen = false;
     void* context = nullptr;                // Worker-specific context
 };
 
 // Result from parallel worker
 struct WorkerResult {
     uint32_t worker_id = 0;
+    uint32_t executed_by_worker_id = 0;
+    uint32_t start_page = 0;
+    uint32_t end_page = 0;
+    bool work_stolen = false;
     core::Status status = core::Status::OK;
     uint64_t rows_processed = 0;
     uint64_t rows_returned = 0;
+    uint64_t transfer_bytes = 0;
     double execution_time_ms = 0.0;
     std::vector<uint8_t> partial_result;    // Serialized partial result
     std::string error_message;
+};
+
+struct ParallelWorkerExecutionInfo {
+    uint32_t preferred_worker_id = 0;
+    uint32_t executed_by_worker_id = 0;
+    uint32_t start_page = 0;
+    uint32_t end_page = 0;
+    uint64_t rows_processed = 0;
+    bool work_stolen = false;
 };
 
 // Partial aggregate state
@@ -288,6 +308,9 @@ public:
     // Get number of pending tasks
     size_t pendingTasks() const;
 
+    // Get total work-steal count across the pool lifetime.
+    uint64_t totalSteals() const { return work_steal_count_.load(std::memory_order_acquire); }
+
     // Shutdown pool
     void shutdown();
 
@@ -300,13 +323,16 @@ private:
 
     uint32_t num_workers_;
     std::vector<std::thread> workers_;
-    std::queue<std::unique_ptr<Task>> task_queue_;
+    std::vector<std::deque<std::unique_ptr<Task>>> task_queues_;
     mutable std::mutex queue_mutex_;
     std::condition_variable queue_cv_;
     std::atomic<bool> shutdown_{false};
     std::atomic<uint32_t> active_tasks_{0};
+    std::atomic<uint64_t> work_steal_count_{0};
 
-    void workerMain();
+    auto hasPendingTasksLocked() const -> bool;
+    auto popTaskLocked(uint32_t worker_index, bool* stole) -> std::unique_ptr<Task>;
+    void workerMain(uint32_t worker_index);
 };
 
 // Parallel scan executor
@@ -324,6 +350,15 @@ public:
     uint64_t rowsProcessed() const { return rows_processed_; }
     uint64_t workersUsed() const { return workers_used_; }
     double executionTimeMs() const { return execution_time_ms_; }
+    uint32_t morselCount() const { return morsel_count_; }
+    bool localityPreferred() const { return locality_preferred_; }
+    uint64_t workStealCount() const { return work_steal_count_; }
+    uint64_t crossPartitionTransferBytes() const { return cross_partition_transfer_bytes_; }
+    const std::string& exchangeMode() const { return exchange_mode_; }
+    const std::vector<ParallelWorkerExecutionInfo>& executionInfos() const
+    {
+        return execution_infos_;
+    }
 
 private:
     core::Database* db_;
@@ -333,6 +368,12 @@ private:
     std::atomic<uint64_t> rows_processed_{0};
     uint32_t workers_used_ = 0;
     double execution_time_ms_ = 0.0;
+    uint32_t morsel_count_ = 0;
+    bool locality_preferred_ = false;
+    uint64_t work_steal_count_ = 0;
+    uint64_t cross_partition_transfer_bytes_ = 0;
+    std::string exchange_mode_ = "SERIAL";
+    std::vector<ParallelWorkerExecutionInfo> execution_infos_;
 
     std::vector<WorkUnit> partitionTable(const ID& table_id, uint32_t num_partitions);
     WorkerResult scanWorker(const WorkUnit& unit);
@@ -373,9 +414,28 @@ private:
     core::Database* db_;
     WorkerPool* pool_;
     ParallelConfig config_;
+    uint32_t workers_used_ = 0;
+    uint32_t morsel_count_ = 0;
+    bool locality_preferred_ = false;
+    uint64_t work_steal_count_ = 0;
+    uint64_t cross_partition_transfer_bytes_ = 0;
+    std::string exchange_mode_ = "SERIAL";
+    std::vector<ParallelWorkerExecutionInfo> execution_infos_;
 
-    PartialAggregateState aggregateWorker(const WorkUnit& unit, const ID& column_id, AggType agg_type);
+    WorkerResult aggregateWorker(const WorkUnit& unit);
     double mergePartialResults(const std::vector<PartialAggregateState>& partials, AggType agg_type);
+
+public:
+    uint32_t workersUsed() const { return workers_used_; }
+    uint32_t morselCount() const { return morsel_count_; }
+    bool localityPreferred() const { return locality_preferred_; }
+    uint64_t workStealCount() const { return work_steal_count_; }
+    uint64_t crossPartitionTransferBytes() const { return cross_partition_transfer_bytes_; }
+    const std::string& exchangeMode() const { return exchange_mode_; }
+    const std::vector<ParallelWorkerExecutionInfo>& executionInfos() const
+    {
+        return execution_infos_;
+    }
 };
 
 // Parallel hash join executor
@@ -393,23 +453,58 @@ public:
                         const std::function<void(const uint8_t*, uint32_t, const uint8_t*, uint32_t)>& match_callback,
                         core::ErrorContext* ctx = nullptr);
 
+    uint64_t rowsProcessed() const { return rows_processed_; }
+    uint64_t matchCount() const { return match_count_; }
+    uint32_t workersUsed() const { return workers_used_; }
+    uint32_t morselCount() const { return morsel_count_; }
+    bool localityPreferred() const { return locality_preferred_; }
+    uint64_t workStealCount() const { return work_steal_count_; }
+    uint64_t crossPartitionTransferBytes() const { return cross_partition_transfer_bytes_; }
+    const std::string& exchangeMode() const { return exchange_mode_; }
+    const std::vector<ParallelWorkerExecutionInfo>& executionInfos() const
+    {
+        return execution_infos_;
+    }
+
 private:
     core::Database* db_;
     WorkerPool* pool_;
     ParallelConfig config_;
 
     // Partitioned hash table (one per partition)
+    struct HashEntry {
+        std::vector<uint8_t> key;
+        core::TypedValue key_value;
+        std::vector<uint8_t> tuple;
+    };
+
     struct HashPartition {
-        std::unordered_multimap<uint64_t, std::vector<uint8_t>> entries;
+        std::unordered_multimap<uint64_t, HashEntry> entries;
         std::mutex mutex;
     };
 
     std::vector<HashPartition> partitions_;
     static constexpr uint32_t NUM_PARTITIONS = 64;
 
-    void buildWorker(const WorkUnit& unit, const ID& join_column_id);
-    void probeWorker(const WorkUnit& unit, const ID& join_column_id,
-                    const std::function<void(const uint8_t*, uint32_t, const uint8_t*, uint32_t)>& match_callback);
+    std::atomic<uint64_t> rows_processed_{0};
+    std::atomic<uint64_t> match_count_{0};
+    uint32_t workers_used_ = 0;
+    uint32_t morsel_count_ = 0;
+    bool locality_preferred_ = false;
+    uint64_t work_steal_count_ = 0;
+    uint64_t cross_partition_transfer_bytes_ = 0;
+    std::string exchange_mode_ = "SERIAL";
+    std::vector<ParallelWorkerExecutionInfo> execution_infos_;
+
+    WorkerResult buildWorker(const WorkUnit& unit,
+                             const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                             size_t join_column_index);
+    WorkerResult probeWorker(
+        const WorkUnit& unit,
+        const std::vector<core::CatalogManager::ColumnInfo>& columns,
+        size_t join_column_index,
+        const std::function<void(const uint8_t*, uint32_t, const uint8_t*, uint32_t)>& match_callback,
+        std::mutex* callback_mutex);
     uint64_t hashJoinKey(const uint8_t* key_data, uint32_t key_size);
 };
 
@@ -424,16 +519,77 @@ public:
                         const std::function<int(const std::vector<uint8_t>&, const std::vector<uint8_t>&)>& comparator,
                         core::ErrorContext* ctx = nullptr);
 
+    uint64_t rowsProcessed() const { return rows_processed_; }
+    uint32_t workersUsed() const { return workers_used_; }
+    uint32_t morselCount() const { return morsel_count_; }
+    bool localityPreferred() const { return locality_preferred_; }
+    uint64_t workStealCount() const { return work_steal_count_; }
+    uint64_t crossPartitionTransferBytes() const { return cross_partition_transfer_bytes_; }
+    const std::string& exchangeMode() const { return exchange_mode_; }
+    const std::vector<ParallelWorkerExecutionInfo>& executionInfos() const
+    {
+        return execution_infos_;
+    }
+
 private:
     core::Database* db_;
     WorkerPool* pool_;
     ParallelConfig config_;
+
+    uint64_t rows_processed_ = 0;
+    uint32_t workers_used_ = 0;
+    uint32_t morsel_count_ = 0;
+    bool locality_preferred_ = false;
+    uint64_t work_steal_count_ = 0;
+    uint64_t cross_partition_transfer_bytes_ = 0;
+    std::string exchange_mode_ = "SERIAL";
+    std::vector<ParallelWorkerExecutionInfo> execution_infos_;
 
     void sortPartition(std::vector<std::vector<uint8_t>>& partition,
                       const std::function<int(const std::vector<uint8_t>&, const std::vector<uint8_t>&)>& comparator);
     void mergePartitions(std::vector<std::vector<std::vector<uint8_t>>>& partitions,
                         std::vector<std::vector<uint8_t>>& result,
                         const std::function<int(const std::vector<uint8_t>&, const std::vector<uint8_t>&)>& comparator);
+};
+
+// Parallel window executor
+class ParallelWindow {
+public:
+    ParallelWindow(core::Database* db, WorkerPool* pool, const ParallelConfig& config);
+    ~ParallelWindow();
+
+    // Execute parallel ROW_NUMBER over already ordered window input.
+    core::Status executeRowNumber(
+        const std::vector<std::vector<uint8_t>>& data,
+        const std::function<bool(const std::vector<uint8_t>&, const std::vector<uint8_t>&)>& same_partition,
+        std::vector<uint64_t>* row_numbers_out,
+        core::ErrorContext* ctx = nullptr);
+
+    uint64_t rowsProcessed() const { return rows_processed_; }
+    uint32_t workersUsed() const { return workers_used_; }
+    uint32_t morselCount() const { return morsel_count_; }
+    bool localityPreferred() const { return locality_preferred_; }
+    uint64_t workStealCount() const { return work_steal_count_; }
+    uint64_t crossPartitionTransferBytes() const { return cross_partition_transfer_bytes_; }
+    const std::string& exchangeMode() const { return exchange_mode_; }
+    const std::vector<ParallelWorkerExecutionInfo>& executionInfos() const
+    {
+        return execution_infos_;
+    }
+
+private:
+    core::Database* db_;
+    WorkerPool* pool_;
+    ParallelConfig config_;
+
+    uint64_t rows_processed_ = 0;
+    uint32_t workers_used_ = 0;
+    uint32_t morsel_count_ = 0;
+    bool locality_preferred_ = false;
+    uint64_t work_steal_count_ = 0;
+    uint64_t cross_partition_transfer_bytes_ = 0;
+    std::string exchange_mode_ = "SERIAL";
+    std::vector<ParallelWorkerExecutionInfo> execution_infos_;
 };
 
 // Global parallel execution manager

@@ -1,0 +1,6 @@
+case_id,policy,transaction_outcome,expected_result,error_code
+T12-OC-001,ON_COMMIT_DELETE_ROWS,commit,rows_for_committing_session_deleted,
+T12-OC-002,ON_COMMIT_PRESERVE_ROWS,commit,rows_preserved_for_session,
+T12-OC-003,ON_COMMIT_DROP,commit,temp_session_definition_and_rows_removed,
+T12-OC-004,any,rollback,rolled_back_versions_invisible_and_metadata_rolled_back,
+T12-OC-005,invalid_policy,create_or_alter,rejected,E_TEMP_ON_COMMIT_POLICY_INVALID

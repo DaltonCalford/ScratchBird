@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <fstream>
 #include <iomanip>
 #include <limits>
 #include <sstream>
@@ -255,6 +256,19 @@ bool myExecDebugEnabled() {
                normalized != "OFF";
     }();
     return enabled;
+}
+
+void appendMyExecTrace(const std::string& message) {
+    const char* path = std::getenv("SCRATCHBIRD_MY_DEBUG_FILE");
+    if ((!path || path[0] == '\0') && !myExecDebugEnabled()) {
+        return;
+    }
+    std::ofstream out(path && path[0] != '\0' ? path : "/tmp/sb_mysql_exec_debug.log",
+                      std::ios::app);
+    if (!out) {
+        return;
+    }
+    out << message << '\n';
 }
 
 bool shouldUseBoundMySqlAttach(const ProtocolAdapterConfig& config) {
@@ -1813,8 +1827,8 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
                                                         client_config_.ipc_method);
     }
     client_config_.connect_timeout_ms = config_.read_timeout_ms;
-    client_config_.read_timeout_ms = config_.read_timeout_ms;
-    client_config_.write_timeout_ms = config_.write_timeout_ms;
+    client_config_.read_timeout_ms = 0;
+    client_config_.write_timeout_ms = 0;
     client_config_.auto_commit = true;
     client_config_.auto_start_server = false;
     client_config_.connect_client_flags = config_.connect_client_flags;
@@ -2077,6 +2091,7 @@ core::Status MySqlAdapter::executeRemoteDialectSQL(const std::string& sql,
 core::Status MySqlAdapter::executeRemoteQuery(const QueryContext& query,
                                               ResultContext& result,
                                               core::ErrorContext* ctx) {
+    appendMyExecTrace("[adapter] executeRemoteQuery start sql=" + query.query);
     if (shouldBootstrapSystemSchemaForRemoteQuery(query.query)) {
         bootstrapInformationSchema(ctx);
     }
@@ -2112,6 +2127,15 @@ core::Status MySqlAdapter::executeRemoteQuery(const QueryContext& query,
     }
 
     status = client_->executeBytecode(bytecode, query.query, &rs, ctx);
+    {
+        std::ostringstream trace;
+        trace << "[adapter] executeRemoteQuery after executeBytecode status="
+              << static_cast<unsigned>(status)
+              << " cols=" << rs.getColumnCount()
+              << " rows=" << rs.getRowCount()
+              << " err=" << (ctx ? ctx->message : "");
+        appendMyExecTrace(trace.str());
+    }
     if (myExecDebugEnabled()) {
         std::fprintf(stderr,
                      "[my_exec] after executeBytecode status=%u err=%s rows=%lld cols=%zu has_error=%d sql=%s\n",
@@ -2325,6 +2349,15 @@ core::Status MySqlAdapter::sendAuthResult(network::Connection* conn,
 
 core::Status MySqlAdapter::sendQueryResult(network::Connection* conn,
                                             const ResultContext& result) {
+    {
+        std::ostringstream trace;
+        trace << "[adapter] sendQueryResult has_error=" << (result.has_error ? 1 : 0)
+              << " cols=" << result.columns.size()
+              << " rows=" << result.rows.size()
+              << " rows_affected=" << result.rows_affected
+              << " tag=" << result.command_tag;
+        appendMyExecTrace(trace.str());
+    }
     if (result.has_error) {
         return sendProtocolError(conn, result.error_code, result.sqlstate,
                                  result.error_message, result.error_detail, result.error_hint);
@@ -3535,6 +3568,14 @@ core::Status MySqlAdapter::handleCommand(network::Connection* conn) {
     }
 
     uint8_t command = current_packet_[0];
+    {
+        std::ostringstream trace;
+        trace << "[adapter] handleCommand cmd=0x" << std::hex
+              << static_cast<unsigned>(command) << std::dec
+              << " packet_len=" << current_packet_.size()
+              << " state=" << static_cast<int>(mysql_state_);
+        appendMyExecTrace(trace.str());
+    }
 
     if (myWireDebugEnabled()) {
         std::fprintf(stderr,
@@ -3597,6 +3638,7 @@ core::Status MySqlAdapter::handleComQuery(network::Connection* conn) {
 
     std::string query(reinterpret_cast<const char*>(current_packet_.data() + 1),
                       current_packet_.size() - 1);
+    appendMyExecTrace("[adapter] handleComQuery sql=" + query);
 
     if (myWireDebugEnabled()) {
         std::fprintf(stderr,
@@ -4005,6 +4047,7 @@ core::Status MySqlAdapter::handleComInitDb(network::Connection* conn) {
 
     std::string new_db(reinterpret_cast<const char*>(current_packet_.data() + 1),
                        current_packet_.size() - 1);
+    appendMyExecTrace("[adapter] handleComInitDb raw_db=" + new_db);
 
     std::string selected_database = extractMySqlDatabaseName(new_db);
     if (selected_database.empty()) {
@@ -4022,6 +4065,7 @@ core::Status MySqlAdapter::handleComInitDb(network::Connection* conn) {
     }
 
     applySuccessfulSessionQuery("USE " + selected_database);
+    appendMyExecTrace("[adapter] handleComInitDb applied_db=" + selected_database);
 
     sendOkPacket(conn);
     return sendBuffer(conn);

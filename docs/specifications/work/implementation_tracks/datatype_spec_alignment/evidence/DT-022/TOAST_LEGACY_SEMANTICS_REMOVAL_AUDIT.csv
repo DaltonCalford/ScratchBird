@@ -1,0 +1,3 @@
+check,legacy_behavior,canonical_behavior,status
+toast pointer detection,marker-only,size-aware canonical pointer validation,PASS
+heap/cat pointer checks,legacy helper,new size-aware helper,PASS

@@ -1,0 +1,7 @@
+ticket,depends_on,rationale
+B1-02-002,B1-02-001,implementation ownership cannot be frozen before spec sufficiency closure
+B1-02-003,B1-02-002,lane A work needs current ownership and audit anchors
+B1-02-004,B1-02-003,lane B integrates after lane A foundation
+B1-02-005,B1-02-003,gates need lane A outputs
+B1-02-005,B1-02-004,gates need lane B outputs
+B1-02-006,B1-02-005,package cannot close before gates and evidence close

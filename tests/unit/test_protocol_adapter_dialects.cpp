@@ -80,6 +80,10 @@ public:
         return T::ensureEngine(ctx);
     }
 
+    core::Status ensureRemoteClientReady(core::ErrorContext* ctx) {
+        return T::ensureRemoteClientForTest(ctx);
+    }
+
     void primeNativeScratchbirdCompiler() {
         if (!T::compiler_v3_) {
             T::compiler_v3_ = std::make_unique<scratchbird::parser::v3::Compiler>();
@@ -301,7 +305,32 @@ public:
                                         const ResultContext& result) {
         return T::sendQueryResult(conn, result);
     }
+
+    uint32_t remoteClientConnectTimeoutMs() const {
+        return T::remoteClientConfigForTest().connect_timeout_ms;
+    }
+
+    uint32_t remoteClientReadTimeoutMs() const {
+        return T::remoteClientConfigForTest().read_timeout_ms;
+    }
+
+    uint32_t remoteClientWriteTimeoutMs() const {
+        return T::remoteClientConfigForTest().write_timeout_ms;
+    }
 };
+
+template <typename AdapterT>
+void expectInnerEngineTimeoutsDisabled(const std::string& prefix) {
+    ProtocolAdapterConfig cfg;
+    cfg.engine_endpoint = uniqueSocketPath(prefix);
+    AdapterHarness<AdapterT> adapter(cfg);
+    core::ErrorContext ctx;
+
+    EXPECT_NE(adapter.ensureRemoteClientReady(&ctx), core::Status::OK);
+    EXPECT_EQ(adapter.remoteClientConnectTimeoutMs(), cfg.read_timeout_ms);
+    EXPECT_EQ(adapter.remoteClientReadTimeoutMs(), 0u);
+    EXPECT_EQ(adapter.remoteClientWriteTimeoutMs(), 0u);
+}
 
 void cleanupDb(const std::string& name) {
     std::error_code ec;
@@ -940,6 +969,22 @@ TEST(ProtocolAdapterDialects, MySQLSelectUsesMysqlParser) {
 
     ASSERT_EQ(status, core::Status::OK) << err;
     EXPECT_FALSE(bytecode.empty());
+}
+
+TEST(ProtocolAdapterDialects, NativeInnerEngineClientDisablesReadAndWriteTimeouts) {
+    expectInnerEngineTimeoutsDisabled<NativeAdapter>("test_native_inner_timeout");
+}
+
+TEST(ProtocolAdapterDialects, PostgreSQLInnerEngineClientDisablesReadAndWriteTimeouts) {
+    expectInnerEngineTimeoutsDisabled<PostgresqlAdapter>("test_pg_inner_timeout");
+}
+
+TEST(ProtocolAdapterDialects, MySQLInnerEngineClientDisablesReadAndWriteTimeouts) {
+    expectInnerEngineTimeoutsDisabled<MySqlAdapter>("test_mysql_inner_timeout");
+}
+
+TEST(ProtocolAdapterDialects, FirebirdInnerEngineClientDisablesReadAndWriteTimeouts) {
+    expectInnerEngineTimeoutsDisabled<FirebirdAdapter>("test_firebird_inner_timeout");
 }
 
 TEST(ProtocolAdapterDialects, MySQLRemoteCompileIgnoresSystemSchemaSubstringsInsideStringLiterals) {
@@ -3093,6 +3138,200 @@ TEST(ProtocolAdapterDialectsNative, PreparedStatementsCacheBucketedCustomPlansFo
     EXPECT_EQ(prepared->optimizer_bucketed_bytecode.size(), 2u);
     EXPECT_EQ(prepared->optimizer_plan_mode,
               core::ConnectionContext::PreparedStatement::OptimizerPlanMode::CUSTOM_BUCKETED);
+}
+
+TEST(ProtocolAdapterDialectsNative, PreparedInsertStatementsStayGenericForScratchBird) {
+    cleanupDb("test_native_prepared_insert_generic.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_native_prepared_insert_generic.sbdb").string();
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    core::ErrorContext ctx;
+    ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+
+    auto run_query = [&](const std::string& sql) {
+        QueryContext query;
+        query.query = sql;
+        ResultContext result;
+        auto status = adapter.executeQueryForTest(query, result);
+        EXPECT_EQ(status, core::Status::OK);
+        EXPECT_FALSE(result.has_error) << result.error_message;
+    };
+
+    run_query("CREATE TABLE audit_log (id INTEGER, name VARCHAR(32))");
+
+    std::vector<int32_t> param_types;
+    ASSERT_EQ(adapter.prepareStatementForTest(
+                  "ins_audit",
+                  "INSERT INTO audit_log (id, name) VALUES ($1, $2)",
+                  param_types),
+              core::Status::OK);
+
+    auto* prepared = adapter.preparedStatementForTest("ins_audit");
+    ASSERT_NE(prepared, nullptr);
+    EXPECT_EQ(prepared->optimizer_plan_mode,
+              core::ConnectionContext::PreparedStatement::OptimizerPlanMode::GENERIC);
+
+    QueryContext first_insert;
+    first_insert.parameter_values = {"1", "alpha"};
+    first_insert.parameter_nulls = {false, false};
+    ResultContext first_result;
+    ASSERT_EQ(adapter.executePreparedForTest("ins_audit", first_insert, first_result),
+              core::Status::OK);
+    ASSERT_FALSE(first_result.has_error) << first_result.error_message;
+
+    QueryContext second_insert;
+    second_insert.parameter_values = {"2", "beta"};
+    second_insert.parameter_nulls = {false, false};
+    ResultContext second_result;
+    ASSERT_EQ(adapter.executePreparedForTest("ins_audit", second_insert, second_result),
+              core::Status::OK);
+    ASSERT_FALSE(second_result.has_error) << second_result.error_message;
+
+    prepared = adapter.preparedStatementForTest("ins_audit");
+    ASSERT_NE(prepared, nullptr);
+    EXPECT_EQ(prepared->optimizer_plan_mode,
+              core::ConnectionContext::PreparedStatement::OptimizerPlanMode::GENERIC);
+    EXPECT_TRUE(prepared->optimizer_parameter_signature_to_bucket.empty());
+    EXPECT_TRUE(prepared->optimizer_bucketed_bytecode.empty());
+
+    QueryContext verify;
+    verify.query = "SELECT id FROM audit_log ORDER BY id";
+    ResultContext verify_result;
+    ASSERT_EQ(adapter.executeQueryForTest(verify, verify_result), core::Status::OK);
+    ASSERT_FALSE(verify_result.has_error) << verify_result.error_message;
+    ASSERT_EQ(verify_result.rows.size(), 2u);
+}
+
+TEST(ProtocolAdapterDialectsNative, PreparedInsertStatementsAcceptTemporalParameters) {
+    cleanupDb("test_native_prepared_insert_temporal.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_native_prepared_insert_temporal.sbdb").string();
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    core::ErrorContext ctx;
+    ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+
+    auto run_query = [&](const std::string& sql) {
+        QueryContext query;
+        query.query = sql;
+        ResultContext result;
+        auto status = adapter.executeQueryForTest(query, result);
+        EXPECT_EQ(status, core::Status::OK);
+        EXPECT_FALSE(result.has_error) << result.error_message;
+    };
+
+    run_query(
+        "CREATE TABLE audit_temporal (id INTEGER, created_on DATE, created_at TIMESTAMP)"
+    );
+
+    std::vector<int32_t> param_types;
+    ASSERT_EQ(adapter.prepareStatementForTest(
+                  "ins_temporal",
+                  "INSERT INTO audit_temporal (id, created_on, created_at) VALUES ($1, $2, $3)",
+                  param_types),
+              core::Status::OK);
+
+    QueryContext insert_query;
+    insert_query.parameter_values = {"1", "2026-04-01", "2026-04-01 12:34:56"};
+    insert_query.parameter_nulls = {false, false, false};
+    ResultContext insert_result;
+    ASSERT_EQ(adapter.executePreparedForTest("ins_temporal", insert_query, insert_result),
+              core::Status::OK);
+    ASSERT_FALSE(insert_result.has_error) << insert_result.error_message;
+
+    QueryContext verify;
+    verify.query = "SELECT id FROM audit_temporal";
+    ResultContext verify_result;
+    ASSERT_EQ(adapter.executeQueryForTest(verify, verify_result), core::Status::OK);
+    ASSERT_FALSE(verify_result.has_error) << verify_result.error_message;
+    ASSERT_EQ(verify_result.rows.size(), 1u);
+}
+
+TEST(ProtocolAdapterDialectsNative, PreparedLargeMultiRowInsertStressRemainsHealthy) {
+    cleanupDb("test_native_prepared_large_insert_stress.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_native_prepared_large_insert_stress.sbdb").string();
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    core::ErrorContext ctx;
+    ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+
+    auto run_query = [&](const std::string& sql) {
+        QueryContext query;
+        query.query = sql;
+        ResultContext result;
+        const auto status = adapter.executeQueryForTest(query, result);
+        ASSERT_EQ(status, core::Status::OK) << sql;
+        ASSERT_FALSE(result.has_error) << result.error_message;
+    };
+
+    run_query(
+        "CREATE TABLE order_items ("
+        "item_id BIGINT PRIMARY KEY, "
+        "order_id BIGINT, "
+        "product_id BIGINT, "
+        "quantity INTEGER, "
+        "unit_price DECIMAL(10, 2), "
+        "discount_pct DECIMAL(5, 2))");
+
+    constexpr size_t kRowsPerStatement = 1024;
+    constexpr size_t kStatementsPerTxn = 4;
+    constexpr size_t kTxnCount = 32;
+
+    std::ostringstream sql;
+    sql << "INSERT INTO order_items "
+           "(item_id, order_id, product_id, quantity, unit_price, discount_pct) VALUES ";
+    uint32_t param_ordinal = 1;
+    for (size_t row = 0; row < kRowsPerStatement; ++row) {
+        if (row != 0) {
+            sql << ", ";
+        }
+        sql << "($" << param_ordinal++ << ", $" << param_ordinal++ << ", $" << param_ordinal++
+            << ", $" << param_ordinal++ << ", $" << param_ordinal++ << ", $"
+            << param_ordinal++ << ")";
+    }
+
+    std::vector<int32_t> param_types;
+    ASSERT_EQ(adapter.prepareStatementForTest("ins_order_items_bulk", sql.str(), param_types),
+              core::Status::OK);
+
+    for (size_t txn = 0; txn < kTxnCount; ++txn) {
+        for (size_t statement = 0; statement < kStatementsPerTxn; ++statement) {
+            QueryContext insert_query;
+            insert_query.parameter_values.reserve(kRowsPerStatement * 6);
+            insert_query.parameter_nulls.reserve(kRowsPerStatement * 6);
+
+            const size_t statement_index = (txn * kStatementsPerTxn) + statement;
+            for (size_t row = 0; row < kRowsPerStatement; ++row) {
+                const uint64_t item_id = (statement_index * kRowsPerStatement) + row + 1;
+                const uint64_t order_id = (item_id % 50000) + 1;
+                const uint64_t product_id = (item_id % 5000) + 1;
+                const uint32_t quantity = static_cast<uint32_t>((item_id % 8) + 1);
+                insert_query.parameter_values.push_back(std::to_string(item_id));
+                insert_query.parameter_values.push_back(std::to_string(order_id));
+                insert_query.parameter_values.push_back(std::to_string(product_id));
+                insert_query.parameter_values.push_back(std::to_string(quantity));
+                insert_query.parameter_values.push_back((item_id % 7 == 0) ? "19.99" : "9.99");
+                insert_query.parameter_values.push_back((item_id % 5 == 0) ? "2.50" : "0.00");
+                insert_query.parameter_nulls.insert(insert_query.parameter_nulls.end(), 6, false);
+            }
+
+            ResultContext insert_result;
+            const auto insert_status =
+                adapter.executePreparedForTest("ins_order_items_bulk", insert_query, insert_result);
+            ASSERT_EQ(insert_status, core::Status::OK)
+                << "txn=" << txn << " statement=" << statement;
+            ASSERT_FALSE(insert_result.has_error)
+                << "txn=" << txn << " statement=" << statement
+                << " error=" << insert_result.error_message;
+        }
+
+        run_query("COMMIT");
+    }
 }
 
 TEST(ProtocolAdapterDialectsC3, MySQLNativePasswordAuth) {

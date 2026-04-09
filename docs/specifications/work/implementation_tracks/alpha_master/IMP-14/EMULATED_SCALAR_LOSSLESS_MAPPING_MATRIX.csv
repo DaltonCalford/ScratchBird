@@ -1,0 +1,11 @@
+case_id,emulated_engine,emulated_type,canonical_or_domain_mapping,lossless,expected_result
+T14-LM-001,firebird_5,INT128,canonical_int128,true,allow
+T14-LM-002,firebird_5,DECFLOAT(34),canonical_decfloat_34,true,allow
+T14-LM-003,postgresql_18,money,canonical_money,true,allow
+T14-LM-004,mysql_8,YEAR,system_domain_sb_dom_year,true,allow
+T14-LM-005,cassandra_5,varint,canonical_decimal_precision0,true,allow
+T14-LM-006,mongodb_8,ObjectId,system_domain_sb_dom_objectid,true,allow
+T14-LM-007,neo4j_5,duration,canonical_interval_triple,true,allow
+T14-LM-008,redis_7,logical_set,domain_over_canonical_set,true,allow
+T14-LM-009,milvus_2,array_of_struct,array_of_composite,true,allow
+T14-LM-010,unknown_unrepresentable_type,opaque_type,no_mapping,false,reject

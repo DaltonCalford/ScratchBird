@@ -1,0 +1,5 @@
+gate_id,required_tickets,required_artifacts,output_directory
+P21-LANG-GATE-01,"LD-001;LD-002;LD-003","LD-001/TOKEN_RULES_AUDIT.csv;LD-002/GRAMMAR_PRODUCTION_INDEX.csv;LD-003/ADMIN_FEATURE_KEY_MAP.csv",docs/specifications/work/implementation_tracks/sql_language_workpack/evidence
+P21-LANG-GATE-02,"LD-004;LD-005;LD-006;LD-007","LD-004/GRAMMAR_ACCEPT_REJECT_MATRIX.csv;LD-005/DML_RESULT_SHAPE_AUDIT.csv;LD-006/PSQL_CONTROLFLOW_CASES.csv;LD-007/NORMALIZATION_CORPUS_RESULTS.csv",docs/specifications/work/implementation_tracks/sql_language_workpack/evidence
+P21-LANG-GATE-03,"LD-008;LD-009;LD-010;LD-011","LD-008/PARAM_BINDING_AUDIT.csv;LD-009/TSQL_ALIAS_REWRITE_RESULTS.csv;LD-010/UUID_BIND_AND_FEATURE_KEY_AUDIT.csv;LD-011/SQL_SBLR_ENVELOPE_AUDIT.csv",docs/specifications/work/implementation_tracks/sql_language_workpack/evidence
+P21-LANG-GATE-04,"LD-012","LD-012/E2E_LANGUAGE_GATE_RESULTS.md;LD-012/E2E_CORPUS_MATRIX.csv",docs/specifications/work/implementation_tracks/sql_language_workpack/evidence

@@ -5,9 +5,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 CLIWORK_ROOT="$(cd "${ROOT_DIR}/.." && pwd)"
+REFERENCE_CLONE_ROOT="${ROOT_DIR}/docs/reference/project_clones/local_existing"
 
 DEFAULT_ISQL=""
 for candidate in \
+  "${REFERENCE_CLONE_ROOT}/firebird/gen/Release/firebird/bin/isql" \
+  "${REFERENCE_CLONE_ROOT}/firebird/gen/Debug/firebird/bin/isql" \
+  "${REFERENCE_CLONE_ROOT}/firebird/build/bin/isql" \
+  "${REFERENCE_CLONE_ROOT}/firebird/build/isql" \
   "${CLIWORK_ROOT}/firebird/gen/Release/firebird/bin/isql" \
   "${CLIWORK_ROOT}/firebird/gen/Debug/firebird/bin/isql" \
   "${CLIWORK_ROOT}/firebird/build/bin/isql" \
@@ -18,6 +23,14 @@ for candidate in \
     break
   fi
 done
+if [[ -z "$DEFAULT_ISQL" ]]; then
+  for candidate in "$(command -v isql-fb 2>/dev/null || true)" "$(command -v isql 2>/dev/null || true)"; do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      DEFAULT_ISQL="$candidate"
+      break
+    fi
+  done
+fi
 ISQL_MODE="native_firebird"
 # Emulated Firebird verification must use donor `isql`/`isql-fb`. `sb_isql` is
 # native ScratchBird/V3 only and is intentionally not accepted for this lane.

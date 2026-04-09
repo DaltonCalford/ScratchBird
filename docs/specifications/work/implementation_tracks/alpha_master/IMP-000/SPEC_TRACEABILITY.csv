@@ -1,0 +1,5 @@
+spec_file,requirement_id,implementation_path,test_id,status,notes
+docs/planning/IMPLEMENTATION_MASTER_PLAN.md,IMP-000-PREFLIGHT,docs/planning/IMPLEMENTATION_MASTER_PLAN.md,T00-GOV-PREFLIGHT,pass,Preflight checklist executed and recorded
+docs/planning/IMPLEMENTATION_TICKETS.csv,IMP-000-CYCLE,docs/planning/IMPLEMENTATION_TICKETS.csv,T00-GOV-CYCLE,pass,Cycle tickets present for known dependency loops
+docs/specifications/AUTHORITATIVE_SPEC_INVENTORY.md,IMP-000-INVENTORY,docs/specifications/AUTHORITATIVE_SPEC_INVENTORY.md,T00-GOV-INVENTORY,pass,Inventory parity validated against canonical tree
+docs/specifications/[00-31]_*/*.md,IMP-000-MARKERS,docs/specifications/[00-31]_*/*.md,T00-GOV-MARKER-SCAN,pass,No unresolved placeholder markers

@@ -1,0 +1,5 @@
+cast_pair,matrix_rule,enforced,status
+BOOLEAN->UUID,deny,deny,PASS
+UUID->INT32,deny,deny,PASS
+BINARY->TIMESTAMP,deny,deny,PASS
+ARRAY->JSON,allow,allow,PASS

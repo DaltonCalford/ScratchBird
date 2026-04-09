@@ -1,0 +1,5 @@
+case_id,suite,required_check,expected_result,error_code
+T23-G01,G,domain_specific_error_code_mapping,pass,
+T23-G02,G,verifier_error_preserves_sblr_codes,pass,
+T23-G03,G,diagnostic_payload_required_fields_present,pass,
+T23-G04,G,normalization_failures_preserve_sblr_codes_with_diagnostics,pass,

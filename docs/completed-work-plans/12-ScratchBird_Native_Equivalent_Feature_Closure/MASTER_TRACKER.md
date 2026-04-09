@@ -1,0 +1,46 @@
+# Master Tracker
+
+| Ticket | Title | Status | Depends On | Primary Evidence |
+| --- | --- | --- | --- | --- |
+| `NEQ-12-001` | Scope freeze and reference-layout bootstrap | completed | none | `README.md` |
+| `NEQ-12-002` | Research transactional eventing durable queues and notifications | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-003` | Draft Beta 2 transactional eventing durable queue and notification canon | completed | `NEQ-12-002` | `docs/specifications/25_Runtime_Modes/BETA2_TRANSACTIONAL_EVENTING_DURABLE_QUEUE_AND_NOTIFICATION_MODEL.md` |
+| `NEQ-12-004` | Research scheduled jobs alerting and operator messaging | completed | `NEQ-12-002` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-005` | Draft Beta 2 scheduler alerting and operator messaging canon | completed | `NEQ-12-003|NEQ-12-004` | `docs/specifications/25_Runtime_Modes/BETA2_DATABASE_SCHEDULER_ALERTING_AND_OPERATOR_MESSAGING_MODEL.md` |
+| `NEQ-12-006` | Research managed safe extensibility runtime | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-007` | Draft Beta 2 managed WASM/WASI extensibility runtime canon | completed | `NEQ-12-006` | `docs/specifications/17_Functions_and_Procedures/BETA2_MANAGED_WASM_WASI_EXTENSIBILITY_RUNTIME_MODEL.md` |
+| `NEQ-12-008` | Research native changefeeds and consumer offsets | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-009` | Draft Beta 2 native changefeed and consumer offset canon | completed | `NEQ-12-008` | `docs/specifications/39_Backup_Restore_and_Bulk_Data_Paths/BETA2_NATIVE_CHANGEFEED_AND_CONSUMER_OFFSET_MODEL.md` |
+| `NEQ-12-010` | Research relational temporal versioning and history binding | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-011` | Draft Beta 2 relational temporal versioning canon | completed | `NEQ-12-010` | `docs/specifications/24_Catalog_Model_and_Virtual_Overlays/BETA2_RELATIONAL_TEMPORAL_VERSIONING_AND_HISTORY_BINDING_MODEL.md` |
+| `NEQ-12-012` | Research tamper-evident ledger and attestation | completed | `NEQ-12-008|NEQ-12-010` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-013` | Draft Beta 2 tamper-evident ledger and attestation canon | completed | `NEQ-12-009|NEQ-12-011|NEQ-12-012` | `docs/specifications/20_Diagnostics_Audit_and_Observability/BETA2_TAMPER_EVIDENT_LEDGER_AND_ATTESTATION_MODEL.md` |
+| `NEQ-12-014` | Research property graph storage and pattern matching | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-015` | Draft Beta 2 property graph storage and pattern matching canon | completed | `NEQ-12-014` | `docs/specifications/24_Catalog_Model_and_Virtual_Overlays/BETA2_PROPERTY_GRAPH_STORAGE_AND_PATTERN_MATCHING_MODEL.md` |
+| `NEQ-12-016` | Research federation and remote-data virtualization closure | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-017` | Draft Beta 2 federation implementation-closure canon | completed | `NEQ-12-016` | `docs/specifications/36_Query_Rewrite_and_Planner/BETA2_NATIVE_FEDERATION_AND_REMOTE_DATA_VIRTUALIZATION_IMPLEMENTATION_MODEL.md` |
+| `NEQ-12-018` | Research transactional blob and file-namespace tables | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-019` | Draft Beta 2 transactional blob and file-namespace table canon | completed | `NEQ-12-018` | `docs/specifications/39_Backup_Restore_and_Bulk_Data_Paths/BETA2_TRANSACTIONAL_BLOB_AND_FILE_NAMESPACE_TABLE_MODEL.md` |
+| `NEQ-12-020` | Research plan-store baseline and managed-tuning closure | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-021` | Draft Beta 2 plan-store implementation-closure canon | completed | `NEQ-12-020` | `docs/specifications/36_Query_Rewrite_and_Planner/BETA2_PLAN_STORE_BASELINE_AND_MANAGED_TUNING_IMPLEMENTATION_MODEL.md` |
+| `NEQ-12-022` | Research service tiers tenant pools and workload governance | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-023` | Draft Beta 2 service tiers tenant pools and governance canon | completed | `NEQ-12-022` | `docs/specifications/38_Workload_Governance_and_Parallelism/BETA2_SERVICE_TIERS_TENANT_POOLS_AND_WORKLOAD_GOVERNANCE_MODEL.md` |
+| `NEQ-12-024` | Research serverless autosuspend autoscale and warm resume | completed | `NEQ-12-022` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-025` | Draft Beta 2 serverless autosuspend autoscale and warm resume canon | completed | `NEQ-12-023|NEQ-12-024` | `docs/specifications/25_Runtime_Modes/BETA2_SERVERLESS_AUTOSUSPEND_AUTOSCALE_AND_WARM_RESUME_MODEL.md` |
+| `NEQ-12-026` | Research distributed atomic coordination and prepared branches | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-027` | Draft Beta 2 distributed atomic coordination canon | completed | `NEQ-12-026` | `docs/specifications/42_Failure_Model_and_Fault_Tolerance/BETA2_DISTRIBUTED_ATOMIC_COORDINATION_AND_PREPARED_BRANCH_MODEL.md` |
+| `NEQ-12-028` | Research replicated topology read scale-out and geo failover | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-029` | Draft Beta 2 replicated topology read scale-out and geo failover canon | completed | `NEQ-12-027|NEQ-12-028` | `docs/specifications/25_Runtime_Modes/BETA2_REPLICATED_TOPOLOGY_READ_SCALE_AND_GEO_FAILOVER_MODEL.md` |
+| `NEQ-12-030` | Research hot-row memory-optimized OLTP lanes and compiled kernels | completed | `NEQ-12-022` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-031` | Draft Beta 2 memory-optimized OLTP lane and compiled-kernel canon | completed | `NEQ-12-023|NEQ-12-030` | `docs/specifications/25_Runtime_Modes/BETA2_MEMORY_OPTIMIZED_OLTP_LANE_AND_COMPILED_KERNEL_MODEL.md` |
+| `NEQ-12-032` | Research enterprise identity federation and token auth | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-033` | Draft Beta 2 enterprise identity federation and token-auth canon | completed | `NEQ-12-032` | `docs/specifications/19_Security_Model/BETA2_ENTERPRISE_IDENTITY_FEDERATION_AND_TOKEN_AUTH_MODEL.md` |
+| `NEQ-12-034` | Research TDE implementation closure | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-035` | Draft Beta 2 TDE implementation-closure canon | completed | `NEQ-12-034` | `docs/specifications/19_Security_Model/BETA2_TRANSPARENT_AT_REST_ENCRYPTION_AND_REKEY_MODEL.md` |
+| `NEQ-12-036` | Research protected-query encryption implementation closure | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-037` | Draft Beta 2 protected-query implementation-closure canon | completed | `NEQ-12-036` | `docs/specifications/19_Security_Model/BETA2_PROTECTED_QUERY_ENCRYPTION_AND_ENCLAVE_EXECUTION_MODEL.md` |
+| `NEQ-12-038` | Research row security and dynamic masking implementation closure | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-039` | Draft Beta 2 RLS and dynamic-masking implementation-closure canon | completed | `NEQ-12-038` | `docs/specifications/19_Security_Model/BETA2_RLS_AND_DYNAMIC_MASKING_IMPLEMENTATION_CLOSURE_MODEL.md` |
+| `NEQ-12-040` | Research analytical columnstore and OLAP acceleration implementation closure | completed | `NEQ-12-001` | `evidence/CONSOLIDATED_PACKET_REFERENCE.md` |
+| `NEQ-12-041` | Draft Beta 2 columnstore and OLAP implementation-closure canon | completed | `NEQ-12-040` | `docs/specifications/18_Index_Framework/BETA2_COLUMNSTORE_AND_OLAP_ACCELERATION_IMPLEMENTATION_CLOSURE_MODEL.md` |
+| `NEQ-12-042` | Final sync inventory update and closeout | completed | `NEQ-12-003|NEQ-12-005|NEQ-12-007|NEQ-12-009|NEQ-12-011|NEQ-12-013|NEQ-12-015|NEQ-12-017|NEQ-12-019|NEQ-12-021|NEQ-12-023|NEQ-12-025|NEQ-12-027|NEQ-12-029|NEQ-12-031|NEQ-12-033|NEQ-12-035|NEQ-12-037|NEQ-12-039|NEQ-12-041` | `gates/NEQ-12-042_CLOSEOUT_SUMMARY.md` |

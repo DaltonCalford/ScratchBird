@@ -1,0 +1,4 @@
+scenario,checksum_flag,checksum_matches,expected_status,test_evidence
+Fresh canonical page,set,true,OK,test_page_contract_stage_s1.cpp:ChecksumValidationFollowsChecksumFlagSemantics
+Tampered page with checksum enforcement,set,false,CHECKSUM_MISMATCH,test_page_contract_stage_s1.cpp:ChecksumValidationFollowsChecksumFlagSemantics
+Tampered page with checksum enforcement disabled,clear,false,OK,test_page_contract_stage_s1.cpp:ChecksumValidationFollowsChecksumFlagSemantics

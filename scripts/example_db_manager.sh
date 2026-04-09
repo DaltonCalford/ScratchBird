@@ -81,6 +81,7 @@ NATIVE_SSLMODE="${SCRATCHBIRD_EXAMPLE_NATIVE_SSLMODE:-disable}"
 AUTH_METHODS="${SCRATCHBIRD_EXAMPLE_AUTH_METHODS:-password}"
 AUTH_PASSWORD_HASH="${SCRATCHBIRD_EXAMPLE_AUTH_PASSWORD_HASH:-argon2id}"
 AUTH_ALLOW_SUPERUSER_REMOTE="${SCRATCHBIRD_EXAMPLE_ALLOW_SUPERUSER_REMOTE:-true}"
+PARSER_ENGINE_RESPONSE_TIMEOUT_MS="${SCRATCHBIRD_EXAMPLE_PARSER_ENGINE_RESPONSE_TIMEOUT_MS:-30000}"
 
 RUN_AS_USER="${SCRATCHBIRD_EXAMPLE_RUN_AS_USER:-$(id -un)}"
 RUN_AS_GROUP="${SCRATCHBIRD_EXAMPLE_RUN_AS_GROUP:-$(id -gn)}"
@@ -169,6 +170,8 @@ resolve_binaries() {
     ISQL_BIN="$(resolve_binary SCRATCHBIRD_SB_ISQL \
         "${REPO_ROOT}/build/src/sb_isql" \
         "${REPO_ROOT}/build/src/cli/sb_isql" \
+        "${DRIVER_ROOT}/build_cli/tracks/p3/drivers/cli/sb_isql" \
+        "${DRIVER_ROOT}/build_cli/tracks/alpha/drivers/cli/sb_isql" \
         "${DRIVER_ROOT}/build/tracks/p3/drivers/cli/sb_isql" \
         "${DRIVER_ROOT}/build/tracks/alpha/drivers/cli/sb_isql")" \
         || die "sb_isql not found. Build ScratchBird-driver CLI first."
@@ -317,6 +320,7 @@ native_port = ${NATIVE_PORT}
 pg_port = ${PG_PORT}
 mysql_port = ${MYSQL_PORT}
 fb_port = ${FB_PORT}
+parser_engine_response_timeout_ms = ${PARSER_ENGINE_RESPONSE_TIMEOUT_MS}
 
 [authentication]
 methods = ${AUTH_METHODS}
@@ -563,6 +567,41 @@ wait_for_runtime_surfaces() {
         tail -n 100 "${SERVER_LOG}" >&2 || true
         die "mysql runtime surface did not become query-ready on ${BIND_HOST}:${MYSQL_PORT}"
     fi
+}
+
+port_is_bindable() {
+    local host="$1"
+    local port="$2"
+    python3 - "$host" "$port" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    sock.bind((host, port))
+except OSError:
+    sys.exit(1)
+finally:
+    sock.close()
+PY
+}
+
+require_listener_ports_available() {
+    local conflicts=()
+    local port
+    for port in "${NATIVE_PORT}" "${PG_PORT}" "${MYSQL_PORT}" "${FB_PORT}"; do
+        if ! port_is_bindable "${BIND_HOST}" "${port}"; then
+            conflicts+=("${port}")
+        fi
+    done
+
+    [[ ${#conflicts[@]} -eq 0 ]] && return 0
+
+    die "example runtime ports already in use on ${BIND_HOST}: ${conflicts[*]}; stop the conflicting runtime or override SCRATCHBIRD_EXAMPLE_DYNAMIC_*_PORT"
 }
 
 stop_server() {
@@ -1045,6 +1084,7 @@ dynamic_setup() {
     load_auth_defaults
     write_token
     write_config
+    require_listener_ports_available
     start_server
     run_seed_pipeline
     write_connection_profiles

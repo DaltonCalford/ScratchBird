@@ -1,0 +1,10 @@
+case_id,suite,required_check,expected_result,error_code
+T28-Q001,Q,firebird_wire_checklist_gates_pass,pass,
+T28-Q002,Q,postgresql_wire_checklist_gates_pass,pass,
+T28-Q003,Q,mysql_wire_checklist_gates_pass,pass,
+T28-Q004,Q,cassandra_wire_checklist_gates_pass,pass,
+T28-Q005,Q,mongodb_wire_checklist_gates_pass,pass,
+T28-Q006,Q,neo4j_bolt_wire_checklist_gates_pass,pass,
+T28-Q007,Q,redis_resp_wire_checklist_gates_pass,pass,
+T28-Q008,Q,milvus_grpc_wire_checklist_gates_pass,pass,
+T28-Q009,Q,wire_evidence_artifacts_written_under_work_conformance_wire,pass,

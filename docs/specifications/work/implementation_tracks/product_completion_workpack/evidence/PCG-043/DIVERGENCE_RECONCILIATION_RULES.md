@@ -1,0 +1,3 @@
+# DIVERGENCE_RECONCILIATION_RULES.md
+
+Template scaffold for PCG-043.

@@ -1,0 +1,5 @@
+suite_id,requirement_id,check,method,expected_result,reject_condition,evidence_artifact
+T31-G7,IMP-31-REQ-G7-01,Crash/restart recovery,Failure injection harness,Recovery behavior matches deterministic policy,Recovery contract violation,TEST_RESULTS.md#T31-G7
+T31-G7,IMP-31-REQ-G7-02,Lock/deadlock stress,Concurrency stress harness,Deadlock handling and progress guarantees hold,Deadlock policy failure,TEST_RESULTS.md#T31-G7
+T31-G7,IMP-31-REQ-G7-03,GC/sweep under load,Load stress harness,GC and sweep remain bounded and correct,GC/sweep correctness or bound failure,TEST_RESULTS.md#T31-G7
+T31-G7,IMP-31-REQ-G7-04,Network disturbance and reconnect behavior,Network fault harness,Reconnect behavior deterministic and safe,Unsafe reconnect or nondeterministic state,TEST_RESULTS.md#T31-G7

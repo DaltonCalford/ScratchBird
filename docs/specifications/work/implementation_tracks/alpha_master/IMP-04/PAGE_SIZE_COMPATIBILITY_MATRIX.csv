@@ -1,0 +1,7 @@
+case_id,page_size_kb,legacy_support_alpha,requires_large_offset_mode,open_existing_db,notes
+PSC-001,8,true,false,allowed,legacy support retained
+PSC-002,16,true,false,allowed,default profile
+PSC-003,32,true,false,allowed,legacy support retained
+PSC-004,64,true,true,allowed,requires 32-bit offsets and 31-bit length flags
+PSC-005,128,true,true,allowed,requires 32-bit offsets and 31-bit length flags
+PSC-006,24,false,false,rejected,not part of supported set

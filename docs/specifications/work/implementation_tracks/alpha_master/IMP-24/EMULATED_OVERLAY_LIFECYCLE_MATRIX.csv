@@ -1,0 +1,6 @@
+case_id,event,precondition,expected_result,error_code
+T24-OV-001,create_emulated_db,engine_profile_enabled,overlay_views_created,
+T24-OV-002,drop_emulated_db,overlay_views_exist,overlay_views_removed,
+T24-OV-003,engine_profile_disabled,profile_disabled,overlay_views_absent,
+T24-OV-004,query_disabled_overlay,profile_disabled,rejected,E_OVERLAY_NOT_AVAILABLE
+T24-OV-005,overlay_visibility_check,session_bound_to_emulated_db,rows_filtered_to_db_scope,

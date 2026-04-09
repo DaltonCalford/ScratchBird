@@ -1,0 +1,113 @@
+driver,lane_requirement_group,jdbc_baseline_group,coverage_status,notes
+JDBC,JDBCBL-CONN,JDBCBL-CONN,MET,Derived from lane mapping: Implemented (core and modern JDBC connection APIs)
+JDBC,JDBCBL-TXN,JDBCBL-TXN,MET,Derived from lane mapping: Implemented (auto-commit; commit/rollback; isolation; savepoints)
+JDBC,JDBCBL-EXEC,JDBCBL-EXEC,MET,Derived from lane mapping: Implemented with writeability guards for non-updatable projections
+JDBC,JDBCBL-META,JDBCBL-META,MET,Derived from lane mapping: Implemented (DatabaseMetaData and ResultSetMetaData surface)
+JDBC,JDBCBL-TYPE,JDBCBL-TYPE,MET,Derived from lane mapping: Implemented (broad JDBC/native type encode/decode and typed retrieval)
+JDBC,JDBCBL-ERR,JDBCBL-ERR,MET,Derived from lane mapping: Implemented (SQLSTATE mapping and SQLState-coded validation errors)
+JDBC,JDBCBL-RES,JDBCBL-RES,MET,Derived from lane mapping: Implemented (resource lifecycle; pooling; cancellation; resilience/recovery)
+ODBC,ODBCBL-CONN,JDBCBL-CONN,MET,Derived from lane mapping: Implemented
+ODBC,ODBCBL-TXN,JDBCBL-TXN,MET,S2 wave1 evidence: tracks/alpha/drivers/odbc/S2_TXN_EXEC_IMPLEMENTATION.md
+ODBC,ODBCBL-EXEC,JDBCBL-EXEC,MET,S2 wave1 evidence: tracks/alpha/drivers/odbc/S2_TXN_EXEC_IMPLEMENTATION.md
+ODBC,ODBCBL-META,JDBCBL-META,PARTIAL,S3 wave3 evidence: tracks/alpha/drivers/odbc/S3_METADATA_IMPLEMENTATION.md
+ODBC,ODBCBL-TYPE,JDBCBL-TYPE,MET,Derived from lane mapping: Implemented
+ODBC,ODBCBL-ERR,JDBCBL-ERR,MET,Derived from lane mapping: Implemented
+ODBC,ODBCBL-RES,JDBCBL-RES,MET,Derived from lane mapping: Implemented
+CPP,CPPBL-CONN,JDBCBL-CONN,PARTIAL,S1 wave2 evidence: tracks/beta/drivers/cpp/S1_CONN_IMPLEMENTATION.md
+CPP,CPPBL-TXN,JDBCBL-TXN,PARTIAL,S2 wave3 evidence: tracks/beta/drivers/cpp/S2_TXN_EXEC_IMPLEMENTATION.md
+CPP,CPPBL-EXEC,JDBCBL-EXEC,PARTIAL,S2 wave3 evidence: tracks/beta/drivers/cpp/S2_TXN_EXEC_IMPLEMENTATION.md
+CPP,CPPBL-META,JDBCBL-META,PARTIAL,S3 wave2 evidence: tracks/beta/drivers/cpp/S3_METADATA_IMPLEMENTATION.md
+CPP,CPPBL-TYPE,JDBCBL-TYPE,PARTIAL,Derived from lane mapping: Partial
+CPP,CPPBL-ERR,JDBCBL-ERR,PARTIAL,Derived from lane mapping: Partial
+CPP,CPPBL-RES,JDBCBL-RES,PARTIAL,Derived from lane mapping: Partial
+DOTNET,DOTNETBL-CONN,JDBCBL-CONN,MET,Derived from lane mapping: Implemented
+DOTNET,DOTNETBL-TXN,JDBCBL-TXN,PARTIAL,S2 wave1 evidence: tracks/alpha/drivers/dotnet/S2_TXN_EXEC_IMPLEMENTATION.md
+DOTNET,DOTNETBL-EXEC,JDBCBL-EXEC,PARTIAL,S2 wave1 evidence: tracks/alpha/drivers/dotnet/S2_TXN_EXEC_IMPLEMENTATION.md
+DOTNET,DOTNETBL-META,JDBCBL-META,PARTIAL,S3 wave1 evidence: tracks/alpha/drivers/dotnet/S3_METADATA_IMPLEMENTATION.md
+DOTNET,DOTNETBL-TYPE,JDBCBL-TYPE,PARTIAL,Derived from lane mapping: Partial
+DOTNET,DOTNETBL-ERR,JDBCBL-ERR,MET,Derived from lane mapping: Implemented
+DOTNET,DOTNETBL-RES,JDBCBL-RES,MET,Derived from lane mapping: Implemented
+GO,GOBL-CONN,JDBCBL-CONN,PARTIAL,S1 wave1 evidence: tracks/alpha/drivers/go/S1_CONN_IMPLEMENTATION.md
+GO,GOBL-TXN,JDBCBL-TXN,PARTIAL,S2 wave2 evidence: tracks/alpha/drivers/go/S2_TXN_EXEC_IMPLEMENTATION.md
+GO,GOBL-EXEC,JDBCBL-EXEC,PARTIAL,S2 wave2 evidence: tracks/alpha/drivers/go/S2_TXN_EXEC_IMPLEMENTATION.md
+GO,GOBL-META,JDBCBL-META,PARTIAL,S3 wave1 evidence: tracks/alpha/drivers/go/S3_METADATA_IMPLEMENTATION.md
+GO,GOBL-TYPE,JDBCBL-TYPE,PARTIAL,Derived from lane mapping: Partial
+GO,GOBL-ERR,JDBCBL-ERR,PARTIAL,Derived from lane mapping: Partial
+GO,GOBL-RES,JDBCBL-RES,PARTIAL,Derived from lane mapping: Partial
+RUST,RUSTBL-CONN,JDBCBL-CONN,PARTIAL,S1 wave1 evidence: tracks/alpha/drivers/rust/S1_CONN_IMPLEMENTATION.md
+RUST,RUSTBL-TXN,JDBCBL-TXN,PARTIAL,S2 wave2 evidence: tracks/alpha/drivers/rust/S2_TXN_EXEC_IMPLEMENTATION.md
+RUST,RUSTBL-EXEC,JDBCBL-EXEC,PARTIAL,S2 wave2 evidence: tracks/alpha/drivers/rust/S2_TXN_EXEC_IMPLEMENTATION.md
+RUST,RUSTBL-META,JDBCBL-META,PARTIAL,S3 wave2 evidence: tracks/alpha/drivers/rust/S3_METADATA_IMPLEMENTATION.md
+RUST,RUSTBL-TYPE,JDBCBL-TYPE,MET,Derived from lane mapping: Implemented
+RUST,RUSTBL-ERR,JDBCBL-ERR,MET,Derived from lane mapping: Implemented
+RUST,RUSTBL-RES,JDBCBL-RES,MET,Derived from lane mapping: Implemented
+NODE,NODEBL-CONN,JDBCBL-CONN,MET,Derived from lane mapping: Implemented (core DSN; TLS; handshake; and manager proxy connect paths)
+NODE,NODEBL-TXN,JDBCBL-TXN,PARTIAL,S2 wave1 evidence: tracks/alpha/drivers/node/S2_TXN_EXEC_IMPLEMENTATION.md
+NODE,NODEBL-EXEC,JDBCBL-EXEC,PARTIAL,S2 wave1 evidence: tracks/alpha/drivers/node/S2_TXN_EXEC_IMPLEMENTATION.md
+NODE,NODEBL-META,JDBCBL-META,PARTIAL,S3 wave1 evidence: tracks/alpha/drivers/node/S3_METADATA_IMPLEMENTATION.md
+NODE,NODEBL-TYPE,JDBCBL-TYPE,PARTIAL,Derived from lane mapping: Partial (broad codec/type support in source; narrow test coverage in lane tests)
+NODE,NODEBL-ERR,JDBCBL-ERR,PARTIAL,Derived from lane mapping: Partial (typed error classes and SQLSTATE mapping implemented; minimal explicit error mapping tests)
+NODE,NODEBL-RES,JDBCBL-RES,PARTIAL,Derived from lane mapping: Partial (resource lifecycle; pooling; cancellation; and resilience primitives are present; coverage is limited)
+PYTHON,PYTHONBL-CONN,JDBCBL-CONN,PARTIAL,S1 wave1 evidence: tracks/alpha/drivers/python/S1_CONN_IMPLEMENTATION.md
+PYTHON,PYTHONBL-TXN,JDBCBL-TXN,PARTIAL,S2 wave2 evidence: tracks/alpha/drivers/python/S2_TXN_EXEC_IMPLEMENTATION.md
+PYTHON,PYTHONBL-EXEC,JDBCBL-EXEC,PARTIAL,S2 wave2 evidence: tracks/alpha/drivers/python/S2_TXN_EXEC_IMPLEMENTATION.md
+PYTHON,PYTHONBL-META,JDBCBL-META,PARTIAL,S3 wave1 evidence: tracks/alpha/drivers/python/S3_METADATA_IMPLEMENTATION.md
+PYTHON,PYTHONBL-TYPE,JDBCBL-TYPE,PARTIAL,Derived from lane mapping: Partial
+PYTHON,PYTHONBL-ERR,JDBCBL-ERR,PARTIAL,Derived from lane mapping: Partial
+PYTHON,PYTHONBL-RES,JDBCBL-RES,PARTIAL,Derived from lane mapping: Partial
+PHP,PHPBL-CONN,JDBCBL-CONN,PARTIAL,S1 wave1 evidence: tracks/alpha/drivers/php/S1_CONN_IMPLEMENTATION.md
+PHP,PHPBL-TXN,JDBCBL-TXN,PARTIAL,S2 wave2 evidence: tracks/alpha/drivers/php/S2_TXN_EXEC_IMPLEMENTATION.md
+PHP,PHPBL-EXEC,JDBCBL-EXEC,PARTIAL,S2 wave2 evidence: tracks/alpha/drivers/php/S2_TXN_EXEC_IMPLEMENTATION.md
+PHP,PHPBL-META,JDBCBL-META,PARTIAL,S3 wave3 evidence: tracks/alpha/drivers/php/S3_METADATA_IMPLEMENTATION.md
+PHP,PHPBL-TYPE,JDBCBL-TYPE,PARTIAL,Derived from lane mapping: Partial
+PHP,PHPBL-ERR,JDBCBL-ERR,PARTIAL,Derived from lane mapping: Partial
+PHP,PHPBL-RES,JDBCBL-RES,MET,Derived from lane mapping: Implemented
+RUBY,RUBYBL-CONN,JDBCBL-CONN,PARTIAL,S1 wave2 evidence: tracks/alpha/drivers/ruby/S1_CONN_IMPLEMENTATION.md
+RUBY,RUBYBL-TXN,JDBCBL-TXN,PARTIAL,S2 wave3 evidence: tracks/alpha/drivers/ruby/S2_TXN_EXEC_IMPLEMENTATION.md
+RUBY,RUBYBL-EXEC,JDBCBL-EXEC,PARTIAL,S2 wave3 evidence: tracks/alpha/drivers/ruby/S2_TXN_EXEC_IMPLEMENTATION.md
+RUBY,RUBYBL-META,JDBCBL-META,PARTIAL,S3 wave2 evidence: tracks/alpha/drivers/ruby/S3_METADATA_IMPLEMENTATION.md
+RUBY,RUBYBL-TYPE,JDBCBL-TYPE,PARTIAL,Derived from lane mapping: Partial
+RUBY,RUBYBL-ERR,JDBCBL-ERR,PARTIAL,Derived from lane mapping: Partial
+RUBY,RUBYBL-RES,JDBCBL-RES,PARTIAL,Derived from lane mapping: Partial
+PASCAL,PASCALBL-CONN,JDBCBL-CONN,PARTIAL,S1 wave2 evidence: tracks/alpha/drivers/pascal/S1_CONN_IMPLEMENTATION.md
+PASCAL,PASCALBL-TXN,JDBCBL-TXN,PARTIAL,S2 wave3 evidence: tracks/alpha/drivers/pascal/S2_TXN_EXEC_IMPLEMENTATION.md
+PASCAL,PASCALBL-EXEC,JDBCBL-EXEC,PARTIAL,S2 wave3 evidence: tracks/alpha/drivers/pascal/S2_TXN_EXEC_IMPLEMENTATION.md
+PASCAL,PASCALBL-META,JDBCBL-META,PARTIAL,S3 wave3 evidence: tracks/alpha/drivers/pascal/S3_METADATA_IMPLEMENTATION.md
+PASCAL,PASCALBL-TYPE,JDBCBL-TYPE,PARTIAL,Derived from lane mapping: Partial
+PASCAL,PASCALBL-ERR,JDBCBL-ERR,MET,Derived from lane mapping: Implemented
+PASCAL,PASCALBL-RES,JDBCBL-RES,PARTIAL,Derived from lane mapping: Partial
+MOJO,MOJOBL-CONN,JDBCBL-CONN,MET,Derived from lane mapping: Implemented
+MOJO,MOJOBL-TXN,JDBCBL-TXN,PARTIAL,S2 wave4 evidence: tracks/alpha/drivers/mojo/S2_TXN_EXEC_IMPLEMENTATION.md
+MOJO,MOJOBL-EXEC,JDBCBL-EXEC,PARTIAL,S2 wave4 evidence: tracks/alpha/drivers/mojo/S2_TXN_EXEC_IMPLEMENTATION.md
+MOJO,MOJOBL-META,JDBCBL-META,PARTIAL,S3 wave4 evidence: tracks/alpha/drivers/mojo/S3_METADATA_IMPLEMENTATION.md; pixi/mojo runtime attempted, compatibility fixes pending
+MOJO,MOJOBL-TYPE,JDBCBL-TYPE,PARTIAL,Derived from lane mapping: Partial
+MOJO,MOJOBL-ERR,JDBCBL-ERR,PARTIAL,Derived from lane mapping: Partial
+MOJO,MOJOBL-RES,JDBCBL-RES,PARTIAL,Derived from lane mapping: Partial
+CLI,CLIBL-CONN,JDBCBL-CONN,MET,Derived from lane mapping: Implemented
+CLI,CLIBL-TXN,JDBCBL-TXN,PARTIAL,S2 wave1 evidence: tracks/alpha/drivers/cli/S2_TXN_EXEC_IMPLEMENTATION.md
+CLI,CLIBL-EXEC,JDBCBL-EXEC,MET,S2 wave1 evidence: tracks/alpha/drivers/cli/S2_TXN_EXEC_IMPLEMENTATION.md
+CLI,CLIBL-META,JDBCBL-META,PARTIAL,S3 wave4 evidence: tracks/alpha/drivers/cli/S3_METADATA_IMPLEMENTATION.md
+CLI,CLIBL-TYPE,JDBCBL-TYPE,PARTIAL,Derived from lane mapping: Partial
+CLI,CLIBL-ERR,JDBCBL-ERR,MET,Derived from lane mapping: Implemented
+CLI,CLIBL-RES,JDBCBL-RES,PARTIAL,Derived from lane mapping: Partial
+DART,DARTBL-CONN,JDBCBL-CONN,MET,Derived from lane mapping: Implemented
+DART,DARTBL-TXN,JDBCBL-TXN,PARTIAL,S2 wave4 evidence: tracks/beta/drivers/dart/S2_TXN_EXEC_IMPLEMENTATION.md
+DART,DARTBL-EXEC,JDBCBL-EXEC,PARTIAL,S2 wave4 evidence: tracks/beta/drivers/dart/S2_TXN_EXEC_IMPLEMENTATION.md
+DART,DARTBL-META,JDBCBL-META,PARTIAL,S3 wave2 evidence: tracks/beta/drivers/dart/S3_METADATA_IMPLEMENTATION.md
+DART,DARTBL-TYPE,JDBCBL-TYPE,PARTIAL,Derived from lane mapping: Partial
+DART,DARTBL-ERR,JDBCBL-ERR,PARTIAL,Derived from lane mapping: Partial
+DART,DARTBL-RES,JDBCBL-RES,PARTIAL,Derived from lane mapping: Partial
+SWIFT,SWIFTBL-CONN,JDBCBL-CONN,MET,Derived from lane mapping: Implemented
+SWIFT,SWIFTBL-TXN,JDBCBL-TXN,PARTIAL,S2 wave4 evidence: tracks/beta/drivers/swift/S2_TXN_EXEC_IMPLEMENTATION.md
+SWIFT,SWIFTBL-EXEC,JDBCBL-EXEC,PARTIAL,S2 wave4 evidence: tracks/beta/drivers/swift/S2_TXN_EXEC_IMPLEMENTATION.md
+SWIFT,SWIFTBL-META,JDBCBL-META,PARTIAL,S3 wave3 evidence: tracks/beta/drivers/swift/S3_METADATA_IMPLEMENTATION.md
+SWIFT,SWIFTBL-TYPE,JDBCBL-TYPE,PARTIAL,Derived from lane mapping: Partial
+SWIFT,SWIFTBL-ERR,JDBCBL-ERR,PARTIAL,Derived from lane mapping: Partial
+SWIFT,SWIFTBL-RES,JDBCBL-RES,PARTIAL,Derived from lane mapping: Partial
+R,RBL-CONN,JDBCBL-CONN,PARTIAL,S1 wave2 evidence: tracks/beta/drivers/r/S1_CONN_IMPLEMENTATION.md
+R,RBL-TXN,JDBCBL-TXN,PARTIAL,S2 wave3 evidence: tracks/beta/drivers/r/S2_TXN_EXEC_IMPLEMENTATION.md
+R,RBL-EXEC,JDBCBL-EXEC,MET,S2 wave3 evidence: tracks/beta/drivers/r/S2_TXN_EXEC_IMPLEMENTATION.md
+R,RBL-META,JDBCBL-META,PARTIAL,S3 wave4 evidence: tracks/beta/drivers/r/S3_METADATA_IMPLEMENTATION.md
+R,RBL-TYPE,JDBCBL-TYPE,PARTIAL,Derived from lane mapping: Partial
+R,RBL-ERR,JDBCBL-ERR,PARTIAL,Derived from lane mapping: Partial
+R,RBL-RES,JDBCBL-RES,PARTIAL,Derived from lane mapping: Partial

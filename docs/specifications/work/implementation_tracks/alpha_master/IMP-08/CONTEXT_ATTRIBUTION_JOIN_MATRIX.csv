@@ -1,0 +1,9 @@
+case_id,last_edit_txid_present,transaction_row,session_row,connection_row,expected_attribution,error_code
+CTX-001,yes,exists,exists,exists,tx_to_session_to_connection_to_user_resolved,NONE
+CTX-002,yes,exists,exists,missing,tx_to_session_only,NONE
+CTX-003,yes,exists,missing,missing,tx_only_attribution,NONE
+CTX-004,no,n/a,n/a,n/a,no_tx_attribution,NONE
+CTX-005,yes,state_committed_end_time_null,invalid,n/a,reject,INVALID_TXN_METADATA
+CTX-006,yes,state_in_progress_end_time_non_null,invalid,n/a,reject,INVALID_TXN_METADATA
+CTX-007,yes,session_connection_uuid_missing_ref,invalid,n/a,reject,INVALID_SESSION_REFERENCE
+CTX-008,yes,cluster_bridge_connection,multi_session_user_context,bridge_attribution_chain,NONE

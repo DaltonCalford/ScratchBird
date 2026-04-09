@@ -1,0 +1,7 @@
+case_id,suite,required_check,expected_result,error_code
+T22-G01,G,unknown_opcode_symbol_id,reject,SBLR-E-0012
+T22-G02,G,payload_length_mismatch,reject,SBLR-E-0033
+T22-G03,G,unregistered_feature_key,reject,SBLR-E-0040
+T22-G04,G,schema_mismatch,reject,SBLR-E-0041
+T22-G05,G,unresolved_operator_signature,reject,SBLR-E-0062
+T22-G06,G,integrity_hash_mismatch,reject,SBLR-E-0100

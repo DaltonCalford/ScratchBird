@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-070",
+  "phase": "PH7",
+  "title": "Execute integrated gameday across reliability security and migration",
+  "status": "pending",
+  "owner": "qa-reliability",
+  "estimate_days": 5,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

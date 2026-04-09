@@ -1,0 +1,25 @@
+{
+  "ticket_id": "PP-08",
+  "title": "Bootstrap Startup Validation Contract",
+  "timestamp_utc": "2026-02-13T18:15:33Z",
+  "implementation_repo": "/home/dcalford/CliWork/ScratchBird",
+  "primary_specs": [
+    "06_Fixed_Bootstrap_Page_Map/BOOTSTRAP_PAGE_LAYOUTS.md"
+  ],
+  "changed_files": [
+    "src/core/database.cpp",
+    "include/scratchbird/core/database.h",
+    "tests/unit/test_page_management_edge_cases.cpp"
+  ],
+  "commands": [
+    {
+      "cmd": "./build/tests/scratchbird_tests --gtest_filter='PageManagementEdgeTest.PageManager_FSMCorruption_*'",
+      "result": "pass"
+    },
+    {
+      "cmd": "./build/tests/scratchbird_tests --gtest_filter='*Alpha101*:*PageManagement*:*MoreCases*:*ErrorPaths*:*OnDiskFormat*:*CRC32C_Comprehensive*:*BTreeRightmost*'",
+      "result": "pass"
+    }
+  ],
+  "status": "done"
+}

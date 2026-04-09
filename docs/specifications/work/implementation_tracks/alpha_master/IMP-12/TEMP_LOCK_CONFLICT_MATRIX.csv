@@ -1,0 +1,5 @@
+case_id,operation,required_lock,contention_case,expected_result,error_code
+T12-LK-001,temp_ddl,X_lock_session_scoped,no_contention,success,
+T12-LK-002,temp_dml,IX_lock_plus_row_locks,no_contention,success,
+T12-LK-003,temp_ddl,request_x_lock,conflicting_session_metadata_op,wait_or_timeout,E_LOCK_TIMEOUT
+T12-LK-004,temp_dml,row_lock_conflict,same_global_temp_other_session,no_cross_session_visibility,E_TEMP_SCOPE_VIOLATION

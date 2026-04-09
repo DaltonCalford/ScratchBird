@@ -1,0 +1,5 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md,21_V3_Dialect_Surface,NORM-PIPELINE-ORDER,LD-007/NORMALIZATION_CORPUS_RESULTS.csv,PASS,Corpus rows validate transform ordering and deterministic decisions
+21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md,21_V3_Dialect_Surface,NORM-CLAUSE-REJECTION,LD-007/CLAUSE_ORDER_NEGATIVE_CASES.csv,PASS,Clause-order/duplicate/conflict rejects captured across families
+21_V3_Dialect_Surface/NATIVE_ADMIN_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,NORM-ADMIN-ALIASES,LD-007/NORMALIZATION_CORPUS_RESULTS.csv,PASS,SCAN alias rewrites and rejects captured
+21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,NORM-TSQL-ALIAS,LD-007/NORMALIZATION_CORPUS_RESULTS.csv,PASS,TSQL alias rewrite and disable-mode rejection covered

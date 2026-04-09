@@ -527,7 +527,7 @@ Status coerceToDecfloat(const TypedValue& source, DataType target,
 
 - [scalar_types.md](./scalar_types.md) - Scalar type definitions
 - [complex_types.md](./complex_types.md) - Complex type definitions
-- Implicit coercion rules from `/home/dcalford/CliWork/local_work/docs/specifications/13_Operator_Model_and_Coercion/IMPLICIT_COERCION_RULES.md`
+- Implicit coercion rules from `docs/specifications/13_Operator_Model_and_Coercion/IMPLICIT_COERCION_RULES.md`
 
 ## Appendix
 

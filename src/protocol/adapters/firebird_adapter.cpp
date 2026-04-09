@@ -1688,8 +1688,8 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
                                                         client_config_.ipc_method);
     }
     client_config_.connect_timeout_ms = config_.read_timeout_ms;
-    client_config_.read_timeout_ms = config_.read_timeout_ms;
-    client_config_.write_timeout_ms = config_.write_timeout_ms;
+    client_config_.read_timeout_ms = 0;
+    client_config_.write_timeout_ms = 0;
     client_config_.auto_commit = true;
     client_config_.auto_start_server = false;
     client_config_.connect_client_flags = config_.connect_client_flags;

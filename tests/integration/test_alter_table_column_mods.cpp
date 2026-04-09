@@ -8,6 +8,7 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <memory>
 
 #include "scratchbird/core/database.h"
@@ -125,4 +126,49 @@ TEST_F(AlterTableColumnModsTest, AlterColumnPositionAffectsSelectStarOrder)
     EXPECT_EQ(select.resultSet()->columnName(0), "c");
     EXPECT_EQ(select.resultSet()->columnName(1), "a");
     EXPECT_EQ(select.resultSet()->columnName(2), "b");
+}
+
+TEST_F(AlterTableColumnModsTest,
+       CompatibleWideningChangesSucceedWhileRewriteRequiredPathsFailClosed)
+{
+    ASSERT_TRUE(executeSQL("CREATE TABLE t_rewrite (id INT, val INT)").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO t_rewrite (id, val) VALUES (1, 42)").success());
+
+    auto drop_column = executeSQL("ALTER TABLE t_rewrite DROP COLUMN val");
+    EXPECT_FALSE(drop_column.success());
+    EXPECT_NE(drop_column.error().find("REWRITE_REQUIRED"), std::string::npos);
+
+    auto alter_type = executeSQL("ALTER TABLE t_rewrite ALTER COLUMN val TYPE BIGINT");
+    ASSERT_TRUE(alter_type.success()) << alter_type.error();
+
+    auto insert_after_alter = executeSQL("INSERT INTO t_rewrite (id, val) VALUES (2, 84)");
+    ASSERT_TRUE(insert_after_alter.success()) << insert_after_alter.error();
+
+    auto select = executeSQL("SELECT val FROM t_rewrite ORDER BY id");
+    ASSERT_TRUE(select.success()) << select.error();
+    ASSERT_TRUE(select.hasResultSet());
+    ASSERT_EQ(select.resultSet()->rowCount(), 2u);
+    EXPECT_EQ(select.resultSet()->getValue(0, 0).toInt64(), 42);
+    EXPECT_EQ(select.resultSet()->getValue(1, 0).toInt64(), 84);
+
+    core::ErrorContext ctx;
+    core::CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(schema_id_, "t_rewrite", table_info, &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    std::vector<core::CatalogManager::ColumnInfo> columns;
+    ASSERT_EQ(db_->catalog_manager()->getColumns(table_info.table_id, columns, &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    auto column_it = std::find_if(columns.begin(), columns.end(), [](const auto& column) {
+        return column.column_name == "val";
+    });
+    ASSERT_NE(column_it, columns.end());
+    EXPECT_EQ(static_cast<core::DataType>(column_it->data_type), core::DataType::INT64);
+
+    auto add_not_null = executeSQL("ALTER TABLE t_rewrite ADD COLUMN extra INT NOT NULL");
+    EXPECT_FALSE(add_not_null.success());
+    EXPECT_NE(add_not_null.error().find("backfill"), std::string::npos);
 }

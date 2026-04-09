@@ -1,0 +1,6 @@
+case_id,contract_surface,source_section,freeze_rule,expected_result
+CA-IF-001,operator_catalog_signature,13,signature_and_result_type_fixed,pass
+CA-IF-002,cast_matrix_rows,13,cast_allow_deny_and_mode_fixed,pass
+CA-IF-003,scalar_type_registry,14,type_id_and_encoding_fixed,pass
+CA-IF-004,scalar_io_error_codes,14,error_codes_and_meanings_fixed,pass
+CA-IF-005,operator_to_type_dependency,13_14,all_operator_operands_reference_defined_scalar_or_domain,pass

@@ -1,0 +1,4 @@
+suite_id,requirement_id,check,method,expected_result,reject_condition,evidence_artifact
+T31-G1,IMP-31-REQ-G1-01,Spec schema contract checks,Static schema validator,All schema contracts valid,Any schema contract mismatch,TEST_RESULTS.md#T31-G1
+T31-G1,IMP-31-REQ-G1-02,Protocol/catalog static checks,Static compatibility validator,Protocol and catalog static checks pass,Any static compatibility violation,TEST_RESULTS.md#T31-G1
+T31-G1,IMP-31-REQ-G1-03,Resource bundle feature/opcode/payload mapping checks,Deterministic mapping checker,All bundle mappings deterministic and complete,Missing or non-deterministic mapping,TEST_RESULTS.md#T31-G1

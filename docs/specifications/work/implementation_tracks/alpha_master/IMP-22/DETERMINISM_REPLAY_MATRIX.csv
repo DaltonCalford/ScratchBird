@@ -1,0 +1,4 @@
+case_id,suite,required_check,expected_result,error_code
+T22-F01,F,same_ast_and_bindings_emit_byte_identical_container,pass,
+T22-F02,F,verifier_error_code_and_index_stable_across_runs,pass,
+T22-F03,F,capability_decision_changes_only_expected_bytes,pass,

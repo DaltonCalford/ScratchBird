@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-020",
+  "status": "completed",
+  "started_at": "2026-02-14T15:03:00Z",
+  "finished_at": "2026-02-14T15:24:21Z",
+  "owner": "codex",
+  "notes": "CAT-020 complete: security extension and PKI/crypto catalog families are wired into root/bootstrap/backfill and exposed via deterministic CRUD contracts with targeted tests passing."
+}

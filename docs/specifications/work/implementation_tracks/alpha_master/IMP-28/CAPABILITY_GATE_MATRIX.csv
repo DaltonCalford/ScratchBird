@@ -1,0 +1,14 @@
+case_id,suite,required_check,expected_result,error_code
+T28-C001,C,disabled_dialect_explicit_error,reject,PAR-E-DIALECT-DISABLED
+T28-C002,C,disabled_feature_explicit_error,reject,PAR-E-FEATURE-DISABLED
+T28-C003,C,unsupported_clause_deterministic_error,reject,PAR-E-UNSUPPORTED-CLAUSE
+T28-C004,C,remap_path_emits_transform_id_and_canonical_ast,pass,
+T28-C005,C,missing_profile_entry_rejected_deterministically,reject,PROFILE_ENTRY_MISSING
+T28-C006,C,profile_build_cross_product_cardinality_1926,pass,
+T28-C007,C,required_engine_token_normalization_rejects_unknown,reject,PAR-E-ENGINE-TOKEN
+T28-C008,C,required_target_expansion_matches_build_rules,pass,
+T28-C009,C,row_serialization_order_and_checksum_match_examples,pass,
+T28-C010,C,sample_rows_match_decision_transform_reject_precedence,pass,
+T28-C011,C,decision_table_row_count_equals_feature_count_plus_header,pass,
+T28-C012,C,every_section21_feature_key_exactly_once_in_decision_table,pass,
+T28-C013,C,no_extra_feature_key_outside_section21,pass,

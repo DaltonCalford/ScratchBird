@@ -1963,6 +1963,163 @@ namespace scratchbird::optimizer
             const auto *binary = static_cast<const parser::v3::BinaryExpr *>(expr);
             if (binary->op == parser::v3::BinaryOp::AND)
             {
+                struct RangePredicateBound
+                {
+                    ResolvedColumnRef column;
+                    std::vector<uint8_t> value;
+                    bool lower_bound = false;
+                    bool inclusive = false;
+                };
+
+                const auto parse_range_bound =
+                    [&](const parser::v3::Expression *bound_expr)
+                        -> std::optional<RangePredicateBound> {
+                        const auto *bound_current = unwrapCasts(bound_expr);
+                        if (bound_current == nullptr ||
+                            bound_current->kind() !=
+                                parser::v3::ASTKind::BinaryExpr)
+                        {
+                            return std::nullopt;
+                        }
+
+                        const auto *bound_binary =
+                            static_cast<const parser::v3::BinaryExpr *>(
+                                bound_current);
+                        parser::v3::BinaryOp normalized_op =
+                            bound_binary->op;
+                        const parser::v3::Expression *column_expr =
+                            bound_binary->left;
+                        const parser::v3::Expression *literal_expr =
+                            bound_binary->right;
+
+                        auto column =
+                            resolveColumnRef(db_,
+                                             table_id,
+                                             column_expr,
+                                             pool,
+                                             ctx);
+                        if (!column.has_value())
+                        {
+                            column_expr = bound_binary->right;
+                            literal_expr = bound_binary->left;
+                            column = resolveColumnRef(db_,
+                                                      table_id,
+                                                      column_expr,
+                                                      pool,
+                                                      ctx);
+                            if (!column.has_value())
+                            {
+                                return std::nullopt;
+                            }
+
+                            switch (normalized_op)
+                            {
+                                case parser::v3::BinaryOp::LT:
+                                    normalized_op = parser::v3::BinaryOp::GT;
+                                    break;
+                                case parser::v3::BinaryOp::LE:
+                                    normalized_op = parser::v3::BinaryOp::GE;
+                                    break;
+                                case parser::v3::BinaryOp::GT:
+                                    normalized_op = parser::v3::BinaryOp::LT;
+                                    break;
+                                case parser::v3::BinaryOp::GE:
+                                    normalized_op = parser::v3::BinaryOp::LE;
+                                    break;
+                                default:
+                                    break;
+                            }
+                        }
+
+                        RangePredicateBound bound;
+                        switch (normalized_op)
+                        {
+                            case parser::v3::BinaryOp::GT:
+                                bound.lower_bound = true;
+                                bound.inclusive = false;
+                                break;
+                            case parser::v3::BinaryOp::GE:
+                                bound.lower_bound = true;
+                                bound.inclusive = true;
+                                break;
+                            case parser::v3::BinaryOp::LT:
+                                bound.lower_bound = false;
+                                bound.inclusive = false;
+                                break;
+                            case parser::v3::BinaryOp::LE:
+                                bound.lower_bound = false;
+                                bound.inclusive = true;
+                                break;
+                            default:
+                                return std::nullopt;
+                        }
+
+                        if (!literalExprToBytes(literal_expr,
+                                                pool,
+                                                parameter_bindings_,
+                                                column->data_type,
+                                                bound.value))
+                        {
+                            return std::nullopt;
+                        }
+
+                        bound.column = *column;
+                        return bound;
+                    };
+
+                const auto estimate_same_column_range_conjunction =
+                    [&]() -> std::optional<double> {
+                        auto left_bound = parse_range_bound(binary->left);
+                        auto right_bound = parse_range_bound(binary->right);
+                        if (!left_bound.has_value() || !right_bound.has_value())
+                        {
+                            return std::nullopt;
+                        }
+                        if (left_bound->column.column_id !=
+                            right_bound->column.column_id)
+                        {
+                            return std::nullopt;
+                        }
+                        if (left_bound->lower_bound == right_bound->lower_bound)
+                        {
+                            return std::nullopt;
+                        }
+
+                        const RangePredicateBound &lower =
+                            left_bound->lower_bound ? *left_bound
+                                                    : *right_bound;
+                        const RangePredicateBound &upper =
+                            left_bound->lower_bound ? *right_bound
+                                                    : *left_bound;
+
+                        const std::string lower_op =
+                            lower.inclusive ? ">=" : ">";
+                        const std::string upper_exclusion_op =
+                            upper.inclusive ? ">" : ">=";
+
+                        const double lower_selectivity =
+                            estimateRange(table_id,
+                                          lower.column.column_id,
+                                          lower_op,
+                                          lower.value,
+                                          ctx);
+                        const double upper_exclusion_selectivity =
+                            estimateRange(table_id,
+                                          upper.column.column_id,
+                                          upper_exclusion_op,
+                                          upper.value,
+                                          ctx);
+                        return clampSelectivity(lower_selectivity -
+                                                upper_exclusion_selectivity);
+                    };
+
+                if (auto same_column_range =
+                        estimate_same_column_range_conjunction();
+                    same_column_range.has_value())
+                {
+                    return *same_column_range;
+                }
+
                 double left_sel = estimateWhereClause(binary->left, table_id, pool, ctx);
                 double right_sel = estimateWhereClause(binary->right, table_id, pool, ctx);
                 double combined = estimateAnd(left_sel, right_sel);

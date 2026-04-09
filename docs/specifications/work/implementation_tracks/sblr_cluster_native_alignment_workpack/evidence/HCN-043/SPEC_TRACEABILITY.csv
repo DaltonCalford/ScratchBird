@@ -1,0 +1,4 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+SB-OBS-METRICS-MONITORING-01.md,structured_event_stream_with_epoch_context,"src/core/observability_contract.cpp::StructuredEventStream::emit;src/core/observability_contract.cpp::StructuredEventStream::serialize","EPOCH_CONTEXT_EVENT_AUDIT.csv;SECURITY_EVENT_EMISSION_RESULTS.md",pass,"Event stream includes required epoch context fields and deterministic event IDs"
+SB-OBS-METRICS-MONITORING-01.md,stable_event_schema_registry,"src/core/observability_contract.cpp::StructuredEventStream::schemaRegistry","EVENT_SCHEMA_REGISTRY.md;TEST_RESULTS.md",pass,"Schema registry is sorted and stable"
+SB-OBS-METRICS-MONITORING-01.md,invalid_event_rejection,"src/core/observability_contract.cpp::StructuredEventStream::validate","EPOCH_CONTEXT_EVENT_AUDIT.csv;TEST_RESULTS.md",pass,"Missing epoch context or invalid payload rejected with INVALID_ARGUMENT"

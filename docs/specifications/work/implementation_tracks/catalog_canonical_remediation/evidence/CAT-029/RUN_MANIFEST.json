@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-029",
+  "status": "completed",
+  "started_at": "2026-02-14T20:55:00Z",
+  "finished_at": "2026-02-14T21:27:30Z",
+  "owner": "codex",
+  "notes": "Implemented cluster_fabric catalog family end-to-end: root/backfill wiring, full CRUD/constraints, bootstrap and contract tests."
+}

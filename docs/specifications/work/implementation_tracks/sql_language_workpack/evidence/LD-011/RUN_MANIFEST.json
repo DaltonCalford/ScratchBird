@@ -1,0 +1,22 @@
+{
+  "ticket_id": "LD-011",
+  "status": "completed",
+  "started_at": "2026-02-11T23:32:33Z",
+  "completed_at": "2026-02-11T23:32:33Z",
+  "spec_inputs": [
+    "docs/specifications/21_V3_Dialect_Surface/NORMATIVE_ADMIN_DDL_DML_PSQL_TSQL_IMPLEMENTATION_CHECKLIST.md",
+    "docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/SBLR_STATEMENT_PAYLOAD_SCHEMAS.md",
+    "docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/SBLR_FEATURE_TO_OPCODE_MATRIX.md",
+    "docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/PARSER_NORMALIZATION_TO_SBLR_VALIDATION_MATRIX.md",
+    "docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/SBLR_VERIFIER_AND_VALIDATION_RULES.md"
+  ],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-011/SQL_SBLR_ENVELOPE_AUDIT.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-011/DIAGNOSTIC_TRACE_AUDIT.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-011/SPEC_TRACEABILITY.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-011/TEST_RESULTS.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-011/IMPLEMENTATION_NOTES.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-011/CHECKSUMS.sha256"
+  ],
+  "notes": "SQL-to-SBLR envelope and verifier-diagnostic contracts completed for gate P21-LANG-GATE-03."
+}

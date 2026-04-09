@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-016",
+  "status": "completed",
+  "started_at": "2026-02-14T13:20:00Z",
+  "finished_at": "2026-02-14T13:55:45Z",
+  "owner": "codex",
+  "notes": "CAT-016 complete: index metadata extension catalog families wired into root/bootstrap/backfill with deterministic CRUD constraints and CAT-016 targeted gate tests passing."
+}

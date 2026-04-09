@@ -1,0 +1,3 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+23/NATIVE_COMPILATION_AND_ARTIFACT_LIFECYCLE.md,platform_rebase_portability,"tests/unit/test_sblr_jit_rebase.cpp","REBASE_ARTIFACT_MISMATCH_RESULTS.md;SBLR_PORTABILITY_RESULTS.md",pass,"Canonical SBLR remains executable across target transition mismatch"
+23/NATIVE_COMPILATION_AND_ARTIFACT_LIFECYCLE.md,target_transition_disqualifies_incompatible_artifacts,"tests/unit/test_sblr_jit_target_mismatch.cpp;src/sblr/jit/jit_artifact_store.cpp","TARGET_TRANSITION_AUDIT.csv;TEST_RESULTS.md",pass,"Cross-target mismatch returns deterministic VM fallback"

@@ -1,0 +1,3 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+15_Complex_Types/DOMAIN_EMULATION_PARAMETERS.md,15_Complex_Types,DOMAIN-EMULATION-VISIBILITY,DT-016/DOMAIN_VISIBILITY_POLICY_TEST_RESULTS.md,PASS,Dialect/profile visibility gate implemented in listDomainsVisible
+24_Catalog_Model_and_Virtual_Overlays/CATALOG_EMULATION_PROFILE.md,24_Catalog_Model_and_Virtual_Overlays,ENABLED-EMULATION-PROFILE-FILTER,DT-016/DOMAIN_VISIBILITY_POLICY_TEST_RESULTS.md,PASS,Enabled emulation types are loaded from catalog and applied to system domain visibility

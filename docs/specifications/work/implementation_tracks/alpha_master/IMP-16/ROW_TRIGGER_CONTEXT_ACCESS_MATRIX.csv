@@ -1,0 +1,8 @@
+case_id,trigger_operation,access_target,expected_result,error_code
+T16-RW-001,INSERT,ROW.NEW.column_x,allowed,
+T16-RW-002,INSERT,ROW.OLD.column_x,rejected,E_ROW_CONTEXT_INVALID_ACCESS
+T16-RW-003,UPDATE,ROW.NEW.column_x,allowed,
+T16-RW-004,UPDATE,ROW.OLD.column_x,allowed,
+T16-RW-005,DELETE,ROW.OLD.column_x,allowed,
+T16-RW-006,DELETE,ROW.NEW.column_x,rejected,E_ROW_CONTEXT_INVALID_ACCESS
+T16-RW-007,outside_trigger,ROW.IS_UPDATE,rejected,E_CONTEXT_SCOPE_VIOLATION

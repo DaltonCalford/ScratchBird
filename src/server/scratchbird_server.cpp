@@ -220,10 +220,8 @@ void ScratchBirdServer::shutdown() {
         state_ = ServerState::STOPPING;
     }
 
-    // Wake up accept loop by closing listener
-    if (parser_listener_) {
-        parser_listener_->stop(nullptr);
-    }
+    // Wake up the main accept loop. The server thread owns parser-listener
+    // teardown during start() cleanup so we do not race stop/reset here.
     if (listener_) {
         listener_->close();
     }
@@ -471,8 +469,12 @@ void ScratchBirdServer::checkControlSignals() {
 }
 
 void ScratchBirdServer::handleClient(std::unique_ptr<IPCConnection> connection) {
+    const std::string local_endpoint =
+        (listener_ && !listener_->getAddress().empty()) ? listener_->getAddress() : getIPCPath();
+
     // Create session
-    ServerSession* session = session_manager_.createSession(connection.get(), database_.get());
+    ServerSession* session =
+        session_manager_.createSession(connection.get(), database_.get(), local_endpoint);
     if (!session) {
         log("Failed to create session");
         return;

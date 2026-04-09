@@ -1,0 +1,7 @@
+page_id,expected_page_type,creation_path,checksum_required,status,notes
+0,PAGE_TYPE_DATABASE_HEADER,src/core/database.cpp:init_header_page,yes,pass,Header persisted with canonical fixed references and next_page_id=6.
+1,PAGE_TYPE_SYSTEM_STATE,src/core/database.cpp:create_system_state_page,yes,pass,System state page created and checksummed during create().
+2,PAGE_TYPE_CATALOG_ROOT,src/core/database.cpp:create_catalog_page,yes,pass,Catalog root shell written at canonical bootstrap slot.
+3,PAGE_TYPE_FSM_ROOT,src/core/database.cpp:create_fsm_page,yes,pass,FSM root created with bitmap reserved bits for pages 0..5.
+4,PAGE_TYPE_TRANSACTION_MAP,src/core/database.cpp:create_tx_map_root_page,yes,pass,Transaction map root created with initial committed entries.
+5,PAGE_TYPE_BOOTSTRAP_RESERVED,src/core/database.cpp:create_reserved_bootstrap_page,yes,pass,Reserved bootstrap slot initialized for future metadata use.

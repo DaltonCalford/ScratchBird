@@ -35,7 +35,8 @@ enum SectionId : uint16_t {
     SECTION_BYTECODE_STREAM = 0x0004,
     SECTION_DEPENDENCIES = 0x0005,
     SECTION_DEBUG_INFO = 0x0006,
-    SECTION_INTEGRITY = 0x0007
+    SECTION_INTEGRITY = 0x0007,
+    SECTION_RETAINED_SYMBOLS = 0x0008
 };
 
 struct ModuleMetadata {
@@ -57,6 +58,7 @@ struct Container {
     std::vector<SectionEntry> sections;
     ModuleMetadata metadata;
     std::vector<std::string> symbols;
+    Value::Object retained_symbol_payload;
     std::vector<ConstantPoolEntry> constants;
     std::vector<uint8_t> bytecode_stream;
     std::vector<uint8_t> dependencies;
@@ -66,5 +68,6 @@ struct Container {
 
 bool encodeContainer(const Container& container, std::vector<uint8_t>& out, std::string& err);
 bool decodeContainer(const uint8_t* data, size_t size, Container& out, std::string& err);
+Value::Object buildNormalizedRetainedSymbolPayload(const Instruction& root);
 
 }  // namespace scratchbird::sblr::v3

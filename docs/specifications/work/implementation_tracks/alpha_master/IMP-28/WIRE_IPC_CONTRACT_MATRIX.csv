@@ -1,0 +1,7 @@
+case_id,suite,required_check,expected_result,error_code
+T28-G001,G,parser_engine_ipc_handshake_feature_negotiation_fields,pass,
+T28-G002,G,execute_request_includes_original_input_and_sblr,pass,
+T28-G003,G,prepared_statement_lifecycle_mapping_correct,pass,
+T28-G004,G,copy_streaming_backpressure_enforced,pass,
+T28-G005,G,cancel_request_interrupts_active_execution,pass,
+T28-G006,G,notification_subscribe_unsubscribe_mapping_correct,pass,

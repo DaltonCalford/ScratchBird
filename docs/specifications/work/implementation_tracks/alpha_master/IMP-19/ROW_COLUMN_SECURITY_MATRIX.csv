@@ -1,0 +1,6 @@
+case_id,policy_type,input_row,input_columns,expected_visible_rows,expected_visible_columns,error_code
+T19-RC-001,row_level,tenant_id_match,all,matching_rows,all_granted_columns,
+T19-RC-002,row_level,tenant_id_mismatch,all,no_rows,none,
+T19-RC-003,column_level,row_match,ssn;email,row_set,email_only,
+T19-RC-004,column_level,row_match,salary,deny_all,none,E_COLUMN_PERMISSION_DENIED
+T19-RC-005,row_plus_column,row_match,ssn;email,row_set,email_masked_policy, 

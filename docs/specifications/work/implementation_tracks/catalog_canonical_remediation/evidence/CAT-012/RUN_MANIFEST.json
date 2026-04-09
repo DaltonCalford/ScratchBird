@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-012",
+  "status": "completed",
+  "started_at": "2026-02-14T04:58:00Z",
+  "finished_at": "2026-02-14T05:31:44Z",
+  "owner": "codex",
+  "notes": "CAT-012 complete: charset_alias/collation_tailoring page wiring, root read/write/backfill, CRUD contracts, and gate tests."
+}

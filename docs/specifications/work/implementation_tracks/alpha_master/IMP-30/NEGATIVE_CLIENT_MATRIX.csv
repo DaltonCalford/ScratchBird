@@ -1,0 +1,4 @@
+case_id,suite,required_check,expected_result,error_code
+T30-F01,F,auth_failure_produces_deterministic_client_error,reject,CLI-E-AUTH
+T30-F02,F,transport_failure_retry_behavior_by_policy,pass,
+T30-F03,F,misuse_of_closed_handles_returns_deterministic_error,reject,CLI-E-HANDLE-CLOSED

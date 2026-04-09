@@ -560,12 +560,14 @@ namespace scratchbird::optimizer
 
     inline auto accessPathMaintenanceStateClassName(
         AccessPathQueryabilityState queryability_state,
+        std::string_view metrics_freshness_class = {},
         std::string_view metrics_confidence_class = {},
         uint64_t publish_lag_xids = 0,
         uint64_t maintenance_backlog_ops = 0,
         uint64_t reclaim_lag_xids = 0) -> const char *
     {
-        if (metrics_confidence_class == "INVALID" ||
+        if (metrics_freshness_class == "UNUSABLE" ||
+            metrics_confidence_class == "INVALID" ||
             queryability_state == AccessPathQueryabilityState::INVALID)
         {
             return "FAILED";
@@ -574,9 +576,14 @@ namespace scratchbird::optimizer
         {
             return "PUBLISH_LAGGED";
         }
-        if (maintenance_backlog_ops > 0 || reclaim_lag_xids > 0)
+        if (maintenance_backlog_ops > 0 || reclaim_lag_xids > 0 ||
+            metrics_freshness_class == "STALE_DEGRADED")
         {
             return "MAINTENANCE_DEBT";
+        }
+        if (metrics_freshness_class == "AGED")
+        {
+            return "LIMITED";
         }
         switch (queryability_state)
         {
@@ -625,6 +632,142 @@ namespace scratchbird::optimizer
                    maintenance_state_class == "PUBLISH_LAGGED";
         }
         return false;
+    }
+
+    inline auto canonicalPlannerBundleRefusalClass(
+        std::string_view reason_code,
+        std::string_view detail) -> std::string
+    {
+        if (reason_code == "P08_PARTIAL_INDEX_PREDICATE_MISMATCH" ||
+            reason_code == "P08_EXPRESSION_INDEX_MISMATCH" ||
+            reason_code == "P08_NO_MATCHING_INDEX_FOR_PREDICATE")
+        {
+            return "semantic mismatch";
+        }
+        if (reason_code == "P08_OPERATOR_STRATEGY_UNBOUND" ||
+            reason_code == "P08_SUPPORT_FUNCTION_UNVALIDATED" ||
+            reason_code == "P08_DISTANCE_SUPPORT_UNVALIDATED" ||
+            reason_code == "P08_HASH_EQ_PREDICATE_REQUIRED" ||
+            reason_code == "P08_BITMAP_COMPOSE_UNAVAILABLE" ||
+            reason_code == "P08_SKIP_SCAN_UNAVAILABLE")
+        {
+            return "unsupported operator shape";
+        }
+        if (reason_code == "P08_ANN_NEAREST_ORDER_REQUIRED" ||
+            reason_code == "P08_TEXT_CORPUS_STATS_REQUIRED" ||
+            reason_code == "P08_TEXT_CANDIDATE_BUDGET_REQUIRED" ||
+            reason_code == "P08_ANN_METRIC_INCOMPATIBLE" ||
+            reason_code == "P08_ANN_CANDIDATE_BUDGET_REQUIRED" ||
+            reason_code == "P08_NEAREST_ORDER_UNVALIDATED")
+        {
+            return "missing required runtime capability";
+        }
+        if (reason_code == "P08_HIGHER_TOTAL_COST_THAN_CURRENT_BEST")
+        {
+            return "higher estimated cost than current winner";
+        }
+        if (reason_code == "P08_MGA_GOVERNANCE_REJECTED")
+        {
+            return "MGA governance rejected candidate under current pressure";
+        }
+        if (reason_code == "P08_STRUCTURALLY_OVERWEIGHT_EXACT_PATH")
+        {
+            return "structurally overweight path under current metrics";
+        }
+        if (reason_code == "P08_SUMMARY_NATIVE_PROMOTION_THRESHOLD_NOT_MET" ||
+            reason_code == "P08_BITMAP_NATIVE_PROMOTION_THRESHOLD_NOT_MET" ||
+            reason_code == "P08_COLUMNSTORE_NATIVE_PROMOTION_THRESHOLD_NOT_MET" ||
+            reason_code == "P08_ANN_HYBRID_FALLBACK_NOT_JUSTIFIED" ||
+            reason_code == "P08_ANN_NATIVE_PROMOTION_THRESHOLD_NOT_MET" ||
+            reason_code == "P08_TEXT_SCORE_ROWS_REQUIRED" ||
+            reason_code == "P08_TEXT_NATIVE_PROMOTION_THRESHOLD_NOT_MET" ||
+            reason_code ==
+                "P08_GENERALIZED_NEAREST_NATIVE_PROMOTION_THRESHOLD_NOT_MET" ||
+            reason_code == "P08_GENERALIZED_NATIVE_PROMOTION_THRESHOLD_NOT_MET")
+        {
+            return "family-specific promotion threshold not met";
+        }
+        if (detail.find("freshness=UNUSABLE") != std::string::npos ||
+            detail.find("invalidation=INVALIDATED_HARD") !=
+                std::string::npos ||
+            detail.find("reason=CONFIDENCE_INVALID") != std::string::npos)
+        {
+            return "unusable metrics";
+        }
+        if (detail.find("freshness=STALE_DEGRADED") != std::string::npos ||
+            detail.find("invalidation=INVALIDATED_SOFT") !=
+                std::string::npos)
+        {
+            return "stale metrics beyond current policy";
+        }
+        if (reason_code == "P08_MAINTENANCE_STATE_INCOMPATIBLE")
+        {
+            return "maintenance state incompatible with trust class";
+        }
+        if (reason_code == "P08_TRUST_LOCATOR_UNDECLARED")
+        {
+            return "missing trust or locator classification";
+        }
+        if (reason_code == "P08_FAMILY_LEGALITY_UNDECLARED")
+        {
+            return "missing canonical family legality classification";
+        }
+        if (reason_code == "P08_FAMILY_LEGALITY_TRUST")
+        {
+            return "trust class violates canonical family legality matrix";
+        }
+        if (reason_code == "P08_FAMILY_LEGALITY_LOCATOR")
+        {
+            return "locator granularity violates canonical family legality matrix";
+        }
+        if (reason_code == "P08_FAMILY_LEGALITY_VISIBILITY")
+        {
+            return "visibility enforcement violates canonical family legality matrix";
+        }
+        if (reason_code == "P08_FAMILY_NOT_QUERYABLE")
+        {
+            return "fail-closed family-specific safety rule";
+        }
+        return "fail-closed family-specific safety rule";
+    }
+
+    inline auto canonicalPlannerBundleRefusalCauseDomain(
+        std::string_view refusal_class) -> std::string
+    {
+        if (refusal_class == "semantic mismatch")
+        {
+            return "SEMANTICS";
+        }
+        if (refusal_class == "unsupported operator shape")
+        {
+            return "OPERATOR";
+        }
+        if (refusal_class ==
+            "MGA governance rejected candidate under current pressure")
+        {
+            return "POLICY";
+        }
+        if (refusal_class == "higher estimated cost than current winner" ||
+            refusal_class == "structurally overweight path under current metrics")
+        {
+            return "COST";
+        }
+        if (refusal_class == "family-specific promotion threshold not met" ||
+            refusal_class == "unusable metrics" ||
+            refusal_class == "stale metrics beyond current policy" ||
+            refusal_class == "maintenance state incompatible with trust class")
+        {
+            return "METRICS";
+        }
+        if (refusal_class == "missing required runtime capability")
+        {
+            return "CAPABILITY";
+        }
+        if (refusal_class == "missing trust or locator classification")
+        {
+            return "POLICY";
+        }
+        return "POLICY";
     }
 
     inline auto accessPathPublicationModelName(
@@ -1117,6 +1260,7 @@ namespace scratchbird::optimizer
         };
 
         std::string family;
+        std::string physical_family;
         std::string path_name;
         PlannerAccessFamily family_kind = PlannerAccessFamily::UNKNOWN;
         std::vector<std::string> family_tags;
@@ -1128,7 +1272,11 @@ namespace scratchbird::optimizer
         AccessPathVisibilityEnforcement visibility_enforcement =
             AccessPathVisibilityEnforcement::UNKNOWN;
         uint32_t family_metrics_version = 0;
+        uint64_t metrics_publication_epoch = 0;
         std::string metrics_confidence_class;
+        std::string metrics_freshness_class;
+        std::string metrics_invalidation_state;
+        std::string metrics_invalidation_reason;
         AccessPathQueryabilityState queryability_state =
             AccessPathQueryabilityState::UNKNOWN;
         std::string native_trust_class;
@@ -1443,7 +1591,12 @@ namespace scratchbird::optimizer
                 capability.supports_specialized_collector_modes;
             access_descriptor_.maintenance_state_class =
                 accessPathMaintenanceStateClassName(
-                    access_descriptor_.queryability_state);
+                    access_descriptor_.queryability_state,
+                    access_descriptor_.metrics_freshness_class,
+                    access_descriptor_.metrics_confidence_class,
+                    access_descriptor_.publish_lag_xids,
+                    access_descriptor_.maintenance_backlog_ops,
+                    access_descriptor_.reclaim_lag_xids);
             access_descriptor_.formula_profile_id = cost_.formula_profile_id;
             access_descriptor_.formula_profile_version = cost_.formula_profile_version;
             access_descriptor_.calibration_profile_id = cost_.calibration_profile_id;
@@ -1534,6 +1687,7 @@ namespace scratchbird::optimizer
                 access_descriptor_.maintenance_state_class =
                     accessPathMaintenanceStateClassName(
                         access_descriptor_.queryability_state,
+                        access_descriptor_.metrics_freshness_class,
                         access_descriptor_.metrics_confidence_class,
                         access_descriptor_.publish_lag_xids,
                         access_descriptor_.maintenance_backlog_ops,

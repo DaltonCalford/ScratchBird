@@ -195,6 +195,33 @@ TEST_F(NativeSqlRendererTest, GenericAlterSystemRendersWithLiteralValue) {
     EXPECT_EQ(rendered.sql, std::string("ALTER SYSTEM SET custom.knob = 'enabled'"));
 }
 
+TEST_F(NativeSqlRendererTest, AlterSystemResetRendersClassifierStatement) {
+    auto root = compileRootInstruction("ALTER SYSTEM RESET scheduler.enabled");
+    NativeSqlRenderResult rendered;
+    std::string error;
+    ASSERT_TRUE(renderNativeSqlInstruction(root, rendered, error)) << error;
+    EXPECT_EQ(rendered.contract_id, std::string("NRSQL-100-ALTER-SYSTEM-GENERIC"));
+    EXPECT_EQ(rendered.sql, std::string("ALTER SYSTEM RESET scheduler.enabled"));
+}
+
+TEST_F(NativeSqlRendererTest, ConfigHistoryRendersClassifierStatement) {
+    auto root = compileRootInstruction("CONFIG HISTORY");
+    NativeSqlRenderResult rendered;
+    std::string error;
+    ASSERT_TRUE(renderNativeSqlInstruction(root, rendered, error)) << error;
+    EXPECT_EQ(rendered.contract_id, std::string("NRSQL-100-ALTER-SYSTEM-GENERIC"));
+    EXPECT_EQ(rendered.sql, std::string("CONFIG HISTORY"));
+}
+
+TEST_F(NativeSqlRendererTest, ConfigReloadRendersClassifierStatement) {
+    auto root = compileRootInstruction("CONFIG RELOAD");
+    NativeSqlRenderResult rendered;
+    std::string error;
+    ASSERT_TRUE(renderNativeSqlInstruction(root, rendered, error)) << error;
+    EXPECT_EQ(rendered.contract_id, std::string("NRSQL-100-ALTER-SYSTEM-GENERIC"));
+    EXPECT_EQ(rendered.sql, std::string("CONFIG RELOAD"));
+}
+
 TEST_F(NativeSqlRendererTest, UuidNameResolutionAdapterResolvesWhenResolverProvided) {
     auto root = compileRootInstruction("CREATE USER app_user WITH PASSWORD 'pw' NOSUPERUSER");
     auto* payload = std::get_if<scratchbird::sblr::v3::Value::Object>(&root.payload.data);

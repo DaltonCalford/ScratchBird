@@ -1,0 +1,4 @@
+case_id,suite,required_check,expected_result,error_code
+T30-D01,D,canonical_commands_parse_dispatch_correctly,pass,
+T30-D02,D,script_mode_and_interactive_mode_behavior,pass,
+T30-D03,D,backup_restore_validate_jobctl_sequence_behavior,pass,

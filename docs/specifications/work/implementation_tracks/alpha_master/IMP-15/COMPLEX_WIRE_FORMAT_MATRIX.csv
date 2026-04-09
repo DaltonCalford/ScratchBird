@@ -1,0 +1,7 @@
+case_id,emulated_engine,type_name,canonical_value,wire_value,resolution_preserved,error_code
+T15-WF-001,postgresql_18,jsonb,canonical_jsonb,pg_jsonb_wire,true,
+T15-WF-002,mysql_8,json,canonical_json,mysql_json_wire,true,
+T15-WF-003,firebird_5,array,canonical_array,firebird_array_wire,true,
+T15-WF-004,mongodb_8,bson,canonical_bson,mongodb_bson_wire,true,
+T15-WF-005,neo4j_5,point,canonical_geometry,neo4j_point_wire,true,
+T15-WF-006,milvus_2,vector_array,canonical_array_composite,milvus_wire,true,

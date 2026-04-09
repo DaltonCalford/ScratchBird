@@ -268,6 +268,97 @@ std::string deriveAuthPolicyScope(const std::string& database_context) {
     return canonicalizePolicyScope(scope);
 }
 
+const char* transportMethodSessionValue(IPCMethod method) {
+    switch (method) {
+        case IPCMethod::UNIX_SOCKET:
+            return "UNIX_SOCKET";
+        case IPCMethod::NAMED_PIPE:
+            return "NAMED_PIPE";
+        case IPCMethod::TCP_LOCALHOST:
+            return "TCP_LOCALHOST";
+        case IPCMethod::AUTO:
+        default:
+            return "AUTO";
+    }
+}
+
+const char* transportFamilySessionValue(IPCMethod method) {
+    switch (method) {
+        case IPCMethod::UNIX_SOCKET:
+        case IPCMethod::NAMED_PIPE:
+            return "LOCAL_NON_IP";
+        case IPCMethod::TCP_LOCALHOST:
+            return "LOCAL_LOOPBACK_IP";
+        case IPCMethod::AUTO:
+        default:
+            return "UNKNOWN";
+    }
+}
+
+std::string formatEndpointIdentity(IPCMethod method, const std::string& address) {
+    if (address.empty()) {
+        return "unknown";
+    }
+
+    if (address.rfind("unix:", 0) == 0 ||
+        address.rfind("pipe:", 0) == 0 ||
+        address.rfind("tcp:", 0) == 0) {
+        return address;
+    }
+
+    switch (method) {
+        case IPCMethod::UNIX_SOCKET:
+            return "unix:" + address;
+        case IPCMethod::NAMED_PIPE:
+            return "pipe:" + address;
+        case IPCMethod::TCP_LOCALHOST:
+            return "tcp:" + address;
+        case IPCMethod::AUTO:
+        default:
+            return address;
+    }
+}
+
+bool isZeroIdLocal(const core::ID& id) {
+    return std::all_of(id.bytes.begin(), id.bytes.end(), [](uint8_t byte) {
+        return byte == 0;
+    });
+}
+
+void setOptionalUuidSessionVariable(core::ConnectionContext& conn_ctx,
+                                    const std::string& name,
+                                    const core::ID& id) {
+    if (isZeroIdLocal(id)) {
+        conn_ctx.clearSessionVariable(name);
+        return;
+    }
+    conn_ctx.setSessionVariable(name, id.toString());
+}
+
+void publishLocalSessionIdentity(core::ConnectionContext& conn_ctx,
+                                 IPCConnection* connection,
+                                 core::Database* database,
+                                 const std::string& local_endpoint) {
+    const IPCMethod method = connection ? connection->getMethod() : IPCMethod::AUTO;
+    conn_ctx.setSessionVariable("SB$TRANSPORT_METHOD", transportMethodSessionValue(method));
+    conn_ctx.setSessionVariable("SB$TRANSPORT_FAMILY", transportFamilySessionValue(method));
+    conn_ctx.setSessionVariable("SB$LOCAL_ENDPOINT", formatEndpointIdentity(method, local_endpoint));
+    conn_ctx.setSessionVariable(
+        "SB$REMOTE_ENDPOINT",
+        connection ? formatEndpointIdentity(method, connection->getRemoteAddress()) : "unknown");
+
+    if (database) {
+        conn_ctx.setSessionVariable("SB$DATABASE_PATH", database->path());
+        setOptionalUuidSessionVariable(conn_ctx, "SB$DATABASE_UUID", database->uuid());
+        setOptionalUuidSessionVariable(conn_ctx, "SB$SERVER_INSTANCE_ID", database->server_instance_id());
+    }
+
+    setOptionalUuidSessionVariable(conn_ctx, "SB$PROTOCOL_SESSION_ID", conn_ctx.protocolSessionId());
+    setOptionalUuidSessionVariable(conn_ctx, "SB$CATALOG_SESSION_ID", conn_ctx.sessionId());
+    setOptionalUuidSessionVariable(conn_ctx, "SB$AUTHKEY_ID", conn_ctx.authKeyId());
+    conn_ctx.setSessionVariable("SB$EMULATION_MODE", conn_ctx.emulationMode());
+}
+
 std::string deriveParserSurfaceFromClientName(const std::string& client_name) {
     const std::string normalized = toLowerAscii(trimAscii(client_name));
     if (normalized.empty()) {
@@ -668,6 +759,18 @@ bool pluginMethodIdToAuthMethod(const std::string& method_id,
 
 bool isValidPluginMethodId(const std::string& method_id) {
     return !method_id.empty() && method_id.rfind("scratchbird.auth.", 0) == 0;
+}
+
+bool isBeta1AdmittedPluginMethodId(const std::string& method_id) {
+    const std::string normalized = toLowerAscii(trimAscii(method_id));
+    return normalized == "scratchbird.auth.password_compat" ||
+           normalized == "scratchbird.auth.md5_legacy" ||
+           normalized == "scratchbird.auth.scram_sha_256" ||
+           normalized == "scratchbird.auth.scram_sha_512" ||
+           normalized == "scratchbird.auth.authkey_token" ||
+           normalized == "scratchbird.auth.peer_uid" ||
+           normalized == "scratchbird.auth.certificate_mtls" ||
+           normalized == "scratchbird.auth.proxy_assertion";
 }
 
 void appendUniquePluginMethodId(std::vector<std::string>& method_ids,
@@ -1729,6 +1832,14 @@ bool resolveAuthNegotiationPolicy(core::CatalogManager* catalog,
         appendUniquePluginMethodId(ordered_method_ids, configured_method_id);
     }
     allowed_method_ids_out.swap(ordered_method_ids);
+    allowed_method_ids_out.erase(
+        std::remove_if(
+            allowed_method_ids_out.begin(),
+            allowed_method_ids_out.end(),
+            [](const std::string& method_id) {
+                return !isBeta1AdmittedPluginMethodId(method_id);
+            }),
+        allowed_method_ids_out.end());
 
     const std::string method_ids_env =
         resolveScopedEnvValue("SCRATCHBIRD_AUTH_ALLOWED_METHOD_IDS", policy_scope);
@@ -1970,11 +2081,13 @@ bool sendCopyOutChunk(protocol::ProtocolSession* session,
 
 ServerSession::ServerSession(IPCConnection* connection,
                              core::Database* database,
+                             const std::string& local_endpoint,
                              const uint8_t session_id[16])
     : connection_(connection)
     , database_(database)
     , state_(SessionState::CREATED)
     , shutdown_requested_(false)
+    , local_endpoint_(local_endpoint)
 {
     std::memcpy(session_id_, session_id, 16);
 
@@ -2103,6 +2216,9 @@ core::Status ServerSession::run() {
 void ServerSession::requestShutdown() {
     shutdown_requested_ = true;
     state_ = SessionState::CLOSING;
+    if (connection_) {
+        connection_->close();
+    }
 }
 
 core::Status ServerSession::processMessage(const protocol::Message& msg, core::ErrorContext* ctx) {
@@ -2521,6 +2637,8 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
                                              0);
             }
         }
+
+        publishLocalSessionIdentity(*conn_ctx_, connection_, database_, local_endpoint_);
 
         executor_->setConnectionContext(conn_ctx_.get());
 
@@ -3141,9 +3259,18 @@ core::Status ServerSession::handleQuery(const protocol::Message& msg, core::Erro
     std::string sql;
     uint8_t flags;
     std::vector<uint8_t> bytecode;
+    std::vector<std::string> parameter_values;
+    std::vector<bool> parameter_nulls;
 
     core::Status status = protocol::ProtocolCodec::parseQuery(
-        msg, session_id, sql, flags, &bytecode, ctx);
+        msg,
+        session_id,
+        sql,
+        flags,
+        &bytecode,
+        &parameter_values,
+        &parameter_nulls,
+        ctx);
     if (status != core::Status::OK) {
         sendError("Invalid query");
         return status;
@@ -3204,7 +3331,9 @@ core::Status ServerSession::handleQuery(const protocol::Message& msg, core::Erro
     SessionState prev_state = state_;
     state_ = SessionState::EXECUTING;
     if (flags & static_cast<uint8_t>(protocol::QueryFlags::BYTECODE)) {
-        status = executeBytecode(bytecode, sql, ctx);
+        const auto* parameter_values_ptr = parameter_values.empty() ? nullptr : &parameter_values;
+        const auto* parameter_nulls_ptr = parameter_nulls.empty() ? nullptr : &parameter_nulls;
+        status = executeBytecode(bytecode, sql, parameter_values_ptr, parameter_nulls_ptr, ctx);
     } else {
         status = sendError("SQL text execution is not supported; parser must submit SBLR bytecode",
                            "0A000",
@@ -3424,7 +3553,40 @@ core::Status ServerSession::sendPendingNotices(core::ErrorContext* ctx) {
 
 core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode,
                                             const std::string& sql,
+                                            const std::vector<std::string>* parameter_values,
+                                            const std::vector<bool>* parameter_nulls,
                                             core::ErrorContext* ctx) {
+    using ExecProfileClock = std::chrono::steady_clock;
+    const auto total_start = ExecProfileClock::now();
+    const auto duration_ms = [](const ExecProfileClock::time_point& start,
+                                const ExecProfileClock::time_point& end) -> double {
+        return static_cast<double>(
+                   std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()) /
+               1000.0;
+    };
+    const bool exec_profile_enabled = []() -> bool {
+        const char* value = std::getenv("SCRATCHBIRD_EXEC_PROFILE");
+        if (value == nullptr || value[0] == '\0') {
+            return false;
+        }
+        return std::strcmp(value, "0") != 0 &&
+               std::strcmp(value, "false") != 0 &&
+               std::strcmp(value, "FALSE") != 0;
+    }();
+    const char* exec_profile_file = []() -> const char* {
+        const char* path = std::getenv("SCRATCHBIRD_EXEC_PROFILE_FILE");
+        if (path == nullptr || path[0] == '\0') {
+            return "/tmp/scratchbird_exec_profile.log";
+        }
+        return path;
+    }();
+    auto sql_prefix = [&]() -> std::string {
+        constexpr size_t kMaxPrefix = 96;
+        if (sql.size() <= kMaxPrefix) {
+            return sql;
+        }
+        return sql.substr(0, kMaxPrefix) + "...";
+    }();
     const bool debug_create_database =
         std::getenv("SCRATCHBIRD_DEBUG_CREATE_DATABASE_FLOW") != nullptr &&
         !sql.empty() &&
@@ -3475,6 +3637,29 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
         ~QueryExecutingGuard() { flag.store(false, std::memory_order_release); }
     } guard(query_executing_);
 
+    struct ParameterGuard {
+        sblr::Executor* executor = nullptr;
+
+        ParameterGuard(sblr::Executor* exec,
+                       const std::vector<std::string>* values,
+                       const std::vector<bool>* nulls)
+            : executor(exec) {
+            if (!executor || !values || !nulls) {
+                return;
+            }
+            executor->setParameters(*values, *nulls);
+        }
+
+        ~ParameterGuard() {
+            if (executor) {
+                executor->clearParameters();
+            }
+        }
+    };
+    const auto parameter_bind_start = ExecProfileClock::now();
+    ParameterGuard parameter_guard(executor_.get(), parameter_values, parameter_nulls);
+    const auto parameter_bind_done = ExecProfileClock::now();
+
     struct ConnectionContextGuard {
         core::ConnectionContext* previous = nullptr;
         bool changed = false;
@@ -3495,11 +3680,28 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
         }
     } ctx_guard(conn_ctx_.get());
 
+    auto validate_start = ExecProfileClock::now();
+    auto validate_done = validate_start;
     if (executor_) {
         core::ErrorContext validate_ctx;
         core::Status validate_status = sblr::validateBytecode(executable_bytecode, &validate_ctx);
+        validate_done = ExecProfileClock::now();
         if (validate_status != core::Status::OK) {
             stats_.queries_failed++;
+            if (exec_profile_enabled) {
+                if (FILE* trace_file = std::fopen(exec_profile_file, "a"); trace_file != nullptr) {
+                    std::fprintf(
+                        trace_file,
+                        "EXEC PROFILE outcome=validate_fail sql=\"%s\" bytecode_bytes=%zu param_count=%zu total_ms=%.3f bind_ms=%.3f validate_ms=%.3f execute_ms=0.000\n",
+                        sql_prefix.c_str(),
+                        executable_bytecode.size(),
+                        parameter_values != nullptr ? parameter_values->size() : 0u,
+                        duration_ms(total_start, validate_done),
+                        duration_ms(parameter_bind_start, parameter_bind_done),
+                        duration_ms(validate_start, validate_done));
+                    std::fclose(trace_file);
+                }
+            }
             if (conn_ctx_) {
                 conn_ctx_->endStatementTrackingFailure(
                     static_cast<uint32_t>(validate_status), "0A000");
@@ -3589,8 +3791,11 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
     } copy_guard(copy_active ? executor_.get() : nullptr);
 
     sblr::ExecutionResult exec_result;
+    auto execute_start = ExecProfileClock::now();
+    auto execute_done = execute_start;
     try {
         exec_result = executor_->execute(executable_bytecode);
+        execute_done = ExecProfileClock::now();
         if (debug_mysql_exec) {
             std::fprintf(stderr,
                          "[my_exec] server_session executor returned success=%d has_rs=%d affected=%lld\n",
@@ -3608,6 +3813,23 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
             std::fflush(stderr);
         }
     } catch (const std::exception& ex) {
+        execute_done = ExecProfileClock::now();
+        if (exec_profile_enabled) {
+            if (FILE* trace_file = std::fopen(exec_profile_file, "a"); trace_file != nullptr) {
+                std::fprintf(
+                    trace_file,
+                    "EXEC PROFILE outcome=throw sql=\"%s\" bytecode_bytes=%zu param_count=%zu total_ms=%.3f bind_ms=%.3f validate_ms=%.3f execute_ms=%.3f message=\"%s\"\n",
+                    sql_prefix.c_str(),
+                    executable_bytecode.size(),
+                    parameter_values != nullptr ? parameter_values->size() : 0u,
+                    duration_ms(total_start, execute_done),
+                    duration_ms(parameter_bind_start, parameter_bind_done),
+                    duration_ms(validate_start, validate_done),
+                    duration_ms(execute_start, execute_done),
+                    ex.what());
+                std::fclose(trace_file);
+            }
+        }
         stats_.queries_failed++;
         if (copy_active) {
             protocol_session_->sendMessage(
@@ -3618,6 +3840,26 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
                 static_cast<uint32_t>(core::Status::INTERNAL_ERROR), "42000");
         }
         return sendError(ex.what(), "42000", ctx);
+    }
+
+    if (exec_profile_enabled) {
+        if (FILE* trace_file = std::fopen(exec_profile_file, "a"); trace_file != nullptr) {
+            std::fprintf(
+                trace_file,
+                "EXEC PROFILE outcome=%s sql=\"%s\" bytecode_bytes=%zu param_count=%zu total_ms=%.3f bind_ms=%.3f validate_ms=%.3f execute_ms=%.3f success=%d has_result_set=%d rows_affected=%lld\n",
+                exec_result.success() ? "ok" : "exec_fail",
+                sql_prefix.c_str(),
+                executable_bytecode.size(),
+                parameter_values != nullptr ? parameter_values->size() : 0u,
+                duration_ms(total_start, execute_done),
+                duration_ms(parameter_bind_start, parameter_bind_done),
+                duration_ms(validate_start, validate_done),
+                duration_ms(execute_start, execute_done),
+                exec_result.success() ? 1 : 0,
+                exec_result.hasResultSet() ? 1 : 0,
+                static_cast<long long>(exec_result.affectedCount()));
+            std::fclose(trace_file);
+        }
     }
 
     if (!exec_result.success()) {
@@ -3774,6 +4016,12 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
     }
     protocol::Message end_msg = protocol::ProtocolCodec::buildEndOfResults();
     return protocol_session_->sendMessage(end_msg, ctx);
+}
+
+core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode,
+                                            const std::string& sql,
+                                            core::ErrorContext* ctx) {
+    return executeBytecode(bytecode, sql, nullptr, nullptr, ctx);
 }
 
 // Helper function to convert DataType to WireType
@@ -3995,7 +4243,9 @@ SessionManager::~SessionManager() {
     shutdownAll();
 }
 
-ServerSession* SessionManager::createSession(IPCConnection* connection, core::Database* database) {
+ServerSession* SessionManager::createSession(IPCConnection* connection,
+                                             core::Database* database,
+                                             const std::string& local_endpoint) {
     std::lock_guard<std::mutex> lock(mutex_);
 
     // Generate session ID
@@ -4003,7 +4253,7 @@ ServerSession* SessionManager::createSession(IPCConnection* connection, core::Da
     protocol::generateSessionId(session_id);
 
     // Create session
-    auto session = std::make_unique<ServerSession>(connection, database, session_id);
+    auto session = std::make_unique<ServerSession>(connection, database, local_endpoint, session_id);
     ServerSession* ptr = session.get();
 
     // Store in map

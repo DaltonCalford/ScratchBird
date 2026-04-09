@@ -33,6 +33,7 @@
 
 #include <memory>
 #include <string>
+#include <sstream>
 #include <vector>
 #include <cstring>
 #include <thread>
@@ -600,6 +601,116 @@ TEST_F(EngineIPCSessionHandlerTest, onCompiledParse_Bind_Execute_FullLifecycle) 
         EXPECT_EQ(status, core::Status::OK);
         // Note: Field metadata population depends on executor implementation
         // The handler correctly captures what the executor returns
+    }
+}
+
+TEST_F(EngineIPCSessionHandlerTest, onCompiledParse_Bind_Execute_BulkInsertPreparedBatchesRemainHealthy) {
+    {
+        core::ErrorContext ctx;
+        const auto status = executeCompiledQuery(
+            1,
+            "CREATE TABLE order_items ("
+            "item_id BIGINT PRIMARY KEY, "
+            "order_id BIGINT, "
+            "product_id BIGINT, "
+            "quantity INTEGER, "
+            "unit_price DECIMAL(10, 2), "
+            "discount_pct DECIMAL(5, 2))",
+            &ctx);
+        ASSERT_EQ(status, core::Status::OK) << ctx.message;
+        handler_->reset();
+    }
+
+    // EngineIPCSessionHandler's local compile helper is not the benchmark-equivalent
+    // native front-door path. Keep this on a moderate prepared-batch size so it
+    // still validates bind/execute lifecycle coverage without conflating larger
+    // native-protocol statement ceilings with executor/storage regressions.
+    constexpr size_t kBatchRows = 256;
+    constexpr size_t kBatchCount = 32;
+
+    std::ostringstream sql_builder;
+    sql_builder
+        << "INSERT INTO order_items (item_id, order_id, product_id, quantity, unit_price, "
+           "discount_pct) VALUES ";
+    for (size_t row = 0; row < kBatchRows; ++row) {
+        if (row != 0) {
+            sql_builder << ", ";
+        }
+        sql_builder << "(?, ?, ?, ?, ?, ?)";
+    }
+    const std::string bulk_insert_sql = sql_builder.str();
+
+    {
+        core::ErrorContext ctx;
+        const auto status =
+            parseCompiledStatement(1, "bulk_order_items_stmt", bulk_insert_sql, &ctx);
+        ASSERT_EQ(status, core::Status::OK) << ctx.message;
+        handler_->reset();
+    }
+
+    for (size_t batch = 0; batch < kBatchCount; ++batch) {
+        std::vector<std::optional<std::string>> params;
+        std::vector<bool> param_nulls;
+        params.reserve(kBatchRows * 6);
+        param_nulls.reserve(kBatchRows * 6);
+
+        for (size_t row = 0; row < kBatchRows; ++row) {
+            const uint64_t item_id = (batch * kBatchRows) + row + 1;
+            const uint64_t order_id = (item_id % 50000) + 1;
+            const uint64_t product_id = (item_id % 5000) + 1;
+            const uint32_t quantity = static_cast<uint32_t>((item_id % 8) + 1);
+            const std::string unit_price = (item_id % 7 == 0) ? "19.99" : "9.99";
+            const std::string discount_pct = (item_id % 5 == 0) ? "2.50" : "0.00";
+
+            params.emplace_back(std::to_string(item_id));
+            params.emplace_back(std::to_string(order_id));
+            params.emplace_back(std::to_string(product_id));
+            params.emplace_back(std::to_string(quantity));
+            params.emplace_back(unit_price);
+            params.emplace_back(discount_pct);
+            param_nulls.insert(param_nulls.end(), 6, false);
+        }
+
+        const std::string portal_name = "bulk_order_items_portal_" + std::to_string(batch);
+
+        {
+            core::ErrorContext ctx;
+            const auto status = handler_->onBind(
+                1, portal_name, "bulk_order_items_stmt", params, param_nulls, &ctx);
+            ASSERT_EQ(status, core::Status::OK)
+                << "bind failed for batch " << batch << ": " << ctx.message;
+            ASSERT_TRUE(handler_->lastError().empty())
+                << "bind reported error for batch " << batch << ": " << handler_->lastError();
+            handler_->reset();
+        }
+
+        {
+            core::ErrorContext ctx;
+            const auto status = handler_->onExecute(1, portal_name, 0, &ctx);
+            ASSERT_EQ(status, core::Status::OK)
+                << "execute failed for batch " << batch << ": " << ctx.message;
+            ASSERT_TRUE(handler_->lastError().empty())
+                << "execute reported error for batch " << batch << ": " << handler_->lastError();
+            handler_->reset();
+        }
+
+        {
+            core::ErrorContext ctx;
+            const auto status = handler_->onCommit(1, &ctx);
+            ASSERT_EQ(status, core::Status::OK)
+                << "commit failed for batch " << batch << ": " << ctx.message;
+            ASSERT_TRUE(handler_->lastError().empty())
+                << "commit reported error for batch " << batch << ": " << handler_->lastError();
+            handler_->reset();
+        }
+
+        {
+            core::ErrorContext ctx;
+            const auto status = handler_->onClose(1, 'P', portal_name, &ctx);
+            ASSERT_EQ(status, core::Status::OK)
+                << "close failed for batch " << batch << ": " << ctx.message;
+            handler_->reset();
+        }
     }
 }
 

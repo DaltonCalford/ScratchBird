@@ -1,0 +1,6 @@
+case_id,scenario,input,expected_result,error_code
+T14-NG-001,null_input_non_nullable,nullable_false_and_input_null,rejected,E_INVALID_PARAMETER_VALUE
+T14-NG-002,malformed_text_to_int,12x34,rejected,E_INVALID_TEXT_REPRESENTATION
+T14-NG-003,permission_denied_type_ddl,non_admin_creates_system_type,rejected,E_PERMISSION_DENIED
+T14-NG-004,resource_exhaustion_type_alloc,memory_limit_exceeded,rejected,E_RESOURCE_EXHAUSTED
+T14-NG-005,invalid_timezone_literal,bad_tz_token,rejected,E_DATETIME_FIELD_OVERFLOW

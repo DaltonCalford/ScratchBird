@@ -1,0 +1,8 @@
+suite_id,requirement_id,check,method,expected_result,reject_condition,evidence_artifact
+T31-G12-01,IMP-31-REQ-G12-01,PKI compromise/revocation drill,Game-day drill harness,Fail-closed handshake and converged revocation behavior,PKI compromise policy violation,TEST_RESULTS.md#T31-G12
+T31-G12-02,IMP-31-REQ-G12-02,Hard clock-skew drill,Game-day drill harness,Write fences and deterministic recovery behavior hold,Clock-skew safety/policy violation,TEST_RESULTS.md#T31-G12
+T31-G12-03,IMP-31-REQ-G12-03,Metadata leader failure drill,Game-day drill harness,Deterministic successor promotion and continuity,Leader failover policy violation,TEST_RESULTS.md#T31-G12
+T31-G12-04,IMP-31-REQ-G12-04,OLTP drain/replace drill,Game-day drill harness,Safety invariants and deterministic rebalance hold,Drain/replace safety violation,TEST_RESULTS.md#T31-G12
+T31-G12-05,IMP-31-REQ-G12-05,Overload drill with admission/autoscale policy,Game-day drill harness,SLO burn policy and autoscale bounds enforced,Admission/autoscale policy violation,TEST_RESULTS.md#T31-G12
+T31-G12-06,IMP-31-REQ-G12-06,Partition drill,Game-day drill harness,Fence/recovery transitions deterministic and policy-compliant,Partition fencing/recovery violation,TEST_RESULTS.md#T31-G12
+T31-G12-07,IMP-31-REQ-G12-07,Backup/restore operational drill,Game-day drill harness,Recovery validation requirements satisfied,Backup/restore validation failure,TEST_RESULTS.md#T31-G12

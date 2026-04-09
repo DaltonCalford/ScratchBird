@@ -1,0 +1,4 @@
+suite_id,requirement_id,check,method,expected_result,reject_condition,evidence_artifact
+T31-G2,IMP-31-REQ-G2-01,Parser/Verifier/VM unit suites,Unit harness,All required unit suites pass,Any failing required unit suite,TEST_RESULTS.md#T31-G2
+T31-G2,IMP-31-REQ-G2-02,Lock manager component suites,Component harness,Lock component suites pass,Any lock component regression,TEST_RESULTS.md#T31-G2
+T31-G2,IMP-31-REQ-G2-03,GC component suites,Component harness,GC component suites pass,Any GC component regression,TEST_RESULTS.md#T31-G2

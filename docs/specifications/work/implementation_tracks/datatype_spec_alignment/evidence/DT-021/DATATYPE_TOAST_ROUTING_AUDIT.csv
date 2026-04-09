@@ -1,0 +1,6 @@
+type,toasting_eligibility,status
+TEXT,eligible,PASS
+BLOB,eligible,PASS
+JSONB,eligible,PASS
+LIST/MAP/BSON,eligible by payload size,PASS
+INT32,not eligible,PASS

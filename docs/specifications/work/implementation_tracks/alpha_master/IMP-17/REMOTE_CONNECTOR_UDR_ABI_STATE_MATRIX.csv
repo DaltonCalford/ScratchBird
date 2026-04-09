@@ -1,0 +1,6 @@
+case_id,check,expected_rule,expected_result,error_code
+T17-RA-001,abi_symbols,all_15_symbols_present,pass,
+T17-RA-002,state_transition,REGISTERED_to_VALIDATED_to_READY,pass,
+T17-RA-003,forbidden_transition,REGISTERED_to_READY,reject,E_REMOTE_STATE_INVALID
+T17-RA-004,degraded_transition,READY_to_DEGRADED_on_failure_threshold,pass,
+T17-RA-005,disable_transition,READY_to_DISABLED_by_policy,pass,

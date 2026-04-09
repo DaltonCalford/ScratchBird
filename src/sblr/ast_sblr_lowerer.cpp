@@ -797,6 +797,8 @@ bool AstSblrLowerer::emitStatementToContainer(parser::v3::Statement* stmt,
         }
     }
 
+    container.retained_symbol_payload =
+        scratchbird::sblr::v3::buildNormalizedRetainedSymbolPayload(root);
     container.bytecode_stream = std::move(stream);
     out = std::move(container);
     return true;
@@ -1437,6 +1439,9 @@ scratchbird::sblr::v3::Instruction AstSblrLowerer::emitCopy(parser::v3::CopyStmt
     }
     if (stmt->options.batch_size_set) {
         addOption(options, "BATCH_SIZE", makeIntLiteralInstr(stmt->options.batch_size));
+    }
+    if (stmt->options.shadow_load_set) {
+        addOption(options, "SHADOW_LOAD", makeBoolLiteralInstr(stmt->options.shadow_load));
     }
     if (stmt->options.max_errors_set) {
         addOption(options, "MAX_ERRORS", makeIntLiteralInstr(stmt->options.max_errors));
@@ -3209,7 +3214,13 @@ scratchbird::sblr::v3::Instruction AstSblrLowerer::emitDdlAlter(parser::v3::Stat
             inst.opcode = op(Opcode::SBLR3_ALTER_SYSTEM);
             inst.flags = 0;
             Value::Object payload;
-            payload["key"] = toIdent(s->name);
+            payload["action"] = Value(uint64_t(static_cast<uint8_t>(s->action)));
+            if (s->name != parser::v3::StringPool::INVALID_ID) {
+                payload["key"] = toIdent(s->name);
+            }
+            if (s->target_name != parser::v3::StringPool::INVALID_ID) {
+                payload["target"] = toIdent(s->target_name);
+            }
             if (s->value) payload["value"] = Value(makeInstr(emitExpression(s->value)));
             inst.payload = Value(std::move(payload));
             return inst;
@@ -6121,7 +6132,9 @@ Value AstSblrLowerer::toSelectItems(const std::vector<parser::v3::SelectItem*>& 
             Instruction inst;
             inst.opcode = op(Opcode::SBLR3_SELECT_TABLE_STAR);
             inst.flags = 0;
-            inst.payload = Value(Value::Bytes{});
+            Value::Object payload;
+            payload["path"] = toSchemaPath(item->table_path);
+            inst.payload = Value(std::move(payload));
             list.push_back(Value(makeInstr(inst)));
         }
     }
@@ -6621,6 +6634,16 @@ TypeSpec AstSblrLowerer::buildTypeSpec(const parser::v3::TypeName& type) {
             case Opcode::SBLR3_TYPE_DATETIME:
                 if (type.scale.has_value()) {
                     target.type_payload.push_back(static_cast<uint8_t>(*type.scale));
+                }
+                break;
+            case Opcode::SBLR3_TYPE_VECTOR:
+                if (type.precision.has_value()) {
+                    appendLE32(static_cast<uint32_t>(*type.precision), target.type_payload);
+                }
+                break;
+            case Opcode::SBLR3_TYPE_ARRAY:
+                if (type.array_size.has_value()) {
+                    appendLE32(static_cast<uint32_t>(*type.array_size), target.type_payload);
                 }
                 break;
             default:

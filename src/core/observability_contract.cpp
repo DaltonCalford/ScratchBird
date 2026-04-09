@@ -9,6 +9,7 @@
  */
 #include "scratchbird/core/observability_contract.h"
 
+#include "scratchbird/core/btree.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/database.h"
@@ -947,6 +948,21 @@ namespace scratchbird::core
                                          {"db", "relation"},
                                          "Pending dead index entries awaiting cleanup.",
                                          "entries"),
+                    makeMetricDefinition("sb_storage_hot_leaf_detections_total",
+                                         MetricType::COUNTER,
+                                         {"db", "relation"},
+                                         "Detected hot right-edge B-tree insert attempts.",
+                                         "events"),
+                    makeMetricDefinition("sb_storage_hot_leaf_presplits_total",
+                                         MetricType::COUNTER,
+                                         {"db", "relation"},
+                                         "Hot right-edge B-tree inserts that triggered a reserved-space presplit.",
+                                         "events"),
+                    makeMetricDefinition("sb_storage_hot_leaf_split_retries_total",
+                                         MetricType::COUNTER,
+                                         {"db", "relation"},
+                                         "Insert retries after a hot right-edge B-tree split.",
+                                         "events"),
                     makeMetricDefinition("sb_gc_sweep_generation",
                                          MetricType::GAUGE,
                                          {"db"},
@@ -1188,6 +1204,8 @@ namespace scratchbird::core
                     makeColumn("relation_name", "VARCHAR", false),
                     makeColumn("cleanup_debt_bytes", "BIGINT", false),
                     makeColumn("retained_dead_bytes", "BIGINT", false),
+                    makeColumn("index_backlog_pages", "BIGINT", false),
+                    makeColumn("index_backlog_bytes", "BIGINT", false),
                     makeColumn("chain_scatter_bucket", "VARCHAR", true),
                     makeColumn("rewrite_recommended", "BOOLEAN", false),
                     makeColumn("sweep_generation", "BIGINT", false),
@@ -1501,8 +1519,10 @@ namespace scratchbird::core
                     makeColumn("reclaimed_version_count", "BIGINT", false),
                     makeColumn("reclaimed_bytes", "BIGINT", false),
                     makeColumn("index_backlog_count", "BIGINT", false),
-                    makeColumn("cursor_crc32c", "BIGINT", false),
+                    makeColumn("index_backlog_pages", "BIGINT", false),
                     makeColumn("resume_outcome", "VARCHAR", false),
+                    makeColumn("cursor_crc32c", "BIGINT", false),
+                    makeColumn("index_backlog_bytes", "BIGINT", false),
                 };
                 definitions.push_back(std::move(sweep_resume_status));
 
@@ -2198,6 +2218,101 @@ namespace scratchbird::core
         if (status != Status::OK)
         {
             return status;
+        }
+
+        if (const auto* catalog_const = db.catalog_manager())
+        {
+            auto* catalog = const_cast<CatalogManager*>(catalog_const);
+            std::vector<CatalogManager::SchemaInfo> schemas;
+            status = catalog->listSchemas(schemas, nullptr);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            struct RelationHotLeafAggregate
+            {
+                uint64_t detections = 0;
+                uint64_t presplits = 0;
+                uint64_t split_retries = 0;
+            };
+            std::map<std::string, RelationHotLeafAggregate> hot_leaf_aggregates;
+
+            for (const CatalogManager::SchemaInfo& schema : schemas)
+            {
+                std::vector<CatalogManager::TableInfo> tables;
+                status = catalog->listTables(schema.schema_id, tables, nullptr);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                for (const CatalogManager::TableInfo& table : tables)
+                {
+                    std::vector<CatalogManager::IndexInfo> indexes;
+                    status = catalog->listIndexesForTable(table.table_id, indexes, nullptr, false);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+
+                    RelationHotLeafAggregate aggregate{};
+                    bool saw_btree = false;
+                    for (const CatalogManager::IndexInfo& index_info : indexes)
+                    {
+                        CatalogManager::IndexType actual_index_type = index_info.index_type;
+                        void* index_ptr =
+                            catalog->getIndexPtr(index_info.index_id, &actual_index_type);
+                        if (index_ptr == nullptr ||
+                            actual_index_type != CatalogManager::IndexType::BTREE)
+                        {
+                            continue;
+                        }
+
+                        const auto stats = static_cast<const BTree*>(index_ptr)->getHotLeafStats();
+                        aggregate.detections += stats.right_edge_detections;
+                        aggregate.presplits += stats.right_edge_presplits;
+                        aggregate.split_retries += stats.right_edge_split_retries;
+                        saw_btree = true;
+                    }
+
+                    if (!saw_btree)
+                    {
+                        continue;
+                    }
+
+                    const std::string relation_name =
+                        table.table_name.empty() ? table.table_id.toString() : table.table_name;
+                    RelationHotLeafAggregate& relation_aggregate =
+                        hot_leaf_aggregates[relation_name];
+                    relation_aggregate.detections += aggregate.detections;
+                    relation_aggregate.presplits += aggregate.presplits;
+                    relation_aggregate.split_retries += aggregate.split_retries;
+                }
+            }
+
+            for (const auto& [relation_name, aggregate] : hot_leaf_aggregates)
+            {
+                const std::string labels_json = db_relation_labels_json(relation_name);
+                add_row(SqlRuntimeMetricRow{
+                    "sb_storage_hot_leaf_detections_total",
+                    "counter",
+                    static_cast<double>(aggregate.detections),
+                    labels_json,
+                    updated_at_ms});
+                add_row(SqlRuntimeMetricRow{
+                    "sb_storage_hot_leaf_presplits_total",
+                    "counter",
+                    static_cast<double>(aggregate.presplits),
+                    labels_json,
+                    updated_at_ms});
+                add_row(SqlRuntimeMetricRow{
+                    "sb_storage_hot_leaf_split_retries_total",
+                    "counter",
+                    static_cast<double>(aggregate.split_retries),
+                    labels_json,
+                    updated_at_ms});
+            }
         }
 
         if (const auto* buffer_pool = db.buffer_pool())
@@ -3003,6 +3118,8 @@ namespace scratchbird::core
         {
             uint64_t cleanup_debt_bytes = 0;
             uint64_t retained_dead_bytes = 0;
+            uint64_t index_backlog_pages = 0;
+            uint64_t index_backlog_bytes = 0;
             bool rewrite_recommended = false;
             std::unordered_set<uint32_t> pages;
         };
@@ -3015,6 +3132,66 @@ namespace scratchbird::core
             agg.retained_dead_bytes += snapshot.advisory.reclaimable_bytes;
             agg.rewrite_recommended = agg.rewrite_recommended || snapshot.advisory.rewrite_recommended;
             agg.pages.insert(snapshot.advisory.page_id);
+        }
+
+        std::vector<IndexCleanupPublicationRecord> cleanup_publications;
+        status = storage->listIndexCleanupPublications(cleanup_publications);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::unordered_set<ID, IDHash> runtime_cleanup_indexes;
+        for (const IndexCleanupPublicationRecord& publication : cleanup_publications)
+        {
+            if (publication.backlog_pages == 0 && publication.backlog_bytes == 0)
+            {
+                continue;
+            }
+
+            runtime_cleanup_indexes.insert(publication.index_id);
+            Aggregate& agg = aggregates[publication.table_id];
+            agg.cleanup_debt_bytes += publication.backlog_bytes;
+            agg.index_backlog_pages += publication.backlog_pages;
+            agg.index_backlog_bytes += publication.backlog_bytes;
+
+            const uint32_t locality_page_id =
+                publication.locality_page_id != 0 ? publication.locality_page_id
+                                                  : publication.page_id;
+            if (locality_page_id != 0)
+            {
+                agg.pages.insert(locality_page_id);
+            }
+        }
+
+        std::vector<CatalogManager::IndexHealthCatalogInfo> health_rows;
+        status = catalog->listIndexHealthCatalogEntries(health_rows, nullptr);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        for (const CatalogManager::IndexHealthCatalogInfo& health_row : health_rows)
+        {
+            if (health_row.cleanup_backlog_pages == 0 && health_row.cleanup_backlog_bytes == 0)
+            {
+                continue;
+            }
+            if (runtime_cleanup_indexes.find(health_row.index_id) != runtime_cleanup_indexes.end())
+            {
+                continue;
+            }
+
+            CatalogManager::IndexInfo index_info{};
+            if (catalog->getIndex(health_row.index_id, index_info, nullptr) != Status::OK)
+            {
+                continue;
+            }
+
+            Aggregate& agg = aggregates[index_info.table_id];
+            agg.cleanup_debt_bytes += health_row.cleanup_backlog_bytes;
+            agg.index_backlog_pages += health_row.cleanup_backlog_pages;
+            agg.index_backlog_bytes += health_row.cleanup_backlog_bytes;
         }
 
         const std::string db_uuid = dbUuidString(db);
@@ -3032,6 +3209,8 @@ namespace scratchbird::core
             }
             row.cleanup_debt_bytes = agg.cleanup_debt_bytes;
             row.retained_dead_bytes = agg.retained_dead_bytes;
+            row.index_backlog_pages = agg.index_backlog_pages;
+            row.index_backlog_bytes = agg.index_backlog_bytes;
             row.has_chain_scatter_bucket = true;
             row.chain_scatter_bucket = chainScatterBucketForPages(agg.pages.size());
             row.rewrite_recommended = agg.rewrite_recommended;
@@ -3876,6 +4055,8 @@ namespace scratchbird::core
         row.reclaimed_version_count = latest.reclaimed_version_count;
         row.reclaimed_bytes = latest.reclaimed_bytes;
         row.index_backlog_count = latest.index_backlog_count;
+        row.index_backlog_pages = latest.index_backlog_pages;
+        row.index_backlog_bytes = latest.index_backlog_bytes;
         row.cursor_crc32c = latest.cursor_crc32c;
         if (!latest.active && latest.page_id == 0)
         {

@@ -1,0 +1,7 @@
+case_id,scenario,input,expected_result,error_code
+T11-NG-001,min_bound_chunk_size,chunk_size=0,rejected,E_INVALID_CHUNK_SIZE
+T11-NG-002,max_bound_lob_size,write_exceeds_max_lob,rejected,E_LOB_TOO_LARGE
+T11-NG-003,malformed_pointer,pointer_payload_corrupt,rejected,E_TOAST_POINTER_INVALID
+T11-NG-004,null_payload_write,payload=null,rejected,E_NULL_PAYLOAD
+T11-NG-005,permission_denied,missing_read_privilege,rejected,E_PERMISSION_DENIED
+T11-NG-006,resource_exhaustion,target_filespace_full,rejected,E_FILESPACE_EXHAUSTED

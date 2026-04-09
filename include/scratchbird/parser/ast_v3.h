@@ -3872,6 +3872,9 @@ struct CopyOptions {
     bool batch_size_set = false;
     int64_t batch_size = 0;
 
+    bool shadow_load_set = false;
+    bool shadow_load = false;
+
     bool max_errors_set = false;
     int64_t max_errors = 0;
 
@@ -4202,13 +4205,30 @@ public:
  *
  * Supports:
  * - ALTER SYSTEM SET section.key = value
+ * - ALTER SYSTEM RESET section.key
+ * - CONFIG HISTORY
+ * - CONFIG RELOAD
  */
 class AlterSystemStmt : public Statement {
 public:
+    enum class Action : uint8_t {
+        SET = 1,
+        RESET = 2,
+        HISTORY = 3,
+        RELOAD = 4,
+        ASSESS_REMOTE_SET = 5,
+        APPLY_INSTRUCTION = 6,
+        CANCEL_INSTRUCTION = 7,
+        QUARANTINE_INSTRUCTION = 8,
+        ACKNOWLEDGE_INSTRUCTION = 9,
+    };
+
     ASTKind kind() const override { return ASTKind::AlterSystemStmt; }
     void accept(ASTVisitor& visitor) override;
 
+    Action action = Action::SET;
     StringPool::StringId name = StringPool::INVALID_ID;
+    StringPool::StringId target_name = StringPool::INVALID_ID;
     Expression* value = nullptr;
 };
 

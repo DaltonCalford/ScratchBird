@@ -1,0 +1,4 @@
+suite_id,requirement_id,check,method,expected_result,reject_condition,evidence_artifact
+T31-G6,IMP-31-REQ-G6-01,SLO benchmark suites,SLO benchmark harness,All required SLO suites meet threshold,Breach of required SLO threshold,TEST_RESULTS.md#T31-G6
+T31-G6,IMP-31-REQ-G6-02,Throughput regression checks,Performance regression harness,No blocking throughput regression,Blocking throughput regression,TEST_RESULTS.md#T31-G6
+T31-G6,IMP-31-REQ-G6-03,Latency regression checks,Performance regression harness,No blocking latency regression,Blocking latency regression,TEST_RESULTS.md#T31-G6

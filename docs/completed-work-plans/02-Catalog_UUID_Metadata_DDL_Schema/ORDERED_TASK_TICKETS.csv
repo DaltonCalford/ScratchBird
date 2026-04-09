@@ -1,0 +1,7 @@
+order,ticket,title,phase,status
+1,B1-02-001,Specification sufficiency closure,spec_closure,completed
+2,B1-02-002,Ownership and audit anchor normalization,ownership,completed
+3,B1-02-003,Configuration UUID bootstrap and catalog core closure,implementation_a,completed
+4,B1-02-004,Metadata DDL schema evolution and online change closure,implementation_b,completed
+5,B1-02-005,Gates benchmarks and evidence closure,gates,completed
+6,B1-02-006,Final closeout,closeout,completed

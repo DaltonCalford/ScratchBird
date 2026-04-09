@@ -1,0 +1,6 @@
+case_id,parser_profile,function_name,policy,expected_result,error_code
+T17-DG-001,native,sb_extended_fn,exposed,allow,
+T17-DG-002,postgresql_18,pg_supported_fn,exposed,allow,
+T17-DG-003,mysql_8,mysql_supported_fn,exposed,allow,
+T17-DG-004,firebird_5,unsupported_fn,hidden,reject,E_DIALECT_FUNCTION_UNSUPPORTED
+T17-DG-005,cassandra_5,unsupported_fn,hidden,reject,E_DIALECT_FUNCTION_UNSUPPORTED

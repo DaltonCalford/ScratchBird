@@ -1,0 +1,7 @@
+suite_id,requirement_id,check,method,expected_result,reject_condition,evidence_artifact
+T31-G11-01,IMP-31-REQ-G11-01,One-way and bidirectional channel state machine conformance,Replication conformance harness,State transitions deterministic and policy-compliant,Invalid or nondeterministic state transition,TEST_RESULTS.md#T31-G11
+T31-G11-02,IMP-31-REQ-G11-02,Cursor protocol frame order and monotonic sequence integrity,Cursor protocol harness,Sequence/order constraints hold,Cursor order/sequence violation,TEST_RESULTS.md#T31-G11
+T31-G11-03,IMP-31-REQ-G11-03,Apply ordering and retry/dead-letter determinism,Apply/retry harness,Apply and retry behavior deterministic,Apply ordering or retry nondeterminism,TEST_RESULTS.md#T31-G11
+T31-G11-04,IMP-31-REQ-G11-04,Loop-prevention and conflict policy determinism,Conflict policy harness,Loop prevention and conflict policy deterministic,Loop or conflict-policy violation,TEST_RESULTS.md#T31-G11
+T31-G11-05,IMP-31-REQ-G11-05,Split-brain fence enforcement and clear workflow determinism,Split-brain fence harness,Fence and clear workflow deterministic and safe,Fence/clear policy violation,TEST_RESULTS.md#T31-G11
+T31-G11-06,IMP-31-REQ-G11-06,Native SQL and CLI replication control surface conformance,Control surface harness,SQL/CLI surfaces conform to contracts,Control surface mismatch,TEST_RESULTS.md#T31-G11

@@ -36,6 +36,17 @@ Equivalent CTest target:
 ctest --test-dir build -R '^ConformancePublicBetaRequiredGate$' --output-on-failure
 ```
 
+## Full Beta 1 Release Cycle
+
+End-to-end release orchestrator:
+
+```bash
+bash scripts/run_full_build_test_with_metrics.sh \
+  --run-public-beta \
+  --run-benchmarks \
+  --benchmark-engines firebird,mysql,postgresql,scratchbird
+```
+
 ## v3 Native Inet Conformance
 
 ```bash
@@ -62,4 +73,6 @@ A beta release candidate must have a passing required gate run covering:
 - security enforcement
 - end-to-end SQL correctness
 - modal/NoSQL verification
-- cluster infrastructure verification
+- release-facing tooling and driver verification
+- benchmark matrix evidence across `firebird`, `mysql`, `postgresql`, and
+  `scratchbird`

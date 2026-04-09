@@ -290,6 +290,8 @@ namespace scratchbird::core
         uint64_t reclaimed_version_count = 0;
         uint64_t reclaimed_bytes = 0;
         uint64_t index_backlog_count = 0;
+        uint64_t index_backlog_pages = 0;
+        uint64_t index_backlog_bytes = 0;
         uint32_t cursor_crc32c = 0;
         std::string resume_outcome;
     };
@@ -313,6 +315,8 @@ namespace scratchbird::core
         std::string relation_name;
         uint64_t cleanup_debt_bytes = 0;
         uint64_t retained_dead_bytes = 0;
+        uint64_t index_backlog_pages = 0;
+        uint64_t index_backlog_bytes = 0;
         bool has_chain_scatter_bucket = false;
         std::string chain_scatter_bucket;
         bool rewrite_recommended = false;

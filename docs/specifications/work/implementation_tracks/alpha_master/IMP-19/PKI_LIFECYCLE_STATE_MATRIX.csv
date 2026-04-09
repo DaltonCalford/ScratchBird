@@ -1,0 +1,9 @@
+case_id,operation,from_state,to_state,expected_result,error_code
+T19-PKI-01,stage_certificate,none,staged,allow,
+T19-PKI-02,activate_certificate,staged,active,allow,
+T19-PKI-03,revoke_certificate,active,revoked,allow,
+T19-PKI-04,propagate_revocation,revoked,revoked_cluster_converged,allow,
+T19-PKI-05,trust_anchor_rollover,start_dual_trust,dual_trust,allow,
+T19-PKI-06,trust_anchor_rollover,dual_trust,new_anchor_only,allow,
+T19-PKI-07,forbidden_transition,revoked,active,reject,E_PKI_INVALID_TRANSITION
+T19-PKI-08,stale_revocation_on_handshake,active_peer,active_peer,reject,E_HANDSHAKE_REVOKED_CERT

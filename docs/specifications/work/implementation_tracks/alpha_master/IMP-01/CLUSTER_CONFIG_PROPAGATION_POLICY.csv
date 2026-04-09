@@ -1,0 +1,11 @@
+policy_key,value,unit,deterministic_rule
+transport_channel,service=config,,must use native SBWP service channel
+delivery_semantics,at_least_once,,idempotent apply via key_id+scope_uuid+change_id
+retry_initial_backoff,250,ms,first retry delay
+retry_multiplier,2.0,ratio,exponential backoff factor
+retry_max_backoff,30000,ms,cap backoff at 30s
+retry_jitter,20,percent,apply +/-% jitter
+retry_termination,never_while_link_healthy,,queue and catch up on reconnect
+conflict_resolution,last_writer_wins,,ordered by monotonic change_id
+workgroup_visibility,isolated,,no cross-server propagation in workgroup mode
+cluster_visibility,shared,,cluster-admin required for cluster-scope writes

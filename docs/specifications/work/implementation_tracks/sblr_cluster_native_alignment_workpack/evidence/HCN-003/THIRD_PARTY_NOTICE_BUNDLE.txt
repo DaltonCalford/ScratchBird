@@ -1,0 +1,26 @@
+ScratchBird Third-Party Notice Bundle (HCN-003 baseline)
+Date: 2026-02-24
+
+This product integrates LLVM components.
+
+LLVM licensing:
+- License family: Apache License 2.0 with LLVM Exceptions
+- Canonical license file source:
+  /home/dcalford/CliWork/llvm-project/LICENSE.TXT
+
+ScratchBird licensing baseline:
+- License family: IDPL-1.0
+- Canonical repository license source:
+  /home/dcalford/CliWork/ScratchBird/LICENSE
+- Full IDPL text source:
+  /home/dcalford/CliWork/local_work/library/technical_specs/firebird/licenses/IDPL_1_0_FULL_TEXT.txt
+
+Packaging requirements for release artifacts:
+1. Include ScratchBird LICENSE file.
+2. Include LLVM LICENSE.TXT.
+3. Include IDPL_1_0_FULL_TEXT.txt in installer/legal bundle.
+4. Include this third-party notice bundle in release/legal manifest.
+
+Compliance note:
+- Engineering review indicates LLVM integration is compatible with required notice/source obligations.
+- This artifact is an engineering control and does not replace legal review.

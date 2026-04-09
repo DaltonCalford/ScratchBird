@@ -1,14 +1,21 @@
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <sstream>
+#include "scratchbird/core/btree.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/proc_array.h"
+#include "scratchbird/optimizer/statistics_manager.h"
 #define private public
 #include "scratchbird/sblr/executor.h"
 #undef private
@@ -18,6 +25,49 @@
 
 using namespace scratchbird::core;
 using namespace scratchbird::sblr;
+
+namespace {
+class ScopedEnvVar {
+public:
+    ScopedEnvVar(const char* key, const std::string& value)
+        : key_(key), had_original_(false) {
+        if (const char* current = std::getenv(key_)) {
+            had_original_ = true;
+            original_value_ = current;
+        }
+        set(value);
+    }
+
+    ~ScopedEnvVar() {
+        if (had_original_) {
+            set(original_value_);
+        } else {
+            unset();
+        }
+    }
+
+private:
+    void set(const std::string& value) {
+#ifdef _WIN32
+        _putenv_s(key_, value.c_str());
+#else
+        setenv(key_, value.c_str(), 1);
+#endif
+    }
+
+    void unset() {
+#ifdef _WIN32
+        _putenv_s(key_, "");
+#else
+        unsetenv(key_);
+#endif
+    }
+
+    const char* key_;
+    bool had_original_;
+    std::string original_value_;
+};
+} // namespace
 
 class ExecutorTest : public ::testing::Test {
 protected:
@@ -122,6 +172,83 @@ protected:
             std::cerr << "Executor error: " << result.error() << "\n";
         }
         return result;
+    }
+
+    void commitCurrentTransaction()
+    {
+        ErrorContext ctx;
+        ASSERT_EQ(conn_ctx_->commit(&ctx), Status::OK) << ctx.message;
+    }
+
+    CatalogManager::IndexInfo requireIndexInfo(const std::string& table_name,
+                                               const std::string& index_name)
+    {
+        ErrorContext ctx;
+        CatalogManager::TableInfo table_info;
+        EXPECT_EQ(db_->catalog_manager()->getTable(default_schema_id_, table_name, table_info, &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        std::vector<CatalogManager::IndexInfo> indexes;
+        EXPECT_EQ(db_->catalog_manager()->listIndexesForTable(table_info.table_id, indexes, &ctx, false),
+                  Status::OK)
+            << ctx.message;
+
+        auto it = std::find_if(indexes.begin(), indexes.end(),
+                               [&](const CatalogManager::IndexInfo& info) {
+                                   return info.index_name == index_name;
+                               });
+        EXPECT_NE(it, indexes.end()) << "Index not found: " << index_name;
+        return it == indexes.end() ? CatalogManager::IndexInfo{} : *it;
+    }
+
+    std::vector<TID> searchIndex(const std::string& table_name,
+                                 const std::string& index_name,
+                                 const std::vector<uint8_t>& key,
+                                 uint64_t current_xid)
+    {
+        CatalogManager::IndexInfo index_info = requireIndexInfo(table_name, index_name);
+        ErrorContext ctx;
+        auto btree = BTree::open(db_.get(), index_info.index_id, index_info.root_gpid, &ctx);
+        EXPECT_NE(btree, nullptr) << ctx.message;
+
+        std::vector<TID> tids;
+        if (btree)
+        {
+            const Status status = btree->search(key, current_xid, &tids, &ctx);
+            EXPECT_TRUE(status == Status::OK || status == Status::NOT_FOUND) << ctx.message;
+        }
+        return tids;
+    }
+
+    std::vector<uint8_t> encodeStoredIntegralIndexKey(int64_t value) const
+    {
+        std::vector<uint8_t> key;
+        ErrorContext ctx;
+        auto typed_value = TypedValue::makeInt64(value);
+        EXPECT_EQ(typed_value.serializePlainValue(key, &ctx), Status::OK) << ctx.message;
+        return key;
+    }
+
+    std::vector<uint8_t> encodeStoredTextIndexKey(const std::string& value) const
+    {
+        std::vector<uint8_t> key;
+        ErrorContext ctx;
+        auto typed_value = TypedValue::makeVarchar(value);
+        EXPECT_EQ(typed_value.serializePlainValue(key, &ctx), Status::OK) << ctx.message;
+        return key;
+    }
+
+    std::vector<uint8_t> encodeExecutorTextIndexKey(const std::string& value) const
+    {
+        std::vector<uint8_t> key{0x02};
+        const uint32_t len = static_cast<uint32_t>(value.size());
+        key.push_back(static_cast<uint8_t>((len >> 24) & 0xFF));
+        key.push_back(static_cast<uint8_t>((len >> 16) & 0xFF));
+        key.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
+        key.push_back(static_cast<uint8_t>(len & 0xFF));
+        key.insert(key.end(), value.begin(), value.end());
+        return key;
     }
 
     ID resolveDefaultSchema(ErrorContext* ctx)
@@ -546,6 +673,1535 @@ TEST_F(ExecutorTest, InsertExpressions) {
     EXPECT_TRUE(insert_result.success()) << insert_result.error();
 }
 
+TEST_F(ExecutorTest, MultiRowValuesInsertUsesStatementBulkHandle)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE insert_bulk_trace ("
+        "id INT PRIMARY KEY, "
+        "email VARCHAR(100), "
+        "metric_value DECIMAL(10, 2))"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE UNIQUE INDEX insert_bulk_trace_email ON insert_bulk_trace(email)"
+    ).success());
+    commitCurrentTransaction();
+
+    const std::filesystem::path trace_path =
+        std::filesystem::path(test_db_path_).replace_extension(".insert-trace.log");
+    std::filesystem::remove(trace_path);
+
+    ScopedEnvVar trace_enabled("SCRATCHBIRD_EXECUTOR_INSERT_TRACE", "1");
+    ScopedEnvVar trace_file("SCRATCHBIRD_EXECUTOR_INSERT_TRACE_FILE", trace_path.string());
+
+    auto insert_result = executeSQL(
+        "INSERT INTO insert_bulk_trace (id, email, metric_value) VALUES "
+        "(1, 'alice@example.com', 1.50), "
+        "(2, 'bob@example.com', 3.00), "
+        "(3, 'carol@example.com', 4.50)"
+    );
+    ASSERT_TRUE(insert_result.success()) << insert_result.error();
+
+    std::ifstream trace_in(trace_path);
+    ASSERT_TRUE(trace_in.is_open()) << trace_path;
+    const std::string trace_contents(
+        (std::istreambuf_iterator<char>(trace_in)),
+        std::istreambuf_iterator<char>());
+
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_admitted=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_enabled=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_used_rows=3"), std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_fallback_rows=0"), std::string::npos);
+    EXPECT_NE(trace_contents.find("values_source_simple_fast_path=1"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("values_source_simple_fast_path_rows=3"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("values_source_simple_fast_path_fallback_rows=0"),
+              std::string::npos);
+    EXPECT_NE(
+        trace_contents.find(
+            "values_source_simple_fast_path_skip_coercion_columns=0"),
+        std::string::npos)
+        << trace_contents;
+    EXPECT_NE(
+        trace_contents.find(
+            "values_source_simple_fast_path_integer_fast_columns=3"),
+        std::string::npos);
+    EXPECT_NE(
+        trace_contents.find(
+            "values_source_simple_fast_path_varchar_fast_columns=3"),
+        std::string::npos);
+    EXPECT_NE(
+        trace_contents.find(
+            "values_source_simple_fast_path_decimal_fast_columns=3"),
+        std::string::npos);
+    EXPECT_NE(
+        trace_contents.find(
+            "values_source_simple_fast_path_generic_coercion_columns=0"),
+        std::string::npos);
+    EXPECT_NE(trace_contents.find("prepared_tuple_serializer_rows=3"),
+              std::string::npos);
+    EXPECT_NE(
+        trace_contents.find("prepared_tuple_serializer_fallback_rows=0"),
+        std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_maintenance_plan_built=1"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_maintenance_plan_indexes=2"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_maintenance_plan_exact_indexes=2"),
+              std::string::npos);
+    EXPECT_NE(
+        trace_contents.find("statement_bulk_handle_maintenance_plan_unique_exact_indexes=2"),
+        std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_maintenance_plan_active_maintenance=0"),
+              std::string::npos);
+    EXPECT_NE(
+        trace_contents.find("statement_bulk_handle_maintenance_plan_deferred_exact_indexes=0"),
+        std::string::npos);
+    EXPECT_NE(
+        trace_contents.find("statement_bulk_handle_maintenance_plan_grouped_exact_indexes=0"),
+        std::string::npos);
+    EXPECT_NE(
+        trace_contents.find(
+            "statement_bulk_handle_maintenance_plan_buffered_empty_unique_indexes=2"),
+        std::string::npos);
+    EXPECT_NE(
+        trace_contents.find("statement_bulk_handle_unique_preflight_bypass_rows=3"),
+        std::string::npos);
+
+    const uint64_t current_xid = db_->storage_engine()->getCurrentXid();
+    EXPECT_EQ(searchIndex("insert_bulk_trace",
+                          "insert_bulk_trace_email",
+                          encodeStoredTextIndexKey("alice@example.com"),
+                          current_xid)
+                  .size(),
+              1u);
+    EXPECT_EQ(searchIndex("insert_bulk_trace",
+                          "insert_bulk_trace_email",
+                          encodeStoredTextIndexKey("bob@example.com"),
+                          current_xid)
+                  .size(),
+              1u);
+    EXPECT_EQ(searchIndex("insert_bulk_trace",
+                          "insert_bulk_trace_email",
+                          encodeStoredTextIndexKey("carol@example.com"),
+                          current_xid)
+                  .size(),
+              1u);
+
+    auto select_result = executeSQL(
+        "SELECT id, email, metric_value FROM insert_bulk_trace ORDER BY id");
+    ASSERT_TRUE(select_result.success()) << select_result.error();
+    auto* rs = select_result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 3u);
+    EXPECT_EQ(rs->getValue(0, 2).toString(), "1.50");
+    EXPECT_EQ(rs->getValue(1, 2).toString(), "3.00");
+    EXPECT_EQ(rs->getValue(2, 2).toString(), "4.50");
+
+    std::filesystem::remove(trace_path);
+}
+
+TEST_F(ExecutorTest, InsertSelectUsesDirectResultSetBulkSink)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE insert_select_bulk_src (id INT PRIMARY KEY, email VARCHAR(100))"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE insert_select_bulk_dst (id INT PRIMARY KEY, email VARCHAR(100))"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE UNIQUE INDEX insert_select_bulk_dst_email "
+        "ON insert_select_bulk_dst(email)"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "INSERT INTO insert_select_bulk_src (id, email) VALUES "
+        "(1, 'alice@example.com'), "
+        "(2, 'bob@example.com'), "
+        "(3, 'carol@example.com')"
+    ).success());
+    commitCurrentTransaction();
+
+    const std::filesystem::path trace_path =
+        std::filesystem::path(test_db_path_).replace_extension(".insert-select-trace.log");
+    std::filesystem::remove(trace_path);
+
+    ScopedEnvVar trace_enabled("SCRATCHBIRD_EXECUTOR_INSERT_TRACE", "1");
+    ScopedEnvVar trace_file("SCRATCHBIRD_EXECUTOR_INSERT_TRACE_FILE", trace_path.string());
+
+    auto insert_result = executeSQL(
+        "INSERT INTO insert_select_bulk_dst (id, email) "
+        "SELECT id, email FROM insert_select_bulk_src"
+    );
+    ASSERT_TRUE(insert_result.success()) << insert_result.error();
+
+    std::ifstream trace_in(trace_path);
+    ASSERT_TRUE(trace_in.is_open()) << trace_path;
+    const std::string trace_contents(
+        (std::istreambuf_iterator<char>(trace_in)),
+        std::istreambuf_iterator<char>());
+
+    EXPECT_NE(trace_contents.find("source_is_select=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("select_source_direct_result_set=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("select_source_stream_callback=1"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("select_source_simple_fast_path=1"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("select_source_simple_fast_path_rows=3"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("select_source_simple_fast_path_fallback_rows=0"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_admitted=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_enabled=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_used_rows=3"), std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_fallback_rows=0"), std::string::npos);
+    EXPECT_NE(trace_contents.find("prepared_tuple_serializer_rows=3"),
+              std::string::npos);
+    EXPECT_NE(
+        trace_contents.find("prepared_tuple_serializer_fallback_rows=0"),
+        std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_maintenance_plan_built=1"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_maintenance_plan_indexes=2"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_maintenance_plan_exact_indexes=2"),
+              std::string::npos);
+    EXPECT_NE(
+        trace_contents.find("statement_bulk_handle_maintenance_plan_unique_exact_indexes=2"),
+        std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_maintenance_plan_active_maintenance=0"),
+              std::string::npos);
+    EXPECT_NE(
+        trace_contents.find("statement_bulk_handle_maintenance_plan_deferred_exact_indexes=0"),
+        std::string::npos);
+    EXPECT_NE(
+        trace_contents.find("statement_bulk_handle_maintenance_plan_grouped_exact_indexes=0"),
+        std::string::npos);
+    EXPECT_NE(
+        trace_contents.find(
+            "statement_bulk_handle_maintenance_plan_buffered_empty_unique_indexes=2"),
+        std::string::npos);
+    EXPECT_NE(
+        trace_contents.find("statement_bulk_handle_unique_preflight_bypass_rows=3"),
+        std::string::npos);
+
+    const uint64_t current_xid = db_->storage_engine()->getCurrentXid();
+    EXPECT_EQ(searchIndex("insert_select_bulk_dst",
+                          "insert_select_bulk_dst_email",
+                          encodeStoredTextIndexKey("alice@example.com"),
+                          current_xid)
+                  .size(),
+              1u);
+    EXPECT_EQ(searchIndex("insert_select_bulk_dst",
+                          "insert_select_bulk_dst_email",
+                          encodeStoredTextIndexKey("bob@example.com"),
+                          current_xid)
+                  .size(),
+              1u);
+    EXPECT_EQ(searchIndex("insert_select_bulk_dst",
+                          "insert_select_bulk_dst_email",
+                          encodeStoredTextIndexKey("carol@example.com"),
+                          current_xid)
+                  .size(),
+              1u);
+
+    std::filesystem::remove(trace_path);
+}
+
+TEST_F(ExecutorTest, InsertSelectFromDerivedWindowSourceStreamsSelectOutput)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE insert_select_window_orders (id INT PRIMARY KEY)"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE insert_select_window_items (id INT PRIMARY KEY)"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE insert_select_window_dst ("
+        "id BIGINT PRIMARY KEY, "
+        "data VARCHAR(100), "
+        "metric_value DECIMAL(10, 2))"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "INSERT INTO insert_select_window_orders (id) VALUES (1), (2)"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "INSERT INTO insert_select_window_items (id) VALUES (10), (20), (30)"
+    ).success());
+    commitCurrentTransaction();
+
+    const std::filesystem::path insert_trace_path =
+        std::filesystem::path(test_db_path_)
+            .replace_extension(".insert-select-window-insert-trace.log");
+    const std::filesystem::path select_trace_path =
+        std::filesystem::path(test_db_path_)
+            .replace_extension(".insert-select-window-select-trace.log");
+    std::filesystem::remove(insert_trace_path);
+    std::filesystem::remove(select_trace_path);
+
+    ScopedEnvVar insert_trace_enabled("SCRATCHBIRD_EXECUTOR_INSERT_TRACE", "1");
+    ScopedEnvVar insert_trace_file("SCRATCHBIRD_EXECUTOR_INSERT_TRACE_FILE",
+                                   insert_trace_path.string());
+    ScopedEnvVar select_trace_enabled("SCRATCHBIRD_SELECT_TRACE", "1");
+    ScopedEnvVar select_trace_file("SCRATCHBIRD_SELECT_TRACE_FILE",
+                                   select_trace_path.string());
+
+    auto insert_result = executeSQL(
+        "INSERT INTO insert_select_window_dst (id, data, metric_value) "
+        "SELECT seq, 'Data_' || CAST(seq AS VARCHAR(20)), seq * 1.5 "
+        "FROM ("
+        "  SELECT ROW_NUMBER() OVER () AS seq "
+        "  FROM insert_select_window_orders o "
+        "  CROSS JOIN insert_select_window_items i "
+        "  LIMIT 3"
+        ") sub");
+    ASSERT_TRUE(insert_result.success()) << insert_result.error();
+
+    std::ifstream insert_trace_in(insert_trace_path);
+    ASSERT_TRUE(insert_trace_in.is_open()) << insert_trace_path;
+    const std::string insert_trace_contents(
+        (std::istreambuf_iterator<char>(insert_trace_in)),
+        std::istreambuf_iterator<char>());
+
+    EXPECT_NE(insert_trace_contents.find("source_is_select=1"),
+              std::string::npos);
+    EXPECT_NE(insert_trace_contents.find("select_source_stream_callback=1"),
+              std::string::npos);
+    EXPECT_NE(insert_trace_contents.find("select_source_simple_fast_path=1"),
+              std::string::npos);
+    EXPECT_NE(insert_trace_contents.find("select_source_simple_fast_path_rows=3"),
+              std::string::npos);
+    EXPECT_NE(
+        insert_trace_contents.find(
+            "select_source_simple_fast_path_skip_coercion_columns=0"),
+        std::string::npos)
+        << insert_trace_contents;
+    EXPECT_NE(
+        insert_trace_contents.find(
+            "select_source_simple_fast_path_integer_fast_columns=3"),
+        std::string::npos)
+        << insert_trace_contents;
+    EXPECT_NE(
+        insert_trace_contents.find(
+            "select_source_simple_fast_path_varchar_fast_columns=3"),
+        std::string::npos);
+    EXPECT_NE(
+        insert_trace_contents.find(
+            "select_source_simple_fast_path_decimal_fast_columns=3"),
+        std::string::npos);
+    EXPECT_NE(
+        insert_trace_contents.find(
+            "select_source_simple_fast_path_generic_coercion_columns=0"),
+        std::string::npos);
+    EXPECT_NE(insert_trace_contents.find("prepared_tuple_serializer_rows=3"),
+              std::string::npos);
+    EXPECT_NE(
+        insert_trace_contents.find(
+            "prepared_tuple_serializer_fallback_rows=0"),
+        std::string::npos);
+    EXPECT_NE(
+        insert_trace_contents.find(
+            "statement_bulk_handle_unique_preflight_bypass_rows=3"),
+        std::string::npos);
+
+    std::ifstream select_trace_in(select_trace_path);
+    ASSERT_TRUE(select_trace_in.is_open()) << select_trace_path;
+    const std::string select_trace_contents(
+        (std::istreambuf_iterator<char>(select_trace_in)),
+        std::istreambuf_iterator<char>());
+
+    EXPECT_NE(
+        select_trace_contents.find(
+            "SELECT TRACE derived_projection mode=DIRECT_QUERY input_rows=3 output_rows=3 prebound_exprs=2 generic_exprs=0"),
+        std::string::npos)
+        << select_trace_contents;
+    EXPECT_NE(
+        select_trace_contents.find(
+            "SELECT TRACE derived_projection mode=DIRECT_QUERY input_rows=3 output_rows=3 prebound_exprs=2 generic_exprs=0 stream=1 source_stream=1"),
+        std::string::npos)
+        << select_trace_contents;
+    const bool base_metadata_count_trace =
+        select_trace_contents.find(
+            "SELECT TRACE table=insert_select_window_orders scan_kind=ROW_COUNT_ONLY runtime_access=METADATA_COUNT") !=
+        std::string::npos;
+    const bool base_scan_count_trace =
+        select_trace_contents.find(
+            "SELECT TRACE table=insert_select_window_orders scan_kind=ROW_COUNT_ONLY runtime_access=COUNT_SCAN") !=
+        std::string::npos;
+    EXPECT_TRUE(base_metadata_count_trace || base_scan_count_trace)
+        << select_trace_contents;
+    const bool metadata_count_trace =
+        select_trace_contents.find(
+            "SELECT TRACE table=insert_select_window_items scan_kind=ROW_COUNT_ONLY runtime_access=METADATA_COUNT") !=
+        std::string::npos;
+    const bool scan_count_trace =
+        select_trace_contents.find(
+            "SELECT TRACE table=insert_select_window_items scan_kind=ROW_COUNT_ONLY runtime_access=COUNT_SCAN") !=
+        std::string::npos;
+    EXPECT_TRUE(metadata_count_trace || scan_count_trace)
+        << select_trace_contents;
+    EXPECT_NE(
+        select_trace_contents.find(
+            "SELECT TRACE row_number_only mode=JOIN_COUNT_FAST_PATH base_rows=2 output_rows=3 limited_rows=3 total_rows=3"),
+        std::string::npos)
+        << select_trace_contents;
+    EXPECT_NE(
+        select_trace_contents.find(
+            "SELECT TRACE output handoff=STREAM_ROWS rows=3"),
+        std::string::npos)
+        << select_trace_contents;
+
+    auto select_result = executeSQL(
+        "SELECT id, data, metric_value FROM insert_select_window_dst ORDER BY id");
+    ASSERT_TRUE(select_result.success()) << select_result.error();
+    auto* rs = select_result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 3u);
+    EXPECT_EQ(rs->getValue(0, 0).toString(), "1");
+    EXPECT_EQ(rs->getValue(0, 1).toString(), "Data_1");
+    EXPECT_EQ(rs->getValue(1, 0).toString(), "2");
+    EXPECT_EQ(rs->getValue(1, 1).toString(), "Data_2");
+    EXPECT_EQ(rs->getValue(2, 0).toString(), "3");
+    EXPECT_EQ(rs->getValue(2, 1).toString(), "Data_3");
+
+    std::filesystem::remove(insert_trace_path);
+    std::filesystem::remove(select_trace_path);
+}
+
+TEST_F(ExecutorTest, UpdateSkipsPostStorageIndexMaintenanceForUnchangedPlainKeys)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE update_plain_key_trace ("
+        "id INT PRIMARY KEY, "
+        "email VARCHAR(100), "
+        "status INT)"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE UNIQUE INDEX update_plain_key_trace_email "
+        "ON update_plain_key_trace(email)"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "INSERT INTO update_plain_key_trace (id, email, status) VALUES "
+        "(1, 'alice@example.com', 10)"
+    ).success());
+    commitCurrentTransaction();
+
+    const std::filesystem::path trace_path =
+        std::filesystem::path(test_db_path_).replace_extension(".update-trace.log");
+    std::filesystem::remove(trace_path);
+
+    ScopedEnvVar trace_enabled("SCRATCHBIRD_UPDATE_TRACE", "1");
+    ScopedEnvVar trace_file("SCRATCHBIRD_UPDATE_TRACE_FILE", trace_path.string());
+
+    auto update_result = executeSQL(
+        "UPDATE update_plain_key_trace SET status = status + 1 WHERE id = 1"
+    );
+    ASSERT_TRUE(update_result.success()) << update_result.error();
+
+    std::ifstream trace_in(trace_path);
+    ASSERT_TRUE(trace_in.is_open()) << trace_path;
+    const std::string trace_contents(
+        (std::istreambuf_iterator<char>(trace_in)),
+        std::istreambuf_iterator<char>());
+
+    EXPECT_NE(trace_contents.find("indexed_keys_unchanged_initial=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("post_storage_index_maintenance_required=0"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("unchanged_key_plan_exact_indexes=2"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("unchanged_key_plan_active_maintenance=0"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("unchanged_key_plan_supplied=1"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("post_storage_index_maintenance_skipped_rows=1"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("tuple_patch_fast_path_rows=1"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("full_tuple_serialize_rows=0"),
+              std::string::npos);
+
+    auto select_result = executeSQL(
+        "SELECT status FROM update_plain_key_trace WHERE id = 1"
+    );
+    ASSERT_TRUE(select_result.success()) << select_result.error();
+    auto* rs = select_result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 11);
+
+    std::filesystem::remove(trace_path);
+}
+
+TEST_F(ExecutorTest, BasicSecondaryIndexInsertMaintainedExactlyOnce)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE idx_once (id INT PRIMARY KEY, email VARCHAR(100), is_active BOOLEAN)"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE UNIQUE INDEX idx_once_email ON idx_once(email)"
+    ).success());
+    commitCurrentTransaction();
+
+    auto insert_result = executeSQL(
+        "INSERT INTO idx_once (id, email, is_active) VALUES (1, 'alice@example.com', TRUE)"
+    );
+    ASSERT_TRUE(insert_result.success()) << insert_result.error();
+
+    auto tids = searchIndex("idx_once",
+                            "idx_once_email",
+                            encodeStoredTextIndexKey("alice@example.com"),
+                            db_->storage_engine()->getCurrentXid());
+    ASSERT_EQ(tids.size(), 1u);
+}
+
+TEST_F(ExecutorTest, MultiRowValuesInsertPublishesGroupedExactSecondaryPlan)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE insert_bulk_grouped_trace (id INT PRIMARY KEY, email VARCHAR(100))"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE INDEX insert_bulk_grouped_trace_email ON insert_bulk_grouped_trace(email)"
+    ).success());
+    commitCurrentTransaction();
+
+    const std::filesystem::path trace_path =
+        std::filesystem::path(test_db_path_).replace_extension(".insert-grouped-trace.log");
+    std::filesystem::remove(trace_path);
+
+    ScopedEnvVar trace_enabled("SCRATCHBIRD_EXECUTOR_INSERT_TRACE", "1");
+    ScopedEnvVar trace_file("SCRATCHBIRD_EXECUTOR_INSERT_TRACE_FILE", trace_path.string());
+
+    auto insert_result = executeSQL(
+        "INSERT INTO insert_bulk_grouped_trace (id, email) VALUES "
+        "(1, 'alice@example.com'), "
+        "(2, 'bob@example.com'), "
+        "(3, 'carol@example.com')"
+    );
+    ASSERT_TRUE(insert_result.success()) << insert_result.error();
+
+    std::ifstream trace_in(trace_path);
+    ASSERT_TRUE(trace_in.is_open()) << trace_path;
+    const std::string trace_contents(
+        (std::istreambuf_iterator<char>(trace_in)),
+        std::istreambuf_iterator<char>());
+
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_admitted=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_enabled=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_used_rows=3"), std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_fallback_rows=0"), std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_maintenance_plan_exact_indexes=2"),
+              std::string::npos);
+    EXPECT_NE(
+        trace_contents.find("statement_bulk_handle_maintenance_plan_unique_exact_indexes=1"),
+        std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_maintenance_plan_deferred_exact_indexes=0"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_maintenance_plan_grouped_exact_indexes=1"),
+              std::string::npos);
+    EXPECT_NE(
+        trace_contents.find(
+            "statement_bulk_handle_maintenance_plan_buffered_empty_unique_indexes=1"),
+        std::string::npos);
+
+    const uint64_t current_xid = db_->storage_engine()->getCurrentXid();
+    EXPECT_EQ(searchIndex("insert_bulk_grouped_trace",
+                          "insert_bulk_grouped_trace_email",
+                          encodeStoredTextIndexKey("alice@example.com"),
+                          current_xid)
+                  .size(),
+              1u);
+    EXPECT_EQ(searchIndex("insert_bulk_grouped_trace",
+                          "insert_bulk_grouped_trace_email",
+                          encodeStoredTextIndexKey("bob@example.com"),
+                          current_xid)
+                  .size(),
+              1u);
+    EXPECT_EQ(searchIndex("insert_bulk_grouped_trace",
+                          "insert_bulk_grouped_trace_email",
+                          encodeStoredTextIndexKey("carol@example.com"),
+                          current_xid)
+                  .size(),
+              1u);
+
+    std::filesystem::remove(trace_path);
+}
+
+TEST_F(ExecutorTest, PreparedPointSelectBucketsCustomPlansForDirectEngineContext)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE prepared_bucket_users ("
+        "id INTEGER, "
+        "name VARCHAR(32), "
+        "email VARCHAR(64), "
+        "age INTEGER)"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE INDEX idx_prepared_bucket_users_id ON prepared_bucket_users(id)"
+    ).success());
+
+    for (int i = 1; i <= 256; ++i)
+    {
+        std::ostringstream sql;
+        sql << "INSERT INTO prepared_bucket_users (id, name, email, age) VALUES ("
+            << i << ", 'u" << i << "', 'u" << i << "@x', " << (20 + (i % 10))
+            << ")";
+        ASSERT_TRUE(executeSQL(sql.str()).success()) << sql.str();
+    }
+    commitCurrentTransaction();
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(default_schema_id_,
+                                               "prepared_bucket_users",
+                                               table_info,
+                                               &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_->statistics_manager()->analyzeTable(table_info.table_id, 1.0, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    const std::string sql_text = "SELECT id FROM prepared_bucket_users WHERE id < $1";
+    QueryCompilerV3 compiler(db_.get());
+    compiler.setCurrentSchema(default_schema_id_);
+    auto generic_compile = compiler.compile(sql_text);
+    ASSERT_TRUE(generic_compile.success());
+
+    ASSERT_EQ(conn_ctx_->prepareStatement("q_bucketed_direct",
+                                          sql_text,
+                                          generic_compile.bytecode(),
+                                          {},
+                                          &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->seedPreparedStatementOptimizerProfile(
+                  "q_bucketed_direct",
+                  generic_compile.planProfile().runtime_plan_hash,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    auto* prepared = conn_ctx_->getPreparedStatement("q_bucketed_direct");
+    ASSERT_NE(prepared, nullptr);
+    EXPECT_EQ(prepared->optimizer_plan_mode,
+              ConnectionContext::PreparedStatement::OptimizerPlanMode::AUTO);
+
+    ConnectionContext::PreparedExecutionSelection selective_selection;
+    ASSERT_EQ(conn_ctx_->resolvePreparedStatementExecutionPlan(
+                  "q_bucketed_direct",
+                  {"5"},
+                  {false},
+                  selective_selection,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(selective_selection.specialization_supported);
+    EXPECT_FALSE(selective_selection.used_generic_bytecode);
+    EXPECT_FALSE(selective_selection.bundle_hit);
+    EXPECT_TRUE(selective_selection.bundle_rebuilt);
+    EXPECT_FALSE(selective_selection.bucket_signature.empty());
+    EXPECT_EQ(prepared->optimizer_parameter_signature_to_bucket.size(), 1u);
+    EXPECT_EQ(prepared->optimizer_bucketed_bytecode.size(), 1u);
+    EXPECT_EQ(prepared->optimizer_bundle_rebuild_count, 1u);
+
+    ConnectionContext::PreparedExecutionSelection broad_selection;
+    ASSERT_EQ(conn_ctx_->resolvePreparedStatementExecutionPlan(
+                  "q_bucketed_direct",
+                  {"250"},
+                  {false},
+                  broad_selection,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(broad_selection.specialization_supported);
+    EXPECT_FALSE(broad_selection.used_generic_bytecode);
+    EXPECT_FALSE(broad_selection.bundle_hit);
+    EXPECT_TRUE(broad_selection.bundle_rebuilt);
+    EXPECT_FALSE(broad_selection.bucket_signature.empty());
+    EXPECT_NE(broad_selection.bucket_signature, selective_selection.bucket_signature);
+
+    prepared = conn_ctx_->getPreparedStatement("q_bucketed_direct");
+    ASSERT_NE(prepared, nullptr);
+    EXPECT_EQ(prepared->optimizer_parameter_signature_to_bucket.size(), 2u);
+    EXPECT_EQ(prepared->optimizer_bucketed_bytecode.size(), 2u);
+    EXPECT_EQ(prepared->optimizer_plan_mode,
+              ConnectionContext::PreparedStatement::OptimizerPlanMode::CUSTOM_BUCKETED);
+    EXPECT_EQ(prepared->optimizer_bundle_rebuild_count, 2u);
+
+    ConnectionContext::PreparedExecutionSelection selective_cached_selection;
+    ASSERT_EQ(conn_ctx_->resolvePreparedStatementExecutionPlan(
+                  "q_bucketed_direct",
+                  {"5"},
+                  {false},
+                  selective_cached_selection,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(selective_cached_selection.bundle_hit);
+    EXPECT_FALSE(selective_cached_selection.bundle_rebuilt);
+    EXPECT_EQ(selective_cached_selection.bucket_signature,
+              selective_selection.bucket_signature);
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+    executor.setParameters({"5"}, {false});
+    auto selective_result = executor.execute(selective_cached_selection.bytecode);
+    ASSERT_TRUE(selective_result.success()) << selective_result.error();
+    ASSERT_NE(selective_result.resultSet(), nullptr);
+    EXPECT_EQ(selective_result.resultSet()->rowCount(), 4u);
+
+    executor.clearParameters();
+    executor.setParameters({"250"}, {false});
+    auto broad_result = executor.execute(broad_selection.bytecode);
+    ASSERT_TRUE(broad_result.success()) << broad_result.error();
+    ASSERT_NE(broad_result.resultSet(), nullptr);
+    EXPECT_EQ(broad_result.resultSet()->rowCount(), 249u);
+}
+
+TEST_F(ExecutorTest, PreparedInsertStatementsStayGenericForDirectEngineContext)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE prepared_insert_generic (id INTEGER, name VARCHAR(32))"
+    ).success());
+    commitCurrentTransaction();
+
+    ErrorContext ctx;
+    const std::string sql_text =
+        "INSERT INTO prepared_insert_generic (id, name) VALUES ($1, $2)";
+    QueryCompilerV3 compiler(db_.get());
+    compiler.setCurrentSchema(default_schema_id_);
+    auto generic_compile = compiler.compile(sql_text);
+    ASSERT_TRUE(generic_compile.success());
+
+    ASSERT_EQ(conn_ctx_->prepareStatement("ins_generic_direct",
+                                          sql_text,
+                                          generic_compile.bytecode(),
+                                          {},
+                                          &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->seedPreparedStatementOptimizerProfile(
+                  "ins_generic_direct",
+                  generic_compile.planProfile().runtime_plan_hash,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    auto* prepared = conn_ctx_->getPreparedStatement("ins_generic_direct");
+    ASSERT_NE(prepared, nullptr);
+    EXPECT_EQ(prepared->optimizer_plan_mode,
+              ConnectionContext::PreparedStatement::OptimizerPlanMode::GENERIC);
+
+    ConnectionContext::PreparedExecutionSelection selection;
+    ASSERT_EQ(conn_ctx_->resolvePreparedStatementExecutionPlan(
+                  "ins_generic_direct",
+                  {"1", "alpha"},
+                  {false, false},
+                  selection,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_FALSE(selection.specialization_supported);
+    EXPECT_TRUE(selection.used_generic_bytecode);
+    EXPECT_FALSE(selection.bundle_hit);
+    EXPECT_FALSE(selection.bundle_rebuilt);
+    EXPECT_TRUE(selection.bucket_signature.empty());
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+    executor.setParameters({"1", "alpha"}, {false, false});
+    auto insert_result = executor.execute(selection.bytecode);
+    ASSERT_TRUE(insert_result.success()) << insert_result.error();
+
+    auto verify_result = executeSQL(
+        "SELECT id, name FROM prepared_insert_generic ORDER BY id"
+    );
+    ASSERT_TRUE(verify_result.success()) << verify_result.error();
+    ASSERT_NE(verify_result.resultSet(), nullptr);
+    ASSERT_EQ(verify_result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(verify_result.resultSet()->getValue(0, 0).toInt64(), 1);
+    EXPECT_EQ(verify_result.resultSet()->getValue(0, 1).toString(), "alpha");
+
+    prepared = conn_ctx_->getPreparedStatement("ins_generic_direct");
+    ASSERT_NE(prepared, nullptr);
+    EXPECT_TRUE(prepared->optimizer_parameter_signature_to_bucket.empty());
+    EXPECT_TRUE(prepared->optimizer_bucketed_bytecode.empty());
+}
+
+TEST_F(ExecutorTest, PreparedSelectPublishesBundleTraceForDirectEngineContext)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE prepared_trace_users ("
+        "id INTEGER, "
+        "name VARCHAR(32), "
+        "email VARCHAR(64), "
+        "age INTEGER)"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE INDEX idx_prepared_trace_users_id ON prepared_trace_users(id)"
+    ).success());
+
+    for (int i = 1; i <= 256; ++i)
+    {
+        std::ostringstream sql;
+        sql << "INSERT INTO prepared_trace_users (id, name, email, age) VALUES ("
+            << i << ", 'u" << i << "', 'u" << i << "@x', " << (20 + (i % 10))
+            << ")";
+        ASSERT_TRUE(executeSQL(sql.str()).success()) << sql.str();
+    }
+    commitCurrentTransaction();
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(default_schema_id_,
+                                               "prepared_trace_users",
+                                               table_info,
+                                               &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_->statistics_manager()->analyzeTable(table_info.table_id, 1.0, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    const std::filesystem::path trace_path =
+        std::filesystem::path(test_db_path_).replace_extension(".prepared-trace.log");
+    std::filesystem::remove(trace_path);
+    ScopedEnvVar trace_enabled("SCRATCHBIRD_PREPARED_TRACE", "1");
+    ScopedEnvVar trace_file("SCRATCHBIRD_PREPARED_TRACE_FILE", trace_path.string());
+
+    const std::string sql_text =
+        "SELECT id FROM prepared_trace_users WHERE id < $1";
+    QueryCompilerV3 compiler(db_.get());
+    compiler.setCurrentSchema(default_schema_id_);
+    auto generic_compile = compiler.compile(sql_text);
+    ASSERT_TRUE(generic_compile.success());
+
+    ASSERT_EQ(conn_ctx_->prepareStatement("q_trace",
+                                          sql_text,
+                                          generic_compile.bytecode(),
+                                          {},
+                                          &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->seedPreparedStatementOptimizerProfile(
+                  "q_trace",
+                  generic_compile.planProfile().runtime_plan_hash,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ConnectionContext::PreparedExecutionSelection selective_selection;
+    ASSERT_EQ(conn_ctx_->resolvePreparedStatementExecutionPlan(
+                  "q_trace",
+                  {"5"},
+                  {false},
+                  selective_selection,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    ConnectionContext::PreparedExecutionSelection broad_selection;
+    ASSERT_EQ(conn_ctx_->resolvePreparedStatementExecutionPlan(
+                  "q_trace",
+                  {"250"},
+                  {false},
+                  broad_selection,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    ConnectionContext::PreparedExecutionSelection cached_selection;
+    ASSERT_EQ(conn_ctx_->resolvePreparedStatementExecutionPlan(
+                  "q_trace",
+                  {"5"},
+                  {false},
+                  cached_selection,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    std::ifstream trace_in(trace_path);
+    ASSERT_TRUE(trace_in.is_open()) << trace_path;
+    const std::string trace_contents(
+        (std::istreambuf_iterator<char>(trace_in)),
+        std::istreambuf_iterator<char>());
+
+    EXPECT_NE(trace_contents.find("PREPARED TRACE phase=seed"), std::string::npos);
+    EXPECT_NE(trace_contents.find("PREPARED TRACE phase=resolve"), std::string::npos);
+    EXPECT_NE(trace_contents.find("name=q_trace"), std::string::npos);
+    EXPECT_NE(trace_contents.find("keyword=SELECT"), std::string::npos);
+    EXPECT_NE(trace_contents.find("bundle_rebuilt=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("bundle_hit=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("used_generic_bundle=0"), std::string::npos);
+    EXPECT_NE(trace_contents.find("bucket_signature="), std::string::npos);
+    EXPECT_EQ(trace_contents.find("bucket_signature=<generic>"), std::string::npos);
+
+    std::filesystem::remove(trace_path);
+}
+
+TEST_F(ExecutorTest, PreparedInsertPublishesGenericTraceForDirectEngineContext)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE prepared_trace_insert (id INTEGER, name VARCHAR(32))"
+    ).success());
+    commitCurrentTransaction();
+
+    ErrorContext ctx;
+    const std::string sql_text =
+        "INSERT INTO prepared_trace_insert (id, name) VALUES ($1, $2)";
+    QueryCompilerV3 compiler(db_.get());
+    compiler.setCurrentSchema(default_schema_id_);
+    auto generic_compile = compiler.compile(sql_text);
+    ASSERT_TRUE(generic_compile.success());
+
+    const std::filesystem::path trace_path =
+        std::filesystem::path(test_db_path_).replace_extension(".prepared-insert-trace.log");
+    std::filesystem::remove(trace_path);
+    ScopedEnvVar trace_enabled("SCRATCHBIRD_PREPARED_TRACE", "1");
+    ScopedEnvVar trace_file("SCRATCHBIRD_PREPARED_TRACE_FILE", trace_path.string());
+
+    ASSERT_EQ(conn_ctx_->prepareStatement("ins_trace",
+                                          sql_text,
+                                          generic_compile.bytecode(),
+                                          {},
+                                          &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->seedPreparedStatementOptimizerProfile(
+                  "ins_trace",
+                  generic_compile.planProfile().runtime_plan_hash,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ConnectionContext::PreparedExecutionSelection selection;
+    ASSERT_EQ(conn_ctx_->resolvePreparedStatementExecutionPlan(
+                  "ins_trace",
+                  {"1", "alpha"},
+                  {false, false},
+                  selection,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    std::ifstream trace_in(trace_path);
+    ASSERT_TRUE(trace_in.is_open()) << trace_path;
+    const std::string trace_contents(
+        (std::istreambuf_iterator<char>(trace_in)),
+        std::istreambuf_iterator<char>());
+
+    EXPECT_NE(trace_contents.find("PREPARED TRACE phase=seed"), std::string::npos);
+    EXPECT_NE(trace_contents.find("PREPARED TRACE phase=resolve"), std::string::npos);
+    EXPECT_NE(trace_contents.find("name=ins_trace"), std::string::npos);
+    EXPECT_NE(trace_contents.find("keyword=INSERT"), std::string::npos);
+    EXPECT_NE(trace_contents.find("used_generic_bundle=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("bundle_hit=0"), std::string::npos);
+    EXPECT_NE(trace_contents.find("bundle_rebuilt=0"), std::string::npos);
+    EXPECT_NE(trace_contents.find("bucket_signature=<generic>"), std::string::npos);
+
+    std::filesystem::remove(trace_path);
+}
+
+TEST_F(ExecutorTest, PreparedSelectSeparatesBundleReuseFromResultCacheReuse)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE prepared_cache_users ("
+        "id INTEGER, "
+        "name VARCHAR(32), "
+        "email VARCHAR(64), "
+        "age INTEGER)"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE INDEX idx_prepared_cache_users_id ON prepared_cache_users(id)"
+    ).success());
+
+    for (int i = 1; i <= 256; ++i)
+    {
+        std::ostringstream sql;
+        sql << "INSERT INTO prepared_cache_users (id, name, email, age) VALUES ("
+            << i << ", 'u" << i << "', 'u" << i << "@x', " << (20 + (i % 10))
+            << ")";
+        ASSERT_TRUE(executeSQL(sql.str()).success()) << sql.str();
+    }
+    commitCurrentTransaction();
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(default_schema_id_,
+                                               "prepared_cache_users",
+                                               table_info,
+                                               &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_->statistics_manager()->analyzeTable(table_info.table_id, 1.0, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    auto& cache = QueryResultCacheManager::getInstance();
+    cache.setEnabled(true);
+    cache.invalidateAll();
+    cache.resetStatistics();
+
+    const std::string sql_text =
+        "SELECT id FROM prepared_cache_users WHERE id < $1";
+    QueryCompilerV3 compiler(db_.get());
+    compiler.setCurrentSchema(default_schema_id_);
+    auto generic_compile = compiler.compile(sql_text);
+    ASSERT_TRUE(generic_compile.success());
+
+    ASSERT_EQ(conn_ctx_->prepareStatement("q_cache_direct",
+                                          sql_text,
+                                          generic_compile.bytecode(),
+                                          {},
+                                          &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->seedPreparedStatementOptimizerProfile(
+                  "q_cache_direct",
+                  generic_compile.planProfile().runtime_plan_hash,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ConnectionContext::PreparedExecutionSelection first_selection;
+    ASSERT_EQ(conn_ctx_->resolvePreparedStatementExecutionPlan(
+                  "q_cache_direct",
+                  {"5"},
+                  {false},
+                  first_selection,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(first_selection.bundle_rebuilt);
+    EXPECT_FALSE(first_selection.bundle_hit);
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+    executor.setParameters({"5"}, {false});
+    auto first_result = executor.execute(first_selection.bytecode);
+    ASSERT_TRUE(first_result.success()) << first_result.error();
+    ASSERT_NE(first_result.resultSet(), nullptr);
+    EXPECT_EQ(first_result.resultSet()->rowCount(), 4u);
+    EXPECT_FALSE(executor.lastStatementUsedResultCache());
+    EXPECT_TRUE(executor.lastStatementInsertedResultCache());
+
+    auto stats_after_first = cache.getStatistics();
+    EXPECT_EQ(stats_after_first.misses, 1u);
+    EXPECT_EQ(stats_after_first.hits, 0u);
+    EXPECT_EQ(stats_after_first.insertions, 1u);
+
+    ConnectionContext::PreparedExecutionSelection second_selection;
+    ASSERT_EQ(conn_ctx_->resolvePreparedStatementExecutionPlan(
+                  "q_cache_direct",
+                  {"5"},
+                  {false},
+                  second_selection,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(second_selection.bundle_hit);
+    EXPECT_FALSE(second_selection.bundle_rebuilt);
+    EXPECT_EQ(second_selection.bucket_signature, first_selection.bucket_signature);
+
+    executor.clearParameters();
+    executor.setParameters({"5"}, {false});
+    auto second_result = executor.execute(second_selection.bytecode);
+    ASSERT_TRUE(second_result.success()) << second_result.error();
+    ASSERT_NE(second_result.resultSet(), nullptr);
+    EXPECT_EQ(second_result.resultSet()->rowCount(), 4u);
+    EXPECT_TRUE(executor.lastStatementUsedResultCache());
+    EXPECT_FALSE(executor.lastStatementInsertedResultCache());
+
+    auto stats_after_second = cache.getStatistics();
+    EXPECT_EQ(stats_after_second.misses, 1u);
+    EXPECT_EQ(stats_after_second.hits, 1u);
+    EXPECT_EQ(stats_after_second.insertions, 1u);
+}
+
+TEST_F(ExecutorTest, PreparedInsertRemainsOutsideResultCache)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE prepared_insert_cache_guard (id INTEGER, name VARCHAR(32))"
+    ).success());
+    commitCurrentTransaction();
+
+    auto& cache = QueryResultCacheManager::getInstance();
+    cache.setEnabled(true);
+    cache.invalidateAll();
+    cache.resetStatistics();
+
+    ErrorContext ctx;
+    const std::string sql_text =
+        "INSERT INTO prepared_insert_cache_guard (id, name) VALUES ($1, $2)";
+    QueryCompilerV3 compiler(db_.get());
+    compiler.setCurrentSchema(default_schema_id_);
+    auto generic_compile = compiler.compile(sql_text);
+    ASSERT_TRUE(generic_compile.success());
+
+    ASSERT_EQ(conn_ctx_->prepareStatement("ins_cache_guard",
+                                          sql_text,
+                                          generic_compile.bytecode(),
+                                          {},
+                                          &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->seedPreparedStatementOptimizerProfile(
+                  "ins_cache_guard",
+                  generic_compile.planProfile().runtime_plan_hash,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ConnectionContext::PreparedExecutionSelection selection;
+    ASSERT_EQ(conn_ctx_->resolvePreparedStatementExecutionPlan(
+                  "ins_cache_guard",
+                  {"1", "alpha"},
+                  {false, false},
+                  selection,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(selection.used_generic_bytecode);
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+    executor.setParameters({"1", "alpha"}, {false, false});
+    auto insert_result = executor.execute(selection.bytecode);
+    ASSERT_TRUE(insert_result.success()) << insert_result.error();
+    EXPECT_FALSE(executor.lastStatementUsedResultCache());
+    EXPECT_FALSE(executor.lastStatementInsertedResultCache());
+
+    auto stats = cache.getStatistics();
+    EXPECT_EQ(stats.hits, 0u);
+    EXPECT_EQ(stats.misses, 0u);
+    EXPECT_EQ(stats.insertions, 0u);
+}
+
+TEST_F(ExecutorTest, PreparedSelectPublishesPlanCacheHitForFreshPreparedHandle)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE prepared_plan_cache_users ("
+        "id INTEGER, "
+        "name VARCHAR(32), "
+        "email VARCHAR(64), "
+        "age INTEGER)"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE INDEX idx_prepared_plan_cache_users_id "
+        "ON prepared_plan_cache_users(id)"
+    ).success());
+
+    for (int i = 1; i <= 256; ++i)
+    {
+        std::ostringstream sql;
+        sql << "INSERT INTO prepared_plan_cache_users (id, name, email, age) VALUES ("
+            << i << ", 'u" << i << "', 'u" << i << "@x', " << (20 + (i % 10))
+            << ")";
+        ASSERT_TRUE(executeSQL(sql.str()).success()) << sql.str();
+    }
+    commitCurrentTransaction();
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(default_schema_id_,
+                                               "prepared_plan_cache_users",
+                                               table_info,
+                                               &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_->statistics_manager()->analyzeTable(table_info.table_id, 1.0, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    const std::filesystem::path trace_path =
+        std::filesystem::path(test_db_path_).replace_extension(".prepared-plan-cache.log");
+    std::filesystem::remove(trace_path);
+    ScopedEnvVar trace_enabled("SCRATCHBIRD_PREPARED_TRACE", "1");
+    ScopedEnvVar trace_file("SCRATCHBIRD_PREPARED_TRACE_FILE", trace_path.string());
+
+    const std::string sql_text =
+        "SELECT id FROM prepared_plan_cache_users WHERE id < $1";
+    QueryCompilerV3 compiler(db_.get());
+    compiler.setCurrentSchema(default_schema_id_);
+    auto generic_compile = compiler.compile(sql_text);
+    ASSERT_TRUE(generic_compile.success());
+
+    QueryCompilerV3::invalidateAllPlanCache();
+    QueryCompilerV3::resetPlanCacheStats();
+
+    ASSERT_EQ(conn_ctx_->prepareStatement("q_plan_cache_a",
+                                          sql_text,
+                                          generic_compile.bytecode(),
+                                          {},
+                                          &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->seedPreparedStatementOptimizerProfile(
+                  "q_plan_cache_a",
+                  generic_compile.planProfile().runtime_plan_hash,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ConnectionContext::PreparedExecutionSelection first_selection;
+    ASSERT_EQ(conn_ctx_->resolvePreparedStatementExecutionPlan(
+                  "q_plan_cache_a",
+                  {"5"},
+                  {false},
+                  first_selection,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(first_selection.plan_cache_consulted);
+    EXPECT_FALSE(first_selection.plan_cache_hit);
+    EXPECT_TRUE(first_selection.bundle_rebuilt);
+
+    auto after_first = QueryCompilerV3::planCacheStats();
+    EXPECT_EQ(after_first.hits, 0u);
+    EXPECT_EQ(after_first.misses, 1u);
+    EXPECT_EQ(after_first.inserts, 1u);
+
+    ASSERT_EQ(conn_ctx_->prepareStatement("q_plan_cache_b",
+                                          sql_text,
+                                          generic_compile.bytecode(),
+                                          {},
+                                          &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->seedPreparedStatementOptimizerProfile(
+                  "q_plan_cache_b",
+                  generic_compile.planProfile().runtime_plan_hash,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ConnectionContext::PreparedExecutionSelection second_selection;
+    ASSERT_EQ(conn_ctx_->resolvePreparedStatementExecutionPlan(
+                  "q_plan_cache_b",
+                  {"5"},
+                  {false},
+                  second_selection,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(second_selection.plan_cache_consulted);
+    EXPECT_TRUE(second_selection.plan_cache_hit);
+    EXPECT_TRUE(second_selection.bundle_rebuilt);
+    EXPECT_FALSE(second_selection.bundle_hit);
+    EXPECT_EQ(second_selection.bucket_signature, first_selection.bucket_signature);
+
+    auto after_second = QueryCompilerV3::planCacheStats();
+    EXPECT_EQ(after_second.hits, 1u);
+    EXPECT_EQ(after_second.misses, 1u);
+    EXPECT_EQ(after_second.inserts, 1u);
+
+    std::ifstream trace_in(trace_path);
+    ASSERT_TRUE(trace_in.is_open()) << trace_path;
+    const std::string trace_contents(
+        (std::istreambuf_iterator<char>(trace_in)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(trace_contents.find("name=q_plan_cache_b"), std::string::npos);
+    EXPECT_NE(trace_contents.find("plan_cache_consulted=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("plan_cache_hit=1"), std::string::npos);
+
+    std::filesystem::remove(trace_path);
+}
+
+TEST_F(ExecutorTest, PreparedMultiRowInsertUsesStatementBulkHandle)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE prepared_insert_bulk_trace (id INT PRIMARY KEY, email VARCHAR(100))"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE UNIQUE INDEX prepared_insert_bulk_trace_email "
+        "ON prepared_insert_bulk_trace(email)"
+    ).success());
+    commitCurrentTransaction();
+
+    ErrorContext ctx;
+    const std::string sql_text =
+        "INSERT INTO prepared_insert_bulk_trace (id, email) VALUES "
+        "($1, $2), ($3, $4), ($5, $6)";
+    QueryCompilerV3 compiler(db_.get());
+    compiler.setCurrentSchema(default_schema_id_);
+    auto generic_compile = compiler.compile(sql_text);
+    ASSERT_TRUE(generic_compile.success());
+
+    ASSERT_EQ(conn_ctx_->prepareStatement("ins_bulk_trace",
+                                          sql_text,
+                                          generic_compile.bytecode(),
+                                          {},
+                                          &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->seedPreparedStatementOptimizerProfile(
+                  "ins_bulk_trace",
+                  generic_compile.planProfile().runtime_plan_hash,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ConnectionContext::PreparedExecutionSelection selection;
+    ASSERT_EQ(conn_ctx_->resolvePreparedStatementExecutionPlan(
+                  "ins_bulk_trace",
+                  {"1",
+                   "alice@example.com",
+                   "2",
+                   "bob@example.com",
+                   "3",
+                   "carol@example.com"},
+                  {false, false, false, false, false, false},
+                  selection,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(selection.used_generic_bytecode);
+    EXPECT_FALSE(selection.specialization_supported);
+    EXPECT_FALSE(selection.plan_cache_consulted);
+
+    const std::filesystem::path trace_path =
+        std::filesystem::path(test_db_path_).replace_extension(".prepared-insert-bulk-trace.log");
+    std::filesystem::remove(trace_path);
+    ScopedEnvVar trace_enabled("SCRATCHBIRD_EXECUTOR_INSERT_TRACE", "1");
+    ScopedEnvVar trace_file("SCRATCHBIRD_EXECUTOR_INSERT_TRACE_FILE", trace_path.string());
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+    executor.setParameters({"1",
+                            "alice@example.com",
+                            "2",
+                            "bob@example.com",
+                            "3",
+                            "carol@example.com"},
+                           {false, false, false, false, false, false});
+    auto insert_result = executor.execute(selection.bytecode);
+    ASSERT_TRUE(insert_result.success()) << insert_result.error();
+
+    std::ifstream trace_in(trace_path);
+    ASSERT_TRUE(trace_in.is_open()) << trace_path;
+    const std::string trace_contents(
+        (std::istreambuf_iterator<char>(trace_in)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_admitted=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_enabled=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_used_rows=3"), std::string::npos);
+    EXPECT_NE(trace_contents.find("statement_bulk_handle_fallback_rows=0"), std::string::npos);
+
+    const uint64_t current_xid = db_->storage_engine()->getCurrentXid();
+    EXPECT_EQ(searchIndex("prepared_insert_bulk_trace",
+                          "prepared_insert_bulk_trace_email",
+                          encodeStoredTextIndexKey("alice@example.com"),
+                          current_xid)
+                  .size(),
+              1u);
+    EXPECT_EQ(searchIndex("prepared_insert_bulk_trace",
+                          "prepared_insert_bulk_trace_email",
+                          encodeStoredTextIndexKey("bob@example.com"),
+                          current_xid)
+                  .size(),
+              1u);
+    EXPECT_EQ(searchIndex("prepared_insert_bulk_trace",
+                          "prepared_insert_bulk_trace_email",
+                          encodeStoredTextIndexKey("carol@example.com"),
+                          current_xid)
+                  .size(),
+              1u);
+
+    std::filesystem::remove(trace_path);
+}
+
+TEST_F(ExecutorTest, PreparedPointUpdateStaysGenericAndUsesUnchangedKeyFastPath)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE prepared_update_fastpath ("
+        "id INT PRIMARY KEY, "
+        "email VARCHAR(100), "
+        "status INT)"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE UNIQUE INDEX prepared_update_fastpath_email "
+        "ON prepared_update_fastpath(email)"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "INSERT INTO prepared_update_fastpath (id, email, status) VALUES "
+        "(1, 'alice@example.com', 10)"
+    ).success());
+    commitCurrentTransaction();
+
+    ErrorContext ctx;
+    const std::string sql_text =
+        "UPDATE prepared_update_fastpath "
+        "SET status = status + $1 "
+        "WHERE id = $2";
+    QueryCompilerV3 compiler(db_.get());
+    compiler.setCurrentSchema(default_schema_id_);
+    auto generic_compile = compiler.compile(sql_text);
+    ASSERT_TRUE(generic_compile.success());
+
+    ASSERT_EQ(conn_ctx_->prepareStatement("upd_generic_direct",
+                                          sql_text,
+                                          generic_compile.bytecode(),
+                                          {},
+                                          &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->seedPreparedStatementOptimizerProfile(
+                  "upd_generic_direct",
+                  generic_compile.planProfile().runtime_plan_hash,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    auto* prepared = conn_ctx_->getPreparedStatement("upd_generic_direct");
+    ASSERT_NE(prepared, nullptr);
+    EXPECT_EQ(prepared->optimizer_plan_mode,
+              ConnectionContext::PreparedStatement::OptimizerPlanMode::GENERIC);
+
+    ConnectionContext::PreparedExecutionSelection selection;
+    ASSERT_EQ(conn_ctx_->resolvePreparedStatementExecutionPlan(
+                  "upd_generic_direct",
+                  {"5", "1"},
+                  {false, false},
+                  selection,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_FALSE(selection.specialization_supported);
+    EXPECT_TRUE(selection.used_generic_bytecode);
+    EXPECT_FALSE(selection.plan_cache_consulted);
+    EXPECT_FALSE(selection.plan_cache_hit);
+
+    const std::filesystem::path trace_path =
+        std::filesystem::path(test_db_path_).replace_extension(".prepared-update-trace.log");
+    std::filesystem::remove(trace_path);
+    ScopedEnvVar trace_enabled("SCRATCHBIRD_UPDATE_TRACE", "1");
+    ScopedEnvVar trace_file("SCRATCHBIRD_UPDATE_TRACE_FILE", trace_path.string());
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+    executor.setParameters({"5", "1"}, {false, false});
+    auto update_result = executor.execute(selection.bytecode);
+    ASSERT_TRUE(update_result.success()) << update_result.error();
+    EXPECT_FALSE(executor.lastStatementUsedResultCache());
+    EXPECT_FALSE(executor.lastStatementInsertedResultCache());
+
+    std::ifstream trace_in(trace_path);
+    ASSERT_TRUE(trace_in.is_open()) << trace_path;
+    const std::string trace_contents(
+        (std::istreambuf_iterator<char>(trace_in)),
+        std::istreambuf_iterator<char>());
+    EXPECT_NE(trace_contents.find("indexed_keys_unchanged_initial=1"), std::string::npos);
+    EXPECT_NE(trace_contents.find("post_storage_index_maintenance_required=0"),
+              std::string::npos);
+    EXPECT_NE(trace_contents.find("post_storage_index_maintenance_skipped_rows=1"),
+              std::string::npos);
+
+    auto select_result = executeSQL(
+        "SELECT status FROM prepared_update_fastpath WHERE id = 1"
+    );
+    ASSERT_TRUE(select_result.success()) << select_result.error();
+    auto* rs = select_result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 15);
+
+    std::filesystem::remove(trace_path);
+}
+
+TEST_F(ExecutorTest, StorageBackedUniqueInsertFailuresStillRejectDuplicates)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE idx_unique_fastpath (id INT PRIMARY KEY, email VARCHAR(100))"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE UNIQUE INDEX idx_unique_fastpath_email ON idx_unique_fastpath(email)"
+    ).success());
+    commitCurrentTransaction();
+
+    ASSERT_TRUE(executeSQL(
+        "INSERT INTO idx_unique_fastpath (id, email) VALUES (1, 'alice@example.com')"
+    ).success());
+    commitCurrentTransaction();
+
+    auto dup_pk = executeSQL(
+        "INSERT INTO idx_unique_fastpath (id, email) VALUES (1, 'other@example.com')"
+    );
+    EXPECT_FALSE(dup_pk.success());
+    EXPECT_FALSE(dup_pk.error().empty());
+
+    auto dup_email = executeSQL(
+        "INSERT INTO idx_unique_fastpath (id, email) VALUES (2, 'alice@example.com')"
+    );
+    EXPECT_FALSE(dup_email.success());
+    EXPECT_FALSE(dup_email.error().empty());
+}
+
+TEST_F(ExecutorTest, BasicSecondaryIndexUpdateMaintainedExactlyOnce)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE idx_update_once (id INT PRIMARY KEY, email VARCHAR(100))"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE UNIQUE INDEX idx_update_once_email ON idx_update_once(email)"
+    ).success());
+    commitCurrentTransaction();
+
+    ASSERT_TRUE(executeSQL(
+        "INSERT INTO idx_update_once (id, email) VALUES (1, 'alice@example.com')"
+    ).success());
+    commitCurrentTransaction();
+
+    auto update_result = executeSQL(
+        "UPDATE idx_update_once SET email = 'bob@example.com' WHERE id = 1"
+    );
+    ASSERT_TRUE(update_result.success()) << update_result.error();
+
+    const uint64_t current_xid = db_->storage_engine()->getCurrentXid();
+    auto old_tids = searchIndex("idx_update_once",
+                                "idx_update_once_email",
+                                encodeStoredTextIndexKey("alice@example.com"),
+                                current_xid);
+    auto new_tids = searchIndex("idx_update_once",
+                                "idx_update_once_email",
+                                encodeStoredTextIndexKey("bob@example.com"),
+                                current_xid);
+    EXPECT_TRUE(old_tids.empty());
+    ASSERT_EQ(new_tids.size(), 1u);
+}
+
+TEST_F(ExecutorTest, PartialIndexTracksOnlyMatchingRows)
+{
+    ASSERT_TRUE(executeSQL(
+        "CREATE TABLE idx_partial_once (id INT PRIMARY KEY, email VARCHAR(100), is_active BOOLEAN)"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "CREATE INDEX idx_partial_once_email ON idx_partial_once(email) WHERE is_active = TRUE"
+    ).success());
+    commitCurrentTransaction();
+
+    ASSERT_TRUE(executeSQL(
+        "INSERT INTO idx_partial_once (id, email, is_active) VALUES (1, 'active@example.com', TRUE)"
+    ).success());
+    ASSERT_TRUE(executeSQL(
+        "INSERT INTO idx_partial_once (id, email, is_active) VALUES (2, 'inactive@example.com', FALSE)"
+    ).success());
+
+    const uint64_t current_xid = db_->storage_engine()->getCurrentXid();
+    auto active_tids = searchIndex("idx_partial_once",
+                                   "idx_partial_once_email",
+                                   encodeExecutorTextIndexKey("active@example.com"),
+                                   current_xid);
+    auto inactive_tids = searchIndex("idx_partial_once",
+                                     "idx_partial_once_email",
+                                     encodeExecutorTextIndexKey("inactive@example.com"),
+                                     current_xid);
+    ASSERT_EQ(active_tids.size(), 1u);
+    EXPECT_TRUE(inactive_tids.empty());
+}
+
 TEST_F(ExecutorTest, InsertTableNotFound) {
     auto result = executeSQL("INSERT INTO nonexistent (id) VALUES (1)");
     EXPECT_FALSE(result.success());
@@ -606,6 +2262,48 @@ TEST_F(ExecutorTest, SelectSpecificColumns) {
     EXPECT_EQ(rs->columnName(1), "c");
     EXPECT_EQ(rs->getValue(0, 0).toInt64(), 1);
     EXPECT_EQ(rs->getValue(0, 1).toInt64(), 3);
+}
+
+TEST_F(ExecutorTest, SelectLeftJoinAliasedEquiJoinCountsUnmatchedRows) {
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE join_customers (customer_id INTEGER PRIMARY KEY, name VARCHAR(50))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE join_orders (order_id INTEGER PRIMARY KEY, customer_id INTEGER, amount INTEGER)")
+                    .success());
+
+    for (int customer_id = 1; customer_id <= 16; ++customer_id)
+    {
+        auto result = executeSQL(
+            "INSERT INTO join_customers (customer_id, name) VALUES (" +
+            std::to_string(customer_id) + ", 'customer_" +
+            std::to_string(customer_id) + "')");
+        ASSERT_TRUE(result.success()) << result.error();
+    }
+
+    for (int order_id = 1; order_id <= 64; ++order_id)
+    {
+        const int customer_id = ((order_id - 1) % 16) + 1;
+        auto result = executeSQL(
+            "INSERT INTO join_orders (order_id, customer_id, amount) VALUES (" +
+            std::to_string(order_id) + ", " + std::to_string(customer_id) +
+            ", " + std::to_string(order_id * 10) + ")");
+        ASSERT_TRUE(result.success()) << result.error();
+    }
+
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO join_orders (order_id, customer_id, amount) VALUES (1001, 9999, 123)")
+                    .success());
+
+    auto result = executeSQL(
+        "SELECT COUNT(*) "
+        "FROM join_orders o "
+        "LEFT JOIN join_customers c ON o.customer_id = c.customer_id "
+        "WHERE c.customer_id IS NULL");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_NE(result.resultSet(), nullptr);
+    ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toInt64(), 1);
 }
 
 TEST_F(ExecutorTest, SelectExpressionRequiresTableSelectWhenUsingColumnGrants) {
@@ -1242,6 +2940,355 @@ TEST_F(ExecutorTest, ImplicitTextNumericComparisonRejectsInvalidText) {
     auto result = executeSQL("SELECT i FROM coercion_cmp_err WHERE i = 'abc'");
     EXPECT_FALSE(result.success());
     EXPECT_NE(result.error().find("Invalid text representation"), std::string::npos);
+}
+
+TEST_F(ExecutorTest, ImplicitDateTextComparisonCoercesToTimestampMidnight) {
+    ASSERT_TRUE(
+        executeSQL("CREATE TABLE coercion_ts_cmp (id INTEGER, order_ts TIMESTAMP)").success());
+    ASSERT_TRUE(
+        executeSQL(
+            "INSERT INTO coercion_ts_cmp (id, order_ts) VALUES (1, '2024-05-31 23:59:59')")
+            .success());
+    ASSERT_TRUE(
+        executeSQL(
+            "INSERT INTO coercion_ts_cmp (id, order_ts) VALUES (2, '2024-06-01 00:00:00')")
+            .success());
+    ASSERT_TRUE(
+        executeSQL(
+            "INSERT INTO coercion_ts_cmp (id, order_ts) VALUES (3, '2024-06-01 12:34:56')")
+            .success());
+
+    auto result = executeSQL(
+        "SELECT id FROM coercion_ts_cmp WHERE order_ts >= '2024-06-01' ORDER BY id");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_EQ(rs->rowCount(), 2u);
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 2);
+    EXPECT_EQ(rs->getValue(1, 0).toInt64(), 3);
+}
+
+TEST_F(ExecutorTest, ImplicitDateTextComparisonTrimsPaddedCharToTimestampMidnight) {
+    ASSERT_TRUE(
+        executeSQL("CREATE TABLE coercion_ts_cmp_padded (id INTEGER, order_ts TIMESTAMP)")
+            .success());
+    ASSERT_TRUE(
+        executeSQL(
+            "INSERT INTO coercion_ts_cmp_padded (id, order_ts) VALUES (1, '2024-05-31 23:59:59')")
+            .success());
+    ASSERT_TRUE(
+        executeSQL(
+            "INSERT INTO coercion_ts_cmp_padded (id, order_ts) VALUES (2, '2024-06-01 00:00:00')")
+            .success());
+    ASSERT_TRUE(
+        executeSQL(
+            "INSERT INTO coercion_ts_cmp_padded (id, order_ts) VALUES (3, '2024-06-01 12:34:56')")
+            .success());
+
+    auto result = executeSQL(
+        "SELECT id FROM coercion_ts_cmp_padded "
+        "WHERE order_ts >= CAST('2024-06-01' AS CHAR(16)) ORDER BY id");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_EQ(rs->rowCount(), 2u);
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 2);
+    EXPECT_EQ(rs->getValue(1, 0).toInt64(), 3);
+}
+
+TEST_F(ExecutorTest, MultilineJoinDateComparisonBenchmarkShapeSucceeds) {
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE benchmark_customers (customer_id INTEGER, country_code VARCHAR(2))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE benchmark_orders (order_id INTEGER, customer_id INTEGER, "
+                    "total_amount DECIMAL(12,2), order_date TIMESTAMP)")
+                    .success());
+
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO benchmark_customers (customer_id, country_code) VALUES (1, 'US')")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO benchmark_orders (order_id, customer_id, total_amount, order_date) "
+                    "VALUES (100, 1, 1500.00, '2024-06-01 10:00:00')")
+                    .success());
+
+    auto result = executeSQL(R"SQL(
+SELECT o.order_id, o.total_amount, c.country_code
+FROM benchmark_orders o
+INNER JOIN benchmark_customers c ON o.customer_id = c.customer_id
+WHERE o.order_date >= '2023-01-01'
+  AND o.total_amount > 1000
+  AND c.country_code IN ('US', 'CA', 'MX')
+)SQL");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 100);
+}
+
+TEST_F(ExecutorTest, HashJoinResidualPredicateKeepsOnlyNonHashConjunct) {
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE benchmark_self_join_customers ("
+                    "customer_id INTEGER, country_code VARCHAR(2), registration_date DATE)")
+                    .success());
+
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO benchmark_self_join_customers "
+                    "(customer_id, country_code, registration_date) VALUES "
+                    "(1, 'US', '2024-01-05')")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO benchmark_self_join_customers "
+                    "(customer_id, country_code, registration_date) VALUES "
+                    "(2, 'US', '2024-02-10')")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO benchmark_self_join_customers "
+                    "(customer_id, country_code, registration_date) VALUES "
+                    "(3, 'US', '2023-12-15')")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO benchmark_self_join_customers "
+                    "(customer_id, country_code, registration_date) VALUES "
+                    "(4, 'CA', '2024-03-01')")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO benchmark_self_join_customers "
+                    "(customer_id, country_code, registration_date) VALUES "
+                    "(5, 'CA', '2024-04-01')")
+                    .success());
+
+    ASSERT_TRUE(executeSQL("SET OPTIMIZER.JOIN_SEARCH = 'INPUT_ORDER'").success());
+
+    auto result = executeSQL(R"SQL(
+SELECT c1.customer_id, c2.customer_id, c1.country_code
+FROM benchmark_self_join_customers c1
+INNER JOIN benchmark_self_join_customers c2 ON c1.country_code = c2.country_code
+    AND c1.customer_id < c2.customer_id
+WHERE c1.registration_date >= '2024-01-01'
+ORDER BY c1.customer_id, c2.customer_id
+)SQL");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_EQ(rs->rowCount(), 4u);
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 1);
+    EXPECT_EQ(rs->getValue(0, 1).toInt64(), 2);
+    EXPECT_EQ(rs->getValue(0, 2).toString(), "US");
+    EXPECT_EQ(rs->getValue(1, 0).toInt64(), 1);
+    EXPECT_EQ(rs->getValue(1, 1).toInt64(), 3);
+    EXPECT_EQ(rs->getValue(2, 0).toInt64(), 2);
+    EXPECT_EQ(rs->getValue(2, 1).toInt64(), 3);
+    EXPECT_EQ(rs->getValue(3, 0).toInt64(), 4);
+    EXPECT_EQ(rs->getValue(3, 1).toInt64(), 5);
+    EXPECT_EQ(rs->getValue(3, 2).toString(), "CA");
+}
+
+TEST_F(ExecutorTest, SelfJoinSameCountryBenchmarkShapeUsesBoundedEngineTime) {
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE benchmark_self_join_perf_customers ("
+                    "customer_id INTEGER, first_name VARCHAR(32), country_code VARCHAR(2), "
+                    "registration_date DATE)")
+                    .success());
+
+    constexpr int kRowCount = 10000;
+    constexpr int kBatchSize = 250;
+    const std::array<std::string, 20> country_codes = {
+        "US", "CA", "MX", "GB", "FR", "DE", "JP", "AU", "BR", "IN",
+        "ZA", "ES", "IT", "NL", "SE", "NO", "AR", "CL", "KR", "SG"};
+
+    for (int start_id = 1; start_id <= kRowCount; start_id += kBatchSize)
+    {
+        std::ostringstream sql;
+        sql << "INSERT INTO benchmark_self_join_perf_customers "
+               "(customer_id, first_name, country_code, registration_date) VALUES ";
+        bool first = true;
+        for (int id = start_id; id < std::min(start_id + kBatchSize, kRowCount + 1); ++id)
+        {
+            if (!first)
+            {
+                sql << ", ";
+            }
+            first = false;
+            const auto& country_code =
+                country_codes[static_cast<size_t>((id - 1) % country_codes.size())];
+            const bool qualifies = (id % 5) == 0;
+            sql << "("
+                << id
+                << ", 'User" << id << "', '"
+                << country_code
+                << "', '"
+                << (qualifies ? "2024-01-15" : "2023-06-01")
+                << "')";
+        }
+        ASSERT_TRUE(executeSQL(sql.str()).success()) << sql.str();
+    }
+
+    ASSERT_TRUE(executeSQL(
+                    "CREATE INDEX idx_benchmark_self_join_perf_country_customer "
+                    "ON benchmark_self_join_perf_customers USING BTREE "
+                    "(country_code, customer_id)")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "CREATE INDEX idx_benchmark_self_join_perf_registration "
+                    "ON benchmark_self_join_perf_customers USING BTREE "
+                    "(registration_date)")
+                    .success());
+
+    auto explain = executeSQL(R"SQL(
+EXPLAIN (FORMAT JSON)
+SELECT c1.customer_id as customer1_id,
+       c1.first_name as customer1_name,
+       c2.customer_id as customer2_id,
+       c2.first_name as customer2_name,
+       c1.country_code
+FROM benchmark_self_join_perf_customers c1
+INNER JOIN benchmark_self_join_perf_customers c2 ON c1.country_code = c2.country_code
+    AND c1.customer_id < c2.customer_id
+WHERE c1.registration_date >= '2024-01-01'
+LIMIT 10000
+)SQL");
+    ASSERT_TRUE(explain.success()) << explain.error();
+    ASSERT_TRUE(explain.hasResultSet());
+    ASSERT_EQ(explain.resultSet()->rowCount(), 1u);
+    const std::string explain_text = explain.resultSet()->getValue(0, 0).toString();
+    EXPECT_EQ(explain_text.find("Plan unavailable"), std::string::npos) << explain_text;
+
+    const auto start = std::chrono::steady_clock::now();
+    auto result = executeSQL(R"SQL(
+SELECT c1.customer_id as customer1_id,
+       c1.first_name as customer1_name,
+       c2.customer_id as customer2_id,
+       c2.first_name as customer2_name,
+       c1.country_code
+FROM benchmark_self_join_perf_customers c1
+INNER JOIN benchmark_self_join_perf_customers c2 ON c1.country_code = c2.country_code
+    AND c1.customer_id < c2.customer_id
+WHERE c1.registration_date >= '2024-01-01'
+LIMIT 10000
+)SQL");
+    const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start).count();
+
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_EQ(result.resultSet()->rowCount(), 10000u);
+    EXPECT_LT(duration_ms, 15000)
+        << "benchmark-shaped self join should stay within a bounded engine envelope";
+}
+
+TEST_F(ExecutorTest, NestedLoopJoinReusesInnerChildPlanForNonParameterizedJoins) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE nl_outer (id INTEGER)").success());
+    ASSERT_TRUE(executeSQL("CREATE TABLE nl_inner (id INTEGER)").success());
+
+    for (int id = 1; id <= 512; ++id)
+    {
+        ASSERT_TRUE(executeSQL(
+                        "INSERT INTO nl_outer (id) VALUES (" + std::to_string(id) + ")")
+                        .success());
+    }
+
+    for (int id = 1; id <= 2048; ++id)
+    {
+        ASSERT_TRUE(executeSQL(
+                        "INSERT INTO nl_inner (id) VALUES (" + std::to_string(id) + ")")
+                        .success());
+    }
+
+    ASSERT_TRUE(executeSQL("SET OPTIMIZER.JOIN_METHOD = 'NESTED_LOOP'").success());
+    ASSERT_TRUE(executeSQL("SET OPTIMIZER.JOIN_SEARCH = 'INPUT_ORDER'").success());
+
+    const auto start = std::chrono::steady_clock::now();
+    auto result = executeSQL(R"SQL(
+SELECT COUNT(*)
+FROM nl_outer o
+JOIN (
+    SELECT id
+    FROM nl_inner
+    WHERE id = 2048
+    LIMIT 1
+) i ON TRUE
+)SQL");
+    const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start).count();
+
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toInt64(), 512);
+    EXPECT_LT(duration_ms, 2000)
+        << "nested-loop join should reuse the materialized inner child plan";
+}
+
+TEST_F(ExecutorTest, GroupByProjectionMatchingExpressionIsAllowed) {
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE benchmark_sales (id INTEGER, category VARCHAR(16), qty "
+                    "INTEGER, unit_price DECIMAL(12,2))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO benchmark_sales (id, category, qty, unit_price) VALUES "
+                    "(1, 'tools', 2, 10.00)")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO benchmark_sales (id, category, qty, unit_price) VALUES "
+                    "(2, 'tools', 1, 20.00)")
+                    .success());
+
+    auto result = executeSQL(R"SQL(
+SELECT
+  qty * unit_price AS line_total,
+  category,
+  COUNT(*) AS total_orders
+FROM benchmark_sales
+GROUP BY qty * unit_price, category
+ORDER BY line_total DESC
+)SQL");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_DOUBLE_EQ(rs->getValue(0, 0).toDouble(), 20.0);
+    EXPECT_EQ(rs->getValue(0, 1).toString(), "tools");
+    EXPECT_EQ(rs->getValue(0, 2).toInt64(), 2);
+}
+
+TEST_F(ExecutorTest, GroupByProjectionMatchingCastExpressionIsAllowed) {
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE benchmark_sales_cast (id INTEGER, order_ts TIMESTAMP, "
+                    "category VARCHAR(16))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO benchmark_sales_cast (id, order_ts, category) VALUES "
+                    "(1, '2024-06-15 12:00:00', 'tools')")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO benchmark_sales_cast (id, order_ts, category) VALUES "
+                    "(2, '2024-06-15 08:30:00', 'tools')")
+                    .success());
+
+    auto result = executeSQL(R"SQL(
+SELECT
+  CAST(order_ts AS DATE) AS day_bucket,
+  category,
+  COUNT(*) AS total_orders
+FROM benchmark_sales_cast
+GROUP BY CAST(order_ts AS DATE), category
+ORDER BY day_bucket DESC
+)SQL");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_EQ(rs->getValue(0, 1).toString(), "tools");
+    EXPECT_EQ(rs->getValue(0, 2).toInt64(), 2);
 }
 
 TEST_F(ExecutorTest, ImplicitTextNumericArithmeticInInsert) {

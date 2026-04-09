@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-002",
+  "phase": "PH0",
+  "title": "Publish cross engine capability evidence and gap ledger",
+  "status": "pending",
+  "owner": "architecture-research",
+  "estimate_days": 4,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

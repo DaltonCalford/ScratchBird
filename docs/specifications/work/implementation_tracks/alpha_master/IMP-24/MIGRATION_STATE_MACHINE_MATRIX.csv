@@ -1,0 +1,10 @@
+case_id,transition,precondition,required_write_set,expected_result,error_code
+T24-MG-001,mode_update,mode_version_current,migration_job_and_migration_event_same_txn,success,
+T24-MG-002,mode_update,stale_mode_version,none,rejected,E_MODE_VERSION_CONFLICT
+T24-MG-003,dual_write_apply,mode=DUAL_WRITE,migration_apply_audit_row_per_write,success,
+T24-MG-004,mirror_legacy_apply,mode=MIRROR_LEGACY,migration_apply_audit_row_per_write,success,
+T24-MG-005,dual_read_audit,mode=DUAL_READ_AUDIT,migration_read_audit_row_per_read,success,
+T24-MG-006,primary_emulated_cutover,open_mismatch_in_guard_window,rejected,E_MIGRATION_MISMATCH_OPEN
+T24-MG-007,retired_transition,active_cursor_backlog,rejected,E_MIGRATION_CURSOR_BACKLOG
+T24-MG-008,purge_audit_rows,mode_not_retired,rejected,E_MIGRATION_PURGE_NOT_ALLOWED
+T24-MG-009,new_enum_kind,unknown_label,rejected,E_ENUM_LABEL_UNKNOWN

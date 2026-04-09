@@ -15,6 +15,22 @@
 
 namespace scratchbird::core
 {
+    namespace
+    {
+        bool iterator_page_is_leaf(const SBBTreePage *page)
+        {
+            if (page == nullptr)
+            {
+                return false;
+            }
+            if (page->btr_header.page_type == PageType::PAGE_TYPE_BTREE_LEAF)
+            {
+                return true;
+            }
+            return (page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0 &&
+                   page->btr_level == 0;
+        }
+    }
 
     // BTree::rangeScan implementation
     // FIREBIRD MGA: Uses current_xid for TIP-based visibility (NOT snapshots)
@@ -260,7 +276,7 @@ namespace scratchbird::core
                 auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
 
                 // Walk down to leftmost leaf
-                while ((page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) == 0)
+                while (!iterator_page_is_leaf(page))
                 {
                     // Internal node - follow first child
                     std::vector<uint8_t> first_key;
@@ -310,7 +326,7 @@ namespace scratchbird::core
             auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
 
             // Navigate to leftmost leaf
-            while ((page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) == 0)
+            while (!iterator_page_is_leaf(page))
             {
                 // Get first child page
                 std::vector<uint8_t> first_key;

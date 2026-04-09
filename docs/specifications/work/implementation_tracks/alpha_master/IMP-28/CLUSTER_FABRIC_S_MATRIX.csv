@@ -1,0 +1,9 @@
+case_id,suite,required_check,expected_result,error_code
+T28-S001,S,cluster_fabric_sql_maps_to_control_feature_keys,pass,
+T28-S002,S,missing_capability_entry_rejected_profile_entry_missing,pass,
+T28-S003,S,expect_version_enforced_for_mutable_fabric_commands,pass,
+T28-S004,S,strict_uuid_binding_for_link_session_task_fields,pass,
+T28-S005,S,passthrough_task_missing_sblr_artifact_ref_rejected,pass,
+T28-S006,S,show_cluster_fabric_fixed_result_shapes,pass,
+T28-S007,S,emulated_parsers_reject_native_cluster_fabric_sql_without_remap,pass,
+T28-S008,S,no_cluster_fabric_data_plane_sql_execution_mapping,pass,

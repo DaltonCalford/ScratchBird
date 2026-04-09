@@ -126,3 +126,6 @@ __pycache__/
 # Compatibility test converted files (regenerable from scripts)
 /tests/compatibility/*/converted/
 /tests/compatibility/*/expected/
+
+/docs/specifications/
+/docs/reference/

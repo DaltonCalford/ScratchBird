@@ -1,0 +1,6 @@
+case_id,scenario,input,expected_result,error_code
+T13-NG-001,malformed_operator_token,1 ? 2,rejected,E_OPERATOR_TOKEN_INVALID
+T13-NG-002,ambiguous_operator_resolution,custom_op_overloads_conflict,rejected,E_OPERATOR_AMBIGUOUS
+T13-NG-003,permission_denied_operator_create,non_admin_creates_operator,rejected,E_PERMISSION_DENIED
+T13-NG-004,resource_exhaustion_expression_depth,deep_expression_exceeds_limit,rejected,E_RESOURCE_EXHAUSTED
+T13-NG-005,null_input_where_not_allowed,operator_requires_non_null_and_strict,rejected,E_INVALID_PARAMETER_VALUE

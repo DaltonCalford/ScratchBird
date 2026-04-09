@@ -134,6 +134,9 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"path", FieldType::SCHEMA_PATH, ""},
         FieldDef{"column", FieldType::IDENT, ""},
     }}},
+    {"SCHEMA_SELECT_TABLE_STAR", SchemaDef{"SCHEMA_SELECT_TABLE_STAR", {
+        FieldDef{"path", FieldType::SCHEMA_PATH, ""},
+    }}},
     {"FETCH_SPEC", SchemaDef{"FETCH_SPEC", {
         FieldDef{"mode", FieldType::U8, ""},
         FieldDef{"with_ties", FieldType::BOOL, ""},
@@ -647,7 +650,9 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"check_expr", FieldType::OPT, "expr"},
     }}},
     {"SCHEMA_DDL_ALTER_SYSTEM", SchemaDef{"SCHEMA_DDL_ALTER_SYSTEM", {
-        FieldDef{"key", FieldType::IDENT, ""},
+        FieldDef{"action", FieldType::U8, ""},
+        FieldDef{"key", FieldType::OPT, "ident"},
+        FieldDef{"target", FieldType::OPT, "ident"},
         FieldDef{"value", FieldType::OPT, "expr"},
     }}},
     {"SCHEMA_DDL_ALTER_JOB", SchemaDef{"SCHEMA_DDL_ALTER_JOB", {

@@ -1,0 +1,30 @@
+{
+  "ticket_id": "IMP-30",
+  "section": "30_Client_Tooling",
+  "wave": "W4",
+  "status": "done",
+  "started_at_utc": "2026-02-12T00:57:20Z",
+  "completed_at_utc": "2026-02-12T00:57:20Z",
+  "gate_contract": "docs/specifications/30_Client_Tooling/TEST_CONTRACT.md",
+  "artifacts": [
+    "IMPLEMENTATION_CHECKLIST.md",
+    "IMPLEMENTATION_NOTES.md",
+    "API_ABI_LIFECYCLE_MATRIX.csv",
+    "CONNECTIVITY_PROFILE_MATRIX.csv",
+    "INSTALLER_PROFILE_MATRIX.csv",
+    "STATEMENT_RESULT_API_MATRIX.csv",
+    "TOOL_COMMAND_SURFACE_MATRIX.csv",
+    "ERROR_EXIT_CONTRACT_MATRIX.csv",
+    "NEGATIVE_CLIENT_MATRIX.csv",
+    "MIGRATION_CONTROL_SURFACE_MATRIX.csv",
+    "REPLICATION_CONTROL_SURFACE_MATRIX.csv",
+    "TEST_RESULTS.md",
+    "CHECKSUMS.sha256",
+    "RUN_MANIFEST.json",
+    "SPEC_TRACEABILITY.csv",
+    "TEST_EVIDENCE_INDEX.md",
+    "GATE_RESULT.json",
+    "CHANGESET_LOG.md"
+  ],
+  "mode": "specification_contract_validation"
+}

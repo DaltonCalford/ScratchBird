@@ -1,0 +1,60 @@
+{
+  "metadata": {
+    "engine": "scratchbird",
+    "dialect": "scratchbird",
+    "host": "127.0.0.1",
+    "port": 17092,
+    "database": "main",
+    "timestamp": "20260403_011621"
+  },
+  "data_loading": [
+    {
+      "table_name": "customers",
+      "row_count": 10000,
+      "duration_ms": 3185.6017112731934,
+      "rows_per_second": 3139.124380995918,
+      "status": "success"
+    },
+    {
+      "table_name": "products",
+      "row_count": 5000,
+      "duration_ms": 1328.0794620513916,
+      "rows_per_second": 3764.8349687426453,
+      "status": "success"
+    },
+    {
+      "table_name": "orders",
+      "row_count": 50000,
+      "duration_ms": 11131.909370422363,
+      "rows_per_second": 4491.592442609233,
+      "status": "success"
+    },
+    {
+      "table_name": "order_items",
+      "row_count": 200000,
+      "duration_ms": 31244.980335235596,
+      "rows_per_second": 6401.028192501563,
+      "status": "success"
+    }
+  ],
+  "test_results": [
+    {
+      "test_name": "bulk_update_with_case",
+      "description": "Bulk UPDATE with CASE expressions",
+      "status": "passed",
+      "duration_ms": 1308.1600666046143,
+      "rows_returned": 0,
+      "rows_affected": -1,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n            UPDATE order_items\n            SET discount_pct = CASE\n                WHEN quantity >= 50 THEN 20.0\n                WHEN quantity >= 20 THEN 15.0\n                WHEN quantity >= 10 THEN"
+    }
+  ],
+  "summary": {
+    "total_tests": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "total_duration_ms": 1308.1600666046143
+  }
+}

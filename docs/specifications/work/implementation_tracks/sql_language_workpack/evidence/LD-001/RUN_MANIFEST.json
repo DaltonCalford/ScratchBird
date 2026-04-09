@@ -1,0 +1,20 @@
+{
+  "ticket_id": "LD-001",
+  "status": "completed",
+  "started_at": "2026-02-11T23:04:00Z",
+  "completed_at": "2026-02-11T23:18:00Z",
+  "spec_inputs": [
+    "docs/specifications/21_V3_Dialect_Surface/OBJECT_NAMING_AND_QUOTING.md",
+    "docs/specifications/21_V3_Dialect_Surface/RESERVED_WORDS_AND_KEYWORDS.md",
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md",
+    "docs/specifications/21_V3_Dialect_Surface/NORMATIVE_ADMIN_DDL_DML_PSQL_TSQL_IMPLEMENTATION_CHECKLIST.md"
+  ],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-001/TOKEN_RULES_AUDIT.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-001/SPEC_TRACEABILITY.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-001/TEST_RESULTS.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-001/IMPLEMENTATION_NOTES.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-001/CHECKSUMS.sha256"
+  ],
+  "notes": "Lexical baseline and deterministic token rules verified from canonical section-21 sources."
+}

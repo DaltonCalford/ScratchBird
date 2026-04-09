@@ -1,0 +1,9 @@
+case_id,component,rule,expected_result,error_code
+T24-RP-001,replication_channel,mode_version_cas_enforced,stale_writer_rejected,E_MODE_VERSION_CONFLICT
+T24-RP-002,replication_txn_batch,apply_order_by_source_commit_seq_ascending,order_preserved,
+T24-RP-003,replication_origin_progress,loop_prevention_enabled,reapply_prevented,
+T24-RP-004,replication_conflict,conflict_rows_persisted_before_terminal_txn_state,ordering_enforced,
+T24-RP-005,split_brain_detection,channel_fenced_and_event_persisted_same_txn,fence_committed,
+T24-RP-006,sys.replication_channel_status,lag_conflict_error_counts_deterministic,view_consistent,
+T24-RP-007,sys.replication_conflict_queue,only_unresolved_conflicts_visible,view_filtered,
+T24-RP-008,sys.replication_cursor_status,monotonic_applied_sequence_progression,monotonicity_enforced,

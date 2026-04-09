@@ -1,0 +1,7 @@
+case_id,suite,required_check,expected_result,error_code
+T28-E001,E,syntax_error_maps_to_dialect_native_envelope,pass,
+T28-E002,E,privilege_error_maps_to_dialect_access_error,pass,
+T28-E003,E,object_not_found_maps_per_dialect,pass,
+T28-E004,E,type_cast_error_maps_per_dialect,pass,
+T28-E005,E,diagnostics_include_original_engine_visible_correlation,pass,
+T28-E006,E,unmapped_engine_error_uses_deterministic_generic_mapping,pass,

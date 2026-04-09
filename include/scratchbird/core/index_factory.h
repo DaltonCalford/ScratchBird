@@ -108,6 +108,25 @@ public:
     static std::vector<IndexFamilyCapabilities> listCapabilities();
 
     /**
+     * Populate canonical named-family metadata on an IndexInfo record.
+     *
+     * This is the authoritative derivation point for Beta 1 named-family
+     * identity, planner grouping, lifecycle model, and baseline metrics
+     * contract.
+     */
+    static void populateCanonicalMetadata(CatalogManager::IndexInfo &index_info);
+
+    /**
+     * Validate canonical metadata already populated on an IndexInfo record.
+     *
+     * @param index_info Index metadata from catalog.
+     * @param reason_out Optional validation failure detail.
+     * @return true when the canonical metadata is internally consistent.
+     */
+    static bool validateCanonicalMetadata(const CatalogManager::IndexInfo &index_info,
+                                          std::string *reason_out = nullptr);
+
+    /**
      * Create new index
      *
      * @param index_type Type of index to create

@@ -1,0 +1,6 @@
+spec_file,requirement_id,implementation_path,test_id,status,notes
+docs/specifications/06_Fixed_Bootstrap_Page_Map/SPEC_OUTLINE.md,IMP-06-REQ-FIXED-MAP,docs/specifications/work/implementation_tracks/alpha_master/IMP-06/FIXED_PAGE_ROLE_MATRIX.csv,T06-FBP-001,pass,Fixed bootstrap page roles mapped
+docs/specifications/06_Fixed_Bootstrap_Page_Map/SPEC_OUTLINE.md,IMP-06-REQ-STARTUP-SEQUENCE,docs/specifications/work/implementation_tracks/alpha_master/IMP-06/BOOTSTRAP_STARTUP_SEQUENCE_MATRIX.csv,T06-FBP-002,pass,Deterministic startup read order mapped
+docs/specifications/06_Fixed_Bootstrap_Page_Map/BOOTSTRAP_PAGE_LAYOUTS.md,IMP-06-REQ-LAYOUT-VALIDATION,docs/specifications/work/implementation_tracks/alpha_master/IMP-06/BOOTSTRAP_LAYOUT_VALIDATION_MATRIX.csv,T06-FBP-003,pass,Bootstrap binary layout rules mapped
+docs/specifications/06_Fixed_Bootstrap_Page_Map/SPEC_OUTLINE.md,IMP-06-REQ-FAILURE-HANDLING,docs/specifications/work/implementation_tracks/alpha_master/IMP-06/BOOTSTRAP_FAILURE_RECOVERY_MATRIX.csv,T06-FBP-004,pass,Failure handling terminal states mapped
+docs/specifications/06_Fixed_Bootstrap_Page_Map/TEST_CONTRACT.md,IMP-06-REQ-GATE,docs/specifications/work/implementation_tracks/alpha_master/IMP-06/TEST_RESULTS.md,T06-FBP-GATE,pass,Required test suite represented in deterministic artifacts

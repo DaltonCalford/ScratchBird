@@ -1,0 +1,4 @@
+hint,expected_behavior,coverage_test,observed_reason,status
+DISABLE_COMPILE,no queue enqueue and VM execution,SblrJitFixture.jit_policy_hint_disable_compile_suppresses_queue_promotion,HINT_DISABLE_COMPILE,pass
+DISABLE_EXECUTE,bypass native execution and force VM,SblrJitFixture.jit_policy_hint_disable_execute_forces_vm_path,HINT_DISABLE_EXECUTE,pass
+PREFER_VM,bias to VM when native possible,SblrJitFixture.jit_soak_mixed_policy_no_semantic_divergence,HINT_PREFER_VM,pass

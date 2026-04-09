@@ -48,6 +48,8 @@ namespace scratchbird::core
 {
     namespace
     {
+        constexpr size_t kBackgroundExactDeltaMergeMaxIndexesPerPass = 8;
+
         bool parseUuidFromString(const std::string& text, ID& out)
         {
             // Expect canonical UUID with dashes; tolerate missing dashes.
@@ -543,6 +545,31 @@ namespace scratchbird::core
                 tuples_removed += tuples_found;
                 space_reclaimed += page_space_reclaimed;
                 pages_cleaned++;
+            }
+
+            if (storage_engine_ != nullptr)
+            {
+                StorageEngine::DeferredExactSecondaryMergeStats merge_stats{};
+                ErrorContext merge_ctx;
+                Status merge_status = storage_engine_->drainDeferredExactSecondaryPageDeltas(
+                    kBackgroundExactDeltaMergeMaxIndexesPerPass,
+                    &merge_stats,
+                    &merge_ctx);
+                if (merge_status != Status::OK)
+                {
+                    LOG_WARNING(
+                        VACUUM,
+                        "Background GC exact-secondary delta merge pass failed: %s",
+                        merge_ctx.message.c_str());
+                }
+                else if (merge_stats.deltas_merged > 0)
+                {
+                    LOG_DEBUG(
+                        VACUUM,
+                        "Background GC merged %lu deferred exact-secondary deltas across %lu indexes",
+                        static_cast<unsigned long>(merge_stats.deltas_merged),
+                        static_cast<unsigned long>(merge_stats.indexes_merged));
+                }
             }
 
             // Update statistics
@@ -1427,6 +1454,12 @@ namespace scratchbird::core
                 uint64_t pages_modified = 0;
                 Status remove_status = index->removeDeadEntriesWithLifecycle(
                     dead_candidates, &entries_removed, &pages_modified, ctx);
+                IndexCleanupDebtSnapshot debt_snapshot{};
+                (void)index->getCleanupDebtSnapshot(&debt_snapshot, nullptr);
+                publication.locality_page_id = debt_snapshot.first_locality_page_id;
+                publication.backlog_pages = debt_snapshot.backlog_pages;
+                publication.backlog_bytes = debt_snapshot.backlog_bytes;
+                publication.repair_required = debt_snapshot.repair_required;
 
                 if (remove_status == Status::OK)
                 {
@@ -1436,13 +1469,31 @@ namespace scratchbird::core
                     {
                         summary_out->exact_entries_removed += entries_removed;
                         summary_out->exact_family_completed++;
+                        summary_out->backlog_count += debt_snapshot.backlog_pages;
+                        summary_out->backlog_pages += debt_snapshot.backlog_pages;
+                        summary_out->backlog_bytes += debt_snapshot.backlog_bytes;
                     }
-                    LOG_INFO(VACUUM,
-                             "Index %s (table %s): exact cleanup completed, removed %lu entries from %lu pages",
-                             index->indexTypeName(),
-                             table.table_name.c_str(),
-                             entries_removed,
-                             pages_modified);
+                    if (debt_snapshot.backlog_pages > 0 || debt_snapshot.backlog_bytes > 0)
+                    {
+                        publication.backlog_count = debt_snapshot.backlog_pages;
+                        LOG_INFO(VACUUM,
+                                 "Index %s (table %s): exact cleanup completed, removed %lu entries from %lu pages with residual debt pages=%lu bytes=%lu",
+                                 index->indexTypeName(),
+                                 table.table_name.c_str(),
+                                 entries_removed,
+                                 pages_modified,
+                                 debt_snapshot.backlog_pages,
+                                 debt_snapshot.backlog_bytes);
+                    }
+                    else
+                    {
+                        LOG_INFO(VACUUM,
+                                 "Index %s (table %s): exact cleanup completed, removed %lu entries from %lu pages",
+                                 index->indexTypeName(),
+                                 table.table_name.c_str(),
+                                 entries_removed,
+                                 pages_modified);
+                    }
                 }
                 else
                 {
@@ -1451,6 +1502,8 @@ namespace scratchbird::core
                     if (summary_out != nullptr)
                     {
                         summary_out->backlog_count += publication.backlog_count;
+                        summary_out->backlog_pages += debt_snapshot.backlog_pages;
+                        summary_out->backlog_bytes += debt_snapshot.backlog_bytes;
                     }
                     LOG_WARNING(VACUUM,
                                 "Index %s (table %s): exact cleanup deferred with status %d",

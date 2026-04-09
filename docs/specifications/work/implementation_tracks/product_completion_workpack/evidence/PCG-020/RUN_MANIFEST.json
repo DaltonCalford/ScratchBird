@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-020",
+  "phase": "PH2",
+  "title": "Implement on disk format versioning and compatibility matrix",
+  "status": "pending",
+  "owner": "upgrade-runtime",
+  "estimate_days": 6,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

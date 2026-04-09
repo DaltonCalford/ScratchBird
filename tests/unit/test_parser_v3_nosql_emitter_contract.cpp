@@ -6,10 +6,12 @@
 
 #include "scratchbird/parser/parser_v3.h"
 #include "scratchbird/parser/v3_emitter.h"
+#include "scratchbird/sblr/ast_sblr_lowerer.h"
 #include "scratchbird/sblr/v3_payloads.h"
 
 using scratchbird::parser::v3::Parser;
 using scratchbird::parser::v3::V3Emitter;
+using scratchbird::parser::v3::AstSblrLowerer;
 using scratchbird::sblr::v3::Container;
 using scratchbird::sblr::v3::DecodeError;
 using scratchbird::sblr::v3::Instruction;
@@ -23,7 +25,7 @@ struct EmittedRoot {
     Value payload;
 };
 
-bool emitRootFromSql(const std::string& sql, EmittedRoot& out, std::string& err) {
+bool emitContainerFromSql(const std::string& sql, Container& out, std::string& err) {
     Parser parser(sql);
     auto parse = parser.parseStatement();
     if (!parse.success() || parse.statement() == nullptr) {
@@ -37,8 +39,31 @@ bool emitRootFromSql(const std::string& sql, EmittedRoot& out, std::string& err)
     }
 
     V3Emitter emitter(parser.stringPool());
+    return emitter.emitStatementToContainer(parse.statement(), out, err);
+}
+
+bool emitLowererContainerFromSql(const std::string& sql,
+                                 Container& out,
+                                 std::string& err) {
+    Parser parser(sql);
+    auto parse = parser.parseStatement();
+    if (!parse.success() || parse.statement() == nullptr) {
+        std::ostringstream oss;
+        oss << "parse failure";
+        for (const auto& e : parse.errors()) {
+            oss << " | " << e.message;
+        }
+        err = oss.str();
+        return false;
+    }
+
+    AstSblrLowerer lowerer(parser.stringPool());
+    return lowerer.emitStatementToContainer(parse.statement(), out, err);
+}
+
+bool emitRootFromSql(const std::string& sql, EmittedRoot& out, std::string& err) {
     Container container;
-    if (!emitter.emitStatementToContainer(parse.statement(), container, err)) {
+    if (!emitContainerFromSql(sql, container, err)) {
         return false;
     }
 
@@ -157,6 +182,20 @@ const Value::List* selectAliases(const EmittedRoot& emitted) {
     return payloadListField(*payload, "select_aliases");
 }
 
+const Value::Object* retainedPayload(const Container& container) {
+    return container.retained_symbol_payload.empty()
+               ? nullptr
+               : &container.retained_symbol_payload;
+}
+
+const Value::List* retainedListField(const Value::Object& payload, const char* key) {
+    auto it = payload.find(key);
+    if (it == payload.end()) {
+        return nullptr;
+    }
+    return std::get_if<Value::List>(&it->second.data);
+}
+
 }  // namespace
 
 TEST(ParserV3NoSqlEmitterContractTest, MapsCanonicalRedisKvAndStreamCommandsToBridgeOpcodes) {
@@ -218,6 +257,118 @@ TEST(ParserV3NoSqlEmitterContractTest, PreservesSelectItemAliasesInSelectPayload
     const auto* second_alias = std::get_if<std::string>(&(*aliases)[1].data);
     ASSERT_NE(second_alias, nullptr);
     EXPECT_TRUE(second_alias->empty());
+}
+
+TEST(ParserV3NoSqlEmitterContractTest,
+     PopulatesNormalizedRetainedSymbolPayloadForSelectAliases) {
+    Container container;
+    std::string err;
+    ASSERT_TRUE(emitContainerFromSql(
+        "SELECT id AS order_id, name FROM users u",
+        container,
+        err)) << err;
+
+    const auto* retained = retainedPayload(container);
+    ASSERT_NE(retained, nullptr);
+
+    auto format_version = retained->find("format_version");
+    ASSERT_NE(format_version, retained->end());
+    const auto* version = std::get_if<uint64_t>(&format_version->second.data);
+    ASSERT_NE(version, nullptr);
+    EXPECT_EQ(*version, 1u);
+
+    const auto* symbol_registry = retainedListField(*retained, "symbol_registry");
+    const auto* output_label_registry =
+        retainedListField(*retained, "output_label_registry");
+    const auto* display_name_registry =
+        retainedListField(*retained, "display_name_registry");
+    ASSERT_NE(symbol_registry, nullptr);
+    ASSERT_NE(output_label_registry, nullptr);
+    ASSERT_NE(display_name_registry, nullptr);
+
+    bool found_output_label = false;
+    for (const auto& entry : *symbol_registry) {
+        const auto* symbol = std::get_if<Value::Object>(&entry.data);
+        ASSERT_NE(symbol, nullptr);
+
+        auto class_it = symbol->find("symbol_class");
+        auto display_id_it = symbol->find("display_name_id");
+        ASSERT_NE(class_it, symbol->end());
+        ASSERT_NE(display_id_it, symbol->end());
+
+        const auto* symbol_class = std::get_if<std::string>(&class_it->second.data);
+        const auto* display_name_id = std::get_if<uint64_t>(&display_id_it->second.data);
+        ASSERT_NE(symbol_class, nullptr);
+        ASSERT_NE(display_name_id, nullptr);
+
+        if (*symbol_class != "output_label_symbol") {
+            continue;
+        }
+
+        for (const auto& display_entry : *display_name_registry) {
+            const auto* display =
+                std::get_if<Value::Object>(&display_entry.data);
+            ASSERT_NE(display, nullptr);
+
+            auto display_id_value = display->find("display_name_id");
+            auto display_name_value = display->find("display_name");
+            ASSERT_NE(display_id_value, display->end());
+            ASSERT_NE(display_name_value, display->end());
+
+            const auto* candidate_id =
+                std::get_if<uint64_t>(&display_id_value->second.data);
+            const auto* display_name =
+                std::get_if<std::string>(&display_name_value->second.data);
+            ASSERT_NE(candidate_id, nullptr);
+            ASSERT_NE(display_name, nullptr);
+
+            if (*candidate_id == *display_name_id && *display_name == "order_id") {
+                found_output_label = true;
+                break;
+            }
+        }
+    }
+
+    EXPECT_TRUE(found_output_label);
+    ASSERT_EQ(output_label_registry->size(), 1u);
+}
+
+TEST(ParserV3NoSqlEmitterContractTest,
+     AstSblrLowererAndV3EmitterShareRetainedAliasPayloadContract) {
+    Container emitter_container;
+    Container lowerer_container;
+    std::string err;
+
+    ASSERT_TRUE(emitContainerFromSql(
+        "SELECT id AS order_id, name FROM users u",
+        emitter_container,
+        err)) << err;
+    ASSERT_TRUE(emitLowererContainerFromSql(
+        "SELECT id AS order_id, name FROM users u",
+        lowerer_container,
+        err)) << err;
+
+    const auto* emitter_retained = retainedPayload(emitter_container);
+    const auto* lowerer_retained = retainedPayload(lowerer_container);
+    ASSERT_NE(emitter_retained, nullptr);
+    ASSERT_NE(lowerer_retained, nullptr);
+
+    const auto* emitter_output_labels =
+        retainedListField(*emitter_retained, "output_label_registry");
+    const auto* lowerer_output_labels =
+        retainedListField(*lowerer_retained, "output_label_registry");
+    ASSERT_NE(emitter_output_labels, nullptr);
+    ASSERT_NE(lowerer_output_labels, nullptr);
+    ASSERT_EQ(emitter_output_labels->size(), lowerer_output_labels->size());
+    ASSERT_EQ(emitter_output_labels->size(), 1u);
+
+    const auto* emitter_symbols =
+        retainedListField(*emitter_retained, "symbol_registry");
+    const auto* lowerer_symbols =
+        retainedListField(*lowerer_retained, "symbol_registry");
+    ASSERT_NE(emitter_symbols, nullptr);
+    ASSERT_NE(lowerer_symbols, nullptr);
+    EXPECT_EQ(emitter_symbols->size(), lowerer_symbols->size());
 }
 
 TEST(ParserV3NoSqlEmitterContractTest, RejectsRemovedEnginePrefixedAliasesBeforeEmission) {

@@ -1,0 +1,4 @@
+case_id,compat_area,expected_result
+T25-CP-001,emulated_parsers_operate_as_listener_managed_profiles_only,pass
+T25-CP-002,native_runtime_modes_preserve_engine_parser_boundary,pass
+T25-CP-003,cluster_fabric_parserless_data_plane_invariant_preserved,pass

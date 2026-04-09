@@ -16,7 +16,9 @@
 #include <unistd.h>
 #include <vector>
 
+#define private public
 #include "scratchbird/core/catalog_manager.h"
+#undef private
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
@@ -278,6 +280,47 @@ TEST_F(CatalogRuntimeContextExtensionContractTest, TransactionContracts)
     ASSERT_EQ(catalog_->getRuntimeTransactionCatalogEntry(200, loaded, &ctx), Status::NOT_FOUND);
 }
 
+TEST_F(CatalogRuntimeContextExtensionContractTest,
+       TerminalTransactionUpsertHealsInvalidRemoteTxnBindingCatalogPage)
+{
+    ErrorContext ctx;
+
+    const ID system_user_id = catalog_->getSystemUserId(&ctx);
+    ASSERT_NE(system_user_id, ID{}) << ctx.message;
+
+    CatalogManager::SessionInfo session{};
+    ASSERT_EQ(catalog_->createSession(system_user_id, ID{}, "native", session, &ctx), Status::OK)
+        << ctx.message;
+
+    CatalogManager::RuntimeTransactionCatalogInfo tx{};
+    tx.txid = 9100;
+    tx.tx_uuid = generateUuidV7();
+    tx.database_id = db_->uuid();
+    tx.session_id = session.session_id;
+    tx.user_id = system_user_id;
+    tx.emulation_engine = CatalogManager::EmulationEngine::NATIVE;
+    tx.isolation_level = static_cast<uint8_t>(IsolationLevel::READ_COMMITTED);
+    tx.state = CatalogManager::RuntimeTransactionState::IN_PROGRESS;
+    tx.start_time = 5000;
+    ASSERT_EQ(catalog_->upsertRuntimeTransactionCatalogEntry(tx, &ctx), Status::OK)
+        << ctx.message;
+
+    catalog_->remote_txn_binding_table_page_ = CatalogManager::CATALOG_ROOT_PAGE;
+
+    tx.state = CatalogManager::RuntimeTransactionState::ABORTED;
+    tx.has_end_time = true;
+    tx.end_time = 5001;
+    ASSERT_EQ(catalog_->upsertRuntimeTransactionCatalogEntry(tx, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_NE(catalog_->remote_txn_binding_table_page_, 0u);
+    EXPECT_NE(catalog_->remote_txn_binding_table_page_, CatalogManager::CATALOG_ROOT_PAGE);
+
+    CatalogManager::RuntimeTransactionCatalogInfo loaded{};
+    ASSERT_EQ(catalog_->getRuntimeTransactionCatalogEntry(tx.txid, loaded, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(loaded.state, CatalogManager::RuntimeTransactionState::ABORTED);
+}
+
 TEST_F(CatalogRuntimeContextExtensionContractTest, TransactionLineageContracts)
 {
     ErrorContext ctx;
@@ -433,6 +476,37 @@ TEST_F(CatalogRuntimeContextExtensionContractTest, LiveTransactionCommitSurvives
     EXPECT_EQ(tx_row.tx_uuid, tx_uuid);
     EXPECT_EQ(tx_row.state, CatalogManager::RuntimeTransactionState::COMMITTED);
     EXPECT_EQ(tx_row.session_id, ID{});
+}
+
+TEST_F(CatalogRuntimeContextExtensionContractTest, CloseSessionRejectsCorruptSessionCatalogPage)
+{
+    ErrorContext ctx;
+
+    const ID system_user_id = catalog_->getSystemUserId(&ctx);
+    ASSERT_NE(system_user_id, ID{}) << ctx.message;
+
+    CatalogManager::SessionInfo session{};
+    ASSERT_EQ(catalog_->createSession(system_user_id, ID{}, "native", session, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_NE(catalog_->sessions_table_page_, 0u);
+
+    BufferPool* bp = db_->buffer_pool();
+    ASSERT_NE(bp, nullptr);
+
+    void* page_buffer = nullptr;
+    ASSERT_EQ(bp->pinPage(catalog_->sessions_table_page_, &page_buffer, &ctx), Status::OK)
+        << ctx.message;
+
+    auto* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
+    heap->record_count = static_cast<uint32_t>(db_->page_size());
+
+    ASSERT_EQ(bp->unpinPage(catalog_->sessions_table_page_, true, &ctx), Status::OK)
+        << ctx.message;
+
+    ErrorContext close_ctx;
+    EXPECT_EQ(catalog_->closeSession(session.session_id, &close_ctx), Status::PAGE_CORRUPT);
+    EXPECT_NE(std::string(close_ctx.message).find("Catalog heap page"),
+              std::string::npos);
 }
 
 TEST_F(CatalogRuntimeContextExtensionContractTest, AnonymousConnectionCommitSkipsRetainedTransactionEvidence)

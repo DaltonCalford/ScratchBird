@@ -1,0 +1,7 @@
+case_id,trigger,expected_rebuild_action,expected_result,error_code
+FSM-RBLD-001,checksum_mismatch,full_page_scan_rebuild_fsm_root,success,NONE
+FSM-RBLD-002,missing_fsm_root_pointer,full_page_scan_rebuild_fsm_root,success,NONE
+FSM-RBLD-003,unclean_shutdown_allocator_dirty_flag,full_page_scan_rebuild_fsm_root,success,NONE
+FSM-RBLD-004,explicit_rebuild_fsm_admin_command,full_page_scan_rebuild_fsm_root,success,NONE
+FSM-RBLD-005,rebuild_invalid_new_fsm_header,reject_new_fsm_keep_old,fail,INVALID_FSM_HEADER
+FSM-RBLD-006,rebuild_page_scan_i_o_error,abort_rebuild_no_pointer_switch,fail,INVALID_FSM_ENTRY

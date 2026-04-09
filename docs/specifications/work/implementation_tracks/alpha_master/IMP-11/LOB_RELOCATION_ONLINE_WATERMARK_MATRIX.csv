@@ -1,0 +1,6 @@
+case_id,phase,watermark_behavior,concurrency_rule,expected_result,error_code
+T11-ONR-001,stage_copy,copy_chunks_upto_watermark,writers_allowed_with_delta_log,stage_complete,
+T11-ONR-002,catch_up,replay_delta_after_watermark,writers_temporarily_queued_at_swap,catch_up_complete,
+T11-ONR-003,pointer_swap,atomic_metadata_swap,exclusive_metadata_lock_required,swap_complete,
+T11-ONR-004,post_swap_validation,hash_compare_old_new,readers_follow_new_pointer,validation_pass,
+T11-ONR-005,swap_failure,rollback_to_old_pointer,delta_log_preserved,rollback_complete,E_RELOCATION_SWAP_FAILED

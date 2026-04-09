@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-054",
+  "phase": "PH5",
+  "title": "Execute soak and capacity endurance gates",
+  "status": "pending",
+  "owner": "qa-reliability",
+  "estimate_days": 6,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

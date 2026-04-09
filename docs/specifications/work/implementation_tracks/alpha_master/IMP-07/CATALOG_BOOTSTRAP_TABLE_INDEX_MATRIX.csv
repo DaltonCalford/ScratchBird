@@ -1,0 +1,17 @@
+case_id,bootstrap_object,required_shape,required_pk_or_index,expected_result,error_code
+CBI-001,database,table_with_required_columns,pk_database_uuid,create_success,NONE
+CBI-002,schema,table_with_required_columns,pk_schema_uuid,create_success,NONE
+CBI-003,object,table_with_required_columns,pk_object_uuid,create_success,NONE
+CBI-004,object_name,table_with_required_columns,pk_name_uuid,create_success,NONE
+CBI-005,type,table_with_required_columns,pk_type_uuid,create_success,NONE
+CBI-006,domain,table_with_required_columns,pk_domain_uuid,create_success,NONE
+CBI-007,index,table_with_required_columns,pk_index_uuid,create_success,NONE
+CBI-008,procedure,table_with_required_columns,pk_function_uuid,create_success,NONE
+CBI-009,emulation_profile,table_with_required_columns,pk_engine,create_success,NONE
+CBI-010,reserved_words,table_with_required_columns,pk_word_parser_scope,create_success,NONE
+CBI-011,filespaces,table_with_required_columns,pk_filespace_id,create_success,NONE
+CBI-012,filespace_files,table_with_required_columns,pk_filespace_file,create_success,NONE
+CBI-013,object_name_unique,unique_index_schema_path_type_canonical_name,enforced,create_success,NONE
+CBI-014,object_index_schema_type,index_schema_uuid_object_type,enforced,create_success,NONE
+CBI-015,missing_required_table,n/a,n/a,bootstrap_fail,CATALOG_BOOTSTRAP_FAILED
+CBI-016,missing_required_index,n/a,n/a,bootstrap_fail,CATALOG_BOOTSTRAP_FAILED

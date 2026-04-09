@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/index_params.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/opcodes.h"
@@ -123,6 +124,44 @@ protected:
             << ctx.message;
         compiler_->setCurrentSchema(public_schema_info.schema_id);
         executor_->setCurrentSchema(public_schema_info.schema_id);
+    }
+
+    core::CatalogManager::IndexInfo getIndexInfo(const std::string& table_name,
+                                                 const std::string& index_name)
+    {
+        core::ErrorContext ctx;
+        core::CatalogManager::SchemaInfo schema_info;
+        EXPECT_EQ(db_->catalog_manager()->getSchema("public", schema_info, &ctx), Status::OK)
+            << ctx.message;
+
+        core::CatalogManager::TableInfo table_info;
+        EXPECT_EQ(db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info, &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        core::CatalogManager::IndexInfo index_info;
+        EXPECT_EQ(db_->catalog_manager()->getIndex(table_info.table_id, index_name, index_info, &ctx),
+                  Status::OK)
+            << ctx.message;
+        return index_info;
+    }
+
+    core::IndexParams loadIndexParams(const core::CatalogManager::IndexInfo& index_info)
+    {
+        core::IndexParams params;
+        if (index_info.index_params_oid == core::ID{})
+        {
+            return params;
+        }
+
+        std::string params_blob;
+        EXPECT_EQ(db_->catalog_manager()->loadStringFromToast(index_info.index_params_oid,
+                                                              0,
+                                                              params_blob,
+                                                              nullptr),
+                  Status::OK);
+        EXPECT_TRUE(core::parseIndexParams(params_blob, &params));
+        return params;
     }
 
     static void corruptFileByte(const std::string& path, uint64_t offset, uint8_t value)
@@ -395,6 +434,88 @@ TEST_F(IndexExecutorDispatchContractsTest, OnlineMaintenanceCapturesInsertDelta)
     EXPECT_GT(deltas.front().commit_txid, 0u);
 }
 
+TEST_F(IndexExecutorDispatchContractsTest, OnlineMaintenanceCapturesSameKeyUpdateDelta)
+{
+    core::ErrorContext ctx;
+    core::CatalogManager::SchemaInfo schema_info;
+    ASSERT_EQ(db_->catalog_manager()->getSchema("public", schema_info, &ctx), Status::OK)
+        << ctx.message;
+
+    core::CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(schema_info.schema_id, "users", table_info, &ctx), Status::OK)
+        << ctx.message;
+
+    core::CatalogManager::IndexInfo index_info;
+    ASSERT_EQ(db_->catalog_manager()->getIndex(table_info.table_id, "idx_users_id", index_info, &ctx), Status::OK)
+        << ctx.message;
+
+    core::CatalogManager::IndexMaintenanceCatalogInfo maintenance{};
+    maintenance.index_id = index_info.index_id;
+    maintenance.maintenance_kind = core::CatalogManager::IndexMaintenanceKind::REBUILD;
+    maintenance.maintenance_mode = core::CatalogManager::IndexMaintenanceMode::ONLINE;
+    maintenance.maintenance_state = core::CatalogManager::IndexMaintenanceState::BUILDING_SHADOW;
+    maintenance.started_txid = 1;
+    core::ID maintenance_id{};
+    ASSERT_EQ(db_->catalog_manager()->upsertIndexMaintenanceCatalogEntry(maintenance, maintenance_id, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ExecutionResult insert_result = executeSql("INSERT INTO users (id, name) VALUES (1, 'alice')");
+    ASSERT_TRUE(insert_result.success()) << insert_result.error();
+
+    ExecutionResult update_result = executeSql("UPDATE users SET name = 'ally' WHERE id = 1");
+    ASSERT_TRUE(update_result.success()) << update_result.error();
+
+    std::vector<core::CatalogManager::IndexMaintenanceDeltaCatalogInfo> deltas;
+    ASSERT_EQ(db_->catalog_manager()->listIndexMaintenanceDeltaCatalogEntries(maintenance_id, deltas, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_FALSE(deltas.empty());
+
+    bool found_update = false;
+    for (const auto& delta : deltas)
+    {
+        if (delta.delta_op == core::CatalogManager::IndexDeltaOp::UPDATE)
+        {
+            found_update = true;
+            EXPECT_GT(delta.commit_txid, 0u);
+        }
+    }
+    EXPECT_TRUE(found_update);
+
+    core::CatalogManager::IndexContentionCatalogInfo contention{};
+    ASSERT_EQ(db_->catalog_manager()->getIndexContentionCatalogEntry(index_info.index_id, contention, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_GE(contention.hot_key_count, 1u);
+}
+
+TEST_F(IndexExecutorDispatchContractsTest, UniqueConflictIncrementsIndexContentionCounter)
+{
+    ExecutionResult create_unique =
+        executeSql("CREATE UNIQUE INDEX idx_users_name_unique ON users (name)");
+    ASSERT_TRUE(create_unique.success()) << create_unique.error();
+
+    ExecutionResult first_insert = executeSql("INSERT INTO users (id, name) VALUES (1, 'alice')");
+    ASSERT_TRUE(first_insert.success()) << first_insert.error();
+
+    ExecutionResult duplicate_insert =
+        executeSql("INSERT INTO users (id, name) VALUES (2, 'alice')");
+    ASSERT_FALSE(duplicate_insert.success());
+
+    const core::CatalogManager::IndexInfo index_info =
+        getIndexInfo("users", "idx_users_name_unique");
+
+    core::ErrorContext ctx;
+    core::CatalogManager::IndexContentionCatalogInfo contention{};
+    ASSERT_EQ(db_->catalog_manager()->getIndexContentionCatalogEntry(index_info.index_id,
+                                                                     contention,
+                                                                     &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_GE(contention.unique_key_conflict_count, 1u);
+}
+
 TEST_F(IndexExecutorDispatchContractsTest, AlterIndexRebalanceRoutesThroughMaintenanceStateMachine)
 {
     ExecutionResult result = executeSql(
@@ -651,11 +772,21 @@ TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRoutesIvfSq8HybridThroug
     ExecutionResult result = executeSql(
         "CREATE INDEX idx_vectors_hybrid ON vectors USING IVF_SQ8_HYBRID (embedding) "
         "WITH (metric = 'l2', nlist = 8, nprobe = 4, sq_bits = 8, gpu_search_threshold = 32)");
-    ASSERT_FALSE(result.success());
-    EXPECT_EQ(result.error().find("CREATE INDEX unsupported index_type"), std::string::npos)
-        << result.error();
-    EXPECT_NE(result.error().find("Vector column has no dimensions specified"), std::string::npos)
-        << result.error();
+    ASSERT_TRUE(result.success()) << result.error();
+
+    core::CatalogManager::IndexInfo index_info =
+        getIndexInfo("vectors", "idx_vectors_hybrid");
+    EXPECT_EQ(index_info.physical_family, "IVF_SQ8_HYBRID");
+    EXPECT_EQ(index_info.planner_family, "ANN_IVF");
+    EXPECT_EQ(index_info.metrics_type,
+              scratchbird::optimizer::IndexFamilyMetricsType::ANN);
+
+    core::IndexParams params = loadIndexParams(index_info);
+    EXPECT_EQ(params.raw_options["METRIC"], "L2");
+    EXPECT_EQ(params.raw_options["NLIST"], "8");
+    EXPECT_EQ(params.raw_options["NPROBE"], "4");
+    EXPECT_EQ(params.raw_options["SQ_BITS"], "8");
+    EXPECT_EQ(params.raw_options["GPU_SEARCH_THRESHOLD"], "32");
 }
 
 TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsInvalidPqBitsDeterministically)
@@ -699,60 +830,75 @@ TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsUnsupportedVector
         << result.error();
 }
 
-TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsAnnoyCreateTimeActivation)
+TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexAdmitsAnnoyFamilyAndPersistsCanonicalMetadata)
 {
     ExecutionResult result = executeSql(
         "CREATE INDEX idx_vectors_annoy ON vectors USING ANNOY (embedding) "
         "WITH (n_trees = 32, leaf_size = 64, search_k = 2048, metric = 'cosine')");
-    ASSERT_FALSE(result.success());
-    EXPECT_EQ(result.error().find("CREATE INDEX unsupported index_type"),
-              std::string::npos)
-        << result.error();
-    EXPECT_NE(result.error().find("IndexFactory create not supported for type: ANNOY"),
-              std::string::npos)
-        << result.error();
+    ASSERT_TRUE(result.success()) << result.error();
+
+    core::CatalogManager::IndexInfo index_info =
+        getIndexInfo("vectors", "idx_vectors_annoy");
+    EXPECT_EQ(index_info.physical_family, "ANNOY");
+    EXPECT_EQ(index_info.planner_family, "ANN_HNSW");
+    EXPECT_EQ(index_info.family_mode, "SHARED_RUNTIME");
+    EXPECT_EQ(index_info.lifecycle_model, "MGA_PAGE_BACKED");
+    EXPECT_EQ(index_info.metrics_type,
+              scratchbird::optimizer::IndexFamilyMetricsType::ANN);
+    EXPECT_EQ(index_info.queryability_state, "QUERYABLE");
+    EXPECT_GE(index_info.family_options_version, 1u);
+
+    core::IndexParams params = loadIndexParams(index_info);
+    EXPECT_EQ(params.physical_family, "ANNOY");
+    EXPECT_EQ(params.planner_family, "ANN_HNSW");
+    EXPECT_EQ(params.raw_options["N_TREES"], "32");
+    EXPECT_EQ(params.raw_options["LEAF_SIZE"], "64");
+    EXPECT_EQ(params.raw_options["SEARCH_K"], "2048");
+    EXPECT_EQ(params.raw_options["METRIC"], "COSINE");
+
+    reopenDatabase();
+
+    core::CatalogManager::IndexInfo reopened =
+        getIndexInfo("vectors", "idx_vectors_annoy");
+    EXPECT_EQ(reopened.physical_family, "ANNOY");
+    EXPECT_EQ(reopened.planner_family, "ANN_HNSW");
+    EXPECT_EQ(reopened.family_mode, "SHARED_RUNTIME");
 }
 
-TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsScannCreateTimeActivation)
+TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexAdmitsScannFamily)
 {
     ExecutionResult result = executeSql(
         "CREATE INDEX idx_vectors_scann_bad ON vectors USING SCANN (embedding) "
         "WITH (quantizer = 'sq8')");
-    ASSERT_FALSE(result.success());
-    EXPECT_EQ(result.error().find("CREATE INDEX unsupported index_type"),
-              std::string::npos)
-        << result.error();
-    EXPECT_NE(result.error().find("IndexFactory create not supported for type: SCANN"),
-              std::string::npos)
-        << result.error();
+    ASSERT_TRUE(result.success()) << result.error();
+    core::CatalogManager::IndexInfo index_info =
+        getIndexInfo("vectors", "idx_vectors_scann_bad");
+    EXPECT_EQ(index_info.physical_family, "SCANN");
+    EXPECT_EQ(index_info.planner_family, "ANN_HNSW");
 }
 
-TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsDiskannCreateTimeActivation)
+TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexAdmitsDiskannFamily)
 {
     ExecutionResult result = executeSql(
         "CREATE INDEX idx_vectors_diskann_bad ON vectors USING DISKANN (embedding) "
         "WITH (entrypoint_strategy = 'medoid')");
-    ASSERT_FALSE(result.success());
-    EXPECT_EQ(result.error().find("CREATE INDEX unsupported index_type"),
-              std::string::npos)
-        << result.error();
-    EXPECT_NE(result.error().find("IndexFactory create not supported for type: DISKANN"),
-              std::string::npos)
-        << result.error();
+    ASSERT_TRUE(result.success()) << result.error();
+    core::CatalogManager::IndexInfo index_info =
+        getIndexInfo("vectors", "idx_vectors_diskann_bad");
+    EXPECT_EQ(index_info.physical_family, "DISKANN");
+    EXPECT_EQ(index_info.planner_family, "ANN_HNSW");
 }
 
-TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsGpuCagraCreateTimeActivation)
+TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexAdmitsGpuCagraFamily)
 {
     ExecutionResult result = executeSql(
         "CREATE INDEX idx_vectors_cagra_bad ON vectors USING GPU_CAGRA (embedding) "
         "WITH (fallback_cpu = true)");
-    ASSERT_FALSE(result.success());
-    EXPECT_EQ(result.error().find("CREATE INDEX unsupported index_type"),
-              std::string::npos)
-        << result.error();
-    EXPECT_NE(result.error().find("IndexFactory create not supported for type: GPU_CAGRA"),
-              std::string::npos)
-        << result.error();
+    ASSERT_TRUE(result.success()) << result.error();
+    core::CatalogManager::IndexInfo index_info =
+        getIndexInfo("vectors", "idx_vectors_cagra_bad");
+    EXPECT_EQ(index_info.physical_family, "GPU_CAGRA");
+    EXPECT_EQ(index_info.planner_family, "ANN_HNSW");
 }
 
 TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexAcceptsArtTypeWithoutUnsupportedTypeError)

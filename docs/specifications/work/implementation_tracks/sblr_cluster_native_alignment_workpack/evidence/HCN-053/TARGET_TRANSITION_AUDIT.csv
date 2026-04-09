@@ -1,0 +1,3 @@
+scenario,from_target,to_target,expected_runtime_behavior,coverage_test,status
+cross-target mismatch,x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu,VM fallback with deterministic mismatch reason,SblrJitFixture.jit_target_mismatch_cross_target_mismatch_falls_back_to_vm,pass
+rebase portability check,x86_64-unknown-linux-gnu,arm64-apple-darwin,VM fallback and canonical execution preserved,SblrJitFixture.jit_rebase_cross_target_rebase_keeps_canonical_sblr_executable,pass

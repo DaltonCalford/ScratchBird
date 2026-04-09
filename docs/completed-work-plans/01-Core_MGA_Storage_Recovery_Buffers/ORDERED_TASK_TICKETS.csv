@@ -1,0 +1,7 @@
+order,ticket,title,phase,status
+1,B1-01-001,Specification sufficiency closure,spec_closure,completed
+2,B1-01-002,Ownership and audit anchor normalization,ownership,completed
+3,B1-01-003,MGA record page filespace allocator and buffer closure,implementation_a,completed
+4,B1-01-004,Writeback checkpoint restart lock GC LOB and failure closure,implementation_b,completed
+5,B1-01-005,Gates benchmarks and evidence closure,gates,completed
+6,B1-01-006,Final closeout,closeout,completed

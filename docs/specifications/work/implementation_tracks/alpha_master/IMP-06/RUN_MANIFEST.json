@@ -1,0 +1,25 @@
+{
+  "ticket_id": "IMP-06",
+  "section": "06_Fixed_Bootstrap_Page_Map",
+  "wave": "W0",
+  "status": "done",
+  "started_at_utc": "2026-02-12T00:17:27Z",
+  "completed_at_utc": "2026-02-12T00:17:27Z",
+  "gate_contract": "docs/specifications/06_Fixed_Bootstrap_Page_Map/TEST_CONTRACT.md",
+  "artifacts": [
+    "IMPLEMENTATION_CHECKLIST.md",
+    "IMPLEMENTATION_NOTES.md",
+    "FIXED_PAGE_ROLE_MATRIX.csv",
+    "BOOTSTRAP_STARTUP_SEQUENCE_MATRIX.csv",
+    "BOOTSTRAP_LAYOUT_VALIDATION_MATRIX.csv",
+    "BOOTSTRAP_FAILURE_RECOVERY_MATRIX.csv",
+    "TEST_RESULTS.md",
+    "CHECKSUMS.sha256",
+    "RUN_MANIFEST.json",
+    "SPEC_TRACEABILITY.csv",
+    "TEST_EVIDENCE_INDEX.md",
+    "GATE_RESULT.json",
+    "CHANGESET_LOG.md"
+  ],
+  "mode": "specification_contract_validation"
+}

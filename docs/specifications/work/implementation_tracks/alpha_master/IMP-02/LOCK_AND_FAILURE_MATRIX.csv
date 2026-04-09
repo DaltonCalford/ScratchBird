@@ -1,0 +1,8 @@
+op_scope,lock_name,mode,hold_window,conflict_policy,timeout_error
+filespace_metadata,filespace_lock,exclusive,operation_scope,serialize create attach detach,LOCK_TIMEOUT
+allocation,filespace_alloc_lock,exclusive per filespace,allocation_or_extend,queue and retry for allocator callers,LOCK_TIMEOUT
+migration,filespace_migration_lock,exclusive per migration,online_migration_scope,reject second migration for same object,MIGRATION_ALREADY_RUNNING
+table_relocation,LOCK_TABLE_RELOCATE,shared_write_capture,copy_and_catch_up,allow reads and writes with delta capture,LOCK_TIMEOUT
+table_cutover,LOCK_TABLE_EXCLUSIVE,exclusive,final_swap_only,short critical section then release,LOCK_TIMEOUT
+partition_split,LOCK_PARTITION_SPLIT,exclusive per parent table,split_scope,single splitter per parent table,LOCK_TIMEOUT
+shadow_write,none,write_mirror_before_commit,per_page_write,mirror failure flips filespace read_only,SHADOW_WRITE_FAILED

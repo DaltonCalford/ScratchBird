@@ -233,6 +233,8 @@ namespace scratchbird::core
                     total_stats.rewrite_recommendations += table_stats.rewrite_recommendations;
                     total_stats.slot_stable_compactions += table_stats.slot_stable_compactions;
                     total_stats.index_backlog_count += table_stats.index_backlog_count;
+                    total_stats.index_backlog_pages += table_stats.index_backlog_pages;
+                    total_stats.index_backlog_bytes += table_stats.index_backlog_bytes;
                 }
                 // Continue with other tables even if one fails
             }
@@ -425,6 +427,8 @@ namespace scratchbird::core
                 return cleanup_status;
             }
             stats.index_backlog_count += cleanup_summary.backlog_count;
+            stats.index_backlog_pages += cleanup_summary.backlog_pages;
+            stats.index_backlog_bytes += cleanup_summary.backlog_bytes;
         }
 
         status = pruneVersionChains(page_table_id, page_id, horizon, &stats, ctx);

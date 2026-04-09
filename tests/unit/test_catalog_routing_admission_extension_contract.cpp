@@ -9,6 +9,7 @@
  */
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -117,6 +118,14 @@ TEST_F(CatalogRoutingAdmissionExtensionContractTest, RoutingAndAdmissionCatalogC
     policy.io_reject_pct = 95;
     policy.reject_mode = CatalogManager::AdmissionRejectMode::QUEUE;
     policy.queue_timeout_ms = 2000;
+    policy.accelerator_profile_name = "ACCELERATOR_REQUIRED";
+    policy.accelerator_memory_budget_bytes = 64ULL * 1024ULL * 1024ULL;
+    policy.accelerator_pinned_residency_target_bytes = 8ULL * 1024ULL * 1024ULL;
+    policy.accelerator_concurrent_build_limit = 2;
+    policy.accelerator_concurrent_search_limit = 4;
+    policy.accelerator_prewarm_policy = "ON_FIRST_USE";
+    policy.accelerator_fallback_policy = "ALLOW_CPU";
+    policy.accelerator_degraded_state_override = "DEGRADED_ACCEPT";
     ASSERT_EQ(catalog_->upsertAdmissionPolicyCatalogEntry(policy, &ctx), Status::OK) << ctx.message;
 
     CatalogManager::AdmissionBindingCatalogInfo binding{};
@@ -125,6 +134,8 @@ TEST_F(CatalogRoutingAdmissionExtensionContractTest, RoutingAndAdmissionCatalogC
     binding.target_kind = CatalogManager::AdmissionTargetKind::WORKLOAD_CLASS;
     binding.class_id = klass.class_id;
     binding.priority = 1;
+    binding.accelerator_device_class = "GPU";
+    binding.accelerator_device_id = "gpu0";
     ASSERT_EQ(catalog_->upsertAdmissionBindingCatalogEntry(binding, &ctx), Status::OK) << ctx.message;
 
     std::vector<CatalogManager::WorkloadClassCatalogInfo> class_rows;
@@ -140,16 +151,44 @@ TEST_F(CatalogRoutingAdmissionExtensionContractTest, RoutingAndAdmissionCatalogC
     ASSERT_EQ(catalog_->listAdmissionPolicyCatalogEntries(policy_rows, &ctx), Status::OK)
         << ctx.message;
     ASSERT_FALSE(policy_rows.empty());
+    auto policy_it = std::find_if(policy_rows.begin(), policy_rows.end(), [&](const auto& row) {
+        return row.policy_name == "strict_oltp";
+    });
+    ASSERT_NE(policy_it, policy_rows.end());
+    ASSERT_EQ(policy_it->accelerator_profile_name, "ACCELERATOR_REQUIRED");
+    EXPECT_EQ(policy_it->accelerator_concurrent_search_limit, 4U);
+    EXPECT_EQ(policy_it->accelerator_memory_budget_bytes, 64ULL * 1024ULL * 1024ULL);
 
     std::vector<CatalogManager::AdmissionBindingCatalogInfo> binding_rows;
     ASSERT_EQ(catalog_->listAdmissionBindingCatalogEntries(policy.policy_id, binding_rows, &ctx), Status::OK)
         << ctx.message;
     ASSERT_FALSE(binding_rows.empty());
+    auto binding_it = std::find_if(binding_rows.begin(), binding_rows.end(), [&](const auto& row) {
+        return row.binding_id == binding.binding_id;
+    });
+    ASSERT_NE(binding_it, binding_rows.end());
+    ASSERT_EQ(binding_it->accelerator_device_class, "GPU");
+    EXPECT_EQ(binding_it->accelerator_device_id, "gpu0");
+
+    CatalogManager::AdmissionPolicyCatalogInfo policy_out{};
+    ASSERT_EQ(catalog_->getAdmissionPolicyCatalogEntry(policy.policy_id, policy_out, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(policy_out.accelerator_profile_name, "ACCELERATOR_REQUIRED");
+    EXPECT_EQ(policy_out.accelerator_prewarm_policy, "ON_FIRST_USE");
+    EXPECT_EQ(policy_out.accelerator_fallback_policy, "ALLOW_CPU");
+    EXPECT_EQ(policy_out.accelerator_degraded_state_override, "DEGRADED_ACCEPT");
+    EXPECT_EQ(policy_out.accelerator_concurrent_build_limit, 2U);
+
+    CatalogManager::AdmissionBindingCatalogInfo binding_out{};
+    ASSERT_EQ(catalog_->getAdmissionBindingCatalogEntry(binding.binding_id, binding_out, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(binding_out.accelerator_device_class, "GPU");
+    EXPECT_EQ(binding_out.accelerator_device_id, "gpu0");
 
     ASSERT_EQ(catalog_->deleteAdmissionBindingCatalogEntry(binding.binding_id, &ctx), Status::OK)
         << ctx.message;
 
-    CatalogManager::AdmissionBindingCatalogInfo binding_out{};
+    binding_out = CatalogManager::AdmissionBindingCatalogInfo{};
     EXPECT_EQ(catalog_->getAdmissionBindingCatalogEntry(binding.binding_id, binding_out, &ctx),
               Status::NOT_FOUND);
 }
@@ -449,4 +488,106 @@ TEST_F(CatalogRoutingAdmissionExtensionContractTest, SloAutoscaleAdmissionTuning
         << ctx.message;
     ASSERT_EQ(catalog_->deleteNodeCatalogEntry(node.node_id, &ctx), Status::OK)
         << ctx.message;
+}
+
+TEST_F(CatalogRoutingAdmissionExtensionContractTest, MemoryGrantFeedbackCatalogContracts)
+{
+    ErrorContext ctx;
+
+    CatalogManager::MemoryGrantFeedbackCatalogInfo invalid{};
+    invalid.grant_feedback_uuid = generateUuidV7();
+    invalid.grant_key_hash = 0x1234ULL;
+    invalid.database_uuid = db_->uuid();
+    invalid.schema_root_uuid = generateUuidV7();
+    invalid.operator_kind = "HASH_JOIN_BUILD";
+    invalid.state = "INVALID_STATE";
+    EXPECT_EQ(catalog_->upsertMemoryGrantFeedbackCatalogEntry(invalid, &ctx),
+              Status::INVALID_ARGUMENT);
+
+    CatalogManager::MemoryGrantFeedbackCatalogInfo feedback{};
+    feedback.grant_key_hash = 0x1234ULL;
+    feedback.database_uuid = db_->uuid();
+    feedback.schema_root_uuid = generateUuidV7();
+    feedback.operator_kind = "HASH_JOIN_BUILD";
+    feedback.sample_count = 8;
+    feedback.last_grant_bytes = 1024 * 1024;
+    feedback.p50_bytes = 768 * 1024;
+    feedback.p90_bytes = 1024 * 1024;
+    feedback.peak_bytes = 1536 * 1024;
+    feedback.spill_count = 1;
+    feedback.cancel_count = 0;
+    feedback.oscillation_count = 0;
+    feedback.state = "WARMING";
+    ASSERT_EQ(catalog_->upsertMemoryGrantFeedbackCatalogEntry(feedback, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_NE(catalog_->memoryGrantFeedbackTablePage(), 0u);
+
+    CatalogManager::MemoryGrantFeedbackCatalogInfo feedback_out{};
+    ASSERT_EQ(catalog_->getMemoryGrantFeedbackCatalogEntry(feedback.grant_key_hash, feedback_out, &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(feedback_out.database_uuid, feedback.database_uuid);
+    EXPECT_EQ(feedback_out.operator_kind, "HASH_JOIN_BUILD");
+    EXPECT_EQ(feedback_out.state, "WARMING");
+    EXPECT_EQ(feedback_out.sample_count, 8u);
+
+    std::vector<CatalogManager::MemoryGrantFeedbackCatalogInfo> feedback_rows;
+    ASSERT_EQ(catalog_->listMemoryGrantFeedbackCatalogEntries(feedback_rows, &ctx), Status::OK)
+        << ctx.message;
+    auto it = std::find_if(feedback_rows.begin(), feedback_rows.end(), [&](const auto& row) {
+        return row.grant_key_hash == feedback.grant_key_hash;
+    });
+    ASSERT_NE(it, feedback_rows.end());
+    const ID original_uuid = it->grant_feedback_uuid;
+    const uint64_t original_created_time = it->created_time;
+
+    CatalogManager::MemoryGrantFeedbackCatalogInfo updated = feedback;
+    updated.grant_feedback_uuid = generateUuidV7();
+    updated.sample_count = 16;
+    updated.last_grant_bytes = 2 * 1024 * 1024;
+    updated.p50_bytes = 1024 * 1024;
+    updated.p90_bytes = 2 * 1024 * 1024;
+    updated.peak_bytes = 3 * 1024 * 1024;
+    updated.spill_count = 3;
+    updated.oscillation_count = 1;
+    updated.state = "OSCILLATING";
+    ASSERT_EQ(catalog_->upsertMemoryGrantFeedbackCatalogEntry(updated, &ctx), Status::OK)
+        << ctx.message;
+
+    feedback_out = CatalogManager::MemoryGrantFeedbackCatalogInfo{};
+    ASSERT_EQ(catalog_->getMemoryGrantFeedbackCatalogEntry(feedback.grant_key_hash, feedback_out, &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(feedback_out.grant_feedback_uuid, original_uuid);
+    EXPECT_EQ(feedback_out.created_time, original_created_time);
+    EXPECT_EQ(feedback_out.sample_count, 16u);
+    EXPECT_EQ(feedback_out.state, "OSCILLATING");
+    EXPECT_EQ(feedback_out.spill_count, 3u);
+
+    ConnectionContext::setCurrent(nullptr);
+    conn_.reset();
+    db_->close();
+    db_.reset();
+    catalog_ = nullptr;
+
+    ASSERT_NO_FATAL_FAILURE({
+        ErrorContext reopen_ctx;
+        db_ = std::make_unique<Database>();
+        ASSERT_EQ(db_->open(db_path_, &reopen_ctx), Status::OK) << reopen_ctx.message;
+        catalog_ = db_->catalog_manager();
+        ASSERT_NE(catalog_, nullptr);
+        ASSERT_EQ(db_->connect(conn_, &reopen_ctx), Status::OK) << reopen_ctx.message;
+        ConnectionContext::setCurrent(conn_.get());
+    });
+
+    feedback_out = CatalogManager::MemoryGrantFeedbackCatalogInfo{};
+    ASSERT_EQ(catalog_->getMemoryGrantFeedbackCatalogEntry(feedback.grant_key_hash, feedback_out, &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(feedback_out.grant_feedback_uuid, original_uuid);
+    EXPECT_EQ(feedback_out.created_time, original_created_time);
+    EXPECT_EQ(feedback_out.state, "OSCILLATING");
+
+    ASSERT_EQ(catalog_->deleteMemoryGrantFeedbackCatalogEntry(feedback.grant_key_hash, &ctx), Status::OK)
+        << ctx.message;
+    feedback_out = CatalogManager::MemoryGrantFeedbackCatalogInfo{};
+    EXPECT_EQ(catalog_->getMemoryGrantFeedbackCatalogEntry(feedback.grant_key_hash, feedback_out, &ctx),
+              Status::NOT_FOUND);
 }

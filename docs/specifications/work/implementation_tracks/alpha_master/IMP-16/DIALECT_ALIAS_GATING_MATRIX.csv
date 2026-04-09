@@ -1,0 +1,7 @@
+case_id,parser_profile,alias_token,canonical_var,policy,expected_result,error_code
+T16-DL-001,native,current_user,SESSION.user_uuid,alias,resolved,
+T16-DL-002,postgresql,session_user,SESSION.user_uuid,alias,resolved,
+T16-DL-003,mysql,@@session.language,SESSION.language,alias,resolved,
+T16-DL-004,firebird,rdb$get_context_txid,TRANSACTION.txid,alias,resolved,
+T16-DL-005,emulated_profile_hidden_var,internal_engine_mode,SYSTEM.engine_mode,hidden,rejected,E_UNKNOWN_CONTEXT_VARIABLE
+T16-DL-006,profile_alias_collision,duplicate_alias_target,any,forbidden,rejected,E_CONTEXT_ALIAS_COLLISION

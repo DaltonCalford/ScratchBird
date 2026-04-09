@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-072",
+  "phase": "PH7",
+  "title": "Publish launch readiness and support handoff package",
+  "status": "pending",
+  "owner": "program-management",
+  "estimate_days": 4,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

@@ -1,0 +1,4 @@
+case_id,suite,required_check,expected_result,error_code
+T27-A01,A,native_inet_handshake_canonical_order,pass,
+T27-A02,A,parser_to_ipc_handshake_canonical_order,pass,
+T27-A03,A,optional_registry_phase_behavior,pass,

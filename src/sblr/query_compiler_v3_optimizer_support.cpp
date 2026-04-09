@@ -278,6 +278,108 @@ namespace scratchbird::sblr::detail
                    ":t" + std::to_string(std::max<uint64_t>(1, conn->policyEpochTable()));
         }
 
+        auto memoryGrantFeedbackKeyHash(const core::ID &database_uuid,
+                                        const core::ID &schema_root_uuid,
+                                        const std::string &normalized_statement_id,
+                                        const std::string &planner_policy_snapshot_id,
+                                        const std::string &cache_mode,
+                                        const std::string &execution_intent_class,
+                                        const std::string &storage_layer_shape,
+                                        const std::string &operator_kind)
+            -> uint64_t
+        {
+            if (database_uuid == core::ID{} || schema_root_uuid == core::ID{} ||
+                normalized_statement_id.empty() || operator_kind.empty())
+            {
+                return 0;
+            }
+
+            std::ostringstream seed;
+            seed << database_uuid.toString() << '|'
+                 << schema_root_uuid.toString() << '|'
+                 << normalized_statement_id << '|'
+                 << planner_policy_snapshot_id << '|'
+                 << cache_mode << '|'
+                 << execution_intent_class << '|'
+                 << storage_layer_shape << '|'
+                 << operator_kind;
+            return sblr::v3::stableHash64(seed.str());
+        }
+
+        auto memoryGrantFeedbackSnapshotId(core::Database *db,
+                                           const core::ID &current_schema_id,
+                                           const std::string &query_feedback_key,
+                                           const std::string &planner_policy_snapshot_id,
+                                           const std::string &cache_mode,
+                                           const std::string &execution_intent_class,
+                                           const std::string &storage_layer_shape)
+            -> std::string
+        {
+            const auto *conn = core::ConnectionContext::getCurrent();
+            const core::ID schema_id = effectiveSchemaId(conn, current_schema_id);
+            if (db == nullptr || db->catalog_manager() == nullptr ||
+                db->uuid() == core::ID{} || schema_id == core::ID{} ||
+                query_feedback_key.empty())
+            {
+                return "mgf:none";
+            }
+
+            static const std::array<std::string, 5> kBoundedOperatorKinds = {
+                "HASH_JOIN",
+                "HASH_AGG",
+                "SORT",
+                "MERGE_JOIN",
+                "WINDOW"};
+
+            std::ostringstream snapshot;
+            snapshot << db->uuid().toString() << '|'
+                     << schema_id.toString() << '|'
+                     << query_feedback_key << '|'
+                     << planner_policy_snapshot_id << '|'
+                     << cache_mode << '|'
+                     << execution_intent_class << '|'
+                     << storage_layer_shape;
+            core::ErrorContext ctx;
+            for (const auto &operator_kind : kBoundedOperatorKinds)
+            {
+                const uint64_t grant_key_hash = memoryGrantFeedbackKeyHash(
+                    db->uuid(),
+                    schema_id,
+                    query_feedback_key,
+                    planner_policy_snapshot_id,
+                    cache_mode,
+                    execution_intent_class,
+                    storage_layer_shape,
+                    operator_kind);
+                core::CatalogManager::MemoryGrantFeedbackCatalogInfo feedback;
+                if (grant_key_hash != 0 &&
+                    db->catalog_manager()->getMemoryGrantFeedbackCatalogEntry(
+                        grant_key_hash,
+                        feedback,
+                        &ctx) == core::Status::OK &&
+                    feedback.state != "DISABLED")
+                {
+                    snapshot << '|'
+                             << operator_kind << ':'
+                             << feedback.updated_at << ':'
+                             << feedback.sample_count << ':'
+                             << feedback.last_grant_bytes << ':'
+                             << feedback.p90_bytes << ':'
+                             << feedback.peak_bytes << ':'
+                             << feedback.spill_count << ':'
+                             << feedback.oscillation_count << ':'
+                             << feedback.state;
+                }
+                else
+                {
+                    snapshot << '|' << operator_kind << ":missing";
+                }
+            }
+
+            return "mgf:" + std::to_string(
+                sblr::v3::stableHash64(snapshot.str()));
+        }
+
         auto upsertRuntimePlanControl(std::vector<optimizer::RuntimePlanControlEntry> &controls,
                                       const std::string &name,
                                       const std::string &value,
@@ -525,7 +627,11 @@ namespace scratchbird::sblr::detail
             out << relation.source_relation_index << ':'
                 << family_name << ':'
                 << relation.family_metrics_version << ':'
+                << relation.metrics_publication_epoch << ':'
                 << relation.metrics_confidence_class << ':'
+                << relation.metrics_freshness_class << ':'
+                << relation.metrics_invalidation_state << ':'
+                << relation.metrics_invalidation_reason << ':'
                 << accessPathQueryabilityStateName(
                        relation.queryability_state) << ':'
                 << relation.formula_profile_id << '@'
@@ -652,6 +758,26 @@ namespace scratchbird::sblr::detail
                 count += countPlanNodes(child);
             }
             return count;
+        }
+
+        auto peakPlanMemoryBudgetBytes(const optimizer::RuntimePlanNode &node) -> uint64_t
+        {
+            uint64_t peak_bytes = node.memory_budget_bytes;
+            for (const auto &child : node.children)
+            {
+                peak_bytes = std::max(peak_bytes, peakPlanMemoryBudgetBytes(child));
+            }
+            return peak_bytes;
+        }
+
+        auto statementMemoryReservationBytes(const optimizer::RuntimePlan &plan) -> uint64_t
+        {
+            uint64_t peak_bytes = peakPlanMemoryBudgetBytes(plan.root);
+            for (const auto &join : plan.join_steps)
+            {
+                peak_bytes = std::max(peak_bytes, join.memory_budget_bytes);
+            }
+            return peak_bytes;
         }
 
         auto estimatedAvgRowBytes(const optimizer::RuntimePlan &plan) -> uint64_t
@@ -846,8 +972,9 @@ namespace scratchbird::sblr::detail
                            0.0,
                            1.0);
             const uint64_t avg_row_bytes = estimatedAvgRowBytes(plan);
-            const uint64_t memory_budget_bytes =
-                std::max<uint64_t>(plan.root.memory_budget_bytes, 4ULL * 1024ULL * 1024ULL);
+            const uint64_t memory_budget_bytes = std::max<uint64_t>(
+                statementMemoryReservationBytes(plan),
+                4ULL * 1024ULL * 1024ULL);
             const uint64_t bridge_shuffle_bytes =
                 static_cast<uint64_t>(std::max<uint64_t>(
                     0,
@@ -1142,6 +1269,22 @@ namespace scratchbird::sblr::detail
                     ? parameter_bindings
                     : nullptr;
             const auto *conn = core::ConnectionContext::getCurrent();
+            const core::ID effective_schema_id =
+                effectiveSchemaId(conn, current_schema_id);
+            const std::string planner_policy_snapshot_id =
+                conn != nullptr ? conn->dialect_tag() : std::string();
+            const std::string cache_mode =
+                plan_profile_mode == QueryCompilerV3PlanProfileMode::CUSTOM
+                    ? "CUSTOM"
+                    : "GENERIC";
+            const std::string memory_grant_feedback_snapshot_id =
+                memoryGrantFeedbackSnapshotId(db,
+                                              current_schema_id,
+                                              query_feedback_key,
+                                              planner_policy_snapshot_id,
+                                              cache_mode,
+                                              "EXECUTE",
+                                              "ROW_STORE_MGA");
             optimizer::StatementPlanRequest plan_request;
             plan_request.statement_kind =
                 optimizer::PlannerStatementKind::SELECT;
@@ -1153,19 +1296,16 @@ namespace scratchbird::sblr::detail
             plan_request.string_pool = &pool;
             plan_request.string_pool_snapshot_id = "parser_v3/live";
             plan_request.parameter_bindings = planner_parameter_bindings;
-            plan_request.current_schema_id = current_schema_id;
+            plan_request.current_schema_id = effective_schema_id;
+            plan_request.memory_grant_feedback_snapshot_id =
+                memory_grant_feedback_snapshot_id;
             plan_request.security_snapshot_id =
                 conn != nullptr
                     ? std::to_string(conn->policyEpochGlobal())
                     : std::string();
             plan_request.planner_policy_snapshot_id =
-                conn != nullptr
-                    ? conn->dialect_tag()
-                    : std::string();
-            plan_request.cache_mode =
-                plan_profile_mode == QueryCompilerV3PlanProfileMode::CUSTOM
-                    ? "CUSTOM"
-                    : "GENERIC";
+                planner_policy_snapshot_id;
+            plan_request.cache_mode = cache_mode;
             plan_request.reuse_mode =
                 plan_profile_mode == QueryCompilerV3PlanProfileMode::CUSTOM
                     ? "PARAMETER_SENSITIVE"
@@ -1835,6 +1975,203 @@ namespace scratchbird::sblr::detail
             }
         }
 
+        auto annotateFamilyStatisticsReplanBoundary(
+            optimizer::RuntimePlan &plan,
+            uint64_t sibling_count) -> void
+        {
+            if (sibling_count == 0)
+            {
+                return;
+            }
+
+            std::ostringstream detail;
+            detail << "boundary=FAMILY_STATISTICS_SIGNATURE"
+                   << " previous_cached_variants=" << sibling_count
+                   << " refresh_attempted=false"
+                   << " replan_required=true"
+                   << " replan_skipped=false";
+            plan.statistics_provenance.push_back(
+                optimizer::RuntimePlanStatisticsProvenance{
+                    "query",
+                    "FAMILY_STATISTICS_REPLAN",
+                    detail.str()});
+            plan.rejected_paths.push_back(
+                optimizer::RuntimePlanTraceEntry{
+                    "PLAN_CACHE",
+                    "query",
+                    "CACHE_REUSE",
+                    "REJECTED",
+                    "family statistics signature boundary crossed",
+                    0.0,
+                    0.0,
+                    plan.root.estimated_rows});
+            upsertRuntimePlanControl(plan.optimizer_controls,
+                                     "FAMILY_STATISTICS_REPLAN_BOUNDARY",
+                                     "FAMILY_STATISTICS_SIGNATURE",
+                                     "PLAN_CACHE");
+        }
+
+        auto annotateCompiledPayloadFamilyStatisticsBoundary(
+            const std::vector<uint8_t> &bytecode,
+            uint64_t sibling_count,
+            std::vector<uint8_t> &bytecode_out,
+            std::string &error_out) -> bool
+        {
+            bytecode_out = bytecode;
+            if (sibling_count == 0)
+            {
+                return true;
+            }
+
+            sblr::v3::Container container;
+            if (!sblr::v3::decodeContainer(bytecode.data(),
+                                           bytecode.size(),
+                                           container,
+                                           error_out))
+            {
+                return false;
+            }
+
+            std::vector<sblr::v3::Instruction> instructions;
+            if (!decodeInstructions(container.bytecode_stream, instructions, error_out))
+            {
+                return false;
+            }
+
+            size_t root_index = std::numeric_limits<size_t>::max();
+            for (size_t index = 0; index < instructions.size(); ++index)
+            {
+                const auto opcode =
+                    static_cast<sblr::v3::Opcode>(instructions[index].opcode);
+                if (opcode != sblr::v3::Opcode::SBLR3_VERSION &&
+                    opcode != sblr::v3::Opcode::SBLR3_END)
+                {
+                    root_index = index;
+                    break;
+                }
+            }
+            if (root_index == std::numeric_limits<size_t>::max())
+            {
+                error_out = "Compiled V3 container did not contain a root statement";
+                return false;
+            }
+
+            auto patch_payload_plan =
+                [&](sblr::v3::Value::Object &payload) -> bool {
+                    auto plan_it = payload.find("plan");
+                    if (plan_it == payload.end())
+                    {
+                        error_out = "Compiled SELECT payload is missing runtime plan";
+                        return false;
+                    }
+
+                    auto *plan_bytes =
+                        std::get_if<sblr::v3::Value::Bytes>(&plan_it->second.data);
+                    if (plan_bytes == nullptr)
+                    {
+                        error_out = "Compiled SELECT runtime plan payload is invalid";
+                        return false;
+                    }
+
+                    optimizer::RuntimePlan runtime_plan;
+                    if (!optimizer::decodeRuntimePlan(*plan_bytes,
+                                                     runtime_plan,
+                                                     error_out))
+                    {
+                        return false;
+                    }
+
+                    annotateFamilyStatisticsReplanBoundary(runtime_plan,
+                                                           sibling_count);
+
+                    std::vector<uint8_t> refreshed_plan_bytes;
+                    if (!optimizer::encodeRuntimePlan(runtime_plan,
+                                                      refreshed_plan_bytes,
+                                                      error_out))
+                    {
+                        return false;
+                    }
+                    plan_it->second = sblr::v3::Value(std::move(refreshed_plan_bytes));
+                    return true;
+                };
+
+            auto *payload = instructionObject(instructions[root_index]);
+            if (payload == nullptr)
+            {
+                error_out = "Compiled root instruction payload is not an object";
+                return false;
+            }
+
+            const auto root_opcode =
+                static_cast<sblr::v3::Opcode>(instructions[root_index].opcode);
+            if (root_opcode == sblr::v3::Opcode::SBLR3_SELECT)
+            {
+                if (!patch_payload_plan(*payload))
+                {
+                    return false;
+                }
+            }
+            else if (root_opcode == sblr::v3::Opcode::SBLR3_EXPLAIN_PLAN)
+            {
+                auto query_it = payload->find("query");
+                if (query_it == payload->end())
+                {
+                    error_out = "Compiled EXPLAIN payload is missing query";
+                    return false;
+                }
+                auto *query_ptr =
+                    std::get_if<sblr::v3::Value::InstrPtr>(&query_it->second.data);
+                if (query_ptr == nullptr || !*query_ptr)
+                {
+                    error_out = "Compiled EXPLAIN query payload is invalid";
+                    return false;
+                }
+                auto *query_payload = instructionObject(**query_ptr);
+                if (query_payload == nullptr || !patch_payload_plan(*query_payload))
+                {
+                    if (error_out.empty())
+                    {
+                        error_out = "Compiled EXPLAIN query payload is invalid";
+                    }
+                    return false;
+                }
+                auto refreshed_plan_it = query_payload->find("plan");
+                if (refreshed_plan_it == query_payload->end())
+                {
+                    error_out = "Compiled EXPLAIN query payload is missing runtime plan";
+                    return false;
+                }
+                (*payload)["plan"] = refreshed_plan_it->second;
+                auto refreshed_plan_text_it = query_payload->find("plan_text");
+                if (refreshed_plan_text_it != query_payload->end())
+                {
+                    (*payload)["plan_text"] = refreshed_plan_text_it->second;
+                }
+                auto refreshed_plan_hash_it = query_payload->find("plan_hash");
+                if (refreshed_plan_hash_it != query_payload->end())
+                {
+                    (*payload)["plan_hash"] = refreshed_plan_hash_it->second;
+                }
+            }
+
+            if (!encodeInstructions(instructions,
+                                    container.bytecode_stream,
+                                    error_out))
+            {
+                return false;
+            }
+
+            std::string encode_error;
+            if (!sblr::v3::encodeContainer(container, bytecode_out, encode_error))
+            {
+                error_out = encode_error.empty() ?
+                    "V3 container encode failed" :
+                    encode_error;
+                return false;
+            }
+            return true;
+        }
+
         auto refreshCachedAdaptiveFeedbackPayload(
             const std::vector<uint8_t> &bytecode,
             const std::optional<optimizer::CardinalityFeedbackSignal> &signal,
@@ -2240,7 +2577,10 @@ namespace scratchbird::sblr::detail
             const std::string &family_statistics_signature,
             const std::string &stats_snapshot_signature,
             const std::string &cost_profile_id,
-            const std::string &policy_snapshot_id) -> void
+            const std::string &policy_snapshot_id,
+            const std::string &grant_policy_snapshot_id,
+            const std::string &memory_grant_feedback_snapshot_id,
+            uint64_t statement_memory_reservation_bytes) -> void
         {
             plan.index_family_signature = index_family_signature;
             plan.family_statistics_signature = family_statistics_signature;
@@ -2272,6 +2612,18 @@ namespace scratchbird::sblr::detail
                                      "PLAN_POLICY_SNAPSHOT",
                                      policy_snapshot_id,
                                      "CACHE_KEY");
+            upsertRuntimePlanControl(plan.optimizer_controls,
+                                     "PLAN_GRANT_POLICY_SNAPSHOT",
+                                     grant_policy_snapshot_id,
+                                     "CACHE_KEY");
+            upsertRuntimePlanControl(plan.optimizer_controls,
+                                     "PLAN_MEMORY_FEEDBACK_SNAPSHOT",
+                                     memory_grant_feedback_snapshot_id,
+                                     "CACHE_KEY");
+            upsertRuntimePlanControl(plan.optimizer_controls,
+                                     "PLAN_MEMORY_RESERVATION_BYTES",
+                                     std::to_string(statement_memory_reservation_bytes),
+                                     std::string(decision_source));
         }
 
         auto buildPlannedVariant(core::Database *db,
@@ -2376,12 +2728,34 @@ namespace scratchbird::sblr::detail
                 deriveStatsSnapshotSignature(variant_out.runtime_plan);
             variant_out.cost_profile_id =
                 deriveCostProfileId(variant_out.runtime_plan);
+            const auto *conn = core::ConnectionContext::getCurrent();
+            const std::string planner_policy_snapshot_id =
+                conn != nullptr ? conn->dialect_tag() : std::string();
+            const std::string cache_mode =
+                plan_mode == QueryCompilerV3PlanProfileMode::CUSTOM
+                    ? "CUSTOM"
+                    : "GENERIC";
+            const std::string memory_grant_feedback_snapshot_id =
+                memoryGrantFeedbackSnapshotId(db,
+                                              current_schema_id,
+                                              query_feedback_key,
+                                              planner_policy_snapshot_id,
+                                              cache_mode,
+                                              variant_out.runtime_plan
+                                                  .execution_intent_class,
+                                              variant_out.runtime_plan
+                                                  .storage_layer_shape);
             variant_out.policy_snapshot_id =
-                currentPolicySnapshotId(core::ConnectionContext::getCurrent());
+                currentPolicySnapshotId(conn) +
+                "|" +
+                memory_grant_feedback_snapshot_id;
             variant_out.runtime_plan.index_family_signature =
                 deriveIndexFamilySignature(variant_out.runtime_plan);
             variant_out.runtime_plan.family_statistics_signature =
                 deriveFamilyStatisticsSignature(variant_out.runtime_plan);
+            variant_out.chooser_candidate =
+                buildReusablePlanCandidate(variant_out.runtime_plan,
+                                           db != nullptr ? db->page_size() : 16384);
 
             annotateReusablePlanMetadata(variant_out.runtime_plan,
                                          plan_profile_control,
@@ -2391,15 +2765,17 @@ namespace scratchbird::sblr::detail
                                              .family_statistics_signature,
                                          variant_out.stats_snapshot_signature,
                                          variant_out.cost_profile_id,
-                                         variant_out.policy_snapshot_id);
+                                         variant_out.policy_snapshot_id,
+                                         planner_policy_snapshot_id,
+                                         memory_grant_feedback_snapshot_id,
+                                         variant_out.chooser_candidate
+                                             .memory_budget_bytes
+                                             .value_or(0));
             annotateAdvisorFeedback(
                 db,
                 sql,
                 optimizer::QueryProfiler::getInstance().fingerprintQuery(sql),
                 variant_out.runtime_plan);
-            variant_out.chooser_candidate =
-                buildReusablePlanCandidate(variant_out.runtime_plan,
-                                           db != nullptr ? db->page_size() : 16384);
             variant_out.cache_key = buildPlanCacheKey(
                 sql,
                 stmt,
@@ -2856,6 +3232,7 @@ namespace scratchbird::sblr::detail
             PlannedCompilationVariant &selected_variant =
                 variants[selected_variant_index];
             fillResultPlanProfile(selected_variant, selected_decision_source);
+            uint64_t family_statistics_boundary_siblings = 0;
 
             if (!adaptive_replan_required)
             {
@@ -2878,6 +3255,10 @@ namespace scratchbird::sblr::detail
                     result.cache_hit = true;
                     return result;
                 }
+
+                family_statistics_boundary_siblings =
+                    planCache().countFamilyStatisticsBoundarySiblings(
+                        selected_variant.cache_key);
             }
 
             if (!encodeSelectedVariant(selected_variant))
@@ -2899,6 +3280,17 @@ namespace scratchbird::sblr::detail
                 optimizer::NativeArtifactStatus::FALLBACK_SBLR_ONLY;
             cache_value.fallback_reason_code = "SBLR_ONLY";
             (void)planCache().put(selected_variant.cache_key, cache_value);
+            if (!annotateCompiledPayloadFamilyStatisticsBoundary(
+                    result.bytecode,
+                    family_statistics_boundary_siblings,
+                    result.bytecode,
+                    instruction_error))
+            {
+                result.errors.push_back(instruction_error.empty()
+                    ? "Family-statistics replan boundary annotation failed"
+                    : instruction_error);
+                return result;
+            }
         }
         else
         {

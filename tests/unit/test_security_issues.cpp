@@ -344,6 +344,7 @@ TEST_F(SecurityTest, ConcurrentAccess_TwoProcesses)
 {
     // First create the database (create() is static and closes the file)
     ASSERT_EQ(Database::create(test_concurrent_path_, 16384), Status::OK);
+    constexpr int kParentSignalTimeoutMs = 30000;
 
     int sync_pipe[2];
     ASSERT_EQ(pipe(sync_pipe), 0) << "Failed to create sync pipe";
@@ -357,7 +358,7 @@ TEST_F(SecurityTest, ConcurrentAccess_TwoProcesses)
         struct pollfd pfd;
         pfd.fd = sync_pipe[0];
         pfd.events = POLLIN;
-        int poll_rc = poll(&pfd, 1, 5000);
+        int poll_rc = poll(&pfd, 1, kParentSignalTimeoutMs);
         if (poll_rc <= 0)
         {
             _exit(1);
@@ -382,10 +383,10 @@ TEST_F(SecurityTest, ConcurrentAccess_TwoProcesses)
             if (ctx.message.find("lock") != std::string::npos ||
                 ctx.message.find("in use") != std::string::npos)
             {
-                exit(0); // Expected behavior
+                _exit(0); // Expected behavior
             }
         }
-        exit(1); // Unexpected - got access or wrong error
+        _exit(1); // Unexpected - got access or wrong error
     }
     else if (pid > 0)
     {

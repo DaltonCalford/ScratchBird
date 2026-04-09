@@ -1,0 +1,6 @@
+contract_clause,implementation,status,notes
+"Catalog root has object table slot", "CatalogRootPage::object_page + read/write mapping",pass,"Persisted via writeCatalogRoot/readCatalogRoot."
+"Object table physical layout defined", "ObjectRecord packed struct",pass,"UUID identity + type + schema/parent/owner + timestamps + is_valid."
+"Bootstrap/load materializes object rows", "ensureObjectCatalogRecord + syncObjectCatalogFromCaches",pass,"Load path invokes sync after cache materialization."
+"Database identity is represented in object table", "ensureDatabaseCatalogRecord -> ensureObjectCatalogRecord",pass,"Database row inserted/verified and mirrored into object table."
+"Stale object rows are invalidated", "syncObjectCatalogFromCaches stale-row pass",pass,"Rows not present in resolver snapshot are marked is_valid=0."

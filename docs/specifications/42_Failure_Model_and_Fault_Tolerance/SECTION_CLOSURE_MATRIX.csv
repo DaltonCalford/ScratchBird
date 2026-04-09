@@ -1,0 +1,4 @@
+requirement_id,requirement_surface,authority_file,evidence_or_gate,status
+FT-01,mga_failure_truth,FAILURE_MODEL_AND_FAULT_CLASSIFICATION.md,TEST_CONTRACT.md,canonicalized
+FT-02,degraded_mode_and_fail_closed_behavior,FAIL_CLOSED_AND_DEGRADED_MODE_RULES.md,TEST_CONTRACT.md,canonicalized
+FT-03,derivative_lane_failure_separation,FAILURE_MODEL_AND_FAULT_CLASSIFICATION.md,TEST_CONTRACT.md,canonicalized

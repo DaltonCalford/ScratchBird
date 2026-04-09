@@ -1,0 +1,8 @@
+case_id,operation,validation,expected_result,error_code
+T24-I18N-001,database_create,mandatory_resources_present,active_bundle_rows_loaded,
+T24-I18N-002,database_create,mandatory_resources_missing,create_rejected,E_RESOURCE_BUNDLE_MISSING
+T24-I18N-003,bundle_activate,staged_bundle_validated,atomic_activation_success,
+T24-I18N-004,bundle_activate,staged_bundle_invalid,old_bundle_remains_active,E_BUNDLE_VALIDATION_FAILED
+T24-I18N-005,bundle_activate,activation_success,runtime_caches_invalidated_by_bundle_hash,
+T24-I18N-006,timezone_ingest,resource_loaded,transition_and_leap_second_rows_present,
+T24-I18N-007,parser_preprocess_contract,script_outputs_match_ingest_expectations,pass,

@@ -1,0 +1,8 @@
+case_id,emulated_engine,type_name,canonical_value,wire_value,resolution_preserved,error_code
+T14-WF-001,firebird_5,blob_text,canonical_lob_text,firebird_blob_segments,true,
+T14-WF-002,postgresql_18,uuid,canonical_uuid_binary,uuid_text,true,
+T14-WF-003,mysql_8,datetime,canonical_timestamp_no_tz,mysql_datetime,true,
+T14-WF-004,cassandra_5,time,canonical_int64_nanos,cassandra_time_nanos,true,
+T14-WF-005,mongodb_8,decimal128,canonical_decfloat_34,bson_decimal128,true,
+T14-WF-006,milvus_2,vector,canonical_vector,float_vector_wire,true,
+T14-WF-007,redis_7,binary_string,canonical_varbinary,redis_bulk_string,true,

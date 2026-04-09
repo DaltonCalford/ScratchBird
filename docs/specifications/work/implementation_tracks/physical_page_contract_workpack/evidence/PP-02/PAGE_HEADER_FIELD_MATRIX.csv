@@ -1,0 +1,17 @@
+field,expected_offset,expected_size,status
+magic,0x00,4,pass
+version,0x04,2,pass
+page_type,0x06,2,pass
+page_size,0x08,4,pass
+checksum,0x0C,4,pass
+lsn,0x10,8,pass
+page_id,0x18,4,pass
+flags,0x1C,4,pass
+database_uuid,0x20,16,pass
+object_uuid,0x30,16,pass
+generation,0x40,8,pass
+free_space,0x48,2,pass
+item_count,0x4A,2,pass
+free_offset,0x4C,2,pass
+special_size,0x4E,2,pass
+PageHeader.total_size,0x00,80,pass

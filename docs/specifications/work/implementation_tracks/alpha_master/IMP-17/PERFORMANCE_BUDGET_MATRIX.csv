@@ -1,0 +1,6 @@
+metric_id,workload,threshold_type,threshold_value,pass_condition
+T17-PF-001,function_eval_hot_path,p95_us,40,measured_p95<=40
+T17-PF-002,blob_filter_chunk_pipeline,p95_ms,25,measured_p95<=25
+T17-PF-003,remote_passthrough_roundtrip,p95_ms,120,measured_p95<=120
+T17-PF-004,fabric_task_submit_poll,p95_ms,35,measured_p95<=35
+T17-PF-005,multiplex_sessions_100_active,memory_mib,512,measured_peak<=512

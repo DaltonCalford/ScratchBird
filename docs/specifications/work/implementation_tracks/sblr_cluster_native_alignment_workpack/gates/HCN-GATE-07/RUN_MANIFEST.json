@@ -1,0 +1,11 @@
+{
+  "gate_id": "HCN-GATE-07",
+  "title": "PH6 Threat, Performance, and Final Signoff Gate",
+  "phase": "PH6",
+  "owner": "codex",
+  "started_utc": "2026-02-23T00:00:00Z",
+  "completed_utc": "2026-02-26T22:25:00Z",
+  "decision": "pass",
+  "source_commit": "9e789eaad9b8e377f42f96f2ea8fec0193970f40",
+  "notes": "HCN-060 through HCN-062 complete with threat suite pass, perf/latency pass, and final release-readiness signoff package."
+}

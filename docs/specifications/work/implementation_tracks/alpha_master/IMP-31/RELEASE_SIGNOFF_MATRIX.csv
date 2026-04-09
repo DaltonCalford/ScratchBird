@@ -1,0 +1,4 @@
+suite_id,requirement_id,check,method,expected_result,reject_condition,evidence_artifact
+T31-G9,IMP-31-REQ-G9-01,Prior suite pass precondition,Gate aggregator,All required prior suites pass,Any prior suite not passed,SYSTEM_GATE_REPORT.md
+T31-G9,IMP-31-REQ-G9-02,Evidence bundle completeness,Evidence completeness checker,All required artifacts present and checksum-valid,Missing or checksum-invalid artifact,EVIDENCE_BUNDLE_INDEX.md
+T31-G9,IMP-31-REQ-G9-03,Deterministic replay verification,Replay verifier,Replay deterministic for pass/fail bundles,Replay nondeterminism,TEST_RESULTS.md#T31-G9

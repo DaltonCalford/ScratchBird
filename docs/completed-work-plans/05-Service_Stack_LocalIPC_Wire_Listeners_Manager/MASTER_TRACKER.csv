@@ -1,0 +1,7 @@
+ticket,title,status,depends_on,primary_evidence
+B1-05-001,Specification sufficiency closure,completed,-,"updated assigned specs|gap closure notes|audit matrix"
+B1-05-002,Ownership and audit anchor normalization,completed,B1-05-001,"current audit matrix|canonical spec audit anchors"
+B1-05-003,Embedded library local IPC and threaded server closure,completed,B1-05-002,"lane A code|spec|evidence closure"
+B1-05-004,Wire handshake listener parser-pool manager and topology closure,completed,B1-05-003,"lane B code|spec|evidence closure"
+B1-05-005,Gates benchmarks and evidence closure,completed,"B1-05-003|B1-05-004","gate artifacts|benchmark artifacts|section 31 closure"
+B1-05-006,Final closeout,completed,B1-05-005,"move-ready package"

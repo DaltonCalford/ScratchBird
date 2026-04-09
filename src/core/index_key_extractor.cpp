@@ -8,6 +8,7 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include "scratchbird/core/index_key_extractor.h"
+#include "scratchbird/core/index_key_encoding.h"
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/error_context.h"
 #include <cstring>
@@ -29,6 +30,7 @@ auto IndexKeyExtractor::extractKey(
     size_t tuple_size,
     const std::vector<size_t>& column_offsets,
     const std::vector<size_t>& column_sizes,
+    const std::vector<CatalogManager::ColumnInfo>& columns,
     const std::vector<uint16_t>& column_indices,
     ToastManager* toast_mgr,
     uint64_t xid,
@@ -54,6 +56,12 @@ auto IndexKeyExtractor::extractKey(
                               "Column index out of range");
             return Status::INVALID_ARGUMENT;
         }
+        if (col_idx >= columns.size())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Column metadata index out of range");
+            return Status::INVALID_ARGUMENT;
+        }
 
         size_t col_offset = column_offsets[col_idx];
         size_t col_size = column_sizes[col_idx];
@@ -77,8 +85,18 @@ auto IndexKeyExtractor::extractKey(
             return status;
         }
 
-        // Append to key
-        key_out->insert(key_out->end(), col_value.begin(), col_value.end());
+        std::vector<uint8_t> encoded_value;
+        status = index_key_encoding::encodePlainValue(
+            static_cast<DataType>(columns[col_idx].data_type),
+            col_value,
+            &encoded_value,
+            ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        key_out->insert(key_out->end(), encoded_value.begin(), encoded_value.end());
     }
 
     return Status::OK;
@@ -89,6 +107,7 @@ auto IndexKeyExtractor::extractKeyForUpdate(
     size_t old_tuple_size,
     const std::vector<size_t>& old_column_offsets,
     const std::vector<size_t>& old_column_sizes,
+    const std::vector<CatalogManager::ColumnInfo>& columns,
     const uint8_t* new_tuple_data,
     size_t new_tuple_size,
     const std::vector<size_t>& new_column_offsets,
@@ -108,10 +127,15 @@ auto IndexKeyExtractor::extractKeyForUpdate(
         return Status::INVALID_ARGUMENT;
     }
 
+    // The cache is keyed only by column index, so update extraction must not
+    // retain values across old/new tuple boundaries or across separate calls.
+    clearCache();
+
     // Extract old key
     Status status = extractKey(
         old_tuple_data, old_tuple_size,
         old_column_offsets, old_column_sizes,
+        columns,
         column_indices, toast_mgr, xid,
         old_key_out, ctx);
 
@@ -127,6 +151,7 @@ auto IndexKeyExtractor::extractKeyForUpdate(
     status = extractKey(
         new_tuple_data, new_tuple_size,
         new_column_offsets, new_column_sizes,
+        columns,
         column_indices, toast_mgr, xid,
         new_key_out, ctx);
 
@@ -135,6 +160,7 @@ auto IndexKeyExtractor::extractKeyForUpdate(
         return status;
     }
 
+    clearCache();
     return Status::OK;
 }
 

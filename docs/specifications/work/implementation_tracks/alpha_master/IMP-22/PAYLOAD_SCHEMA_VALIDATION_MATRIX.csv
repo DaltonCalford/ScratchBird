@@ -1,0 +1,16 @@
+case_id,suite,required_check,expected_result,error_code
+T22-C01,C,payload_decodes_with_required_fields,pass,
+T22-C02,C,missing_required_fields_fail_deterministically,reject,SBLR-E-0033
+T22-C03,C,unknown_trailing_bytes_fail,reject,SBLR-E-0033
+T22-C04,C,family_action_enum_validation,pass,
+T22-C05,C,ddl_create_type_requires_type_payload,reject,SBLR-E-0041
+T22-C06,C,routine_payload_required_for_routine_ddl,reject,SBLR-E-0041
+T22-C07,C,security_payload_required_for_grant_revoke,reject,SBLR-E-0041
+T22-C08,C,textsearch_drop_configuration_requires_action7_and_config_uuid,reject,SBLR-E-0041
+T22-C09,C,normalization_evidence_fields_required,pass,
+T22-C10,C,invalid_rule_set_id,reject,SBLR-E-0054
+T22-C11,C,missing_required_clause_bit,reject,SBLR-E-0055
+T22-C12,C,clause_order_vector_violation,reject,SBLR-E-0056
+T22-C13,C,alias_rewrite_flag_conflict,reject,SBLR-E-0057
+T22-C14,C,unknown_clause_code,reject,SBLR-E-0058
+T22-C15,C,resource_bundle_payload_uuid_requirements_enforced,pass,

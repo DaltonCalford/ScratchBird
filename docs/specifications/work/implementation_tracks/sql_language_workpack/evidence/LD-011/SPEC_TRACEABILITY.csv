@@ -1,0 +1,5 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+21_V3_Dialect_Surface/NORMATIVE_ADMIN_DDL_DML_PSQL_TSQL_IMPLEMENTATION_CHECKLIST.md,21_V3_Dialect_Surface,LANG-OUTPUT-SQL-SBLR-ENVELOPE,LD-011/SQL_SBLR_ENVELOPE_AUDIT.csv,PASS,Envelope fields and deterministic mapping from SQL family/feature to SBLR opcode payload captured
+22_SBLR_Canonical_Model_and_Opcodes/SBLR_STATEMENT_PAYLOAD_SCHEMAS.md,22_SBLR_Canonical_Model_and_Opcodes,STMT-ENVELOPE-PREFIX-AND-FAMILY-PAYLOAD,LD-011/SQL_SBLR_ENVELOPE_AUDIT.csv,PASS,Global statement envelope and family payload constraints audited across parser families
+22_SBLR_Canonical_Model_and_Opcodes/PARSER_NORMALIZATION_TO_SBLR_VALIDATION_MATRIX.md,22_SBLR_Canonical_Model_and_Opcodes,NORMALIZATION-EVIDENCE-BRIDGE,LD-011/SQL_SBLR_ENVELOPE_AUDIT.csv,PASS,Rule-set ids clause masks and clause-order vector conformance covered
+22_SBLR_Canonical_Model_and_Opcodes/SBLR_VERIFIER_AND_VALIDATION_RULES.md,22_SBLR_Canonical_Model_and_Opcodes,VERIFIER-DIAGNOSTIC-OUTPUT-CONTRACT,LD-011/DIAGNOSTIC_TRACE_AUDIT.csv,PASS,Stable verifier error and success trace fields covered with deterministic replay requirement

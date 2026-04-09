@@ -1,0 +1,6 @@
+case_id,scenario,expected_result,error_code
+T25-NG-001,malformed_runtime_mode_config,rejected,E_RUNTIME_CONFIG_INVALID
+T25-NG-002,non_localhost_fallback_target_when_ipc_unavailable,rejected,E_LOCALHOST_ONLY
+T25-NG-003,listener_start_without_open_database,rejected,E_NO_OPEN_DATABASE
+T25-NG-004,forbidden_state_transition,rejected,E_RUNTIME_STATE_TRANSITION_INVALID
+T25-NG-005,resource_exhaustion_on_pool_warmup,rejected,E_RESOURCE_EXHAUSTED

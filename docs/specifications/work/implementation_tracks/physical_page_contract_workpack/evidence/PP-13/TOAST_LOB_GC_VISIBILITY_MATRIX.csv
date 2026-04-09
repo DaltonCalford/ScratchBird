@@ -1,0 +1,4 @@
+scenario,tip_state_before_gc,expected_gc_action,post_gc_visibility,evidence
+Chunk deleted by committed transaction,COMMITTED,delete_chunk,invisible,test_toast_gc_contract.cpp:TipGcDeletesChunksWithCommittedDeleteTransaction
+Chunk deleted by aborted transaction,ABORTED,clear_xmax_and_delete_flags,visible,test_toast_gc_contract.cpp:TipGcClearsXmaxForAbortedDeleteTransaction
+Chunk deleted by missing/out_of_range transaction,OUT_OF_RANGE,clear_xmax_and_delete_flags,visible,src/core/garbage_collector.cpp:cleanToastChunksByTIP

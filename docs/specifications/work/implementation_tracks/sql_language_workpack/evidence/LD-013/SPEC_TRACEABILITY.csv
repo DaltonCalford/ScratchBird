@@ -1,0 +1,4 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+21_V3_Dialect_Surface/NATIVE_JDBC_DRIVER_SQL_PROMOTION_MATRIX.md,Matrix,JSQL-001..026;JSQL-030;JSQL-032,LD-013/JDBC_SQL_PROMOTION_TRACEABILITY.csv,PASS,Consolidated row-level evidence mapping with test-method and command references for mandatory promotion rows
+21_V3_Dialect_Surface/NORMATIVE_JDBC_SQL_PROMOTION_IMPLEMENTATION_CHECKLIST.md,Evidence Artifacts,JDBC_SQL_PROMOTION_TRACEABILITY.csv;JDBC_SQL_PROMOTION_TEST_RESULTS.md,LD-013/JDBC_SQL_PROMOTION_TRACEABILITY.csv;LD-013/JDBC_SQL_PROMOTION_TEST_RESULTS.md,PASS,Checklist-required JDBC evidence artifacts produced for consolidated promotion scope
+21_V3_Dialect_Surface/TEST_CONTRACT.md,P21 JDBC promotion gates,P21-JDBC-GATE-01..05-MANDATORY,LD-013/P21_JDBC_GATE_ROLLUP.md,PASS,Gate-aligned mapping of mandatory promotion rows with explicit evidence commands

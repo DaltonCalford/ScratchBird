@@ -1,0 +1,2 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+15_Complex_Types/DOMAIN_DDL_AND_CATALOG.md,15_Complex_Types,LEGACY-SYSTEM-NAME-REMOVAL,DT-014/LEGACY_DOMAIN_NAME_REMOVAL_AUDIT.csv,PASS,Legacy `SBDB$` naming removed from active source and tests

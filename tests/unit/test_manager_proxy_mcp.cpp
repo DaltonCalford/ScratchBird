@@ -201,6 +201,16 @@ std::unique_ptr<Socket> connectWithRetry(const std::string& host,
     return nullptr;
 }
 
+std::string statusEntryValue(const std::vector<ProtocolCodec::StatusEntry>& entries,
+                             const std::string& key) {
+    for (const auto& entry : entries) {
+        if (entry.key == key) {
+            return entry.value;
+        }
+    }
+    return std::string();
+}
+
 void runMcpAuthHandshake(Socket& manager_socket,
                          const std::string& mcp_auth_secret = kManagerAuthSecret) {
     ErrorContext ctx;
@@ -296,6 +306,20 @@ TEST(ManagerProxyMcpTest, HelloAuthListConnectFlowWithReadyInternalEndpoint) {
     ASSERT_EQ(ProtocolCodec::parseStatusResponse(response, request_type, entries, &ctx), Status::OK)
         << ctx.message;
     ASSERT_EQ(request_type, StatusRequestType::SERVER_INFO);
+    EXPECT_EQ(statusEntryValue(entries, "database_owner"), "main");
+    EXPECT_EQ(statusEntryValue(entries, "heartbeat_state"), "READY");
+    EXPECT_EQ(statusEntryValue(entries, "controller_reachable"), "true");
+    EXPECT_EQ(statusEntryValue(entries, "listener_control_reachable"), "false");
+    EXPECT_EQ(statusEntryValue(entries, "unresolved_drift_count"), "0");
+    EXPECT_EQ(statusEntryValue(entries, "queued_instruction_count"), "0");
+    EXPECT_EQ(statusEntryValue(entries, "blocked_instruction_count"), "0");
+    EXPECT_EQ(statusEntryValue(entries, "quarantined_instruction_count"), "0");
+    EXPECT_EQ(statusEntryValue(entries, "applying_instruction_count"), "0");
+    EXPECT_EQ(statusEntryValue(entries, "last_instruction_state"), "NONE");
+    EXPECT_FALSE(statusEntryValue(entries, "manager_uuid").empty());
+    EXPECT_FALSE(statusEntryValue(entries, "server_uuid").empty());
+    EXPECT_FALSE(statusEntryValue(entries, "owner_database_uuid").empty());
+    EXPECT_FALSE(statusEntryValue(entries, "heartbeat_sequence").empty());
 
     runMcpAuthHandshake(*manager_socket);
 
@@ -327,6 +351,10 @@ TEST(ManagerProxyMcpTest, HelloAuthListConnectFlowWithReadyInternalEndpoint) {
         }
     }
     EXPECT_TRUE(saw_db_main);
+    EXPECT_EQ(statusEntryValue(entries, "heartbeat_state"), "READY");
+    EXPECT_FALSE(statusEntryValue(entries, "manager_uuid").empty());
+    EXPECT_FALSE(statusEntryValue(entries, "server_uuid").empty());
+    EXPECT_FALSE(statusEntryValue(entries, "owner_database_uuid").empty());
 
     Message db_connect = ProtocolCodec::buildMcpDbConnect(
         "main", "native_v3", "native_v3", std::vector<uint8_t>(16, 0xAB));

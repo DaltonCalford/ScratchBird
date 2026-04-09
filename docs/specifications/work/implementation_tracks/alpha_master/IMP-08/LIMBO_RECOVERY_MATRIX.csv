@@ -1,0 +1,6 @@
+case_id,startup_condition,prepared_tx_decision,required_action,terminal_state,error_code
+LMB-001,unclean_shutdown,known_commit,resolve_prepared_to_committed,committed,NONE
+LMB-002,unclean_shutdown,known_rollback,resolve_prepared_to_aborted,aborted,NONE
+LMB-003,unclean_shutdown,unknown_decision,retain_limbo_and_expose_admin_resolution,limbo,NONE
+LMB-004,clean_shutdown,any,no_limbo_scan_required,unchanged,NONE
+LMB-005,limbo_resolution_without_evidence,commit_attempt,reject_action,limbo,INVALID_LIMBO_DECISION

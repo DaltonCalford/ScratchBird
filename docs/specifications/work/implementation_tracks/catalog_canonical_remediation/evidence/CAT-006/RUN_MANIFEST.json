@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-006",
+  "status": "completed",
+  "started_at": "2026-02-14T01:50:00Z",
+  "finished_at": "2026-02-14T02:06:47Z",
+  "owner": "Codex",
+  "notes": "Implemented canonical object_name table page/root-slot wiring, default-language name upsert/sync from resolver caches, stale default-name invalidation, and bootstrap contract assertions for non-duplication across reopen."
+}

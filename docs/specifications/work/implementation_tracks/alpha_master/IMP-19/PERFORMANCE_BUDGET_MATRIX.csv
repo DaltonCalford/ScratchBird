@@ -1,0 +1,5 @@
+metric_id,workload,threshold_type,threshold_value,pass_condition
+T19-PF-001,auth_handshake,password_p95_ms,30,measured_p95<=30
+T19-PF-002,permission_check_per_object,p95_us,250,measured_p95<=250
+T19-PF-003,row_column_masking_10k_rows,p95_ms,120,measured_p95<=120
+T19-PF-004,pki_revocation_propagation,max_seconds,30,cluster_convergence<=30

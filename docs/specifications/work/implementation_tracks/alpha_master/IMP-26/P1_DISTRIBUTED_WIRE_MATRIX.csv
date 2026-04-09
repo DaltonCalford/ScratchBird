@@ -1,0 +1,8 @@
+case_id,suite,required_check,expected_result,error_code
+T26-H01,H,message_family_ids_required_fields_profile_rules,pass,
+T26-H02,H,read_policy_req_ack_roundtrip_validation,pass,
+T26-H03,H,verification_repair_events_correlation_integrity,pass,
+T26-H04,H,degraded_state_event_on_policy_triggered_transition,pass,
+T26-H05,H,telemetry_sample_payload_required_fields_and_redaction,pass,
+T26-H06,H,telemetry_batch_stream_sequence_and_backpressure,pass,
+T26-H07,H,error_mapping_and_compat_downgrade_reject_deterministic,pass,

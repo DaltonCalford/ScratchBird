@@ -82,6 +82,7 @@ static const PageGetterEntry kPageGetters[] = {
     {"indexMaintenanceTablePage", "index_maintenance_table_page_", &core::CatalogManager::indexMaintenanceTablePage},
     {"indexMaintenanceDeltasTablePage", "index_maintenance_deltas_table_page_", &core::CatalogManager::indexMaintenanceDeltasTablePage},
     {"indexBuildDeltasTablePage", "index_build_deltas_table_page_", &core::CatalogManager::indexBuildDeltasTablePage},
+    {"indexPageDeltasTablePage", "index_page_deltas_table_page_", &core::CatalogManager::indexPageDeltasTablePage},
     {"indexStatsTablePage", "index_stats_table_page_", &core::CatalogManager::indexStatsTablePage},
     {"indexUsageTablePage", "index_usage_table_page_", &core::CatalogManager::indexUsageTablePage},
     {"indexContentionTablePage", "index_contention_table_page_", &core::CatalogManager::indexContentionTablePage},

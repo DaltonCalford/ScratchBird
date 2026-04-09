@@ -1,0 +1,7 @@
+case_id,object,validation_rule,expected_result,error_code
+T24-SB-001,sblr_module.statement_norm_count,must_equal_count_in_sblr_statement_norm,pass,
+T24-SB-002,sblr_plan.normalization_evidence_hash,must_equal_module_hash,pass,
+T24-SB-003,sblr_statement_norm,persisted_for_each_accepted_statement,pass,
+T24-SB-004,sblr_plan_dependency,referential_integrity_required,pass,
+T24-SB-005,plan_invalidation,epoch_and_dependency_rules_followed,pass,
+T24-SB-006,missing_statement_norm,accepted_statement_without_row,reject,E_SBLR_NORM_ROW_MISSING

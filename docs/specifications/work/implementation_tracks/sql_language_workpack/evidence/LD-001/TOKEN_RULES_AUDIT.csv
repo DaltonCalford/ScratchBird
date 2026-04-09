@@ -1,0 +1,16 @@
+rule_id,source_spec,token_or_identifier_class,normative_requirement,validation_method,result,evidence
+LEX-001,21_V3_Dialect_Surface/OBJECT_NAMING_AND_QUOTING.md,IDENT_UNQUOTED,"Unquoted identifiers MUST match [A-Za-z_][A-Za-z0-9_]*",spec_line_presence_check,PASS,regex rule present and unique
+LEX-002,21_V3_Dialect_Surface/OBJECT_NAMING_AND_QUOTING.md,IDENT_UNQUOTED,"Unquoted identifiers MUST NOT contain spaces or periods",spec_line_presence_check,PASS,explicit prohibition present
+LEX-003,21_V3_Dialect_Surface/OBJECT_NAMING_AND_QUOTING.md,IDENT_QUOTED,"Quoted identifiers use double quotes",spec_line_presence_check,PASS,explicit quoting rule present
+LEX-004,21_V3_Dialect_Surface/OBJECT_NAMING_AND_QUOTING.md,IDENT_QUOTED,"Inside quoted identifier, doubled quote escapes literal quote",spec_line_presence_check,PASS,escape sequence rule present
+LEX-005,21_V3_Dialect_Surface/OBJECT_NAMING_AND_QUOTING.md,CASE_UNQUOTED,"Unquoted identifiers are case-insensitive",spec_line_presence_check,PASS,explicit case rule present
+LEX-006,21_V3_Dialect_Surface/OBJECT_NAMING_AND_QUOTING.md,CASE_QUOTED,"Quoted identifiers are case-sensitive and preserve spelling",spec_line_presence_check,PASS,explicit case rule present
+LEX-007,21_V3_Dialect_Surface/OBJECT_NAMING_AND_QUOTING.md,NORMALIZATION,"Parser stores original_name and normalized_name",spec_line_presence_check,PASS,normalization rule present
+LEX-008,21_V3_Dialect_Surface/OBJECT_NAMING_AND_QUOTING.md,COLLISION,"Same-schema objects cannot share normalized_name",spec_line_presence_check,PASS,collision rule present
+LEX-009,21_V3_Dialect_Surface/OBJECT_NAMING_AND_QUOTING.md,RESERVED_NATIVE,"Native parser uses context-aware reserved-word recognition",spec_line_presence_check,PASS,rule present
+LEX-010,21_V3_Dialect_Surface/RESERVED_WORDS_AND_KEYWORDS.md,RESERVED_CATALOG,"reserved_words table includes word parser_scope is_reserved is_keyword last_updated_txid",spec_line_presence_check,PASS,all required columns present
+LEX-011,21_V3_Dialect_Surface/RESERVED_WORDS_AND_KEYWORDS.md,RESERVED_ENFORCEMENT,"Emulated parsers enforce is_reserved=true words",spec_line_presence_check,PASS,enforcement rule present
+LEX-012,21_V3_Dialect_Surface/RESERVED_WORDS_AND_KEYWORDS.md,RESERVED_BYPASS,"Quoted identifiers bypass reserved word checks",spec_line_presence_check,PASS,bypass rule present
+LEX-013,21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md,TOKEN_CLASSES,"Token classes fixed: IDENT STRING NUMBER SYMBOL KEYWORD JSON_DOC BLOB BINARY",spec_line_presence_check,PASS,token classes explicitly enumerated
+LEX-014,21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md,TOKEN_REINTERPRETATION,"No automatic token reinterpretation allowed after parse start",spec_line_presence_check,PASS,hard rule present
+LEX-015,21_V3_Dialect_Surface/NORMATIVE_ADMIN_DDL_DML_PSQL_TSQL_IMPLEMENTATION_CHECKLIST.md,PIPELINE_ORDER,"Lexical contract must execute before grammar and normalization",execution_order_check,PASS,mandatory execution order lists lexical first

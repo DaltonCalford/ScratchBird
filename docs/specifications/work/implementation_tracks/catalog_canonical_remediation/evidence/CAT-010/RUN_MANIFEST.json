@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-010",
+  "status": "completed",
+  "started_at": "2026-02-14T04:20:00Z",
+  "finished_at": "2026-02-14T04:44:15Z",
+  "owner": "codex",
+  "notes": "CAT-010 complete: physical type-family catalog pages + full CRUD + deterministic constraints + CAT-010 contract test suite pass."
+}

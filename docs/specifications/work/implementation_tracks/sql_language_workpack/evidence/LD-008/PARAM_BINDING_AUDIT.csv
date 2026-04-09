@@ -1,0 +1,21 @@
+audit_id,statement_kind,input_sql,parameter_mode,expected_parameter_slots,expected_bind_decision,expected_error_code,source_spec,notes
+PB-001,select,"SELECT * FROM orders WHERE id = $1;",positional,1,ACCEPT,,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Single positional parameter
+PB-002,select,"SELECT * FROM orders WHERE id = $2;",positional,2,REJECT,E_PARAMETER_COUNT_MISMATCH,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Missing slot 1 in provided bind set
+PB-003,select,"SELECT * FROM orders WHERE id = :id;",named,1,ACCEPT,,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Single named parameter normalized to canonical slot
+PB-004,select,"SELECT * FROM orders WHERE id = :id OR parent_id = :id;",named,1,ACCEPT,,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Same named parameter reuses one slot
+PB-005,select,"SELECT * FROM orders WHERE id = :id AND amount > :min;",named,2,ACCEPT,,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Two distinct named slots
+PB-006,insert,"INSERT INTO orders(id,total) VALUES ($1,$2);",positional,2,ACCEPT,,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Insert binding success
+PB-007,insert,"INSERT INTO orders(id,total) VALUES ($1,$2);",positional,2,REJECT,E_PARAMETER_TYPE_MISMATCH,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Type mismatch in slot 2
+PB-008,update,"UPDATE orders SET total = $2 WHERE id = $1;",positional,2,ACCEPT,,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Update binding success
+PB-009,delete,"DELETE FROM orders WHERE id = :id RETURNING id;",named,1,ACCEPT,,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Delete returning with named bind
+PB-010,merge,"MERGE INTO dst USING src ON dst.id = $1 WHEN MATCHED THEN UPDATE SET total = $2;",positional,2,ACCEPT,,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Merge binding success
+PB-011,prepared_execute,"EXECUTE p_orders USING 1,2;",prepared,2,ACCEPT,,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Prepared execute with matching arity
+PB-012,prepared_execute,"EXECUTE p_orders USING 1;",prepared,2,REJECT,E_PARAMETER_COUNT_MISMATCH,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Prepared execute arity mismatch
+PB-013,prepared_execute,"EXECUTE p_missing USING 1;",prepared,1,REJECT,E_OPTION_VALUE_INVALID,21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md,Unknown prepared statement
+PB-014,select,"SELECT k FROM o1 JOIN o2 ON o1.k=o2.k WHERE k = :k;",named,1,REJECT,E_BIND_AMBIGUOUS_COLUMN,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Ambiguous bind target column
+PB-015,select,"SELECT total FROM missing_orders WHERE id = :id;",named,1,REJECT,E_BIND_UNKNOWN_RELATION,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Unknown relation before bind finalize
+PB-016,select,"SELECT missing_col FROM orders WHERE id = :id;",named,1,REJECT,E_BIND_UNKNOWN_COLUMN,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Unknown column reference
+PB-017,update,"UPDATE orders SET [sb_col]row_uuid = :u WHERE id = :id;",named,2,REJECT,E_SYSTEM_COLUMN_WRITE_FORBIDDEN,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,System column write forbidden
+PB-018,select,"SELECT * FROM orders WHERE id = :id AND created_at > :ts;",named,2,REJECT,E_PARAMETER_TYPE_MISMATCH,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Invalid timestamp bind type
+PB-019,select,"SELECT * FROM orders WHERE id = $1 AND total > :min;",mixed,2,ACCEPT,,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Mixed positional/named normalized to canonical slots
+PB-020,select,"SELECT * FROM orders WHERE id = :id AND id = :id2;",named,2,REJECT,E_PARAMETER_COUNT_MISMATCH,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,Missing one named slot in bind payload

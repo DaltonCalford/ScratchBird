@@ -1,0 +1,5 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,DML-RESULT-SHAPES,LD-005/DML_RESULT_SHAPE_AUDIT.csv,PASS,All canonical DML result-shape contracts captured
+21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,DML-FEATURE-KEY-COVERAGE,LD-005/DML_ACCEPT_REJECT_MATRIX.csv,PASS,Feature-key accept/reject coverage includes SELECT/INSERT/UPDATE/DELETE/MERGE/COPY
+21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md,21_V3_Dialect_Surface,DML-CLAUSE-ORDER-REJECTION,LD-005/DML_ACCEPT_REJECT_MATRIX.csv,PASS,Clause order, duplicate, and conflict rejections mapped
+21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,DML-BIND-AND-TYPE-ERRORS,LD-005/DML_ACCEPT_REJECT_MATRIX.csv,PASS,Binding, parameter, and system-column error cases covered

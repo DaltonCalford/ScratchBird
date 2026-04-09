@@ -1,0 +1,26 @@
+{
+  "ticket_id": "IMP-10",
+  "section": "10_GC_and_Sweep",
+  "wave": "W1",
+  "status": "done",
+  "started_at_utc": "2026-02-12T00:21:24Z",
+  "completed_at_utc": "2026-02-12T00:21:24Z",
+  "gate_contract": "docs/specifications/10_GC_and_Sweep/TEST_CONTRACT.md",
+  "artifacts": [
+    "IMPLEMENTATION_CHECKLIST.md",
+    "IMPLEMENTATION_NOTES.md",
+    "GC_HORIZON_ELIGIBILITY_MATRIX.csv",
+    "SWEEP_TRIGGER_SCHEDULING_MATRIX.csv",
+    "GC_SWEEP_ACTION_MATRIX.csv",
+    "INDEX_LOB_CLEANUP_MATRIX.csv",
+    "GC_FAILURE_RECOVERY_MATRIX.csv",
+    "TEST_RESULTS.md",
+    "CHECKSUMS.sha256",
+    "RUN_MANIFEST.json",
+    "SPEC_TRACEABILITY.csv",
+    "TEST_EVIDENCE_INDEX.md",
+    "GATE_RESULT.json",
+    "CHANGESET_LOG.md"
+  ],
+  "mode": "specification_contract_validation"
+}

@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-008",
+  "status": "completed",
+  "started_at": "2026-02-14T03:20:00Z",
+  "finished_at": "2026-02-14T03:48:15Z",
+  "owner": "codex",
+  "notes": "Implemented parent-scoped uniqueness enforcement for triggers and object_name default-language names, added canonical parentage validation in object sync, and added CAT-008 unit coverage."
+}

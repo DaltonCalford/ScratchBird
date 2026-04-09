@@ -1,0 +1,10 @@
+case_id,suite,required_check,expected_result,error_code
+T23-B01,B,valid_container_load_and_bind,pass,
+T23-B02,B,verifier_failure_stops_before_bind,reject,SBLR-E-XXXX
+T23-B03,B,uuid_binding_permission_and_kind_checks,pass,
+T23-B04,B,stale_catalog_epoch_triggers_rebind_rebuild,pass,
+T23-B05,B,invalid_rule_set_id_rejected_before_bind,reject,SBLR-E-0054
+T23-B06,B,missing_required_clause_bit_rejected_before_bind,reject,SBLR-E-0055
+T23-B07,B,clause_order_violation_rejected_before_bind,reject,SBLR-E-0056
+T23-B08,B,alias_flag_conflict_rejected_before_bind,reject,SBLR-E-0057
+T23-B09,B,unknown_clause_code_rejected_before_bind,reject,SBLR-E-0058

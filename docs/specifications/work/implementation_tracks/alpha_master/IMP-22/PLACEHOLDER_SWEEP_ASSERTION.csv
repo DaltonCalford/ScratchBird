@@ -1,0 +1,2 @@
+case_id,required_check,expected_result,notes
+T22-PH-001,no_unresolved_placeholder_markers_in_canonical_section22_files,pass,explicit_numeric_opcode_freeze_note_in_decision_record_allowed

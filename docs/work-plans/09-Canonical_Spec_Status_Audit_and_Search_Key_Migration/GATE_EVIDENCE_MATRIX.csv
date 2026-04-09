@@ -1,0 +1,5 @@
+gate_id,focus,required_tickets,required_evidence
+SV-09-GATE-01,scope_and_census,"SV-09-001|SV-09-002","frozen status vocabulary|row-complete audit matrix|classification bootstrap"
+SV-09-GATE-02,anchor_migration,SV-09-003,"migration log|updated canonical specs|owned unique search keys"
+SV-09-GATE-03,section_verification,"SV-09-004|SV-09-005|SV-09-006|SV-09-007","corrected status claims|updated audit rows|section evidence notes"
+SV-09-GATE-04,final_rollup,SV-09-008,"finished list|partial list|outstanding list|final classification csv|move-ready tracker state"

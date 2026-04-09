@@ -1,0 +1,4 @@
+requirement_id,requirement_surface,authority_file,evidence_or_gate,status
+PS-01,page_size_selection_policy,PAGE_SIZE_SELECTION_COMPATIBILITY_AND_OPERATOR_POLICY_MODEL.md,TEST_CONTRACT.md,canonicalized
+PS-02,page_size_structural_compatibility,SPEC_OUTLINE.md,DEPENDENCIES.md,canonicalized
+PS-03,page_size_upgrade_and_rebuild_boundary,PAGE_SIZE_SELECTION_COMPATIBILITY_AND_OPERATOR_POLICY_MODEL.md,TEST_CONTRACT.md,canonicalized

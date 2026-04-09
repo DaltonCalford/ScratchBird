@@ -1,0 +1,5 @@
+component,rule,source_file,contract_status,notes
+PageManager::initialize,Reserve fixed pages 0..5,src/core/page_manager.cpp,pass,total_pages initialized to BOOTSTRAP_FIXED_PAGE_COUNT and bitmap marks fixed pages allocated.
+PageManager::freePage,Disallow freeing fixed pages 0..5,src/core/page_manager.cpp,pass,Hard guard returns INVALID_ARGUMENT when page_id < BOOTSTRAP_FIXED_PAGE_COUNT.
+PageManager::reconstructFromPages,Always reserve fixed page range before scan,src/core/page_manager.cpp,pass,Reconstruction premarks fixed pages then scans from first dynamic page.
+Catalog root binding,Catalog manager uses canonical bootstrap catalog page,include/scratchbird/core/catalog_manager.h,pass,CATALOG_ROOT_PAGE bound to BOOTSTRAP_PAGE_CATALOG_ROOT.

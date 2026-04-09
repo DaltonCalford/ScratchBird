@@ -1,0 +1,4 @@
+scenario,table_id,shard_key,expected_epoch,plan_epoch,routed,target_shard,reason,test_case
+stable_route_lookup,aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa,customer-42,7,7,true,10000000-0000-4000-8000-000000000001,NONE,DeterministicShardRouterTest.SameInputsProduceSameRouteDecision
+stable_route_lookup_repeat,aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa,customer-42,7,7,true,10000000-0000-4000-8000-000000000001,NONE,DeterministicShardRouterTest.SameInputsProduceSameRouteDecision
+stale_epoch_reject,bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb,order-1,11,12,false,00000000-0000-0000-0000-000000000000,STALE_ROUTING_EPOCH,DeterministicShardRouterTest.RejectsStaleRoutingEpoch

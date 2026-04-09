@@ -1,0 +1,9 @@
+case_id,page_size_kb,extent_pages,extent_policy,expected_result,error_code
+ALG-EXT-001,8,256,default_small_page,accept,NONE
+ALG-EXT-002,16,256,default_small_page,accept,NONE
+ALG-EXT-003,32,256,default_small_page,accept,NONE
+ALG-EXT-004,64,128,default_large_page,accept,NONE
+ALG-EXT-005,128,128,default_large_page,accept,NONE
+ALG-EXT-006,16,0,invalid_extent_size,reject,INVALID_FSM_ENTRY
+ALG-EXT-007,16,-1,invalid_extent_size,reject,INVALID_FSM_ENTRY
+ALG-EXT-008,16,non_default_without_create_override,invalid_override,reject,INVALID_FSM_ENTRY

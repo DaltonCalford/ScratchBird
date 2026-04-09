@@ -1,4 +1,4 @@
-Last updated: 2026-03-28
+Last updated: 2026-04-04
 
 # MY-EMU-040 MTR Gate Integration
 
@@ -7,7 +7,7 @@ Last updated: 2026-03-28
 ## Prerequisites
 - `tests/compatibility/mysql/repos/mysql-server/mysql-test/mysql-test-run.pl`: `present`
 - `tests/compatibility/mysql/repos/mysql-server/mysql-test`: `present`
-- `full upstream mysql source/runtime auto-detected`: `present`
+- `full upstream mysql source/runtime auto-detected`: `missing`
 
 ## Command templates
 ```bash

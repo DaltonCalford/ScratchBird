@@ -8,6 +8,7 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include "scratchbird/core/btree_page.h"
+#include "scratchbird/core/database.h"
 #include "scratchbird/core/logger.h"
 #include <stdexcept>
 #include <cstring>
@@ -68,6 +69,22 @@ namespace scratchbird::core
             }
             return (a < b) ? -1 : 1;
         }
+
+        bool page_is_leaf(const SBBTreePage *page)
+        {
+            if (page == nullptr)
+            {
+                return false;
+            }
+
+            if (page->btr_header.page_type == PageType::PAGE_TYPE_BTREE_LEAF)
+            {
+                return true;
+            }
+
+            return (page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0 &&
+                   page->btr_level == 0;
+        }
     }
 
 
@@ -84,6 +101,13 @@ namespace scratchbird::core
     auto BTreePage::initialize(const ID &index_uuid, const ID &table_uuid, uint16_t level,
                                uint16_t flags) -> Status
     {
+        page_header_->btr_header.magic = K_MAGIC_SBRD;
+        page_header_->btr_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+        page_header_->btr_header.header_bytes = CANONICAL_PAGE_HEADER_BYTES;
+        page_header_->btr_header.flags = 0;
+        page_header_->btr_header.page_size = page_size_;
+        page_header_->btr_header.header_checksum = 0;
+        page_header_->btr_header.payload_checksum = 0;
         if ((flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0)
         {
             page_header_->btr_header.page_type = PageType::PAGE_TYPE_BTREE_LEAF;
@@ -112,6 +136,9 @@ namespace scratchbird::core
         page_header_->btr_lsn = 0;
         // btr_high_water starts at end of page, nodes grow downward from there
         page_header_->btr_high_water = page_size_;
+        pageSetLower(page_header_->btr_header, sizeof(SBBTreePage));
+        pageSetUpper(page_header_->btr_header, page_size_);
+        pageSetSpecial(page_header_->btr_header, page_size_);
         return Status::OK;
     }
 
@@ -191,12 +218,16 @@ namespace scratchbird::core
         // Rebuild page with optional prefix compression
         std::vector<uint8_t> temp(page_size_, 0);
         auto new_header = *page_header_;
+        new_header.btr_header.page_type = PageType::PAGE_TYPE_BTREE_LEAF;
+        new_header.btr_level = 0;
+        new_header.btr_flags |= static_cast<uint16_t>(BTreeFlags::LEAF);
         new_header.btr_count = 0;
         new_header.btr_high_water = page_size_;
         new_header.btr_free_space = page_size_ - sizeof(SBBTreePage);
         new_header.btr_prefix_total = 0;
         new_header.btr_suffix_total = 0;
         new_header.btr_min_prefix_len = 0;
+        new_header.btr_rightmost_child = 0;
 
         std::memcpy(temp.data(), &new_header, sizeof(SBBTreePage));
         auto *new_offsets = reinterpret_cast<uint16_t *>(temp.data() + sizeof(SBBTreePage));
@@ -308,8 +339,125 @@ namespace scratchbird::core
             new_header.btr_flags &= ~static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE);
         }
 
+        const uint32_t offset_array_end =
+            sizeof(SBBTreePage) +
+            (static_cast<uint32_t>(new_header.btr_count) * sizeof(uint16_t));
+        pageSetLower(new_header.btr_header, offset_array_end);
+        pageSetUpper(new_header.btr_header, new_header.btr_high_water);
+        pageSetSpecial(new_header.btr_header, page_size_);
+
         std::memcpy(temp.data(), &new_header, sizeof(SBBTreePage));
         std::memcpy(page_data_, temp.data(), page_size_);
+
+        return Status::OK;
+    }
+
+    auto BTreePage::append_sorted_leaf_node(const std::vector<uint8_t> &key,
+                                            const Tuple &value,
+                                            uint64_t xmin,
+                                            const std::vector<uint8_t> &prev_full_key,
+                                            ErrorContext *ctx) -> Status
+    {
+        (void)ctx;
+        if (!is_leaf())
+        {
+            return Status::INVALID_ARGUMENT;
+        }
+
+        const uint16_t entry_index = page_header_->btr_count;
+        uint16_t prefix_len = 0;
+        std::vector<uint8_t> stored_key = key;
+        const bool force_restart_anchor =
+            (entry_index % kLeafSearchRestartInterval) == 0;
+        const auto compression =
+            static_cast<BTreeCompressionType>(page_header_->btr_compression);
+        if (entry_index > 0 && !force_restart_anchor &&
+            (compression == BTreeCompressionType::PREFIX ||
+             compression == BTreeCompressionType::BOTH ||
+             compression == BTreeCompressionType::ADAPTIVE))
+        {
+            prefix_len = calculate_prefix_length_bytes(prev_full_key, key);
+            if (!should_prefix_compress(prefix_len, key.size()))
+            {
+                prefix_len = 0;
+            }
+        }
+
+        if (prefix_len > 0)
+        {
+            stored_key.assign(key.begin() + prefix_len, key.end());
+        }
+
+        const uint32_t node_size =
+            sizeof(SBBTreeNode) + static_cast<uint32_t>(stored_key.size()) +
+            sizeof(OnDiskTID);
+        const uint32_t needed_space = node_size + sizeof(uint16_t);
+        if (page_header_->btr_free_space < needed_space)
+        {
+            return Status::PAGE_FULL;
+        }
+
+        if (entry_index > 0)
+        {
+            if (auto *prev_node = get_node(static_cast<uint16_t>(entry_index - 1));
+                prev_node != nullptr)
+            {
+                prev_node->btn_flags &=
+                    ~static_cast<uint16_t>(BTreeNodeFlags::LAST_ON_PAGE);
+            }
+        }
+
+        page_header_->btr_high_water -= node_size;
+        auto *node =
+            reinterpret_cast<SBBTreeNode *>(page_data_ + page_header_->btr_high_water);
+        uint16_t node_flags = static_cast<uint16_t>(BTreeNodeFlags::LAST_ON_PAGE);
+        if (entry_index == 0)
+        {
+            node_flags |= static_cast<uint16_t>(BTreeNodeFlags::FIRST_ON_PAGE);
+        }
+        node->btn_flags = node_flags;
+        node->btn_prefix_len = prefix_len;
+        node->btn_suffix_trunc = 0;
+        node->btn_key_len = static_cast<uint16_t>(stored_key.size());
+        node->btn_tuple_count = 1;
+        node->btn_child_page = 0;
+        node->btn_xmin = xmin;
+        node->btn_xmax = 0;
+
+        uint8_t *key_location = reinterpret_cast<uint8_t *>(node) + sizeof(SBBTreeNode);
+        if (!stored_key.empty())
+        {
+            std::memcpy(key_location, stored_key.data(), stored_key.size());
+        }
+        auto *tid_location = reinterpret_cast<OnDiskTID *>(key_location + stored_key.size());
+        tid_location[0] = toOnDiskTID(value.tid);
+
+        auto *offsets = reinterpret_cast<uint16_t *>(page_data_ + sizeof(SBBTreePage));
+        offsets[entry_index] = static_cast<uint16_t>(page_header_->btr_high_water);
+        page_header_->btr_count++;
+        page_header_->btr_free_space -= needed_space;
+
+        if (prefix_len > 0)
+        {
+            page_header_->btr_prefix_total += prefix_len;
+            if (page_header_->btr_min_prefix_len == 0 ||
+                prefix_len < page_header_->btr_min_prefix_len)
+            {
+                page_header_->btr_min_prefix_len = prefix_len;
+            }
+            page_header_->btr_flags |= static_cast<uint16_t>(BTreeFlags::COMPRESSED);
+        }
+        else if (page_header_->btr_prefix_total == 0)
+        {
+            page_header_->btr_flags &= ~static_cast<uint16_t>(BTreeFlags::COMPRESSED);
+        }
+
+        const uint32_t offset_array_end =
+            sizeof(SBBTreePage) +
+            (static_cast<uint32_t>(page_header_->btr_count) * sizeof(uint16_t));
+        pageSetLower(page_header_->btr_header, offset_array_end);
+        pageSetUpper(page_header_->btr_header, page_header_->btr_high_water);
+        pageSetSpecial(page_header_->btr_header, page_size_);
 
         return Status::OK;
     }
@@ -382,7 +530,7 @@ namespace scratchbird::core
 
     auto BTreePage::is_leaf() const -> bool
     {
-        return (page_header_->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0;
+        return page_is_leaf(page_header_);
     }
 
     auto BTreePage::find_split_point() -> uint16_t
@@ -536,7 +684,7 @@ namespace scratchbird::core
         }
 
         // Check if this is a leaf or internal node
-        bool is_leaf = (page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0;
+        const bool is_leaf = page_is_leaf(page);
 
         tuple_ids_out.clear();
 

@@ -274,11 +274,17 @@ std::string renderExprLikeValue(const v3::Value& value) {
 std::string renderAlterSystemClassifierStatement(const std::string& contract_id,
                                                  const v3::Value::Object& payload,
                                                  NativeSqlNameResolver* resolver) {
+    const auto action_value = objectField(payload, "action");
     const auto key_value = objectField(payload, "key");
+    const auto target_value = objectField(payload, "target");
     const auto value_value = objectField(payload, "value");
+    const uint64_t action = action_value != nullptr ? asU64(*action_value).value_or(1) : 1;
     const std::string key = key_value != nullptr && asString(*key_value).has_value()
                                 ? *asString(*key_value)
                                 : std::string();
+    const std::string target = target_value != nullptr && asString(*target_value).has_value()
+                                   ? *asString(*target_value)
+                                   : std::string();
     const std::string value_sql = value_value != nullptr
                                       ? renderExprLikeValue(*value_value)
                                       : std::string();
@@ -426,8 +432,49 @@ std::string renderAlterSystemClassifierStatement(const std::string& contract_id,
         return "ALTER MEASUREMENT " + name + " RETENTION " + value_sql;
     }
 
+    if (action == 3) {
+        return "CONFIG HISTORY";
+    }
+    if (action == 4) {
+        return "CONFIG RELOAD";
+    }
+    if (key == "management.show_servers") {
+        return "SHOW MANAGEMENT SERVERS";
+    }
+    if (key == "management.show_instructions") {
+        return "SHOW MANAGEMENT INSTRUCTIONS";
+    }
+    if (key == "management.show_drift") {
+        return "SHOW MANAGEMENT DRIFT";
+    }
+    if (action == 5) {
+        std::ostringstream sql;
+        sql << "ALTER SYSTEM ASSESS REMOTE SET " << key;
+        if (!value_sql.empty()) {
+            sql << " = " << value_sql;
+        }
+        if (!target.empty()) {
+            sql << " ON SERVER " << target;
+        }
+        return sql.str();
+    }
+    if (action == 6) {
+        return "ALTER SYSTEM APPLY INSTRUCTION " + key;
+    }
+    if (action == 7) {
+        return "ALTER SYSTEM CANCEL INSTRUCTION " + key;
+    }
+    if (action == 8) {
+        return "ALTER SYSTEM QUARANTINE INSTRUCTION " + key;
+    }
+    if (action == 9) {
+        return "ALTER SYSTEM ACKNOWLEDGE INSTRUCTION " + key;
+    }
     if (key.empty()) {
         return "ALTER SYSTEM";
+    }
+    if (action == 2) {
+        return "ALTER SYSTEM RESET " + key;
     }
     if (value_sql.empty()) {
         return "ALTER SYSTEM SET " + key;

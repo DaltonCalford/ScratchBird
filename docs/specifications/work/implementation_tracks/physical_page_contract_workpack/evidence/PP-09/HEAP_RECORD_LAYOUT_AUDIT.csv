@@ -1,0 +1,8 @@
+area,requirement,implementation_status,notes
+record_header,row_uuid present and stable across versions,pass,stable_row_uuid propagated through update and overwrite paths
+record_header,record_format defaults to canonical v1,pass,applyCanonicalRecordContract sets RECORD_FORMAT_V1 when zero
+record_header,payload_len tracks stored payload bytes,pass,payload_len recalculated from tuple size on each write path
+record_flags,RHD_DELETED reflects delete semantics,pass,deleteTuple sets infomask then canonical flag mapper derives RHD_DELETED
+record_flags,RHD_CHAINED reflects version-chain semantics,pass,back versions set HEAP_CHAIN and mapper sets RHD_CHAINED
+record_flags,RHD_MOVED reflects tuple relocation,pass,update/overwrite set HEAP_MOVED when tuple is relocated
+record_flags,RHD_TOAST_PTR reflects payload pointer contract,pass,mapper detects ToastPointer signature in payload

@@ -488,17 +488,45 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadWriteSamePage) {
 
     std::atomic<int> errors{0};
     std::atomic<int> successful_ops{0};
+    std::atomic<int> pin_errors{0};
+    std::atomic<int> unpin_errors{0};
+    std::atomic<int> pin_invalid_argument{0};
+    std::atomic<int> pin_io_error{0};
+    std::atomic<int> pin_other{0};
+    std::atomic<int> unpin_invalid_argument{0};
+    std::atomic<int> unpin_not_found{0};
+    std::atomic<int> unpin_io_error{0};
+    std::atomic<int> unpin_other{0};
+    std::mutex error_mutex;
+    std::string last_error;
     std::vector<std::thread> threads;
+
+    ASSERT_NO_FATAL_FAILURE(warmPages({SHARED_PAGE}));
 
     // Reader threads
     for (int t = 0; t < NUM_READ_THREADS; ++t) {
-        threads.emplace_back([&]() {
+        threads.emplace_back([&, t]() {
             ErrorContext ctx;
             for (int i = 0; i < ITERATIONS; ++i) {
                 void* buffer = nullptr;
                 Status s = pool_->pinPage(SHARED_PAGE, &buffer, &ctx);
                 if (s != Status::OK) {
                     errors.fetch_add(1);
+                    pin_errors.fetch_add(1);
+                    if (s == Status::INVALID_ARGUMENT) {
+                        pin_invalid_argument.fetch_add(1);
+                    } else if (s == Status::IO_ERROR) {
+                        pin_io_error.fetch_add(1);
+                    } else {
+                        pin_other.fetch_add(1);
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(error_mutex);
+                        last_error = "reader thread=" + std::to_string(t) +
+                                     " iter=" + std::to_string(i) +
+                                     " pin " + ctx.message +
+                                     " snapshot_after={" + describeFrameSnapshot(SHARED_PAGE) + "}";
+                    }
                     continue;
                 }
 
@@ -508,6 +536,23 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadWriteSamePage) {
                 s = pool_->unpinPage(SHARED_PAGE, false, &ctx);
                 if (s != Status::OK) {
                     errors.fetch_add(1);
+                    unpin_errors.fetch_add(1);
+                    if (s == Status::INVALID_ARGUMENT) {
+                        unpin_invalid_argument.fetch_add(1);
+                    } else if (s == Status::NOT_FOUND) {
+                        unpin_not_found.fetch_add(1);
+                    } else if (s == Status::IO_ERROR) {
+                        unpin_io_error.fetch_add(1);
+                    } else {
+                        unpin_other.fetch_add(1);
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(error_mutex);
+                        last_error = "reader thread=" + std::to_string(t) +
+                                     " iter=" + std::to_string(i) +
+                                     " unpin " + ctx.message +
+                                     " snapshot_after={" + describeFrameSnapshot(SHARED_PAGE) + "}";
+                    }
                 } else {
                     successful_ops.fetch_add(1);
                 }
@@ -524,6 +569,21 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadWriteSamePage) {
                 Status s = pool_->pinPage(SHARED_PAGE, &buffer, &ctx);
                 if (s != Status::OK) {
                     errors.fetch_add(1);
+                    pin_errors.fetch_add(1);
+                    if (s == Status::INVALID_ARGUMENT) {
+                        pin_invalid_argument.fetch_add(1);
+                    } else if (s == Status::IO_ERROR) {
+                        pin_io_error.fetch_add(1);
+                    } else {
+                        pin_other.fetch_add(1);
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(error_mutex);
+                        last_error = "writer thread=" + std::to_string(t) +
+                                     " iter=" + std::to_string(i) +
+                                     " pin " + ctx.message +
+                                     " snapshot_after={" + describeFrameSnapshot(SHARED_PAGE) + "}";
+                    }
                     continue;
                 }
 
@@ -535,6 +595,23 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadWriteSamePage) {
                 s = pool_->unpinPage(SHARED_PAGE, true, &ctx);
                 if (s != Status::OK) {
                     errors.fetch_add(1);
+                    unpin_errors.fetch_add(1);
+                    if (s == Status::INVALID_ARGUMENT) {
+                        unpin_invalid_argument.fetch_add(1);
+                    } else if (s == Status::NOT_FOUND) {
+                        unpin_not_found.fetch_add(1);
+                    } else if (s == Status::IO_ERROR) {
+                        unpin_io_error.fetch_add(1);
+                    } else {
+                        unpin_other.fetch_add(1);
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(error_mutex);
+                        last_error = "writer thread=" + std::to_string(t) +
+                                     " iter=" + std::to_string(i) +
+                                     " unpin " + ctx.message +
+                                     " snapshot_after={" + describeFrameSnapshot(SHARED_PAGE) + "}";
+                    }
                 } else {
                     successful_ops.fetch_add(1);
                 }
@@ -546,7 +623,18 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadWriteSamePage) {
         t.join();
     }
 
-    EXPECT_EQ(errors.load(), 0) << "Concurrent read/write to same page should be safe";
+    EXPECT_EQ(errors.load(), 0)
+        << "Concurrent read/write to same page should be safe"
+        << " (pin_errors=" << pin_errors.load()
+        << ", unpin_errors=" << unpin_errors.load()
+        << ", pin_invalid_argument=" << pin_invalid_argument.load()
+        << ", pin_io_error=" << pin_io_error.load()
+        << ", pin_other=" << pin_other.load()
+        << ", unpin_invalid_argument=" << unpin_invalid_argument.load()
+        << ", unpin_not_found=" << unpin_not_found.load()
+        << ", unpin_io_error=" << unpin_io_error.load()
+        << ", unpin_other=" << unpin_other.load()
+        << ", last_error='" << last_error << "')";
     EXPECT_EQ(successful_ops.load(), (NUM_READ_THREADS + NUM_WRITE_THREADS) * ITERATIONS);
 
     std::cout << "Same-page concurrency test: " << successful_ops.load() << " operations completed\n";

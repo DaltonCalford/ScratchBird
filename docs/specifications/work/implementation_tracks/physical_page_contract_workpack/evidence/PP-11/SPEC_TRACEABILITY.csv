@@ -1,0 +1,6 @@
+spec_clause,implementation,evidence,status
+TOAST pointer binary format is canonical 32 bytes,include/scratchbird/core/toast.h (ToastPointer + static_assert),TOAST_POINTER_BINARY_AUDIT.csv,pass
+TOAST pointer flags/compression semantics are canonicalized,src/core/toast.cpp (toastValue/detoastValue),TOAST_POINTER_BINARY_AUDIT.csv,pass
+Heap contract detects canonical TOAST pointer payload,src/core/heap_page.cpp (applyCanonicalRecordContract + isToastPointer),TEST_RESULTS.md,pass
+GC/scan logic identifies TOAST references via canonical pointer validator,src/core/garbage_collector.cpp,TEST_RESULTS.md,pass
+Unit suites validate pointer creation/detection and TOAST read paths,tests/unit/test_toast_operations.cpp + tests/unit/test_heap_toast_integration.cpp + tests/unit/test_toast_tip_visibility.cpp,TEST_RESULTS.md,pass

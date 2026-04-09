@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-051",
+  "phase": "PH5",
+  "title": "Implement alerting dashboards and readiness health model",
+  "status": "pending",
+  "owner": "sre-observability",
+  "estimate_days": 5,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

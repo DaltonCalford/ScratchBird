@@ -28,6 +28,14 @@ namespace scratchbird::core
         IndexGcLifecycleState lifecycle_state = IndexGcLifecycleState::LOGICAL_DEAD_ROOT;
     };
 
+    struct IndexCleanupDebtSnapshot
+    {
+        uint64_t backlog_pages = 0;
+        uint64_t backlog_bytes = 0;
+        uint32_t first_locality_page_id = 0;
+        bool repair_required = false;
+    };
+
     /**
      * IndexGCInterface - Interface for index garbage collection
      *
@@ -144,6 +152,17 @@ namespace scratchbird::core
                                          uint64_t *entries_removed_out = nullptr,
                                          uint64_t *pages_modified_out = nullptr,
                                          ErrorContext *ctx = nullptr) = 0;
+
+        virtual Status getCleanupDebtSnapshot(IndexCleanupDebtSnapshot *snapshot_out,
+                                              ErrorContext *ctx = nullptr) const
+        {
+            (void)ctx;
+            if (snapshot_out != nullptr)
+            {
+                *snapshot_out = IndexCleanupDebtSnapshot{};
+            }
+            return Status::OK;
+        }
 
         /**
          * Get index type name (for logging/debugging)

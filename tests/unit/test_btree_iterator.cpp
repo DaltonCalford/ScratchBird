@@ -27,12 +27,14 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/gpid.h"
+#include "scratchbird/core/index_key_encoding.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/tid.h"
 #include "test_helpers.h"
 #include <filesystem>
 #include <vector>
 #include <algorithm>
+#include <cstring>
 #include <random>
 #include <iostream>
 
@@ -107,16 +109,38 @@ protected:
     // Helper: Create a key from an integer
     std::vector<uint8_t> makeKey(int32_t value)
     {
-        std::vector<uint8_t> key(sizeof(int32_t));
-        *reinterpret_cast<int32_t*>(key.data()) = value;
-        return key;
+        std::vector<uint8_t> plain_key(sizeof(int32_t));
+        std::memcpy(plain_key.data(), &value, sizeof(int32_t));
+
+        std::vector<uint8_t> encoded_key;
+        ErrorContext ctx;
+        EXPECT_EQ(index_key_encoding::encodePlainValue(DataType::INT32,
+                                                       plain_key,
+                                                       &encoded_key,
+                                                       &ctx),
+                  Status::OK)
+            << ctx.message;
+        return encoded_key;
     }
 
     // Helper: Extract integer from key
     int32_t extractKey(const std::vector<uint8_t>& key)
     {
-        if (key.size() < sizeof(int32_t)) return 0;
-        return *reinterpret_cast<const int32_t*>(key.data());
+        std::vector<uint8_t> plain_key;
+        ErrorContext ctx;
+        if (index_key_encoding::decodeToPlainValue(DataType::INT32,
+                                                   key.data(),
+                                                   key.size(),
+                                                   &plain_key,
+                                                   &ctx) != Status::OK ||
+            plain_key.size() < sizeof(int32_t))
+        {
+            return 0;
+        }
+
+        int32_t value = 0;
+        std::memcpy(&value, plain_key.data(), sizeof(int32_t));
+        return value;
     }
 
     GPID allocateRootGpid(ErrorContext *ctx)
@@ -271,6 +295,43 @@ TEST_F(BTreeIteratorTest, FullScanMultiplePages)
     EXPECT_EQ(scanned.size(), 100u);
     EXPECT_TRUE(std::is_sorted(scanned.begin(), scanned.end()));
     EXPECT_EQ(iter->getScannedCount(), 100u);
+}
+
+TEST_F(BTreeIteratorTest, AscendingRightEdgeRangeIncludesTerminalKeyAfterRepeatedSplits)
+{
+    GPID root_gpid;
+    ASSERT_EQ(createIndex(&root_gpid), Status::OK);
+    openIndex(root_gpid);
+
+    std::vector<int32_t> keys;
+    for (int i = 1; i <= 256; ++i)
+    {
+        keys.push_back(i);
+    }
+    insertKeys(keys);
+
+    ErrorContext ctx;
+    std::vector<TID> tids;
+    ASSERT_EQ(btree_->search(makeKey(256), 0, &tids, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(tids.size(), 1u);
+
+    auto start_key = makeKey(200);
+    auto iter = btree_->rangeScan(&start_key, nullptr, 0, true, true, &ctx);
+    ASSERT_NE(iter, nullptr);
+
+    std::vector<int32_t> scanned;
+    while (iter->hasNext())
+    {
+        std::vector<uint8_t> key;
+        TID tid;
+        ASSERT_EQ(iter->next(&key, &tid, &ctx), Status::OK) << ctx.message;
+        scanned.push_back(extractKey(key));
+    }
+
+    ASSERT_EQ(scanned.size(), 57u);
+    EXPECT_EQ(scanned.front(), 200);
+    EXPECT_EQ(scanned.back(), 256);
 }
 
 /**

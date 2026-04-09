@@ -1,0 +1,9 @@
+case_id,required_check,expected_result,error_code
+T25-LAYER-01,mode_composition_profiles_match_spec,pass,
+T25-LAYER-02,listener_mgmt_ipc_rejects_sql_sblr_data_plane,pass,
+T25-LAYER-03,per_listener_parser_family_policy_single_family_per_port,pass,
+T25-LAYER-04,nine_parser_inventory_complete_no_family_fallback,pass,
+T25-LAYER-05,embedded_cluster_bridge_joins_without_listener_ipc_when_configured,pass,
+T25-LAYER-06,parser_auth_fails_deterministically_when_no_open_database,pass,
+T25-LAYER-07,listeners_parsers_not_started_when_no_database_opened,pass,
+T25-LAYER-08,startup_precedence_conflict_resolution_auditable,pass,

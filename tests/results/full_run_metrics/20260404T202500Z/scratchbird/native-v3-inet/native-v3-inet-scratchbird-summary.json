@@ -1,0 +1,30 @@
+{
+  "metadata": {
+    "source_result_dir": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_inet/results/ctest/20260404_202255",
+    "manifest": {
+      "run_id": "20260404_202255",
+      "engine": "scratchbird_native",
+      "protocol_surface": "sbwp_native",
+      "parser_core": "v3",
+      "parser_mode": "native_core",
+      "execution_mode": "inet_tcp_listener",
+      "isql_binary": "/home/dcalford/CliWork/ScratchBird-driver/build_cli/tracks/p3/drivers/cli/sb_isql",
+      "ctest_list_file": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_inet/config/v3_native_inet_list.txt",
+      "listed_tests": 23,
+      "status": "skipped",
+      "failure_count": 0,
+      "results_dir": "/home/dcalford/CliWork/ScratchBird/tests/conformance/v3_native_inet/results/ctest/20260404_202255",
+      "host": "127.0.0.1",
+      "port": "16092",
+      "database": "main",
+      "username": "SysArch",
+      "timestamp_utc": "2026-04-05T00:22:55Z"
+    }
+  },
+  "summary": {
+    "total_cases": 23,
+    "passed": 23,
+    "failed": 0
+  },
+  "results": []
+}

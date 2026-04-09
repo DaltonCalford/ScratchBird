@@ -1,0 +1,9 @@
+case_id,type_name,edge_case,input,expected_result,error_code
+T14-EC-001,int32,overflow,2147483648,reject,E_NUMERIC_VALUE_OUT_OF_RANGE
+T14-EC-002,uint128,negative_input,-1,reject,E_INVALID_TEXT_REPRESENTATION
+T14-EC-003,decimal,precision_overflow,999999999999999999999999999999.99,reject,E_NUMERIC_VALUE_OUT_OF_RANGE
+T14-EC-004,varchar,length_overflow,very_long_string,reject,E_STRING_DATA_RIGHT_TRUNCATION
+T14-EC-005,date,invalid_calendar,2026-02-30,reject,E_DATETIME_VALUE_OUT_OF_RANGE
+T14-EC-006,time,invalid_time,24:00:00,reject,E_DATETIME_VALUE_OUT_OF_RANGE
+T14-EC-007,uuid,invalid_hex,zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz,reject,E_INVALID_TEXT_REPRESENTATION
+T14-EC-008,inet,invalid_prefix,10.0.0.1/99,reject,E_INVALID_TEXT_REPRESENTATION

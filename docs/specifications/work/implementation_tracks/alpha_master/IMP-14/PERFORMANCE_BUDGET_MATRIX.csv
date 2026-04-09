@@ -1,0 +1,6 @@
+metric_id,workload,threshold_type,threshold_value,pass_condition
+T14-PF-001,scalar_parse_int_hot_path,p95_us,25,measured_p95<=25
+T14-PF-002,scalar_format_uuid_hot_path,p95_us,20,measured_p95<=20
+T14-PF-003,decimal_parse_100k_values,throughput_rows_per_sec,300000,measured_rate>=300000
+T14-PF-004,wire_conversion_100k_values,p95_ms,120,measured_p95<=120
+T14-PF-005,fuzz_validation_memory,MiB,256,measured_peak<=256

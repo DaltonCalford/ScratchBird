@@ -1,0 +1,11 @@
+{
+  "gate_id": "HCN-GATE-04",
+  "title": "PH4 Observability Contract Closure Gate",
+  "phase": "PH4",
+  "owner": "codex",
+  "started_utc": "2026-02-23T00:00:00Z",
+  "completed_utc": "2026-02-26T19:24:48Z",
+  "decision": "pass",
+  "source_commit": "9e789eaad9b8e377f42f96f2ea8fec0193970f40",
+  "notes": "HCN-040..043 complete with canonical metrics policy, SQL view builders, health/readiness endpoint contract, and structured epoch-context event stream."
+}

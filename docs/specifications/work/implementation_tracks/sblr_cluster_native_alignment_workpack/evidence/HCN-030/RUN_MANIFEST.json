@@ -1,0 +1,15 @@
+{
+  "ticket_id": "HCN-030",
+  "title": "Implement shard commit log append pipeline",
+  "phase": "PH3",
+  "owner": "codex",
+  "started_utc": "2026-02-23T00:00:00Z",
+  "completed_utc": "2026-02-26T19:01:41Z",
+  "source_commit": "9e789eaad9b8e377f42f96f2ea8fec0193970f40",
+  "commands": [
+    "cmake --build build --target scratchbird_tests -j\14",
+    "./build/tests/scratchbird_tests --gtest_filter='ShardCommitLogPipelineTest.*'",
+    "./build/tests/scratchbird_tests --gtest_filter='ClusterWriteFencingTest.*:DeterministicShardRouterTest.*:SessionEpochPinsTest.*:CatalogSessionEpochPinningTest.*:MultiShardWriteGuardTest.*:GtxidOrderingTest.*'"
+  ],
+  "notes": "Shard commit log append path now enforces per-shard local_txn_id ordering and durable fsync-backed append semantics."
+}

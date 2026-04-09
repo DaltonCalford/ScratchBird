@@ -333,6 +333,8 @@ sys [o] (SCHEMA)
 sys [s]
 sys.cluster [o] (SCHEMA)
 sys.cluster [s]
+sys.config [o] (SCHEMA)
+sys.config [s]
 sys.connections [o] (SCHEMA)
 sys.connections [s]
 sys.emulation [o] (SCHEMA)
@@ -341,11 +343,11 @@ sys.information [o] (SCHEMA)
 sys.information [s]
 sys.jobs [o] (SCHEMA)
 sys.jobs [s]
-sys.sb_toast_019d3778-98c6-71ef-8ac1-251a55acaee7 [o] (TABLE)
-sys.sb_toast_019d3778-98c6-71ef-8ac1-251a55acaee7.chunk_data [o] (COLUMN)
-sys.sb_toast_019d3778-98c6-71ef-8ac1-251a55acaee7.chunk_id [o] (COLUMN)
-sys.sb_toast_019d3778-98c6-71ef-8ac1-251a55acaee7.chunk_seq [o] (COLUMN)
-sys.sb_toast_019d3778-98c6-71ef-8ac1-251a55acaee7.sb_toast_019d3778-98c6-71ef-8ac1-251a55acaee7_idx [o] (INDEX)
+sys.sb_toast_019d5bb8-2992-7739-bf13-78eacf2a6902 [o] (TABLE)
+sys.sb_toast_019d5bb8-2992-7739-bf13-78eacf2a6902.chunk_data [o] (COLUMN)
+sys.sb_toast_019d5bb8-2992-7739-bf13-78eacf2a6902.chunk_id [o] (COLUMN)
+sys.sb_toast_019d5bb8-2992-7739-bf13-78eacf2a6902.chunk_seq [o] (COLUMN)
+sys.sb_toast_019d5bb8-2992-7739-bf13-78eacf2a6902.sb_toast_019d5bb8-2992-7739-bf13-78eacf2a6902_idx [o] (INDEX)
 sys.schema [o] (SCHEMA)
 sys.schema [s]
 sys.security [o] (SCHEMA)

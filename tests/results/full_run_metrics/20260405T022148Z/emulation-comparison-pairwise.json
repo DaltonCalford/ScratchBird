@@ -1,0 +1,189 @@
+{
+  "suite_family": "emulation-comparison",
+  "contract_id": "compatibility-emulation-compare-v1",
+  "pairs": [
+    {
+      "dialect_family": "firebird",
+      "original_target": "upstream-firebird",
+      "emulation_target": "scratchbird-firebird",
+      "original_status": "passed",
+      "emulation_status": "missing",
+      "comparable": false,
+      "verdict": "missing-or-ineligible-source",
+      "contract_checks": [
+        {
+          "field": "contract_id",
+          "original": "compatibility-emulation-compare-v1",
+          "emulation": "compatibility-emulation-compare-v1",
+          "match": true
+        },
+        {
+          "field": "expected_harness",
+          "original": "compatibility_converted_sql_ctest",
+          "emulation": "compatibility_converted_sql_ctest",
+          "match": true
+        },
+        {
+          "field": "protocol_surface",
+          "original": "firebird_remote",
+          "emulation": "",
+          "match": false
+        },
+        {
+          "field": "parser_core",
+          "original": "v3",
+          "emulation": "",
+          "match": false
+        },
+        {
+          "field": "parser_mode",
+          "original": "emulation_surface_only",
+          "emulation": "",
+          "match": false
+        },
+        {
+          "field": "ctest_list_mode",
+          "original": "curated",
+          "emulation": "",
+          "match": false
+        },
+        {
+          "field": "ctest_list_identity",
+          "original": "config/ctest_list.txt",
+          "emulation": "",
+          "match": false
+        },
+        {
+          "field": "listed_tests",
+          "original": 12,
+          "emulation": 0,
+          "match": false
+        }
+      ],
+      "original_summary_json": "upstream-firebird/emulation-comparison/emulation-comparison-upstream-firebird-summary.json",
+      "emulation_summary_json": "scratchbird-firebird/emulation-comparison/emulation-comparison-scratchbird-firebird-summary.json"
+    },
+    {
+      "dialect_family": "mysql",
+      "original_target": "upstream-mysql",
+      "emulation_target": "scratchbird-mysql",
+      "original_status": "missing",
+      "emulation_status": "passed",
+      "comparable": false,
+      "verdict": "missing-or-ineligible-source",
+      "contract_checks": [
+        {
+          "field": "contract_id",
+          "original": "compatibility-emulation-compare-v1",
+          "emulation": "compatibility-emulation-compare-v1",
+          "match": true
+        },
+        {
+          "field": "expected_harness",
+          "original": "compatibility_converted_sql_ctest",
+          "emulation": "compatibility_converted_sql_ctest",
+          "match": true
+        },
+        {
+          "field": "protocol_surface",
+          "original": "",
+          "emulation": "mysql_8x",
+          "match": false
+        },
+        {
+          "field": "parser_core",
+          "original": "",
+          "emulation": "v3",
+          "match": false
+        },
+        {
+          "field": "parser_mode",
+          "original": "",
+          "emulation": "emulation_surface_only",
+          "match": false
+        },
+        {
+          "field": "ctest_list_mode",
+          "original": "",
+          "emulation": "curated",
+          "match": false
+        },
+        {
+          "field": "ctest_list_identity",
+          "original": "",
+          "emulation": "config/ctest_list.txt",
+          "match": false
+        },
+        {
+          "field": "listed_tests",
+          "original": 0,
+          "emulation": 3,
+          "match": false
+        }
+      ],
+      "original_summary_json": "upstream-mysql/emulation-comparison/emulation-comparison-upstream-mysql-summary.json",
+      "emulation_summary_json": "scratchbird-mysql/emulation-comparison/emulation-comparison-scratchbird-mysql-summary.json"
+    },
+    {
+      "dialect_family": "postgresql",
+      "original_target": "upstream-postgresql",
+      "emulation_target": "scratchbird-postgresql",
+      "original_status": "missing",
+      "emulation_status": "passed",
+      "comparable": false,
+      "verdict": "missing-or-ineligible-source",
+      "contract_checks": [
+        {
+          "field": "contract_id",
+          "original": "compatibility-emulation-compare-v1",
+          "emulation": "compatibility-emulation-compare-v1",
+          "match": true
+        },
+        {
+          "field": "expected_harness",
+          "original": "compatibility_converted_sql_ctest",
+          "emulation": "compatibility_converted_sql_ctest",
+          "match": true
+        },
+        {
+          "field": "protocol_surface",
+          "original": "",
+          "emulation": "postgresql_v3",
+          "match": false
+        },
+        {
+          "field": "parser_core",
+          "original": "",
+          "emulation": "v3",
+          "match": false
+        },
+        {
+          "field": "parser_mode",
+          "original": "",
+          "emulation": "emulation_surface_only",
+          "match": false
+        },
+        {
+          "field": "ctest_list_mode",
+          "original": "",
+          "emulation": "curated",
+          "match": false
+        },
+        {
+          "field": "ctest_list_identity",
+          "original": "",
+          "emulation": "config/ctest_list.txt",
+          "match": false
+        },
+        {
+          "field": "listed_tests",
+          "original": 0,
+          "emulation": 5,
+          "match": false
+        }
+      ],
+      "original_summary_json": "upstream-postgresql/emulation-comparison/emulation-comparison-upstream-postgresql-summary.json",
+      "emulation_summary_json": "scratchbird-postgresql/emulation-comparison/emulation-comparison-scratchbird-postgresql-summary.json"
+    }
+  ]
+}

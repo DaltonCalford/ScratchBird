@@ -1,0 +1,5 @@
+case_id,suite,required_check,expected_result,error_code
+T28-A001,A,parser_cannot_execute_locally,pass,
+T28-A002,A,engine_rejects_request_without_required_metadata,reject,PAR-E-METADATA
+T28-A003,A,parser_cannot_bypass_engine_auth_privilege,pass,
+T28-A004,A,parser_crash_does_not_crash_engine_process,pass,

@@ -1,0 +1,5 @@
+case_id,suite,required_check,expected_result,error_code
+T22-H02,H,type_bounds_match_sections14_15,pass,
+T22-H03,H,parser_pipeline_feature_result_ids_match_section28,pass,
+T22-H04,H,transaction_alias_rewrite_metadata_deterministic,pass,
+T22-H06,H,rule_set_and_clause_code_mapping_matches_section21,pass,

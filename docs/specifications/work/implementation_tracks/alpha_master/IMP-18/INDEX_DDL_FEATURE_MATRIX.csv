@@ -1,0 +1,4 @@
+case_id,ddl_feature,required_check,expected_result,error_code
+T18-DDL-001,expression_predicate_include_prefix_indexes,feature_semantics_correct,pass,
+T18-DDL-002,nulls_distinct_modes,distinct_vs_not_distinct_behavior_correct,pass,
+T18-DDL-003,desc_sort_modes,invert_compare_and_bytewise_complement_ordering_equivalent,pass,

@@ -1,0 +1,4 @@
+case_id,suite,required_check,expected_result,error_code
+T26-C01,C,execute_req_carries_valid_sblr_container_and_feature_metadata,pass,
+T26-C02,C,result_sequence_matches_result_shape,pass,
+T26-C03,C,verifier_failures_map_to_error_frame_verifier_domain,pass,

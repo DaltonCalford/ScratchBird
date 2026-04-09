@@ -1,0 +1,298 @@
+{
+  "metadata": {
+    "engine": "scratchbird",
+    "host": "127.0.0.1",
+    "port": 17092,
+    "timestamp": "20260403_021502"
+  },
+  "results": [
+    {
+      "test_name": "clustered_pk_range_scan",
+      "test_category": "mysql_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: [42000] Table or view not found: orders_clustered (Object not found)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "clustered_pk_prefix_scan",
+      "test_category": "mysql_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: [42000] Table or view not found: orders_clustered (Object not found)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "covering_index_lookup",
+      "test_category": "mysql_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: [42000] Table or view not found: products_covering (Object not found)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "secondary_index_covering_count",
+      "test_category": "mysql_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: [42000] Table or view not found: events (Object not found)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "repeated_hot_page_access",
+      "test_category": "mysql_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: [42000] Table or view not found: hot_data (Object not found)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "point_select_pk_buffer_efficiency",
+      "test_category": "mysql_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: [42000] Expected expression",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "secondary_index_insert_buffering",
+      "test_category": "mysql_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: [42000] Expected expression",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "sequential_pk_insert_performance",
+      "test_category": "mysql_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: [42000] Expected expression",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "parallel_seq_scan_large_table",
+      "test_category": "pg_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: [42000] Expected BY after GROUP",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "parallel_hash_join",
+      "test_category": "pg_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 432.29055404663086,
+      "expected_pattern": "Slower than PostgreSQL",
+      "actual_pattern": "ScratchBird native candidate",
+      "performance_score": 50.0,
+      "notes": "PostgreSQL advantage: 3-6x"
+    },
+    {
+      "test_name": "parallel_bitmap_heap_scan",
+      "test_category": "pg_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 358.61778259277344,
+      "expected_pattern": "Slower than PostgreSQL",
+      "actual_pattern": "ScratchBird native candidate",
+      "performance_score": 50.0,
+      "notes": "PostgreSQL advantage: 3-5x"
+    },
+    {
+      "test_name": "gin_fulltext_search",
+      "test_category": "pg_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: [42000] PRS_0506: Unknown builtin function symbol",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "gist_range_queries",
+      "test_category": "pg_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: [42000] Table or view not found: reservations (Object not found)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "brin_warehouse_scan",
+      "test_category": "pg_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 326.5817165374756,
+      "expected_pattern": "Slower than PostgreSQL",
+      "actual_pattern": "ScratchBird native candidate",
+      "performance_score": 50.0,
+      "notes": "PostgreSQL advantage: 5-20x index size, 2-3x query"
+    },
+    {
+      "test_name": "partial_index_selective",
+      "test_category": "pg_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: [42000] Table or view not found: orders_with_status (Object not found)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "hash_join_large_tables",
+      "test_category": "pg_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 471.22955322265625,
+      "expected_pattern": "Slower than PostgreSQL",
+      "actual_pattern": "ScratchBird native candidate",
+      "performance_score": 50.0,
+      "notes": "PostgreSQL advantage: 10-100x"
+    },
+    {
+      "test_name": "merge_join_sorted",
+      "test_category": "pg_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 596.7588424682617,
+      "expected_pattern": "Slower than PostgreSQL",
+      "actual_pattern": "ScratchBird native candidate",
+      "performance_score": 50.0,
+      "notes": "PostgreSQL advantage: 5-10x"
+    },
+    {
+      "test_name": "toast_large_column_scan",
+      "test_category": "pg_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 259.1245174407959,
+      "expected_pattern": "Slower than PostgreSQL",
+      "actual_pattern": "ScratchBird native candidate",
+      "performance_score": 50.0,
+      "notes": "PostgreSQL advantage: 2-5x"
+    },
+    {
+      "test_name": "hot_update_frequent",
+      "test_category": "pg_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 282.43327140808105,
+      "expected_pattern": "Slower than PostgreSQL",
+      "actual_pattern": "ScratchBird native candidate",
+      "performance_score": 50.0,
+      "notes": "PostgreSQL advantage: 3-10x"
+    },
+    {
+      "test_name": "mga_readers_dont_block",
+      "test_category": "fb_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 163.72442245483398,
+      "expected_pattern": "Slower than Firebird",
+      "actual_pattern": "ScratchBird native candidate",
+      "performance_score": 50.0,
+      "notes": "Firebird advantage: 10-100x (under high contention)"
+    },
+    {
+      "test_name": "mga_long_running_read",
+      "test_category": "fb_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 339.80751037597656,
+      "expected_pattern": "Slower than Firebird",
+      "actual_pattern": "ScratchBird native candidate",
+      "performance_score": 50.0,
+      "notes": "Firebird advantage: No blocking vs vacuum blocking"
+    },
+    {
+      "test_name": "mga_rollback_performance",
+      "test_category": "fb_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 377.0177364349365,
+      "expected_pattern": "Slower than Firebird",
+      "actual_pattern": "ScratchBird native candidate",
+      "performance_score": 50.0,
+      "notes": "Firebird advantage: 100-1000x for large transactions"
+    },
+    {
+      "test_name": "concurrent_read_heavy",
+      "test_category": "fb_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: [42000] Table or view not found: read_heavy (Object not found)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "concurrent_write_heavy",
+      "test_category": "fb_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 339.88022804260254,
+      "expected_pattern": "Slower than Firebird",
+      "actual_pattern": "ScratchBird native candidate",
+      "performance_score": 50.0,
+      "notes": "Firebird advantage: 2-5x"
+    },
+    {
+      "test_name": "storage_compact_nulls",
+      "test_category": "fb_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 329.0395736694336,
+      "expected_pattern": "Slower than Firebird",
+      "actual_pattern": "ScratchBird native candidate",
+      "performance_score": 50.0,
+      "notes": "Firebird advantage: 30-50% smaller"
+    },
+    {
+      "test_name": "storage_index_compression",
+      "test_category": "fb_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: [42000] Table or view not found: repetitive_data (Object not found)",
+      "performance_score": 0,
+      "notes": "Failed"
+    },
+    {
+      "test_name": "index_selective_bitmap",
+      "test_category": "fb_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 496.59109115600586,
+      "expected_pattern": "Slower than Firebird",
+      "actual_pattern": "ScratchBird native candidate",
+      "performance_score": 50.0,
+      "notes": "Firebird advantage: 2-3x"
+    },
+    {
+      "test_name": "index_navigational",
+      "test_category": "fb_optimized",
+      "engine": "scratchbird",
+      "duration_ms": 0,
+      "expected_pattern": "",
+      "actual_pattern": "Error: [42000] Expected expression",
+      "performance_score": 0,
+      "notes": "Failed"
+    }
+  ],
+  "summary": {
+    "total_tests": 28,
+    "by_category": {
+      "mysql_optimized": 8,
+      "pg_optimized": 11,
+      "fb_optimized": 9
+    }
+  }
+}

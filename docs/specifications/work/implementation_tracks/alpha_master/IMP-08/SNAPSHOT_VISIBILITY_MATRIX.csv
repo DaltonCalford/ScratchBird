@@ -1,0 +1,11 @@
+case_id,create_tx_state,delete_tx_state,reader_tx_relation,expected_visibility,expected_action,error_code
+VIS-001,committed,0,reader_other,visible,use_current_version,NONE
+VIS-002,active,0,reader_other,invisible,follow_back_ptr,NONE
+VIS-003,reader_self,0,reader_self,visible,use_current_version,NONE
+VIS-004,committed,committed_other,reader_other,invisible,follow_back_ptr,NONE
+VIS-005,committed,active_other,reader_other,visible,treat_delete_as_zero,NONE
+VIS-006,committed,aborted,reader_other,visible,treat_delete_as_zero,NONE
+VIS-007,committed,reader_self,reader_self,invisible_or_intent,session_semantic_path,NONE
+VIS-008,invalid_chain_pointer,n/a,any,n/a,reject,BROKEN_VERSION_CHAIN
+VIS-009,no_visible_version_found,n/a,any,invisible,row_not_returned,NONE
+VIS-010,update_creates_new_version,previous_visible,writer_tx,new_visible_with_back_ptr,chain_extended,NONE

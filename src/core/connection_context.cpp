@@ -19,13 +19,20 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/mga_backout_engine.h"
 #include "scratchbird/core/heap_page.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
+#include "scratchbird/sblr/v3_plan_cache_key.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cassert>
 #include <cerrno>
 #include <cctype>
 #include <cstdio>
+#include <fstream>
+#include <iomanip>
 #include <limits>
+#include <mutex>
+#include <sstream>
+#include <unordered_set>
 
 namespace scratchbird::core
 {
@@ -78,6 +85,264 @@ namespace scratchbird::core
                 normalized.push_back(ch == '/' ? '.' : ch);
             }
             return normalized;
+        }
+
+        struct ConnectionContextCurrentGuard
+        {
+            ConnectionContext* previous = nullptr;
+            bool changed = false;
+
+            explicit ConnectionContextCurrentGuard(ConnectionContext* current)
+                : previous(ConnectionContext::getCurrent())
+            {
+                if (current != nullptr && current != previous)
+                {
+                    ConnectionContext::setCurrent(current);
+                    changed = true;
+                }
+            }
+
+            ~ConnectionContextCurrentGuard()
+            {
+                if (changed)
+                {
+                    ConnectionContext::setCurrent(previous);
+                }
+            }
+        };
+
+        std::string leadingPreparedStatementKeywordUpper(const std::string& sql)
+        {
+            size_t pos = 0;
+            while (pos < sql.size() &&
+                   std::isspace(static_cast<unsigned char>(sql[pos])) != 0)
+            {
+                ++pos;
+            }
+
+            size_t end = pos;
+            while (end < sql.size() &&
+                   std::isalpha(static_cast<unsigned char>(sql[end])) != 0)
+            {
+                ++end;
+            }
+
+            std::string keyword = sql.substr(pos, end - pos);
+            std::transform(keyword.begin(),
+                           keyword.end(),
+                           keyword.begin(),
+                           [](unsigned char ch) {
+                               return static_cast<char>(std::toupper(ch));
+                           });
+            return keyword;
+        }
+
+        bool statementSupportsPreparedOptimizerSpecialization(const std::string& sql)
+        {
+            const std::string keyword = leadingPreparedStatementKeywordUpper(sql);
+            if (keyword.empty())
+            {
+                return false;
+            }
+
+            static const std::unordered_set<std::string> kGenericOnlyKeywords = {
+                "INSERT",   "UPDATE",   "DELETE",  "MERGE",   "UPSERT",  "REPLACE",
+                "CREATE",   "ALTER",    "DROP",    "TRUNCATE","GRANT",   "REVOKE",
+                "SET",      "BEGIN",    "COMMIT",  "ROLLBACK","SAVEPOINT","RELEASE",
+                "CALL",     "EXECUTE",  "DECLARE", "DO",      "COPY",
+            };
+
+            return kGenericOnlyKeywords.find(keyword) == kGenericOnlyKeywords.end();
+        }
+
+        bool preparedSpecializationDialectEligible(const ConnectionContext* conn_ctx)
+        {
+            auto normalize_tag = [](const std::string& value) {
+                std::string normalized;
+                normalized.reserve(value.size());
+                for (unsigned char ch : value)
+                {
+                    normalized.push_back(
+                        static_cast<char>(std::toupper(ch)));
+                }
+                return normalized;
+            };
+
+            if (conn_ctx == nullptr)
+            {
+                return true;
+            }
+
+            const std::string dialect = normalize_tag(conn_ctx->dialect_tag());
+            const std::string emulation = normalize_tag(conn_ctx->emulationMode());
+
+            static const std::unordered_set<std::string> kNativeDialects = {
+                "",
+                "SCRATCHBIRD",
+                "SCRATCHBIRD_V3",
+                "SCRATCHBIRD_NATIVE",
+                "NATIVE",
+            };
+
+            if (kNativeDialects.find(emulation) == kNativeDialects.end())
+            {
+                return false;
+            }
+            return kNativeDialects.find(dialect) != kNativeDialects.end();
+        }
+
+        auto buildPreparedOptimizerParameterBindings(
+            const std::vector<std::string>& parameter_values,
+            const std::vector<bool>& parameter_nulls) -> optimizer::ParameterBindings
+        {
+            optimizer::ParameterBindings bindings;
+            bindings.positional.reserve(parameter_values.size());
+            for (size_t index = 0; index < parameter_values.size(); ++index)
+            {
+                optimizer::BoundParameterValue value;
+                value.is_null = index < parameter_nulls.size() && parameter_nulls[index];
+                if (!value.is_null)
+                {
+                    value.text = parameter_values[index];
+                }
+                bindings.positional.push_back(std::move(value));
+            }
+            return bindings;
+        }
+
+        auto buildPreparedOptimizerParameterSignature(
+            const optimizer::ParameterBindings& bindings) -> std::string
+        {
+            std::ostringstream signature;
+            for (const auto& value : bindings.positional)
+            {
+                signature << (value.is_null ? 'N' : 'V') << ':';
+                if (!value.is_null)
+                {
+                    signature << sblr::v3::stableHash64(value.text);
+                }
+                signature << ';';
+            }
+            return signature.str();
+        }
+
+#if defined(SCRATCHBIRD_ENABLE_PREPARED_TRACE) && SCRATCHBIRD_ENABLE_PREPARED_TRACE
+        bool preparedTraceEnabled()
+        {
+            const char* value = std::getenv("SCRATCHBIRD_PREPARED_TRACE");
+            if (value == nullptr || value[0] == '\0')
+            {
+                return false;
+            }
+
+            return std::strcmp(value, "0") != 0 &&
+                   std::strcmp(value, "false") != 0 &&
+                   std::strcmp(value, "FALSE") != 0;
+        }
+
+        const char* preparedTraceFilePath()
+        {
+            const char* path = std::getenv("SCRATCHBIRD_PREPARED_TRACE_FILE");
+            if (path == nullptr || path[0] == '\0')
+            {
+                return "/tmp/scratchbird_prepared_trace.log";
+            }
+            return path;
+        }
+
+        void appendPreparedTraceLine(const std::string& line)
+        {
+            static std::mutex trace_mutex;
+            std::lock_guard<std::mutex> guard(trace_mutex);
+
+            std::ofstream out(preparedTraceFilePath(), std::ios::app);
+            if (!out.is_open())
+            {
+                return;
+            }
+
+            out << line << '\n';
+        }
+#else
+        bool preparedTraceEnabled()
+        {
+            return false;
+        }
+
+        const char* preparedTraceFilePath()
+        {
+            return "";
+        }
+
+        void appendPreparedTraceLine(const std::string&)
+        {
+        }
+#endif
+
+        void appendPreparedSeedTrace(
+            const std::string& name,
+            const ConnectionContext::PreparedStatement& stmt)
+        {
+            if (!preparedTraceEnabled())
+            {
+                return;
+            }
+
+            std::ostringstream trace_line;
+            trace_line << "PREPARED TRACE phase=seed"
+                       << " name=" << (name.empty() ? "<unnamed>" : name)
+                       << " keyword="
+                       << leadingPreparedStatementKeywordUpper(stmt.sql_text)
+                       << " plan_mode="
+                       << static_cast<int>(stmt.optimizer_plan_mode)
+                       << " generic_plan_hash="
+                       << (stmt.optimizer_generic_plan_hash.empty()
+                               ? "<empty>"
+                               : stmt.optimizer_generic_plan_hash);
+            appendPreparedTraceLine(trace_line.str());
+        }
+
+        void appendPreparedResolveTrace(
+            const std::string& name,
+            const ConnectionContext::PreparedStatement& stmt,
+            const ConnectionContext::PreparedExecutionSelection& selection,
+            const std::chrono::steady_clock::time_point& start)
+        {
+            if (!preparedTraceEnabled())
+            {
+                return;
+            }
+
+            std::ostringstream trace_line;
+            trace_line << std::fixed << std::setprecision(3)
+                       << "PREPARED TRACE phase=resolve"
+                       << " name=" << (name.empty() ? "<unnamed>" : name)
+                       << " keyword="
+                       << leadingPreparedStatementKeywordUpper(stmt.sql_text)
+                       << " plan_mode="
+                       << static_cast<int>(stmt.optimizer_plan_mode)
+                       << " specialization_supported="
+                       << (selection.specialization_supported ? 1 : 0)
+                       << " bundle_hit=" << (selection.bundle_hit ? 1 : 0)
+                       << " bundle_rebuilt=" << (selection.bundle_rebuilt ? 1 : 0)
+                       << " plan_cache_consulted="
+                       << (selection.plan_cache_consulted ? 1 : 0)
+                       << " plan_cache_hit=" << (selection.plan_cache_hit ? 1 : 0)
+                       << " used_generic_bundle="
+                       << (selection.used_generic_bytecode ? 1 : 0)
+                       << " parameter_signature="
+                       << (selection.parameter_signature.empty()
+                               ? "<none>"
+                               : selection.parameter_signature)
+                       << " bucket_signature="
+                       << (selection.bucket_signature.empty()
+                               ? "<generic>"
+                               : selection.bucket_signature)
+                       << " total_ms="
+                       << std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now() - start)
+                              .count();
+            appendPreparedTraceLine(trace_line.str());
         }
 
         const char *temporaryObjectKindNameLocal(ConnectionContext::TemporaryObjectKind kind)
@@ -2183,7 +2448,9 @@ namespace scratchbird::core
                                                        const ID& object_id,
                                                        const std::string& operation_class,
                                                        uint64_t statement_hash,
-                                                       const std::string& statement_text)
+                                                       const std::string& statement_text,
+                                                       const std::string& change_class,
+                                                       const std::string& detail_json)
     {
         if (current_xid_ == 0 || isForensicReplayActive() || isZeroUuidLocal(object_id))
         {
@@ -2196,6 +2463,8 @@ namespace scratchbird::core
         batch.operation_class = operation_class.empty() ? "DDL" : operation_class;
         batch.statement_hash = statement_hash;
         batch.statement_text = statement_text;
+        batch.change_class = change_class;
+        batch.detail_json = detail_json;
 
         if (!pending_transactional_ddl_batches_.empty())
         {
@@ -2204,7 +2473,9 @@ namespace scratchbird::core
                 prior.object_id == batch.object_id &&
                 prior.operation_class == batch.operation_class &&
                 prior.statement_hash == batch.statement_hash &&
-                prior.statement_text == batch.statement_text)
+                prior.statement_text == batch.statement_text &&
+                prior.change_class == batch.change_class &&
+                prior.detail_json == batch.detail_json)
             {
                 return;
             }
@@ -2253,6 +2524,47 @@ namespace scratchbird::core
             return status;
         }
 
+        auto resolve_schema_epoch_version = [&](const ID& schema_epoch_uuid) -> uint64_t {
+            if (isZeroUuidLocal(schema_epoch_uuid))
+            {
+                return 0;
+            }
+
+            CatalogManager::SchemaEpochCatalogInfo info{};
+            ErrorContext epoch_ctx;
+            Status epoch_status = catalog->getSchemaEpochCatalogEntry(schema_epoch_uuid, info, &epoch_ctx);
+            if (epoch_status != Status::OK)
+            {
+                return 0;
+            }
+            if (info.has_commit_seqno)
+            {
+                return info.commit_seqno;
+            }
+            return info.created_time;
+        };
+
+        auto append_plan_event =
+            [&](const ID& plan_uuid,
+                uint64_t event_seq,
+                const char* phase_from,
+                const char* phase_to,
+                const char* event_state,
+                const char* event_code) -> Status {
+            CatalogManager::SchemaChangeEventCatalogInfo event{};
+            event.schema_change_plan_uuid = plan_uuid;
+            event.event_seq = event_seq;
+            event.has_phase_from = (phase_from != nullptr && phase_from[0] != '\0');
+            if (event.has_phase_from)
+            {
+                event.phase_from = phase_from;
+            }
+            event.phase_to = phase_to == nullptr ? std::string() : std::string(phase_to);
+            event.event_state = event_state == nullptr ? std::string() : std::string(event_state);
+            event.event_code = event_code == nullptr ? std::string() : std::string(event_code);
+            return catalog->appendSchemaChangeEventCatalogEntry(event, ctx);
+        };
+
         json payload = json::object();
         payload["database_uuid"] = db_->uuid().toString();
         payload["tx_uuid"] = current_transaction_uuid_.toString();
@@ -2262,12 +2574,163 @@ namespace scratchbird::core
         payload["operation_count"] = pending_transactional_ddl_batches_.size();
         payload["operations"] = json::array();
 
+        const uint64_t baseline_schema_epoch = resolve_schema_epoch_version(schema_epoch_before_uuid);
+        const uint64_t committed_schema_epoch =
+            schema_epoch.has_commit_seqno ? schema_epoch.commit_seqno : commit_seqno;
+        const uint64_t manifest_hash = fnv1a64(definition_manifest);
+
         for (const auto& op : pending_transactional_ddl_batches_)
         {
+            const std::string effective_change_class =
+                op.change_class.empty() ? "METADATA_ONLY" : op.change_class;
+
+            CatalogManager::SchemaChangePlanCatalogInfo plan{};
+            plan.object_uuid = op.object_id;
+            plan.object_type = objectTypeLabel(op.object_type);
+            plan.requested_operation = op.operation_class.empty() ? "DDL" : op.operation_class;
+            plan.change_class = effective_change_class;
+            plan.requested_by_uuid = current_user_id_;
+            plan.phase_state = "CUTOVER_COMMITTED";
+            plan.baseline_schema_epoch = baseline_schema_epoch;
+            plan.has_expanded_schema_epoch = true;
+            plan.expanded_schema_epoch = committed_schema_epoch;
+            plan.has_cutover_schema_epoch = true;
+            plan.cutover_schema_epoch = committed_schema_epoch;
+            plan.rollback_class =
+                (effective_change_class == "EXPAND_BACKFILL_CUTOVER")
+                    ? "EXPLICIT_REVERSE_CHANGE"
+                    : "TRANSACTION_ROLLBACK";
+            status = catalog->appendSchemaChangePlanCatalogEntry(plan, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            status = append_plan_event(
+                plan.schema_change_plan_uuid, 1, nullptr, "DRAFTED", "PREPARED", "REQUEST_ACCEPTED");
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            if (effective_change_class == "EXPAND_BACKFILL_CUTOVER")
+            {
+                json detail = json::object();
+                if (!op.detail_json.empty())
+                {
+                    try
+                    {
+                        detail = json::parse(op.detail_json);
+                    }
+                    catch (...)
+                    {
+                        SET_ERROR_CONTEXT(
+                            ctx,
+                            Status::INVALID_ARGUMENT,
+                            "schema change detail payload is invalid");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                }
+
+                CatalogManager::SchemaChangeBackfillProgressCatalogInfo progress{};
+                progress.schema_change_plan_uuid = plan.schema_change_plan_uuid;
+                progress.worker_generation = committed_schema_epoch;
+                progress.scanned_row_count = detail.value("scanned_row_count", uint64_t{0});
+                progress.written_row_count = detail.value("written_row_count", uint64_t{0});
+                progress.validated_row_count = detail.value("validated_row_count", uint64_t{0});
+                progress.partial_chunk_rewind_required =
+                    detail.value("partial_chunk_rewind_required", false);
+                progress.restart_disposition =
+                    detail.value("restart_disposition", std::string("VALIDATION_ONLY_COMPLETE"));
+                status = catalog->upsertSchemaChangeBackfillProgressCatalogEntry(progress, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                CatalogManager::SchemaChangeCutoverGuardCatalogInfo guard{};
+                guard.schema_change_plan_uuid = plan.schema_change_plan_uuid;
+                guard.expected_pre_cutover_schema_epoch = baseline_schema_epoch;
+                guard.validation_manifest_hash = manifest_hash;
+                guard.dependency_refresh_complete = true;
+                guard.guard_state = "READY";
+                status = catalog->upsertSchemaChangeCutoverGuardCatalogEntry(guard, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                status = append_plan_event(plan.schema_change_plan_uuid,
+                                           2,
+                                           "DRAFTED",
+                                           "EXPANDED_METADATA",
+                                           "PREPARED",
+                                           "METADATA_EXPANDED");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = append_plan_event(plan.schema_change_plan_uuid,
+                                           3,
+                                           "EXPANDED_METADATA",
+                                           "BACKFILL_ACTIVE",
+                                           "PREPARED",
+                                           "VALIDATION_RECORDED");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = append_plan_event(plan.schema_change_plan_uuid,
+                                           4,
+                                           "BACKFILL_ACTIVE",
+                                           "CUTOVER_PENDING",
+                                           "PREPARED",
+                                           "CUTOVER_GUARD_READY");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = append_plan_event(plan.schema_change_plan_uuid,
+                                           5,
+                                           "CUTOVER_PENDING",
+                                           "CUTOVER_COMMITTED",
+                                           "COMMITTED",
+                                           "COMMIT_PUBLISHED");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+            else
+            {
+                status = append_plan_event(plan.schema_change_plan_uuid,
+                                           2,
+                                           "DRAFTED",
+                                           "EXPANDED_METADATA",
+                                           "PREPARED",
+                                           "METADATA_STAGED");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = append_plan_event(plan.schema_change_plan_uuid,
+                                           3,
+                                           "EXPANDED_METADATA",
+                                           "CUTOVER_COMMITTED",
+                                           "COMMITTED",
+                                           "COMMIT_PUBLISHED");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+
             json op_doc = json::object();
             op_doc["object_uuid"] = op.object_id.toString();
             op_doc["object_type"] = objectTypeLabel(op.object_type);
             op_doc["operation_class"] = op.operation_class;
+            op_doc["change_class"] = effective_change_class;
+            op_doc["schema_change_plan_uuid"] = plan.schema_change_plan_uuid.toString();
             op_doc["statement_hash"] = op.statement_hash;
             op_doc["statement_text"] = op.statement_text;
             payload["operations"].push_back(std::move(op_doc));
@@ -3594,6 +4057,31 @@ namespace scratchbird::core
         delta.newpage_updates += newpage_updates;
     }
 
+    bool ConnectionContext::snapshotPendingTableDmlDelta(const ID& table_id,
+                                                         TableDmlDelta& out) const
+    {
+        out = TableDmlDelta{};
+        if (isZeroUuidLocal(table_id))
+        {
+            return false;
+        }
+
+        auto it = pending_table_deltas_.find(table_id);
+        if (it == pending_table_deltas_.end())
+        {
+            return false;
+        }
+
+        out = it->second;
+        return true;
+    }
+
+    bool ConnectionContext::hasPendingTableDmlDelta(const ID& table_id) const
+    {
+        TableDmlDelta delta;
+        return snapshotPendingTableDmlDelta(table_id, delta) && !delta.empty();
+    }
+
     std::string ConnectionContext::sessionSettingsJson() const
     {
         // Stable ordering keeps diffs readable in dormant transaction records.
@@ -4514,6 +5002,11 @@ namespace scratchbird::core
         sp.xid = current_xid_;
         sp.command_id = command_id_;
         sp.implicit_statement_frame = implicit_statement_frame;
+        sp.append_only_backout_tracking = implicit_statement_frame && savepoint_stack_.empty();
+        if (sp.append_only_backout_tracking)
+        {
+            sp.changes.reserve(8192);
+        }
 
         savepoint_stack_.push_back(std::move(sp));
 
@@ -4539,12 +5032,23 @@ namespace scratchbird::core
                                                        uint16_t stable_item_id)
         -> SavepointBackoutAction *
     {
-        for (auto &change : savepoint.changes)
+        const SavepointBackoutLocator locator{table_id, stable_page_id, stable_item_id};
+        auto indexed = savepoint.change_index.find(locator);
+        if (indexed != savepoint.change_index.end() &&
+            indexed->second < savepoint.changes.size())
         {
-            if (change.matches(table_id, stable_page_id, stable_item_id))
+            return &savepoint.changes[indexed->second];
+        }
+
+        for (size_t idx = 0; idx < savepoint.changes.size(); ++idx)
+        {
+            auto &change = savepoint.changes[idx];
+            if (!change.matches(table_id, stable_page_id, stable_item_id))
             {
-                return &change;
+                continue;
             }
+            savepoint.change_index.emplace(locator, idx);
+            return &change;
         }
         return nullptr;
     }
@@ -4623,8 +5127,9 @@ namespace scratchbird::core
         }
 
         Savepoint &savepoint = savepoint_stack_.back();
-        if (findSavepointBackoutChange(savepoint, table_id, stable_page_id, stable_item_id) !=
-            nullptr)
+        if (!savepoint.append_only_backout_tracking &&
+            findSavepointBackoutChange(savepoint, table_id, stable_page_id, stable_item_id) !=
+                nullptr)
         {
             return;
         }
@@ -4638,6 +5143,14 @@ namespace scratchbird::core
             action.prior_tuple_image.assign(prior_tuple_data, prior_tuple_data + prior_tuple_size);
         }
         savepoint.changes.emplace_back(std::move(action));
+        if (!savepoint.append_only_backout_tracking)
+        {
+            savepoint.change_index.emplace(SavepointBackoutLocator{
+                                               table_id,
+                                               stable_page_id,
+                                               stable_item_id},
+                                           savepoint.changes.size() - 1);
+        }
 
         LOG_DEBUG(TRANSACTION,
                   "Tracked savepoint backout action (%s, page=%u, item=%u) in savepoint '%s' (level %u)",
@@ -4661,6 +5174,11 @@ namespace scratchbird::core
                 continue;
             }
             target.changes.emplace_back(change);
+            target.change_index.emplace(SavepointBackoutLocator{
+                                            change.table_id,
+                                            change.stable_page_id,
+                                            change.stable_item_id},
+                                        target.changes.size() - 1);
         }
     }
 
@@ -4888,6 +5406,7 @@ namespace scratchbird::core
         // Keep the target savepoint active, but clear its post-rollback mutation state.
         sp_it = savepoint_stack_.begin() + static_cast<std::ptrdiff_t>(target_index);
         sp_it->changes.clear();
+        sp_it->change_index.clear();
         sp_it->temp_objects_created.clear();
 
         // Remove nested savepoints.
@@ -5403,6 +5922,175 @@ namespace scratchbird::core
         stmt.execution_count = 0;
 
         prepared_statements_[name] = std::move(stmt);
+        return Status::OK;
+    }
+
+    Status ConnectionContext::seedPreparedStatementOptimizerProfile(
+        const std::string& name,
+        const std::string& generic_plan_hash,
+        ErrorContext* ctx)
+    {
+        auto* stmt = getPreparedStatement(name);
+        if (stmt == nullptr)
+        {
+            if (ctx != nullptr)
+            {
+                ctx->code = Status::NOT_FOUND;
+                ctx->message = "Prepared statement '" + name + "' does not exist";
+            }
+            return Status::NOT_FOUND;
+        }
+
+        stmt->optimizer_generic_plan_hash = generic_plan_hash;
+        stmt->optimizer_custom_sample_count = 0;
+        stmt->optimizer_bundle_hit_count = 0;
+        stmt->optimizer_bundle_rebuild_count = 0;
+        stmt->optimizer_last_parameter_signature.clear();
+        stmt->optimizer_last_bucket_signature.clear();
+        stmt->optimizer_bucketed_bytecode.clear();
+        stmt->optimizer_parameter_signature_to_bucket.clear();
+        stmt->optimizer_bucket_plan_hash.clear();
+        stmt->optimizer_plan_mode =
+            (preparedSpecializationDialectEligible(this) &&
+             statementSupportsPreparedOptimizerSpecialization(stmt->sql_text) &&
+             !generic_plan_hash.empty())
+                ? PreparedStatement::OptimizerPlanMode::AUTO
+                : PreparedStatement::OptimizerPlanMode::GENERIC;
+        appendPreparedSeedTrace(name, *stmt);
+        return Status::OK;
+    }
+
+    Status ConnectionContext::resolvePreparedStatementExecutionPlan(
+        const std::string& name,
+        const std::vector<std::string>& parameter_values,
+        const std::vector<bool>& parameter_nulls,
+        PreparedExecutionSelection& selection_out,
+        ErrorContext* ctx)
+    {
+        const auto resolve_start = std::chrono::steady_clock::now();
+        selection_out = PreparedExecutionSelection{};
+
+        auto* stmt = getPreparedStatement(name);
+        if (stmt == nullptr)
+        {
+            if (ctx != nullptr)
+            {
+                ctx->code = Status::NOT_FOUND;
+                ctx->message = "Prepared statement '" + name + "' does not exist";
+            }
+            return Status::NOT_FOUND;
+        }
+
+        selection_out.bytecode = stmt->bytecode;
+        selection_out.specialization_supported =
+            preparedSpecializationDialectEligible(this) &&
+            statementSupportsPreparedOptimizerSpecialization(stmt->sql_text);
+
+        if (!selection_out.specialization_supported || parameter_values.empty() ||
+            stmt->optimizer_plan_mode == PreparedStatement::OptimizerPlanMode::GENERIC)
+        {
+            selection_out.used_generic_bytecode = true;
+            stmt->optimizer_last_parameter_signature.clear();
+            stmt->optimizer_last_bucket_signature.clear();
+            appendPreparedResolveTrace(name, *stmt, selection_out, resolve_start);
+            return Status::OK;
+        }
+
+        const optimizer::ParameterBindings bindings =
+            buildPreparedOptimizerParameterBindings(parameter_values, parameter_nulls);
+        const std::string parameter_signature =
+            buildPreparedOptimizerParameterSignature(bindings);
+        selection_out.parameter_signature = parameter_signature;
+        stmt->optimizer_last_parameter_signature = parameter_signature;
+
+        auto mapped_bucket =
+            stmt->optimizer_parameter_signature_to_bucket.find(parameter_signature);
+        if (mapped_bucket != stmt->optimizer_parameter_signature_to_bucket.end())
+        {
+            auto cached_variant =
+                stmt->optimizer_bucketed_bytecode.find(mapped_bucket->second);
+            if (cached_variant != stmt->optimizer_bucketed_bytecode.end())
+            {
+                selection_out.bytecode = cached_variant->second;
+                selection_out.bucket_signature = mapped_bucket->second;
+                selection_out.used_generic_bytecode = false;
+                selection_out.bundle_hit = true;
+                ++stmt->optimizer_bundle_hit_count;
+                stmt->optimizer_last_bucket_signature = mapped_bucket->second;
+                appendPreparedResolveTrace(name, *stmt, selection_out, resolve_start);
+                return Status::OK;
+            }
+        }
+
+        if (db_ == nullptr)
+        {
+            if (ctx != nullptr)
+            {
+                ctx->code = Status::INVALID_ARGUMENT;
+                ctx->message =
+                    "Prepared statement specialization requires a database context";
+            }
+            appendPreparedResolveTrace(name, *stmt, selection_out, resolve_start);
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ConnectionContextCurrentGuard current_guard(this);
+        scratchbird::sblr::QueryCompilerV3 compiler(db_);
+        compiler.setCurrentSchema(getCurrentSchemaId());
+        auto compile_result = compiler.compileWithParameters(
+            stmt->sql_text,
+            bindings,
+            scratchbird::sblr::detail::QueryCompilerV3PlanProfileMode::CUSTOM);
+        if (!compile_result.success())
+        {
+            if (ctx != nullptr)
+            {
+                ctx->code = Status::INVALID_ARGUMENT;
+                ctx->message =
+                    compile_result.errors().empty()
+                        ? "Prepared statement specialization compile failed"
+                        : compile_result.errors().front();
+            }
+            appendPreparedResolveTrace(name, *stmt, selection_out, resolve_start);
+            return Status::INVALID_ARGUMENT;
+        }
+
+        const auto& profile = compile_result.planProfile();
+        selection_out.bytecode = compile_result.bytecode();
+        selection_out.bucket_signature = profile.signature;
+        selection_out.used_generic_bytecode = false;
+        selection_out.bundle_rebuilt = true;
+        selection_out.plan_cache_consulted = true;
+        selection_out.plan_cache_hit = compile_result.cacheHit();
+        ++stmt->optimizer_bundle_rebuild_count;
+        stmt->optimizer_last_bucket_signature = profile.signature;
+        stmt->optimizer_parameter_signature_to_bucket[parameter_signature] =
+            profile.signature;
+        stmt->optimizer_bucketed_bytecode[profile.signature] = selection_out.bytecode;
+        if (!profile.runtime_plan_hash.empty())
+        {
+            stmt->optimizer_bucket_plan_hash[profile.signature] =
+                profile.runtime_plan_hash;
+        }
+        ++stmt->optimizer_custom_sample_count;
+
+        if (stmt->optimizer_bucket_plan_hash.size() >= 2)
+        {
+            stmt->optimizer_plan_mode = PreparedStatement::OptimizerPlanMode::CUSTOM_BUCKETED;
+        }
+        else if (stmt->optimizer_custom_sample_count >= 3 &&
+                 !stmt->optimizer_generic_plan_hash.empty() &&
+                 stmt->optimizer_bucket_plan_hash.size() == 1 &&
+                 stmt->optimizer_bucket_plan_hash.begin()->second ==
+                     stmt->optimizer_generic_plan_hash)
+        {
+            stmt->optimizer_plan_mode = PreparedStatement::OptimizerPlanMode::GENERIC;
+            selection_out.bytecode = stmt->bytecode;
+            selection_out.bucket_signature.clear();
+            selection_out.used_generic_bytecode = true;
+        }
+
+        appendPreparedResolveTrace(name, *stmt, selection_out, resolve_start);
         return Status::OK;
     }
 

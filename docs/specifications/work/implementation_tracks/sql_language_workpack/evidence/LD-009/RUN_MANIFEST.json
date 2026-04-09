@@ -1,0 +1,19 @@
+{
+  "ticket_id": "LD-009",
+  "status": "completed",
+  "started_at": "2026-02-11T23:24:15Z",
+  "completed_at": "2026-02-11T23:24:15Z",
+  "spec_inputs": [
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md",
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md"
+  ],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-009/TSQL_ALIAS_REWRITE_RESULTS.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-009/TSQL_ALIAS_REJECTION_RESULTS.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-009/SPEC_TRACEABILITY.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-009/TEST_RESULTS.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-009/IMPLEMENTATION_NOTES.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-009/CHECKSUMS.sha256"
+  ],
+  "notes": "TSQL alias rewrite/reject matrix completed with deterministic behavior and error-code layering."
+}

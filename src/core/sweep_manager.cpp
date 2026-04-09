@@ -76,7 +76,28 @@ namespace scratchbird::core
         };
 
 #pragma pack(push, 1)
-        struct SweepProgressChecksumPayload
+        struct SweepProgressChecksumPayloadV1
+        {
+            uint64_t version = 1;
+            uint64_t control = 0;
+            uint64_t sweep_generation = 0;
+            uint64_t relation_hi = 0;
+            uint64_t relation_lo = 0;
+            uint64_t filespace_hi = 0;
+            uint64_t filespace_lo = 0;
+            uint64_t page_id = 0;
+            uint64_t captured_oit = 0;
+            uint64_t captured_oat = 0;
+            uint64_t captured_ost = 0;
+            uint64_t checkpoint_generation_seen = 0;
+            uint64_t persist_time = 0;
+            uint64_t start_horizon = 0;
+            uint64_t reclaimed_version_count = 0;
+            uint64_t reclaimed_bytes = 0;
+            uint64_t index_backlog_count = 0;
+        };
+
+        struct SweepProgressChecksumPayloadV2
         {
             uint64_t version = SYSTEM_STATE_SWEEP_PROGRESS_VERSION;
             uint64_t control = 0;
@@ -95,6 +116,8 @@ namespace scratchbird::core
             uint64_t reclaimed_version_count = 0;
             uint64_t reclaimed_bytes = 0;
             uint64_t index_backlog_count = 0;
+            uint64_t index_backlog_pages = 0;
+            uint64_t index_backlog_bytes = 0;
         };
 #pragma pack(pop)
 
@@ -263,7 +286,8 @@ namespace scratchbird::core
             }
         }
 
-        auto computeSweepProgressChecksum(uint64_t control,
+        auto computeSweepProgressChecksum(uint64_t version,
+                                          uint64_t control,
                                           uint64_t sweep_generation,
                                           uint64_t relation_hi,
                                           uint64_t relation_lo,
@@ -278,9 +302,35 @@ namespace scratchbird::core
                                           uint64_t start_horizon,
                                           uint64_t reclaimed_version_count,
                                           uint64_t reclaimed_bytes,
-                                          uint64_t index_backlog_count) -> uint32_t
+                                          uint64_t index_backlog_count,
+                                          uint64_t index_backlog_pages,
+                                          uint64_t index_backlog_bytes) -> uint32_t
         {
-            SweepProgressChecksumPayload payload{};
+            if (version <= 1)
+            {
+                SweepProgressChecksumPayloadV1 payload{};
+                payload.control = control;
+                payload.sweep_generation = sweep_generation;
+                payload.relation_hi = relation_hi;
+                payload.relation_lo = relation_lo;
+                payload.filespace_hi = filespace_hi;
+                payload.filespace_lo = filespace_lo;
+                payload.page_id = page_id;
+                payload.captured_oit = captured_oit;
+                payload.captured_oat = captured_oat;
+                payload.captured_ost = captured_ost;
+                payload.checkpoint_generation_seen = checkpoint_generation_seen;
+                payload.persist_time = persist_time;
+                payload.start_horizon = start_horizon;
+                payload.reclaimed_version_count = reclaimed_version_count;
+                payload.reclaimed_bytes = reclaimed_bytes;
+                payload.index_backlog_count = index_backlog_count;
+                return crc32cCompute(reinterpret_cast<const uint8_t*>(&payload),
+                                     sizeof(payload),
+                                     0u);
+            }
+
+            SweepProgressChecksumPayloadV2 payload{};
             payload.control = control;
             payload.sweep_generation = sweep_generation;
             payload.relation_hi = relation_hi;
@@ -297,6 +347,8 @@ namespace scratchbird::core
             payload.reclaimed_version_count = reclaimed_version_count;
             payload.reclaimed_bytes = reclaimed_bytes;
             payload.index_backlog_count = index_backlog_count;
+            payload.index_backlog_pages = index_backlog_pages;
+            payload.index_backlog_bytes = index_backlog_bytes;
             return crc32cCompute(reinterpret_cast<const uint8_t*>(&payload),
                                  sizeof(payload),
                                  0u);
@@ -1650,7 +1702,7 @@ namespace scratchbird::core
 
         const uint64_t version =
             state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_VERSION_SLOT];
-        if (version != 0 && version != SYSTEM_STATE_SWEEP_PROGRESS_VERSION)
+        if (version != 0 && version != 1 && version != SYSTEM_STATE_SWEEP_PROGRESS_VERSION)
         {
             buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
             LOG_WARNING(VACUUM,
@@ -1659,7 +1711,7 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        if (version == SYSTEM_STATE_SWEEP_PROGRESS_VERSION)
+        if (version == 1 || version == SYSTEM_STATE_SWEEP_PROGRESS_VERSION)
         {
             const uint64_t control =
                 state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_CONTROL_SLOT];
@@ -1698,6 +1750,13 @@ namespace scratchbird::core
                 state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_RECLAIMED_BYTES_SLOT];
             state_out->index_backlog_count =
                 state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_SLOT];
+            if (version >= SYSTEM_STATE_SWEEP_PROGRESS_VERSION)
+            {
+                state_out->index_backlog_pages = state_page->reserved[
+                    SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_PAGES_SLOT];
+                state_out->index_backlog_bytes = state_page->reserved[
+                    SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_BYTES_SLOT];
+            }
             unpackSweepProgressControl(control,
                                        &state_out->active,
                                        &state_out->stage,
@@ -1706,6 +1765,7 @@ namespace scratchbird::core
                                        &state_out->slot_id);
 
             const uint32_t computed_crc = computeSweepProgressChecksum(
+                version,
                 control,
                 state_out->sweep_generation,
                 relation_hi,
@@ -1721,7 +1781,9 @@ namespace scratchbird::core
                 state_out->start_horizon,
                 state_out->reclaimed_version_count,
                 state_out->reclaimed_bytes,
-                state_out->index_backlog_count);
+                state_out->index_backlog_count,
+                state_out->index_backlog_pages,
+                state_out->index_backlog_bytes);
             state_out->cursor_checksum_valid =
                 state_out->cursor_crc32c == computed_crc;
             if (state_out->active && !state_out->cursor_checksum_valid)
@@ -1745,6 +1807,8 @@ namespace scratchbird::core
             {
                 if (state_out->page_id != 0 || state_out->reclaimed_version_count != 0 ||
                     state_out->reclaimed_bytes != 0 || state_out->index_backlog_count != 0 ||
+                    state_out->index_backlog_pages != 0 ||
+                    state_out->index_backlog_bytes != 0 ||
                     !isZeroIdLocal(state_out->relation_uuid))
                 {
                     state_out->stage = SweepProgressStage::RECLAIM_PENDING;
@@ -1811,6 +1875,7 @@ namespace scratchbird::core
                                                          state.resume_strict_audit,
                                                          state.slot_id);
         const uint32_t cursor_crc32c = computeSweepProgressChecksum(
+            SYSTEM_STATE_SWEEP_PROGRESS_VERSION,
             control,
             state.sweep_generation,
             relation_hi,
@@ -1826,7 +1891,9 @@ namespace scratchbird::core
             state.start_horizon,
             state.reclaimed_version_count,
             state.reclaimed_bytes,
-            state.index_backlog_count);
+            state.index_backlog_count,
+            state.index_backlog_pages,
+            state.index_backlog_bytes);
 
         state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_VERSION_SLOT] =
             SYSTEM_STATE_SWEEP_PROGRESS_VERSION;
@@ -1857,6 +1924,10 @@ namespace scratchbird::core
             state.reclaimed_bytes;
         state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_SLOT] =
             state.index_backlog_count;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_PAGES_SLOT] =
+            state.index_backlog_pages;
+        state_page->reserved[SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_BYTES_SLOT] =
+            state.index_backlog_bytes;
 
         if (db_ != nullptr && db_->mga_failpoint_manager() != nullptr)
         {
@@ -1891,6 +1962,8 @@ namespace scratchbird::core
             history.reclaimed_version_count = state.reclaimed_version_count;
             history.reclaimed_bytes = state.reclaimed_bytes;
             history.index_backlog_count = state.index_backlog_count;
+            history.index_backlog_pages = state.index_backlog_pages;
+            history.index_backlog_bytes = state.index_backlog_bytes;
             history.cursor_crc32c = cursor_crc32c;
             ErrorContext history_ctx;
             const Status history_status =
@@ -2675,6 +2748,8 @@ namespace scratchbird::core
             sweep_progress.reclaimed_version_count = 0;
             sweep_progress.reclaimed_bytes = 0;
             sweep_progress.index_backlog_count = 0;
+            sweep_progress.index_backlog_pages = 0;
+            sweep_progress.index_backlog_bytes = 0;
             sweep_progress.stage = SweepProgressStage::LOCAL_EVIDENCE_PENDING;
         }
 
@@ -3172,6 +3247,8 @@ namespace scratchbird::core
                     page_stats.dead_tuples_removed + page_stats.version_chains_pruned;
                 progress->reclaimed_bytes += page_stats.free_space_recovered;
                 progress->index_backlog_count += page_stats.index_backlog_count;
+                progress->index_backlog_pages += page_stats.index_backlog_pages;
+                progress->index_backlog_bytes += page_stats.index_backlog_bytes;
             }
 
             progress->page_id = page_id;

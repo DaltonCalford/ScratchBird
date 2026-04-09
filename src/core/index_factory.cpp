@@ -109,15 +109,15 @@ constexpr std::array<IndexCaps, 59> kIndexFamilyRegistry = {{
     {IndexType::RHNSW_SQ, "RHNSW_SQ", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
      true, true, true, false, true, true, false, false},
     {IndexType::ANNOY, "ANNOY", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
-     false, true, true, false, true, true, false, false},
+     true, true, true, false, true, true, false, false},
     {IndexType::NSG, "NSG", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
      true, true, true, false, true, true, false, false},
     {IndexType::DISKANN, "DISKANN", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
-     false, true, true, false, true, true, false, false},
+     true, true, true, false, true, true, false, false},
     {IndexType::SCANN, "SCANN", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
-     false, true, true, false, true, true, false, false},
+     true, true, true, false, true, true, false, false},
     {IndexType::GPU_CAGRA, "GPU_CAGRA", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
-     false, true, true, false, true, true, false, false},
+     true, true, true, false, true, true, false, false},
     {IndexType::MINHASH_LSH, "MINHASH_LSH", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
      true, true, true, false, false, false, false, false},
     {IndexType::SPARSE_INVERTED, "SPARSE_INVERTED", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
@@ -200,6 +200,225 @@ std::string indexTypeDebugString(IndexType index_type)
         return caps->canonical_name;
     }
     return std::to_string(static_cast<uint8_t>(index_type));
+}
+
+const char *plannerFamilyGroupName(IndexType index_type)
+{
+    switch (index_type)
+    {
+        case IndexType::BTREE:
+        case IndexType::ART:
+        case IndexType::STL_SORT:
+        case IndexType::MONGODB_GEO_HAYSTACK:
+        case IndexType::NEO4J_RANGE:
+        case IndexType::NEO4J_POINT:
+        case IndexType::REDIS_LIST:
+        case IndexType::REDIS_ZSET:
+        case IndexType::REDIS_STREAM:
+            return "BTREE";
+        case IndexType::HASH:
+        case IndexType::REDIS_STRING:
+        case IndexType::REDIS_HASH:
+        case IndexType::REDIS_SET:
+        case IndexType::REDIS_HLL:
+            return "HASH";
+        case IndexType::LSM:
+            return "LSM";
+        case IndexType::BRIN:
+            return "BRIN";
+        case IndexType::ZONEMAP:
+        case IndexType::BLOOM:
+            return "SUMMARY_FILTER";
+        case IndexType::BITMAP:
+        case IndexType::NEO4J_LOOKUP:
+        case IndexType::REDIS_BITMAP:
+            return "BITMAP";
+        case IndexType::COLUMNSTORE:
+            return "COLUMNSTORE";
+        case IndexType::GIN:
+            return "GIN";
+        case IndexType::GIST:
+            return "GIST";
+        case IndexType::SPGIST:
+            return "SPGIST";
+        case IndexType::RTREE:
+        case IndexType::MONGODB_2D:
+        case IndexType::MONGODB_2DSPHERE:
+        case IndexType::MONGODB_2DSPHERE_BUCKET:
+        case IndexType::REDIS_GEO:
+            return "RTREE";
+        case IndexType::FULLTEXT:
+        case IndexType::INVERTED:
+        case IndexType::MINHASH_LSH:
+        case IndexType::SPARSE_INVERTED:
+        case IndexType::SPARSE_WAND:
+        case IndexType::TRIE:
+        case IndexType::NGRAM:
+        case IndexType::MONGODB_WILDCARD:
+        case IndexType::MONGODB_ENCRYPTED_RANGE:
+        case IndexType::NEO4J_TEXT:
+        case IndexType::CASSANDRA_SASI:
+        case IndexType::CASSANDRA_SAI:
+            return "TEXT_SEARCH";
+        case IndexType::VECTOR_FLAT:
+        case IndexType::VECTOR_BIN_FLAT:
+            return "VECTOR_FLAT";
+        case IndexType::HNSW:
+        case IndexType::RHNSW_PQ:
+        case IndexType::RHNSW_SQ:
+        case IndexType::ANNOY:
+        case IndexType::NSG:
+        case IndexType::DISKANN:
+        case IndexType::SCANN:
+        case IndexType::GPU_CAGRA:
+        case IndexType::NEO4J_VECTOR:
+            return "ANN_HNSW";
+        case IndexType::IVF:
+        case IndexType::IVF_FLAT:
+        case IndexType::BIN_IVF_FLAT:
+        case IndexType::IVF_PQ:
+        case IndexType::IVF_SQ8:
+        case IndexType::IVF_SQ8_HYBRID:
+            return "ANN_IVF";
+    }
+    return "UNKNOWN";
+}
+
+optimizer::IndexFamilyMetricsType metricsTypeForIndex(IndexType index_type)
+{
+    switch (index_type)
+    {
+        case IndexType::BTREE:
+        case IndexType::ART:
+        case IndexType::STL_SORT:
+        case IndexType::MONGODB_GEO_HAYSTACK:
+        case IndexType::NEO4J_RANGE:
+        case IndexType::NEO4J_POINT:
+        case IndexType::REDIS_LIST:
+        case IndexType::REDIS_ZSET:
+        case IndexType::REDIS_STREAM:
+        case IndexType::HASH:
+        case IndexType::REDIS_STRING:
+        case IndexType::REDIS_HASH:
+        case IndexType::REDIS_SET:
+        case IndexType::REDIS_HLL:
+        case IndexType::LSM:
+            return optimizer::IndexFamilyMetricsType::ORDERED_EXACT;
+        case IndexType::BRIN:
+        case IndexType::ZONEMAP:
+        case IndexType::BLOOM:
+        case IndexType::BITMAP:
+        case IndexType::NEO4J_LOOKUP:
+        case IndexType::REDIS_BITMAP:
+        case IndexType::COLUMNSTORE:
+            return optimizer::IndexFamilyMetricsType::SUMMARY_CANDIDATE;
+        case IndexType::GIN:
+        case IndexType::GIST:
+        case IndexType::SPGIST:
+        case IndexType::RTREE:
+        case IndexType::MONGODB_2D:
+        case IndexType::MONGODB_2DSPHERE:
+        case IndexType::MONGODB_2DSPHERE_BUCKET:
+        case IndexType::REDIS_GEO:
+            return optimizer::IndexFamilyMetricsType::GENERALIZED_SPATIAL;
+        case IndexType::FULLTEXT:
+        case IndexType::INVERTED:
+        case IndexType::MINHASH_LSH:
+        case IndexType::SPARSE_INVERTED:
+        case IndexType::SPARSE_WAND:
+        case IndexType::TRIE:
+        case IndexType::NGRAM:
+        case IndexType::MONGODB_WILDCARD:
+        case IndexType::MONGODB_ENCRYPTED_RANGE:
+        case IndexType::NEO4J_TEXT:
+        case IndexType::CASSANDRA_SASI:
+        case IndexType::CASSANDRA_SAI:
+            return optimizer::IndexFamilyMetricsType::TEXT_SEARCH;
+        case IndexType::VECTOR_FLAT:
+        case IndexType::VECTOR_BIN_FLAT:
+        case IndexType::HNSW:
+        case IndexType::IVF:
+        case IndexType::IVF_FLAT:
+        case IndexType::BIN_IVF_FLAT:
+        case IndexType::IVF_PQ:
+        case IndexType::IVF_SQ8:
+        case IndexType::IVF_SQ8_HYBRID:
+        case IndexType::RHNSW_PQ:
+        case IndexType::RHNSW_SQ:
+        case IndexType::ANNOY:
+        case IndexType::NSG:
+        case IndexType::DISKANN:
+        case IndexType::SCANN:
+        case IndexType::GPU_CAGRA:
+        case IndexType::NEO4J_VECTOR:
+            return optimizer::IndexFamilyMetricsType::ANN;
+    }
+    return optimizer::IndexFamilyMetricsType::UNKNOWN;
+}
+
+const char *lifecycleModelName(IndexStorageModel storage_model)
+{
+    switch (storage_model)
+    {
+        case IndexStorageModel::FILE_BASED:
+            return "MGA_FILE_BACKED";
+        case IndexStorageModel::PAGE_BASED:
+        default:
+            return "MGA_PAGE_BACKED";
+    }
+}
+
+const char *familyModeName(IndexType index_type, const IndexCaps &caps)
+{
+    switch (index_type)
+    {
+        case IndexType::FULLTEXT:
+            return "QUERY_ALIAS";
+        case IndexType::BTREE:
+        case IndexType::HASH:
+        case IndexType::HNSW:
+        case IndexType::GIN:
+        case IndexType::GIST:
+        case IndexType::BRIN:
+        case IndexType::RTREE:
+        case IndexType::SPGIST:
+        case IndexType::BITMAP:
+        case IndexType::COLUMNSTORE:
+        case IndexType::LSM:
+            return "DIRECT";
+        default:
+            break;
+    }
+
+    if (caps.runtime_class == IndexRuntimeClass::INVERTED ||
+        caps.runtime_class == IndexRuntimeClass::HNSW ||
+        caps.runtime_class == IndexRuntimeClass::BTREE ||
+        caps.runtime_class == IndexRuntimeClass::HASH ||
+        caps.runtime_class == IndexRuntimeClass::BRIN ||
+        caps.runtime_class == IndexRuntimeClass::BITMAP ||
+        caps.runtime_class == IndexRuntimeClass::RTREE)
+    {
+        return "SHARED_RUNTIME";
+    }
+    return "DIRECT";
+}
+
+const char *queryabilityStateName(uint8_t state)
+{
+    switch (state)
+    {
+        case static_cast<uint8_t>(CatalogManager::IndexState::BUILDING):
+            return "BUILDING";
+        case static_cast<uint8_t>(CatalogManager::IndexState::RETIRED):
+            return "RETIRING";
+        case static_cast<uint8_t>(CatalogManager::IndexState::FAILED):
+            return "FAILED";
+        case static_cast<uint8_t>(CatalogManager::IndexState::INACTIVE):
+            return "STALE";
+        case static_cast<uint8_t>(CatalogManager::IndexState::ACTIVE):
+        default:
+            return "QUERYABLE";
+    }
 }
 
 bool isZeroId(const ID& id)
@@ -385,6 +604,88 @@ std::vector<IndexFactory::IndexFamilyCapabilities> IndexFactory::listCapabilitie
     return std::vector<IndexFamilyCapabilities>(kIndexFamilyRegistry.begin(), kIndexFamilyRegistry.end());
 }
 
+void IndexFactory::populateCanonicalMetadata(CatalogManager::IndexInfo &index_info)
+{
+    const IndexFamilyCapabilities *caps = lookupCapabilities(index_info.index_type);
+    if (!caps)
+    {
+        return;
+    }
+
+    index_info.physical_family = caps->canonical_name;
+    index_info.planner_family = plannerFamilyGroupName(index_info.index_type);
+    index_info.family_mode = familyModeName(index_info.index_type, *caps);
+    if (index_info.format_version == 0)
+    {
+        index_info.format_version = 1;
+    }
+    if (index_info.family_options_version == 0)
+    {
+        index_info.family_options_version = 1;
+    }
+    index_info.alias_origin.clear();
+    index_info.lifecycle_model = lifecycleModelName(caps->storage_model);
+    index_info.metrics_type = metricsTypeForIndex(index_info.index_type);
+    if (index_info.metrics_version == 0)
+    {
+        index_info.metrics_version = 1;
+    }
+    index_info.queryability_state = queryabilityStateName(index_info.state);
+}
+
+bool IndexFactory::validateCanonicalMetadata(const CatalogManager::IndexInfo &index_info,
+                                            std::string *reason_out)
+{
+    CatalogManager::IndexInfo expected = index_info;
+    populateCanonicalMetadata(expected);
+
+    auto fail = [&](const std::string &reason) {
+        if (reason_out)
+        {
+            *reason_out = reason;
+        }
+        return false;
+    };
+
+    if (index_info.physical_family != expected.physical_family)
+    {
+        return fail("physical_family mismatch");
+    }
+    if (index_info.planner_family != expected.planner_family)
+    {
+        return fail("planner_family mismatch");
+    }
+    if (index_info.family_mode != expected.family_mode)
+    {
+        return fail("family_mode mismatch");
+    }
+    if (index_info.format_version != expected.format_version)
+    {
+        return fail("format_version mismatch");
+    }
+    if (index_info.lifecycle_model != expected.lifecycle_model)
+    {
+        return fail("lifecycle_model mismatch");
+    }
+    if (index_info.metrics_type != expected.metrics_type)
+    {
+        return fail("metrics_type mismatch");
+    }
+    if (index_info.metrics_version == 0)
+    {
+        return fail("metrics_version missing");
+    }
+    if (index_info.family_options_version == 0)
+    {
+        return fail("family_options_version missing");
+    }
+    if (index_info.queryability_state != expected.queryability_state)
+    {
+        return fail("queryability_state mismatch");
+    }
+    return true;
+}
+
 Status IndexFactory::createIndex(
     CatalogManager::IndexType index_type,
     Database *db,
@@ -407,6 +708,17 @@ Status IndexFactory::createIndex(
             std::to_string(static_cast<uint8_t>(index_type));
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
         return Status::INVALID_ARGUMENT;
+    }
+    {
+        std::string validation_reason;
+        if (!validateCanonicalMetadata(index_info, &validation_reason))
+        {
+            std::string error_msg =
+                "IndexFactory canonical metadata invalid for type: " +
+                std::string(caps->canonical_name) + " (" + validation_reason + ")";
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
+            return Status::INVALID_ARGUMENT;
+        }
     }
     if (!caps->supports_create)
     {
@@ -895,6 +1207,17 @@ Status IndexFactory::openIndex(
             std::to_string(static_cast<uint8_t>(index_type));
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
         return Status::INVALID_ARGUMENT;
+    }
+    {
+        std::string validation_reason;
+        if (!validateCanonicalMetadata(index_info, &validation_reason))
+        {
+            std::string error_msg =
+                "IndexFactory canonical metadata invalid for type: " +
+                std::string(caps->canonical_name) + " (" + validation_reason + ")";
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
+            return Status::INVALID_ARGUMENT;
+        }
     }
     if (!caps->supports_open)
     {

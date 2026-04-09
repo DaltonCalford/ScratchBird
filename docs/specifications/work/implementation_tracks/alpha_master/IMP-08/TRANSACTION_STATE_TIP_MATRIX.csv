@@ -1,0 +1,11 @@
+case_id,initial_state,event,next_state,tip_encoding,expected_result,error_code
+TXS-001,new,begin,active,00,success,NONE
+TXS-002,active,commit,committed,01,success,NONE
+TXS-003,active,rollback,aborted,10,success,NONE
+TXS-004,active,prepare,limbo,11,success,NONE
+TXS-005,limbo,coordinator_commit,committed,01,success,NONE
+TXS-006,limbo,coordinator_rollback,aborted,10,success,NONE
+TXS-007,active,commit_flush_fail,active,00,fail,COMMIT_FAILED
+TXS-008,any,txid_overflow,n/a,n/a,fail,TXID_EXHAUSTED
+TXS-009,tip_page,invalid_header,n/a,n/a,fail,INVALID_TIP_HEADER
+TXS-010,tip_lookup,out_of_range,n/a,n/a,fail,TXID_OUT_OF_RANGE

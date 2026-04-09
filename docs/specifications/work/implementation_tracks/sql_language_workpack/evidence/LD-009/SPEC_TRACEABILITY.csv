@@ -1,0 +1,5 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,TSQL-ALIAS-REWRITE,LD-009/TSQL_ALIAS_REWRITE_RESULTS.csv,PASS,BEGIN/COMMIT/ROLLBACK alias rewrite behavior captured with canonical outputs and metadata
+21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,TSQL-ALIAS-DISABLED-REJECT,LD-009/TSQL_ALIAS_REJECTION_RESULTS.csv,PASS,Alias disabled mode rejection captured with deterministic error mapping
+21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,TSQL-SAVEPOINT-RESOLUTION,LD-009/TSQL_ALIAS_REWRITE_RESULTS.csv,PASS,Rollback alias savepoint-resolution behavior captured for match and non-match cases
+21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md,21_V3_Dialect_Surface,TSQL-AMBIGUITY-REJECT,LD-009/TSQL_ALIAS_REJECTION_RESULTS.csv,PASS,Ambiguous rollback target and malformed alias syntax rejection matrix captured

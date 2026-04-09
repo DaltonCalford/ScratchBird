@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-012",
+  "phase": "PH1",
+  "title": "Implement restore validation and DR rehearsal automation",
+  "status": "pending",
+  "owner": "recovery-platform",
+  "estimate_days": 8,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

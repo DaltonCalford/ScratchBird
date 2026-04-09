@@ -682,7 +682,7 @@ static_assert(sizeof(PageHeader) == 106,
 
     constexpr uint64_t SYSTEM_STATE_WRITEBACK_INCIDENT_FLAG_OPEN = 1ULL << 0;
 
-    constexpr uint64_t SYSTEM_STATE_SWEEP_PROGRESS_VERSION = 1;
+    constexpr uint64_t SYSTEM_STATE_SWEEP_PROGRESS_VERSION = 2;
     constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_VERSION_SLOT = 44;
     constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_CONTROL_SLOT = 45;
     constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_GENERATION_SLOT = 46;
@@ -701,6 +701,8 @@ static_assert(sizeof(PageHeader) == 106,
     constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_RECLAIMED_VERSIONS_SLOT = 59;
     constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_RECLAIMED_BYTES_SLOT = 60;
     constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_SLOT = 61;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_PAGES_SLOT = 62;
+    constexpr size_t SYSTEM_STATE_SWEEP_PROGRESS_INDEX_BACKLOG_BYTES_SLOT = 63;
 
     struct BootstrapCatalogRootHeader
     {

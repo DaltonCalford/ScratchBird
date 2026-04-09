@@ -1,5 +1,6 @@
 #include "scratchbird/sblr/v3_validator.h"
 
+#include <set>
 #include <utility>
 
 #include "scratchbird/sblr/v3_container.h"
@@ -92,7 +93,259 @@ bool readU64Field(const Value::Object& payload,
     return true;
 }
 
+const Value::List* readListField(const Value::Object& payload,
+                                 const char* field_name,
+                                 std::string& err) {
+    const Value* value = findField(payload, field_name);
+    if (!value) {
+        err = std::string("missing required field: ") + field_name;
+        return nullptr;
+    }
+    const auto* typed = std::get_if<Value::List>(&value->data);
+    if (!typed) {
+        err = std::string("invalid field type for: ") + field_name;
+        return nullptr;
+    }
+    return typed;
+}
+
+const Value::Object* asObject(const Value& value) {
+    return std::get_if<Value::Object>(&value.data);
+}
+
+const std::string* asStringValue(const Value& value) {
+    return std::get_if<std::string>(&value.data);
+}
+
 }  // namespace
+
+ValidationResult validateRetainedSymbolPayload(const Value::Object& payload) {
+    uint64_t format_version = 0;
+    std::string field_err;
+    if (!readU64Field(payload, "format_version", format_version, field_err)) {
+        return makeFailure("SBLR-E-0030", field_err);
+    }
+    if (format_version == 0) {
+        return makeFailure("SBLR-E-0030",
+                           "retained symbol payload format_version must be non-zero");
+    }
+
+    const Value::List* symbol_registry =
+        readListField(payload, "symbol_registry", field_err);
+    if (!symbol_registry) {
+        return makeFailure("SBLR-E-0030", field_err);
+    }
+    const Value::List* scope_registry =
+        readListField(payload, "scope_registry", field_err);
+    if (!scope_registry) {
+        return makeFailure("SBLR-E-0030", field_err);
+    }
+    const Value::List* scope_parent_map =
+        readListField(payload, "scope_parent_map", field_err);
+    if (!scope_parent_map) {
+        return makeFailure("SBLR-E-0030", field_err);
+    }
+    const Value::List* display_name_registry =
+        readListField(payload, "display_name_registry", field_err);
+    if (!display_name_registry) {
+        return makeFailure("SBLR-E-0030", field_err);
+    }
+    const Value::List* parameter_display_registry =
+        readListField(payload, "parameter_display_registry", field_err);
+    if (!parameter_display_registry) {
+        return makeFailure("SBLR-E-0030", field_err);
+    }
+    const Value::List* output_label_registry =
+        readListField(payload, "output_label_registry", field_err);
+    if (!output_label_registry) {
+        return makeFailure("SBLR-E-0030", field_err);
+    }
+    const Value::List* placeholder_binding_registry =
+        readListField(payload, "placeholder_binding_registry", field_err);
+    if (!placeholder_binding_registry) {
+        return makeFailure("SBLR-E-0030", field_err);
+    }
+    const Value::List* source_order_registry =
+        readListField(payload, "source_order_registry", field_err);
+    if (!source_order_registry) {
+        return makeFailure("SBLR-E-0030", field_err);
+    }
+    (void)placeholder_binding_registry;
+
+    std::set<uint64_t> scope_ids;
+    for (const auto& entry : *scope_registry) {
+        const auto* object = asObject(entry);
+        if (!object) {
+            return makeFailure("SBLR-E-0031",
+                               "scope_registry entry must be object");
+        }
+        uint64_t scope_id = 0;
+        if (!readU64Field(*object, "scope_id", scope_id, field_err)) {
+            return makeFailure("SBLR-E-0031", field_err);
+        }
+        if (!scope_ids.insert(scope_id).second) {
+            return makeFailure("SBLR-E-0031", "duplicate retained scope_id");
+        }
+    }
+
+    std::set<uint64_t> display_name_ids;
+    for (const auto& entry : *display_name_registry) {
+        const auto* object = asObject(entry);
+        if (!object) {
+            return makeFailure("SBLR-E-0032",
+                               "display_name_registry entry must be object");
+        }
+        uint64_t display_name_id = 0;
+        if (!readU64Field(*object,
+                          "display_name_id",
+                          display_name_id,
+                          field_err)) {
+            return makeFailure("SBLR-E-0032", field_err);
+        }
+        const Value* display_name = findField(*object, "display_name");
+        if (!display_name || asStringValue(*display_name) == nullptr) {
+            return makeFailure("SBLR-E-0032",
+                               "display_name_registry entry missing display_name");
+        }
+        if (!display_name_ids.insert(display_name_id).second) {
+            return makeFailure("SBLR-E-0032",
+                               "duplicate retained display_name_id");
+        }
+    }
+
+    std::set<uint64_t> symbol_ids;
+    for (const auto& entry : *symbol_registry) {
+        const auto* object = asObject(entry);
+        if (!object) {
+            return makeFailure("SBLR-E-0033",
+                               "symbol_registry entry must be object");
+        }
+        uint64_t symbol_id = 0;
+        uint64_t scope_id = 0;
+        uint64_t display_name_id = 0;
+        if (!readU64Field(*object, "symbol_id", symbol_id, field_err) ||
+            !readU64Field(*object, "scope_id", scope_id, field_err) ||
+            !readU64Field(*object,
+                          "display_name_id",
+                          display_name_id,
+                          field_err)) {
+            return makeFailure("SBLR-E-0033", field_err);
+        }
+        const Value* symbol_class = findField(*object, "symbol_class");
+        if (!symbol_class || asStringValue(*symbol_class) == nullptr) {
+            return makeFailure("SBLR-E-0033",
+                               "symbol_registry entry missing symbol_class");
+        }
+        if (!symbol_ids.insert(symbol_id).second) {
+            return makeFailure("SBLR-E-0033", "duplicate retained symbol_id");
+        }
+        if (scope_ids.find(scope_id) == scope_ids.end()) {
+            return makeFailure("SBLR-E-0033",
+                               "retained symbol references missing scope");
+        }
+        if (display_name_ids.find(display_name_id) == display_name_ids.end()) {
+            return makeFailure("SBLR-E-0033",
+                               "retained symbol references missing display_name");
+        }
+    }
+
+    for (const auto& entry : *scope_parent_map) {
+        const auto* object = asObject(entry);
+        if (!object) {
+            return makeFailure("SBLR-E-0034",
+                               "scope_parent_map entry must be object");
+        }
+        uint64_t scope_id = 0;
+        uint64_t parent_scope_id = 0;
+        if (!readU64Field(*object, "scope_id", scope_id, field_err) ||
+            !readU64Field(*object,
+                          "parent_scope_id",
+                          parent_scope_id,
+                          field_err)) {
+            return makeFailure("SBLR-E-0034", field_err);
+        }
+        if (scope_ids.find(scope_id) == scope_ids.end()) {
+            return makeFailure("SBLR-E-0034",
+                               "scope_parent_map references missing scope");
+        }
+        if (parent_scope_id != 0 &&
+            scope_ids.find(parent_scope_id) == scope_ids.end()) {
+            return makeFailure("SBLR-E-0034",
+                               "scope_parent_map references missing parent scope");
+        }
+    }
+
+    for (const auto& entry : *parameter_display_registry) {
+        const auto* object = asObject(entry);
+        if (!object) {
+            return makeFailure("SBLR-E-0035",
+                               "parameter_display_registry entry must be object");
+        }
+        uint64_t symbol_id = 0;
+        uint64_t display_name_id = 0;
+        if (!readU64Field(*object, "symbol_id", symbol_id, field_err) ||
+            !readU64Field(*object,
+                          "display_name_id",
+                          display_name_id,
+                          field_err)) {
+            return makeFailure("SBLR-E-0035", field_err);
+        }
+        if (symbol_ids.find(symbol_id) == symbol_ids.end() ||
+            display_name_ids.find(display_name_id) == display_name_ids.end()) {
+            return makeFailure("SBLR-E-0035",
+                               "parameter_display_registry references missing symbol");
+        }
+    }
+
+    for (const auto& entry : *output_label_registry) {
+        const auto* object = asObject(entry);
+        if (!object) {
+            return makeFailure("SBLR-E-0036",
+                               "output_label_registry entry must be object");
+        }
+        uint64_t symbol_id = 0;
+        if (!readU64Field(*object, "symbol_id", symbol_id, field_err)) {
+            return makeFailure("SBLR-E-0036", field_err);
+        }
+        if (symbol_ids.find(symbol_id) == symbol_ids.end()) {
+            return makeFailure("SBLR-E-0036",
+                               "output_label_registry references missing symbol");
+        }
+    }
+
+    for (const auto& entry : *source_order_registry) {
+        const auto* object = asObject(entry);
+        if (!object) {
+            return makeFailure("SBLR-E-0037",
+                               "source_order_registry entry must be object");
+        }
+        uint64_t scope_id = 0;
+        if (!readU64Field(*object, "scope_id", scope_id, field_err)) {
+            return makeFailure("SBLR-E-0037", field_err);
+        }
+        if (scope_ids.find(scope_id) == scope_ids.end()) {
+            return makeFailure("SBLR-E-0037",
+                               "source_order_registry references missing scope");
+        }
+        const Value* ordered_symbols = findField(*object, "symbol_ids");
+        const auto* order_list =
+            ordered_symbols ? std::get_if<Value::List>(&ordered_symbols->data)
+                            : nullptr;
+        if (!order_list) {
+            return makeFailure("SBLR-E-0037",
+                               "source_order_registry missing symbol_ids");
+        }
+        for (const auto& symbol_value : *order_list) {
+            const auto* symbol_id = std::get_if<uint64_t>(&symbol_value.data);
+            if (!symbol_id || symbol_ids.find(*symbol_id) == symbol_ids.end()) {
+                return makeFailure("SBLR-E-0037",
+                                   "source_order_registry references missing symbol");
+            }
+        }
+    }
+
+    return makeSuccess();
+}
 
 ValidationResult validateContainerDetailed(const uint8_t* data, size_t size) {
     Container container;
@@ -103,6 +356,14 @@ ValidationResult validateContainerDetailed(const uint8_t* data, size_t size) {
 
     if (!checkAlignment(container.sections)) {
         return makeFailure("SBLR-E-0002", "section table alignment violation");
+    }
+
+    if (!container.retained_symbol_payload.empty()) {
+        ValidationResult retained_result =
+            validateRetainedSymbolPayload(container.retained_symbol_payload);
+        if (!retained_result.ok) {
+            return retained_result;
+        }
     }
 
     if (container.bytecode_stream.empty()) {

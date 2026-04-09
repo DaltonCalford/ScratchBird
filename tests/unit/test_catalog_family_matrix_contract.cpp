@@ -108,6 +108,7 @@ TEST_F(CatalogFamilyMatrixContractTest, CanonicalCatalogFamilyPagesAreMaterializ
         {"index_maintenance", catalog_->indexMaintenanceTablePage()},
         {"index_maintenance_delta", catalog_->indexMaintenanceDeltasTablePage()},
         {"index_build_delta", catalog_->indexBuildDeltasTablePage()},
+        {"index_page_delta", catalog_->indexPageDeltasTablePage()},
         {"index_stats", catalog_->indexStatsTablePage()},
         {"index_usage", catalog_->indexUsageTablePage()},
         {"index_contention", catalog_->indexContentionTablePage()},

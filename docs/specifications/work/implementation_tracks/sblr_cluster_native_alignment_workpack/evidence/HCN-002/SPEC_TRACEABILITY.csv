@@ -1,0 +1,6 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+SB_CLUSTER_NATIVE_ALIGNMENT_GAP_ANALYSIS_2026-02-23.md,HCN-002-GAP-LEDGER,Gap ledger normalized to ticket IDs,GAP_TO_TICKET_TRACE.csv,done,All critical and high-priority rows mapped
+SB-CLUSTER-SWS-MGA-01.md,HCN-002-CLUSTER-CLOSURE,Cluster runtime and safety gaps mapped to PH1-PH3 tickets,ACCEPTANCE_MAPPING.csv,done,Dependencies preserved in mapping
+SB-OBS-METRICS-MONITORING-01.md,HCN-002-OBS-CLOSURE,Observability contract gaps mapped to PH4 tickets,ACCEPTANCE_MAPPING.csv,done,Metric and SQL view gaps explicitly linked
+23/NATIVE_COMPILATION_AND_ARTIFACT_LIFECYCLE.md,HCN-002-NATIVE-CLOSURE,Hybrid native and JIT gaps mapped to PH5 tickets,ACCEPTANCE_MAPPING.csv,done,Explicit compile first and JIT opt-in preserved
+ORDERED_TASK_TICKETS.csv,HCN-002-EXIT-CRITERIA,Gap rows linked to ticket exit criteria and gate artifacts,ACCEPTANCE_MAPPING.csv,done,No unmapped P0 requirement remains

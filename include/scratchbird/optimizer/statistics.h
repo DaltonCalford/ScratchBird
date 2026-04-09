@@ -127,6 +127,23 @@ namespace scratchbird::optimizer
         INVALID = 3
     };
 
+    enum class IndexMetricsFreshnessClass : uint32_t
+    {
+        UNKNOWN = 0,
+        CURRENT = 1,
+        AGED = 2,
+        STALE_DEGRADED = 3,
+        UNUSABLE = 4
+    };
+
+    enum class IndexMetricsInvalidationState : uint32_t
+    {
+        UNKNOWN = 0,
+        VALID = 1,
+        INVALIDATED_SOFT = 2,
+        INVALIDATED_HARD = 3
+    };
+
     /**
      * Most Common Values (MCV) Entry
      *
@@ -365,9 +382,15 @@ namespace scratchbird::optimizer
         std::string planner_family;
         IndexMetricsQueryabilityState queryability_state =
             IndexMetricsQueryabilityState::UNKNOWN;
+        uint64_t metrics_publication_epoch = 0;
         uint64_t metrics_last_refresh_xid = 0;
         IndexMetricsConfidenceClass metrics_confidence_class =
             IndexMetricsConfidenceClass::UNKNOWN;
+        IndexMetricsFreshnessClass metrics_freshness_class =
+            IndexMetricsFreshnessClass::UNKNOWN;
+        IndexMetricsInvalidationState metrics_invalidation_state =
+            IndexMetricsInvalidationState::UNKNOWN;
+        std::string metrics_invalidation_reason;
         uint64_t leaf_pages = 0;
         uint16_t height = 0;
         uint64_t row_count_est = 0;
@@ -753,6 +776,82 @@ namespace scratchbird::optimizer
             default:
                 return "UNKNOWN";
         }
+    }
+
+    inline auto indexMetricsFreshnessClassName(
+        IndexMetricsFreshnessClass value) -> const char *
+    {
+        switch (value)
+        {
+            case IndexMetricsFreshnessClass::CURRENT:
+                return "CURRENT";
+            case IndexMetricsFreshnessClass::AGED:
+                return "AGED";
+            case IndexMetricsFreshnessClass::STALE_DEGRADED:
+                return "STALE_DEGRADED";
+            case IndexMetricsFreshnessClass::UNUSABLE:
+                return "UNUSABLE";
+            case IndexMetricsFreshnessClass::UNKNOWN:
+            default:
+                return "UNKNOWN";
+        }
+    }
+
+    inline auto indexMetricsInvalidationStateName(
+        IndexMetricsInvalidationState value) -> const char *
+    {
+        switch (value)
+        {
+            case IndexMetricsInvalidationState::VALID:
+                return "VALID";
+            case IndexMetricsInvalidationState::INVALIDATED_SOFT:
+                return "INVALIDATED_SOFT";
+            case IndexMetricsInvalidationState::INVALIDATED_HARD:
+                return "INVALIDATED_HARD";
+            case IndexMetricsInvalidationState::UNKNOWN:
+            default:
+                return "UNKNOWN";
+        }
+    }
+
+    inline auto indexMetricsFreshnessClassFromName(std::string_view value)
+        -> IndexMetricsFreshnessClass
+    {
+        if (value == "CURRENT")
+        {
+            return IndexMetricsFreshnessClass::CURRENT;
+        }
+        if (value == "AGED" || value == "STALE_ACCEPTABLE")
+        {
+            return IndexMetricsFreshnessClass::AGED;
+        }
+        if (value == "STALE_DEGRADED")
+        {
+            return IndexMetricsFreshnessClass::STALE_DEGRADED;
+        }
+        if (value == "UNUSABLE")
+        {
+            return IndexMetricsFreshnessClass::UNUSABLE;
+        }
+        return IndexMetricsFreshnessClass::UNKNOWN;
+    }
+
+    inline auto indexMetricsInvalidationStateFromName(std::string_view value)
+        -> IndexMetricsInvalidationState
+    {
+        if (value == "VALID")
+        {
+            return IndexMetricsInvalidationState::VALID;
+        }
+        if (value == "INVALIDATED_SOFT")
+        {
+            return IndexMetricsInvalidationState::INVALIDATED_SOFT;
+        }
+        if (value == "INVALIDATED_HARD")
+        {
+            return IndexMetricsInvalidationState::INVALIDATED_HARD;
+        }
+        return IndexMetricsInvalidationState::UNKNOWN;
     }
 
 } // namespace scratchbird::optimizer

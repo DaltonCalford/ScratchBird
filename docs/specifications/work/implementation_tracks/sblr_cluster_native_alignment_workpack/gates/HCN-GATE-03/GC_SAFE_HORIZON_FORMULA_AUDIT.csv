@@ -1,0 +1,4 @@
+scenario,ost_shard,rwm_shard,expected_gc_safe_horizon,observed_gc_safe_horizon,test_case,status
+both_present_min_rule,7,6,6,6,GcSafeHorizonCalculatorTest.ComputesMinOfOstAndRwmAndControlsReclaimability,pass
+missing_ost,0,6,0,0,GcSafeHorizonCalculatorTest.MissingOstOrRwmYieldsZeroSafeHorizon,pass
+missing_rwm,5,0,0,0,GcSafeHorizonCalculatorTest.MissingOstOrRwmYieldsZeroSafeHorizon,pass

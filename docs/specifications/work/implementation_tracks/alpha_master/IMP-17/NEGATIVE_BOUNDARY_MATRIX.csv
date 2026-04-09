@@ -1,0 +1,6 @@
+case_id,scenario,input,expected_result,error_code
+T17-NG-001,malformed_udr_payload,invalid_envelope,rejected,E_INVALID_PARAMETER_VALUE
+T17-NG-002,null_required_uuid,missing_module_or_task_uuid,rejected,E_INVALID_PARAMETER_VALUE
+T17-NG-003,permission_denied_udr_admin,non_admin_alter_udr,rejected,E_PERMISSION_DENIED
+T17-NG-004,resource_exhaustion_udr_context,max_contexts_exceeded,rejected,E_RESOURCE_EXHAUSTED
+T17-NG-005,missing_required_symbol,abi_incomplete,rejected,E_UDR_SYMBOL_MISSING

@@ -94,6 +94,19 @@ bool myExecDebugEnabled() {
     return enabled;
 }
 
+void appendMyExecTrace(const std::string& message) {
+    const char* path = std::getenv("SCRATCHBIRD_MY_DEBUG_FILE");
+    if ((!path || path[0] == '\0') && !myExecDebugEnabled()) {
+        return;
+    }
+    std::ofstream out(path && path[0] != '\0' ? path : "/tmp/sb_mysql_exec_debug.log",
+                      std::ios::app);
+    if (!out) {
+        return;
+    }
+    out << message << '\n';
+}
+
 const char* messageTypeName(protocol::MessageType type) {
     return protocol::messageTypeToString(type);
 }
@@ -2393,6 +2406,13 @@ public:
                              static_cast<unsigned>(response.getType()));
                 std::fflush(stderr);
             }
+            {
+                std::ostringstream trace;
+                trace << "[client] received type="
+                      << messageTypeName(response.getType())
+                      << " (" << static_cast<unsigned>(response.getType()) << ")";
+                appendMyExecTrace(trace.str());
+            }
 
             switch (response.getType()) {
                 case protocol::MessageType::QUERY_ERROR: {
@@ -2657,9 +2677,19 @@ public:
 
     core::Status doExecuteBytecode(const std::vector<uint8_t>& bytecode,
                                    const std::string& sql,
+                                   const std::vector<std::string>* parameter_values,
+                                   const std::vector<bool>* parameter_nulls,
                                    ResultSet* results,
                                    core::ErrorContext* ctx) {
-        auto query_msg = protocol::ProtocolCodec::buildQueryBytecode(session_id_, bytecode, sql, 0);
+        protocol::Message query_msg =
+            (parameter_values != nullptr && parameter_nulls != nullptr)
+            ? protocol::ProtocolCodec::buildQueryBytecode(session_id_,
+                                                          bytecode,
+                                                          sql,
+                                                          *parameter_values,
+                                                          *parameter_nulls,
+                                                          0)
+            : protocol::ProtocolCodec::buildQueryBytecode(session_id_, bytecode, sql, 0);
         return doExecuteQueryMessage(query_msg, results, ctx);
     }
 
@@ -3102,7 +3132,31 @@ core::Status Connection::executeBytecode(const std::vector<uint8_t>& bytecode,
         return core::Status::CONNECTION_FAILURE;
     }
 
-    auto status = impl_->doExecuteBytecode(bytecode, sql, results, ctx);
+    auto status = impl_->doExecuteBytecode(bytecode, sql, nullptr, nullptr, results, ctx);
+    if (!isOk(status) && ctx && ctx->message.empty() && !impl_->last_error_.empty())
+    {
+        ctx->set(status, impl_->last_error_.c_str(), __FILE__, __LINE__, __func__);
+    }
+    return status;
+}
+
+core::Status Connection::executeBytecode(const std::vector<uint8_t>& bytecode,
+                                         const std::string& sql,
+                                         const std::vector<std::string>& parameter_values,
+                                         const std::vector<bool>& parameter_nulls,
+                                         ResultSet* results,
+                                         core::ErrorContext* ctx) {
+    if (!isConnected()) {
+        impl_->last_error_ = "Not connected";
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    auto status = impl_->doExecuteBytecode(bytecode,
+                                           sql,
+                                           &parameter_values,
+                                           &parameter_nulls,
+                                           results,
+                                           ctx);
     if (!isOk(status) && ctx && ctx->message.empty() && !impl_->last_error_.empty())
     {
         ctx->set(status, impl_->last_error_.c_str(), __FILE__, __LINE__, __func__);
@@ -3118,7 +3172,7 @@ core::Status Connection::executeBytecode(const std::vector<uint8_t>& bytecode,
         return core::Status::CONNECTION_FAILURE;
     }
 
-    auto status = impl_->doExecuteBytecode(bytecode, std::string(), results, ctx);
+    auto status = impl_->doExecuteBytecode(bytecode, std::string(), nullptr, nullptr, results, ctx);
     if (!isOk(status) && ctx && ctx->message.empty() && !impl_->last_error_.empty())
     {
         ctx->set(status, impl_->last_error_.c_str(), __FILE__, __LINE__, __func__);

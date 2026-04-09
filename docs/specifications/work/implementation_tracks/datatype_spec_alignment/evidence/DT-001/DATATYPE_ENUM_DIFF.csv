@@ -1,0 +1,5 @@
+enum_item,status,notes
+LIST,ADDED,Canonical complex type identity present
+MAP,ADDED,Canonical complex type identity present
+BSON,ADDED,Canonical complex type identity present
+UINT128,VERIFIED,Native scalar identity preserved

@@ -1,0 +1,6 @@
+case_id,operation,validation_rule,expected_result,error_code
+T17-BL-001,create_filter,module_exists_and_validated,created,
+T17-BL-002,create_filter,missing_symbol,rejected,E_BLOB_FILTER_SYMBOL_NOT_FOUND
+T17-BL-003,alter_filter,module_entrypoint_valid,updated,
+T17-BL-004,drop_filter,existing_filter,dropped,
+T17-BL-005,duplicate_subtype_binding,duplicate_tuple,rejected,E_BLOB_FILTER_DUPLICATE_BINDING

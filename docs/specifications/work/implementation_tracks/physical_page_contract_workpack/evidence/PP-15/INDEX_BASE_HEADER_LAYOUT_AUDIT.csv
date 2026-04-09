@@ -1,0 +1,12 @@
+item,expected,implementation,status
+IndexPageHeader.size,32 bytes,include/scratchbird/core/ondisk.h static_assert(sizeof(IndexPageHeader)==32),pass
+index_uuid.offset,0x00,tests/unit/test_index_page_base_layout_contract.cpp,pass
+page_level.offset,0x10,tests/unit/test_index_page_base_layout_contract.cpp,pass
+flags.offset,0x12,tests/unit/test_index_page_base_layout_contract.cpp,pass
+right_sibling.offset,0x14,tests/unit/test_index_page_base_layout_contract.cpp,pass
+left_sibling.offset,0x18,tests/unit/test_index_page_base_layout_contract.cpp,pass
+opaque_len.offset,0x1C,tests/unit/test_index_page_base_layout_contract.cpp,pass
+reserved.offset,0x1E,tests/unit/test_index_page_base_layout_contract.cpp,pass
+Flag bit contract,bits 0-3 only in Alpha,include/scratchbird/core/ondisk.h INDEX_PAGE_FLAG_* + isValidIndexPageFlags,pass
+reserved field contract,must be zero,include/scratchbird/core/ondisk.h isValidIndexPageHeaderBasic,pass
+opaque_len contract,must match expected opaque size,include/scratchbird/core/ondisk.h isValidIndexPageHeaderBasic,pass

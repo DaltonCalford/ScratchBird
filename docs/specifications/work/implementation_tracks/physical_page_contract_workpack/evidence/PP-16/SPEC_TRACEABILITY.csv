@@ -1,0 +1,6 @@
+spec_clause,implementation,evidence,status
+Only canonical index page types are accepted by index-page validators,include/scratchbird/core/ondisk.h (isCanonicalIndexPageType),INDEX_PAGE_TYPE_AND_SIBLING_MATRIX.csv,pass
+Non-index page types are rejected for index header validation,include/scratchbird/core/ondisk.h (isValidIndexPageHeaderForType),INDEX_PAGE_TYPE_AND_SIBLING_MATRIX.csv,pass
+Sibling edge flags must match sibling pointers deterministically,include/scratchbird/core/ondisk.h (isValidIndexSiblingContract),INDEX_PAGE_TYPE_AND_SIBLING_MATRIX.csv,pass
+Root pages must be both leftmost and rightmost with no siblings,include/scratchbird/core/ondisk.h (isValidIndexSiblingContract root branch),INDEX_PAGE_TYPE_AND_SIBLING_MATRIX.csv,pass
+Page type and sibling contract behavior is regression-tested,tests/unit/test_index_page_type_sibling_contract.cpp,TEST_RESULTS.md,pass

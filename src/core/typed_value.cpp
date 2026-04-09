@@ -3831,11 +3831,19 @@ namespace scratchbird::core
                 return data_.bool_val ? "true" : "false";
             case DataType::VARCHAR:
             case DataType::TEXT:
-            case DataType::CHAR:
             case DataType::JSON:
             case DataType::XML:
             case DataType::COMPLETION_FIELD:
                 return string_data_;
+            case DataType::CHAR:
+            {
+                std::string trimmed = string_data_;
+                while (!trimmed.empty() && trimmed.back() == ' ')
+                {
+                    trimmed.pop_back();
+                }
+                return trimmed;
+            }
             case DataType::JSONB:
             case DataType::BSON:
             {
@@ -7449,6 +7457,30 @@ namespace scratchbird::core
                        : string_data_;
         };
 
+        auto normalizeTemporalParseInput = [&](std::string text) -> std::string
+        {
+            text = trimAscii(text);
+            if (text.size() >= 2 && text.front() == '\'' && text.back() == '\'')
+            {
+                std::string unquoted;
+                unquoted.reserve(text.size() - 2);
+                for (size_t i = 1; i + 1 < text.size(); ++i)
+                {
+                    if (text[i] == '\'' && i + 1 < text.size() - 1 && text[i + 1] == '\'')
+                    {
+                        unquoted.push_back('\'');
+                        ++i;
+                    }
+                    else
+                    {
+                        unquoted.push_back(text[i]);
+                    }
+                }
+                return trimAscii(unquoted);
+            }
+            return text;
+        };
+
         auto normalized_format = (format == CastFormat::DEFAULT) ? CastFormat::HEX : format;
 
         // Same type (handle modifiers)
@@ -9427,7 +9459,7 @@ namespace scratchbird::core
                     min_pos = 16;
                 }
 
-                std::string input = stringValueForParse();
+                std::string input = normalizeTemporalParseInput(stringValueForParse());
                 if (!parseOffsetSuffix(input, min_pos, base, offset_seconds, has_offset, ctx))
                 {
                     return wrapStatus(Status::DATETIME_VALUE_OUT_OF_RANGE);
@@ -9530,14 +9562,18 @@ namespace scratchbird::core
                 {
                     sep_pos = base.find(' ');
                 }
+                std::string date_part;
+                std::string time_part;
                 if (sep_pos == std::string::npos)
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::DATETIME_VALUE_OUT_OF_RANGE,
-                                      "Invalid TIMESTAMP format");
-                    return wrapStatus(Status::DATETIME_VALUE_OUT_OF_RANGE);
+                    date_part = base;
+                    time_part = "00:00:00";
                 }
-                std::string date_part = base.substr(0, sep_pos);
-                std::string time_part = base.substr(sep_pos + 1);
+                else
+                {
+                    date_part = base.substr(0, sep_pos);
+                    time_part = base.substr(sep_pos + 1);
+                }
 
                 int year = 0;
                 int month = 0;

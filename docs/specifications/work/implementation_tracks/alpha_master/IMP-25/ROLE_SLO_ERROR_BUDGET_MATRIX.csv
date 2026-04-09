@@ -1,0 +1,7 @@
+case_id,required_check,expected_result,error_code
+T25-SLO-01,role_profile_resolution_and_binding_precedence,pass,
+T25-SLO-02,sli_slo_budget_calculations_formula_match,pass,
+T25-SLO-03,burn_rate_severity_classification_thresholds,pass,
+T25-SLO-04,admission_tuning_within_safety_bounds,pass,
+T25-SLO-05,autoscale_trigger_and_cooldown_rules_deterministic,pass,
+T25-SLO-06,burn_tuning_autoscale_evidence_rows_persisted_immutable,pass,

@@ -1,0 +1,8 @@
+case_id,isolation_level,read_committed_mode,snapshot_scope,writer_conflict_behavior,expected_result,error_code
+ISO-001,SNAPSHOT,n/a,transaction_start_snapshot,no_restart,deterministic_snapshot,NONE
+ISO-002,READ_COMMITTED,READ_CONSISTENCY,statement_snapshot,restart_on_conflict,deterministic_restart_or_success,NONE
+ISO-003,READ_COMMITTED,RECORD_VERSION,latest_committed_or_back_version,no_wait_backversion_read,success_or_backversion,NONE
+ISO-004,READ_COMMITTED,NO_RECORD_VERSION,latest_only,wait_on_active_writer,success_or_timeout,LOCK_TIMEOUT
+ISO-005,READ_ONLY_PRECOMMITTED,n/a,precommitted_snapshot,writer_forbidden,read_only_success,NONE
+ISO-006,invalid_isolation,n/a,n/a,n/a,reject,INVALID_TXN_ISOLATION
+ISO-007,read_committed_invalid_mode,UNKNOWN,n/a,n/a,reject,INVALID_TXN_ISOLATION

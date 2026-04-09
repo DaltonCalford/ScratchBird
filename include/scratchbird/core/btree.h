@@ -19,9 +19,11 @@
 #include "scratchbird/core/gpid.h"
 #include "scratchbird/core/bloom_filter.h"
 #include "scratchbird/core/buffer_pool.h"
+#include <atomic>
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 
 namespace scratchbird
@@ -172,11 +174,37 @@ namespace scratchbird
         class BTree : public IndexGCInterface
         {
         public:
+            struct BulkLoadStats
+            {
+                bool input_already_sorted = false;
+                uint64_t sort_us = 0;
+                uint64_t leaf_build_us = 0;
+                uint64_t internal_build_us = 0;
+                uint64_t root_finalize_us = 0;
+            };
+
+            struct HotLeafStats
+            {
+                uint64_t right_edge_detections = 0;
+                uint64_t right_edge_presplits = 0;
+                uint64_t right_edge_split_retries = 0;
+            };
+
             BTree(Database *db, SBBTreeIndex index_info);
             ~BTree();
 
             const SBBTreeIndex &getIndexInfo() const { return index_info_; }
-
+            auto getHotLeafStats() const -> HotLeafStats
+            {
+                HotLeafStats stats{};
+                stats.right_edge_detections =
+                    hot_leaf_right_edge_detections_.load(std::memory_order_relaxed);
+                stats.right_edge_presplits =
+                    hot_leaf_right_edge_presplits_.load(std::memory_order_relaxed);
+                stats.right_edge_split_retries =
+                    hot_leaf_right_edge_split_retries_.load(std::memory_order_relaxed);
+                return stats;
+            }
             // Static factory methods
             static Status create(Database *db, const UuidV7Bytes &index_uuid,
                                  const UuidV7Bytes &table_uuid,
@@ -275,8 +303,9 @@ namespace scratchbird
             // @param xid Transaction ID for btn_xmin on all entries
             // @return Status::OK on success
             Status bulkLoad(std::vector<std::pair<std::vector<uint8_t>, TID>> &entries,
-                           uint64_t xid,
-                           ErrorContext *ctx = nullptr);
+                            uint64_t xid,
+                            ErrorContext *ctx = nullptr,
+                            BulkLoadStats *stats_out = nullptr);
 
             Status attachBloomFilter(const BloomFilterConfig &config,
                                      uint64_t estimated_keys,
@@ -286,6 +315,7 @@ namespace scratchbird
             Status detachBloomFilter(ErrorContext *ctx = nullptr);
             Status rebuildBloomFilter(ErrorContext *ctx = nullptr);
             BloomFilter *getBloomFilter() const { return bloom_filter_.get(); }
+            uint64_t rootPage() const { return index_info_.idx_root_page; }
 
             // PHASE 2 TASK 2.2: IndexGCInterface implementation
             // Remove index entries pointing to dead tuples
@@ -295,6 +325,8 @@ namespace scratchbird
                                      uint64_t *entries_removed_out = nullptr,
                                      uint64_t *pages_modified_out = nullptr,
                                      ErrorContext *ctx = nullptr) override;
+            Status getCleanupDebtSnapshot(IndexCleanupDebtSnapshot *snapshot_out,
+                                          ErrorContext *ctx = nullptr) const override;
 
             // Get index type name for logging
             const char *indexTypeName() const override
@@ -311,14 +343,31 @@ namespace scratchbird
                                             ErrorContext *ctx = nullptr);
 
         private:
+            struct RightmostLeafHint
+            {
+                uint64_t page_num = 0;
+                std::vector<uint8_t> high_key;
+            };
+
             Database *db_;
             SBBTreeIndex index_info_;
             CharsetManager charset_manager_; // For collation-aware key comparisons
+            std::atomic<uint64_t> hot_leaf_right_edge_detections_{0};
+            std::atomic<uint64_t> hot_leaf_right_edge_presplits_{0};
+            std::atomic<uint64_t> hot_leaf_right_edge_split_retries_{0};
+            mutable std::mutex rightmost_leaf_hint_mutex_;
+            RightmostLeafHint rightmost_leaf_hint_;
+            mutable std::mutex cleanup_debt_snapshot_mutex_;
+            IndexCleanupDebtSnapshot last_cleanup_debt_snapshot_;
 
             Status pinIndexPage(uint64_t page_num, void **buffer, ErrorContext *ctx = nullptr,
                                 BufferPool::AccessStrategy strategy = BufferPool::AccessStrategy::Normal);
             Status unpinIndexPage(uint64_t page_num, bool dirty, ErrorContext *ctx = nullptr);
             GPID indexGPID(uint64_t page_num) const;
+            Status persistRootGPID(uint64_t root_page_num, ErrorContext *ctx);
+            void clearRightmostLeafHint();
+            void updateRightmostLeafHint(uint64_t page_num, const std::vector<uint8_t> &high_key);
+            void storeCleanupDebtSnapshot(const IndexCleanupDebtSnapshot &snapshot);
 
             // Collation-aware key comparison using CharsetManager
             // Returns: -1 if key1 < key2, 0 if equal, 1 if key1 > key2
@@ -355,7 +404,9 @@ namespace scratchbird
             // Page split operations
             // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
             Status split_leaf_page(uint64_t left_page_num, const std::vector<uint8_t> &new_key,
-                                   const TID &new_tid, ErrorContext *ctx);
+                                   const TID &new_tid, uint64_t xid,
+                                   uint64_t *right_page_num_out,
+                                   ErrorContext *ctx);
             Status split_internal_page(uint64_t left_page_num,
                                        uint64_t left_child_page_num,
                                        const std::vector<uint8_t> &separator_key,

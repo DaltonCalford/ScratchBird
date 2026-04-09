@@ -11,6 +11,7 @@ emulated
 sys.information	sys
 sys.security	sys
 sys.system	sys
+sys.config	sys
 sys.schema	sys
 sys.cluster	sys
 sys.connections	sys

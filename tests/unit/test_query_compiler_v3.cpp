@@ -365,6 +365,17 @@ TEST_F(QueryCompilerV3Test, CompileSelectWithCompactArithmetic) {
     ASSERT_TRUE(result.success()) << "Compilation failed";
 }
 
+TEST_F(QueryCompilerV3Test, CompileInsertWithAnonymousQuestionMarkPlaceholders) {
+    auto create_table = compileAndExecute(
+        "CREATE TABLE question_mark_params (item_id INT, order_id INT, qty INT)");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    auto result = compiler_->compile(
+        "INSERT INTO question_mark_params (item_id, order_id, qty) VALUES (?, ?, ?), (?, ?, ?)");
+    ASSERT_TRUE(result.success());
+    EXPECT_FALSE(result.bytecode().empty());
+}
+
 TEST_F(QueryCompilerV3Test, ValidateCompactAndSpacedArithmeticBytecode) {
     auto compact = compiler_->compile("SELECT 10+5");
     ASSERT_TRUE(compact.success()) << "Compact compilation failed";

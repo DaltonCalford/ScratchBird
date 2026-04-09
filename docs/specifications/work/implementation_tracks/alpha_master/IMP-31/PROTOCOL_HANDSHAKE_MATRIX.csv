@@ -1,0 +1,4 @@
+suite_id,requirement_id,check,method,expected_result,reject_condition,evidence_artifact
+T31-G3,IMP-31-REQ-G3-01,Frame/message conformance,Protocol conformance harness,All frames/messages conform to spec,Any frame/message conformance error,TEST_RESULTS.md#T31-G3
+T31-G3,IMP-31-REQ-G3-02,Handshake transcript and auth policy flow checks,Handshake transcript replayer,All handshake transcripts accepted/rejected deterministically,Policy mismatch or nondeterministic handshake outcome,TEST_RESULTS.md#T31-G3
+T31-G3,IMP-31-REQ-G3-03,Registry visibility checks,Registry visibility harness,Capability/registry visibility contracts hold,Visibility contract violation,TEST_RESULTS.md#T31-G3

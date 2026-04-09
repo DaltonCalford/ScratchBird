@@ -1,0 +1,8 @@
+case_id,suite,required_check,expected_result,error_code
+T30-BI01,BI,embedded_only_artifacts_installed_forbidden_omitted,pass,
+T30-BI02,BI,server_ipc_profile_artifacts_without_listener_parser,pass,
+T30-BI03,BI,server_ipc_listener_parser_profile_selected_families_installed,pass,
+T30-BI04,BI,client_libs_only_omits_server_binaries_services,pass,
+T30-BI05,BI,full_stack_installs_all_required_artifacts,pass,
+T30-BI06,BI,profile_conflicts_or_missing_artifacts_fail_deterministically,reject,INS-E-PROFILE
+T30-BI07,BI,first_start_without_open_database_skips_listener_startup,pass,

@@ -1,0 +1,23 @@
+gap_id,gap_summary,gap_status,mapped_ticket,priority,depends_on,acceptance_artifact,notes
+G-001,Single writer per shard fencing not enforced,missing,HCN-020,P0,HCN-014,FENCING_WRITE_PATH_AUDIT.csv,Current runtime uses BRG_0406 reject path for cluster families
+G-002,Leader term and fencing token checks missing,missing,HCN-020,P0,HCN-014,STALE_LEADER_REJECTION_RESULTS.md,Required for split-brain safety
+G-003,Cluster identity not persisted in DB header,missing,HCN-010,P0,HCN-003,DB_HEADER_LAYOUT_DIFF.md,Needs cluster_id node_id cluster_config_epoch fields
+G-004,Injectable TimeSource abstraction absent,missing,HCN-011,P1,HCN-010,TIME_SOURCE_INTERFACE.md,UUID and lease paths still tied to system clock
+G-005,StorageLockProvider abstraction incomplete,partial,HCN-012,P1,HCN-010,PLATFORM_LOCK_AUDIT.csv,Direct flock usage still present in runtime paths
+G-006,Session epoch tuple incomplete,partial,HCN-022,P0,HCN-021,SESSION_EPOCH_MODEL.md,Cluster schema security epoch tuple required
+G-007,GTXID contract missing,missing,HCN-024,P0,HCN-021,GTXID_SCHEMA.md,Cross-shard ordering identity required
+G-008,Snapshot vector and CWM publication missing,missing,HCN-032,P0,HCN-030,SNAPSHOT_REGISTRY_SCHEMA.md,Cross-shard read safety depends on CWM publication
+G-009,Shard commit log pipeline absent,missing,HCN-030,P0,HCN-024,SCL_RECORD_SCHEMA.md,Durable append ordering is not implemented
+G-010,Follower apply ordering and idempotence missing,missing,HCN-031,P0,HCN-030,FOLLOWER_APPLY_IDEMPOTENCE_RESULTS.md,Replay safety contract missing
+G-011,GC safe horizon min(OST and RWM) not enforced,missing,HCN-033,P0,HCN-031|HCN-032,GC_SAFE_HORIZON_FORMULA_AUDIT.csv,Distributed MGA GC boundary not enforced
+G-012,Domain control-plane replication partially implemented,partial,HCN-034,P1,HCN-013|HCN-014,DOMAIN_HASH_CONSISTENCY_MATRIX.csv,Join rejoin hash convergence required
+G-013,Required operator SHOW surfaces incomplete,partial,HCN-041,P1,HCN-040,SQL_VIEW_SCHEMA_AUDIT.csv,Spec requires additional cluster introspection views
+G-014,Threat model gameday suites absent,missing,HCN-060,P0,HCN-034|HCN-043,SPLIT_BRAIN_SIM_RESULTS.md,Safety claims require deterministic adversarial evidence
+G-015,OpenMetrics endpoint contract partial,partial,HCN-042,P1,HCN-040,HEALTH_ENDPOINT_TEST_RESULTS.md,Path routing readiness contract needs closure
+G-016,SB-OBS metric namespace mismatch,missing,HCN-040,P0,HCN-033,METRIC_NAME_MAPPING.csv,Current prefix scratchbird_ diverges from sb_ contract
+G-017,Required SQL observability views absent,missing,HCN-041,P0,HCN-040,SYS_METRICS_RUNTIME_RESULTS.md,sys.metrics.runtime and related views missing
+G-018,healthz readyz endpoint contract partial,partial,HCN-042,P0,HCN-040,READINESS_TRANSITION_AUDIT.csv,Explicit liveness readiness endpoints required
+G-019,Structured event schema missing epoch context,partial,HCN-043,P1,HCN-040,EPOCH_CONTEXT_EVENT_AUDIT.csv,Event payload must carry cluster schema security epochs
+G-020,Explicit native compile path incomplete,partial,HCN-050,P0,HCN-003,EXPLICIT_COMPILE_API_CONTRACT.md,Catalog exists but runtime compile and execution wiring incomplete
+G-021,Artifact selector and deterministic fallback incomplete,partial,HCN-051,P0,HCN-050,FALLBACK_REASON_CODE_MATRIX.csv,Compatibility key and fallback reasons not fully enforced
+G-022,Optional JIT queue suppression and rebasing controls incomplete,partial,HCN-052|HCN-053,P1,HCN-051,HINT_SUPPRESSION_MATRIX.csv,Keep JIT opt-in and enforce portability checks

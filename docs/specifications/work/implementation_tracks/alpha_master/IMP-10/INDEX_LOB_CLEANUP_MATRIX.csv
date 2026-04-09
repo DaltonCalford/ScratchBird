@@ -1,0 +1,6 @@
+case_id,heap_event,index_cleanup_required,lob_cleanup_required,expected_result,error_code
+ILC-001,row_version_reclaimed_yes,yes,no,index_entries_removed,NONE
+ILC-002,row_version_reclaimed_with_toast,yes,yes,index_removed_lob_marked,NONE
+ILC-003,row_version_not_reclaimed,no,no,no_action,NONE
+ILC-004,index_entry_missing_for_reclaimed_row,yes,no,fail_and_report,GC_INDEX_MISMATCH
+ILC-005,orphan_lob_chunk_detected,n/a,yes,mark_deferred_delete,NONE

@@ -1,0 +1,5 @@
+case_id,suite,required_check,expected_result,error_code
+T30-E01,E,wire_errors_map_to_client_error_domains_codes,pass,
+T30-E02,E,verifier_errors_preserve_sblr_error_values,pass,
+T30-E03,E,cli_exit_code_contract_enforced,pass,
+T30-E04,E,json_rendering_schema_stability,pass,

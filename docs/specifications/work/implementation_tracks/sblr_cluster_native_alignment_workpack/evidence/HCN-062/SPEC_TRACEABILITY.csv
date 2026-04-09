@@ -1,0 +1,4 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+31/CLUSTER_GAMEDAY_AND_OPERATOR_RUNBOOK_GATES.md,final_gate_signoff_package,"local_work/docs/planning/SBLR_CLUSTER_NATIVE_ALIGNMENT_WORKTREE/gates/HCN-GATE-07","GATE_EVIDENCE_INDEX.csv;FINAL_SIGNOFF_SUMMARY.md",pass,"All required gate evidence indexed and decisioned"
+SB-CLUSTER-THREAT-MODEL-AND-FAILURE-ANALYSIS.md,threat_suite_completion,"local_work/docs/planning/SBLR_CLUSTER_NATIVE_ALIGNMENT_WORKTREE/evidence/HCN-060","SPLIT_BRAIN_SIM_RESULTS.md;TEST_RESULTS.md",pass,"Threat/failure suites completed and passing"
+23/NATIVE_COMPILATION_AND_ARTIFACT_LIFECYCLE.md,hybrid_native_release_readiness,"local_work/docs/planning/SBLR_CLUSTER_NATIVE_ALIGNMENT_WORKTREE/evidence/HCN-050;HCN-051;HCN-052;HCN-053","RELEASE_READINESS_CHECKLIST.md;FINAL_SIGNOFF_SUMMARY.md",pass,"Hybrid native invariants and fallback contracts verified"

@@ -1,0 +1,12 @@
+# PCG-GATE-00 Evidence Bundle
+
+Gate: PCG-GATE-00
+Phase: PH0
+
+Required artifacts:
+- RUN_MANIFEST.json
+- RESULT_SUMMARY.md
+- INPUT_SCOPE_LOCK.md
+- CAPABILITY_GAP_LEDGER.csv
+- PROGRAM_SLO_MATRIX.csv
+- CHECKSUMS.sha256

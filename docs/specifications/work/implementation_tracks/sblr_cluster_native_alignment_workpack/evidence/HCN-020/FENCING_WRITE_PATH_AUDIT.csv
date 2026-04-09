@@ -1,0 +1,4 @@
+scenario,leader_node_id,leader_term,request_node_id,request_term,request_routing_epoch,current_routing_epoch,allowed,reason,test_case
+stale_leader_node,11111111-1111-4111-8111-111111111111,7,22222222-2222-4222-8222-222222222222,7,100,100,false,NOT_CURRENT_LEADER,ClusterWriteFencingTest.StaleLeaderWritesAreRejectedByTokenAndLeaderIdentity
+stale_fencing_term,11111111-1111-4111-8111-111111111111,7,11111111-1111-4111-8111-111111111111,6,100,100,false,STALE_FENCING_TOKEN,ClusterWriteFencingTest.StaleLeaderWritesAreRejectedByTokenAndLeaderIdentity
+routing_epoch_mismatch,11111111-1111-4111-8111-111111111111,9,11111111-1111-4111-8111-111111111111,9,100,101,false,ROUTING_EPOCH_MISMATCH,ClusterWriteFencingTest.RoutingEpochMustMatchPinnedWritePathEpoch

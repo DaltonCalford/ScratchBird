@@ -1,0 +1,4 @@
+requirement_id,requirement_surface,authority_file,evidence_or_gate,status
+IX-01,all_families_primary_class,INDEX_METRICS_AND_COSTING.md,TEST_CONTRACT.md,canonicalized
+IX-02,index_publication_and_reclaim,INDEX_MGA_PUBLICATION_AND_RECLAIM.md,TEST_CONTRACT.md,canonicalized
+IX-03,vector_residency_and_flush,VECTOR_AND_ANN_INDEX_ALWAYS_RESIDENT_ADMISSION_AND_FLUSH_MODEL.md,TEST_CONTRACT.md,canonicalized

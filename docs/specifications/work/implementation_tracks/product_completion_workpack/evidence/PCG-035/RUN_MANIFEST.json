@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-035",
+  "phase": "PH3",
+  "title": "Implement retention and legal hold lifecycle controls",
+  "status": "pending",
+  "owner": "governance-security",
+  "estimate_days": 5,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

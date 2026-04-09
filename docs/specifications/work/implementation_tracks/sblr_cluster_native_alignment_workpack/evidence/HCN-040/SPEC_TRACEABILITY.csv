@@ -1,0 +1,4 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+SB-OBS-METRICS-MONITORING-01.md,metric_name_prefix_sb,"src/core/observability_contract.cpp::MetricContractPolicy::isCanonicalMetricName","CARDINALITY_POLICY_AUDIT.csv;TEST_RESULTS.md",pass,"Canonical metric policy enforces sb_ prefix and approved subsystem token"
+SB-OBS-METRICS-MONITORING-01.md,label_cardinality_policy,"src/core/observability_contract.cpp::MetricContractPolicy::validateSample","CARDINALITY_POLICY_AUDIT.csv;TEST_RESULTS.md",pass,"Allowlist/forbidden-label policy enforced through registry audit"
+SB-OBS-METRICS-MONITORING-01.md,canonical_metric_namespace_alignment,"src/core/observability_contract.cpp::MetricContractPolicy::registerSbObsBaselineMetrics;src/core/telemetry.cpp::ScratchBirdMetrics::initialize","METRIC_NAME_MAPPING.csv;PROMETHEUS_EXPORT_DIFF.md",pass,"Canonical sb_* metric family registered alongside legacy names for migration"

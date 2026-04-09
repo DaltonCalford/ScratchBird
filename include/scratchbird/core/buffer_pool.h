@@ -254,6 +254,11 @@ namespace scratchbird::core
             uint32_t page_size = 16384; // Page size in bytes
             BufferProfile profile = BufferProfile::Mixed;
             PoolLayout layout = PoolLayout::Segmented;
+            uint64_t configured_memory_request_bytes = 0;
+            uint64_t detected_memory_ceiling_bytes = 0;
+            uint64_t effective_memory_budget_bytes = 0;
+            bool memory_budget_clamped = false;
+            bool memory_ceiling_is_environment_bounded = false;
             std::array<DomainBudgetConfig, static_cast<size_t>(PolicyDomain::Count)> domain_budgets{};
             uint32_t replacement_protected_pct = 35;
             uint32_t replacement_ghost_history_pct = 20;
@@ -505,7 +510,8 @@ namespace scratchbird::core
          * @param ctx Error context
          * @return Status::OK on success, error status otherwise
          *
-         * Note: For Phase 1, only tablespace_id=0 (primary) is supported.
+         * Supports both primary (tablespace 0) and custom tablespaces
+         * (1-65535) through the GPID allocation path.
          */
         auto allocatePageGlobal(uint16_t tablespace_id, GPID *gpid_out, void **buffer,
                                ErrorContext *ctx = nullptr) -> Status;
@@ -1661,6 +1667,7 @@ namespace scratchbird::core
         static auto isHardReservedDomain(PolicyDomain domain) -> bool;
         static auto isDirectProtectClass(MgaPageClass page_class) -> bool;
         static auto isDirectProtectSystemMetaPageType(uint16_t page_type) -> bool;
+        auto isDirectProtectFrame(const Frame &frame) const -> bool;
         static auto isSystemMetaPageType(uint16_t page_type) -> bool;
         static auto isIndexRootInternalPageType(uint16_t page_type) -> bool;
         static auto isIndexLikePageType(uint16_t page_type) -> bool;

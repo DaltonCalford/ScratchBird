@@ -1,0 +1,8 @@
+check_id,category,expected_source,observed_location,status,delta,notes
+SDU-001,Namespace UUID,15_Complex_Types/SYSTEM_DOMAIN_UUID_REGISTRY.md,src/core/domain_manager.cpp:systemDomainNamespaceUuid,PASS,,Namespace UUID matches spec: e82f373b-99fa-4e85-a135-dfee52b58edb
+SDU-002,UUID version/rules,15_Complex_Types/SYSTEM_DOMAIN_UUID_REGISTRY.md,src/core/domain_manager.cpp:uuidV5,PASS,,UUID v5 generation uses RFC version/variant bits
+SDU-003,Canonical key shape,15_Complex_Types/SYSTEM_DOMAIN_UUID_REGISTRY.md,src/core/domain_manager.cpp:canonicalSystemDomainKey,PASS,,Canonical `domain|origin|name|base_type=...` format implemented
+SDU-004,Fixed-ID enforcement,15_Complex_Types/SYSTEM_DOMAIN_UUID_REGISTRY.md,src/core/domain_manager.cpp:ensureSystemDomains,PASS,,System create path uses fixed_domain_id deterministic UUID
+SDU-005,Collision reject,15_Complex_Types/SYSTEM_DOMAIN_UUID_REGISTRY.md,src/core/domain_manager.cpp:resolveDomainCreateId,PASS,,Duplicate fixed_domain_id rejected
+SDU-006,Registry name-set alignment,15_Complex_Types/SYSTEM_DOMAIN_UUID_REGISTRY.md,src/core/domain_manager.cpp:kSystemDomains,PARTIAL,Canonical registry names differ from runtime bootstrap names,Requires follow-up migration to canonical name set (`[sb_dom]cat_*`, `[sb_dom]uuid_v7_internal`, etc.)
+SDU-007,Registry literal UUID parity,15_Complex_Types/SYSTEM_DOMAIN_UUID_REGISTRY.md,Runtime bootstrap list,PARTIAL,Full literal UUID parity not yet validated row-for-row against authoritative registry,Requires strict import/migration task to align/verify every listed domain UUID

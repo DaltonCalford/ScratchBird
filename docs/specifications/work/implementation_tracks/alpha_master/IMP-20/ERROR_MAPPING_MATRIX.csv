@@ -1,0 +1,6 @@
+case_id,error_source,internal_code,exposed_code,mapping_rule,expected_result
+T20-ER-001,permission_check,E_PERMISSION_DENIED,SQLSTATE_42501,deterministic_by_policy,stable_mapping
+T20-ER-002,lock_timeout,E_LOCK_TIMEOUT,SQLSTATE_55P03,deterministic_by_lock_manager,stable_mapping
+T20-ER-003,toast_pointer,E_TOAST_POINTER_INVALID,SQLSTATE_XX000,deterministic_storage_error,stable_mapping
+T20-ER-004,syntax_parser,E_SYNTAX_INVALID,SQLSTATE_42601,deterministic_parser_error,stable_mapping
+T20-ER-005,resource_exhaustion,E_RESOURCE_EXHAUSTED,SQLSTATE_53000,deterministic_resource_error,stable_mapping

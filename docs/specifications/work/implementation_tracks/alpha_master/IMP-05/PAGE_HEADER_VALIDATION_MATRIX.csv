@@ -1,0 +1,13 @@
+case_id,field_or_rule,input,expected_result,error_code
+PHT-001,magic,0x53425244,accept,NONE
+PHT-002,magic,invalid,reject,INVALID_MAGIC
+PHT-003,page_size,matches_db_header,accept,NONE
+PHT-004,page_size,mismatch_db_header,reject,INVALID_PAGE_SIZE
+PHT-005,page_type,known_enum,accept,NONE
+PHT-006,page_type,unknown_enum,reject,INVALID_PAGE_TYPE
+PHT-007,free_offset_special_overlap,no_overlap,accept,NONE
+PHT-008,free_offset_special_overlap,overlap,reject,INVALID_PAGE_LAYOUT
+PHT-009,checksum,computed_equals_stored,accept,NONE
+PHT-010,checksum,mismatch_with_valid_flag,reject,INVALID_CHECKSUM
+PHT-011,lsn_alpha_rule,zeroed,accept,NONE
+PHT-012,lsn_alpha_rule,non_zero,reject,INVALID_PAGE_LAYOUT

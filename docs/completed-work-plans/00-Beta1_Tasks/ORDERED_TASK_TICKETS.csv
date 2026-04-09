@@ -1,0 +1,7 @@
+order,ticket,title,phase,status
+1,B1P-001,Beta 1 scope freeze,freeze,done
+2,B1P-002,Section inventory and ownership normalization,map,done
+3,B1P-003,Dependency-ordered downstream sequence freeze,sequence,done
+4,B1P-004,Generate downstream work-plans 01 through 04,generate,done
+5,B1P-005,Generate downstream work-plans 05 through 08,generate,done
+6,B1P-006,Final Beta 1 planning handoff closure,closeout,done

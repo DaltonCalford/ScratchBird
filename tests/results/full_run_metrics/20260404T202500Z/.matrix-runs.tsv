@@ -1,0 +1,13 @@
+scratchbird|full-gate|2026-04-05T00:49:36Z|602.58|8|failed|scratchbird/full-gate
+scratchbird|public-beta|2026-04-05T00:49:36Z|0.0|1|failed|scratchbird/public-beta
+firebird|regression|2026-04-05T00:49:16Z|0.0|0|passed|firebird/regression
+mysql|regression|2026-04-05T00:22:35Z|0.0|0|passed|mysql/regression
+postgresql|regression|2026-04-05T00:22:04Z|0.0|0|passed|postgresql/regression
+scratchbird|regression|2026-04-05T00:22:55Z|0.0|0|skipped|scratchbird/regression
+scratchbird-firebird|emulation-comparison|2026-04-05T00:49:36Z|0.0|1|missing|scratchbird-firebird/emulation-comparison
+scratchbird-mysql|emulation-comparison|2026-04-05T00:22:35Z|0.0|0|passed|scratchbird-mysql/emulation-comparison
+scratchbird-postgresql|emulation-comparison|2026-04-05T00:22:04Z|0.0|0|passed|scratchbird-postgresql/emulation-comparison
+upstream-firebird|emulation-comparison|2026-04-05T00:49:16Z|0.0|0|passed|upstream-firebird/emulation-comparison
+upstream-mysql|emulation-comparison|2026-04-05T00:49:36Z|0.0|1|missing|upstream-mysql/emulation-comparison
+upstream-postgresql|emulation-comparison|2026-04-05T00:49:36Z|0.0|1|missing|upstream-postgresql/emulation-comparison
+scratchbird|native-v3-inet|2026-04-05T00:22:55Z|0.0|0|skipped|scratchbird/native-v3-inet

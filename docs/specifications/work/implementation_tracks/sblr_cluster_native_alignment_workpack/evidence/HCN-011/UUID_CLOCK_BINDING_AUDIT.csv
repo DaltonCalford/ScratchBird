@@ -1,0 +1,3 @@
+file,binding,status,notes
+src/core/uuidv7.cpp,generateUuidV7(const TimeSource*),pass,Direct system_clock dependency removed from UUID generator
+include/scratchbird/core/uuidv7.h,generateUuidV7 signature,pass,TimeSource injection path exposed to callers/tests

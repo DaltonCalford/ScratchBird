@@ -1,0 +1,13 @@
+case_id,gate_requirement,evidence_file,expected_result
+T21-LG-001,lexical_contract,docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-001/TEST_RESULTS.md,pass
+T21-LG-002,grammar_production_registration,docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-002/GRAMMAR_PRODUCTION_INDEX.csv,pass
+T21-LG-003,admin_mapping,docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-003/ADMIN_FEATURE_KEY_MAP.csv,pass
+T21-LG-004,ddl_accept_reject,docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-004/GRAMMAR_ACCEPT_REJECT_MATRIX.csv,pass
+T21-LG-005,dml_result_shape,docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-005/DML_RESULT_SHAPE_AUDIT.csv,pass
+T21-LG-006,psql_controlflow_cursor,docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-006/PSQL_CURSOR_STATE_MATRIX.csv,pass
+T21-LG-007,normalization_rejection,docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-007/NORMALIZATION_CORPUS_RESULTS.csv,pass
+T21-LG-008,param_binding_type_coercion,docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-008/PARAM_BINDING_AUDIT.csv,pass
+T21-LG-009,tsql_alias_policy,docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-009/TSQL_ALIAS_REWRITE_RESULTS.csv,pass
+T21-LG-010,uuid_bind_feature_keys,docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-010/UUID_BIND_AND_FEATURE_KEY_AUDIT.csv,pass
+T21-LG-011,sql_sblr_trace,docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-011/SQL_SBLR_ENVELOPE_AUDIT.csv,pass
+T21-LG-012,e2e_language_gate,docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-012/E2E_LANGUAGE_GATE_RESULTS.md,pass

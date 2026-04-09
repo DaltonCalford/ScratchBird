@@ -1,0 +1,8 @@
+area,requirement,implementation_status,notes
+binary_size,pointer must be 32 bytes,pass,static_assert(sizeof(ToastPointer)==32) enforced
+field_layout,lob_uuid present and used as stable TOAST value id,pass,all delete/detoast call sites now use lob_uuid
+field_layout,total_len stores uncompressed byte length,pass,detoast decompresses against total_len when compressed
+field_layout,chunk_size is explicit and configurable,pass,toastValue stamps chunk_size from page-size policy
+field_layout,compression field explicit,pass,compression set to NONE/LZ4 and validated
+field_layout,flags field explicit and bounded,pass,TOAST_COMPRESSED/ENCRYPTED/INLINE_REF mask enforced
+validation,isToastPointer rejects malformed pointers deterministically,pass,checks UUID plausibility, non-zero lengths, valid flags/compression pairing

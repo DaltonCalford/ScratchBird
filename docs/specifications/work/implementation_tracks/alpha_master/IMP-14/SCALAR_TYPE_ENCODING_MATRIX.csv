@@ -1,0 +1,11 @@
+case_id,type_family,type_name,storage_form,encoding_rule,expected_result,error_code
+T14-EN-001,integer,int128,inline_fixed_width,16_byte_twos_complement,encoded,
+T14-EN-002,integer,uint128,inline_fixed_width,16_byte_unsigned,encoded,
+T14-EN-003,numeric,decimal_var,inline_or_varlen,precision_scale_metadata,encoded,
+T14-EN-004,text,varchar,varlen_utf8,length_prefix_plus_payload,encoded,
+T14-EN-005,binary,varbinary,varlen_bytes,length_prefix_plus_payload,encoded,
+T14-EN-006,uuid,uuid,inline_fixed_width,16_byte_binary,encoded,
+T14-EN-007,temporal,timestamp_tz,inline_fixed_width,utc_epoch_plus_offset_meta,encoded,
+T14-EN-008,network,inet,varlen_struct,af_family_plus_addr_plus_prefix,encoded,
+T14-EN-009,bit,varbit,varlen_bits,bit_length_plus_bit_payload,encoded,
+T14-EN-010,overflow_to_toast,text_large,toast_pointer,inline_pointer_to_lob_chain,encoded,

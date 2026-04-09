@@ -29,6 +29,22 @@ class Database;
 class WorkloadGovernance
 {
 public:
+    enum class AcceleratorPosture : uint8_t
+    {
+        NONE = 0,
+        CPU_ONLY = 1,
+        CPU_PREFERRED = 2,
+        ACCELERATOR_PREFERRED = 3,
+        ACCELERATOR_REQUIRED = 4
+    };
+
+    enum class AcceleratorOperation : uint8_t
+    {
+        NONE = 0,
+        SEARCH = 1,
+        BUILD = 2
+    };
+
     struct QueryDescriptor
     {
         ConnectionContext* connection = nullptr;
@@ -37,12 +53,23 @@ public:
         std::string schema_name;
         std::string client_app;
         std::string resource_tag;
+        AcceleratorPosture accelerator_posture = AcceleratorPosture::NONE;
+        AcceleratorOperation accelerator_operation = AcceleratorOperation::NONE;
+        std::string accelerator_profile_name;
+        std::string accelerator_device_class;
+        std::string accelerator_device_id;
+        std::string accelerator_device_pool_id;
+        uint64_t accelerator_memory_request_bytes = 0;
+        uint64_t accelerator_pinned_residency_bytes = 0;
     };
 
     struct AdmissionDecision
     {
         bool admitted = true;
         bool queued = false;
+        bool accelerator_requested = false;
+        bool accelerator_admitted = false;
+        bool accelerator_fallback_used = false;
         Status status = Status::OK;
         std::string code;
         std::string detail;
@@ -50,6 +77,10 @@ public:
         ID policy_id{};
         std::string class_name;
         std::string policy_name;
+        std::string accelerator_profile_name;
+        std::string accelerator_device_class;
+        std::string accelerator_device_id;
+        std::string accelerator_device_pool_id;
     };
 
     class AdmissionLease
@@ -83,6 +114,9 @@ public:
         ID policy_id_{};
         std::string class_name_;
         std::string policy_name_;
+        uint64_t accelerator_reserved_memory_bytes_ = 0;
+        bool accelerator_search_active_ = false;
+        bool accelerator_build_active_ = false;
         bool active_ = false;
     };
 
@@ -101,6 +135,21 @@ public:
         uint32_t active_sessions = 0;
         uint32_t active_queries = 0;
         uint32_t queued_queries = 0;
+        std::string accelerator_profile_name;
+        std::string accelerator_device_class;
+        std::string accelerator_device_id;
+        std::string accelerator_device_pool_id;
+        std::string accelerator_prewarm_policy;
+        std::string accelerator_fallback_policy;
+        std::string accelerator_degraded_state_override;
+        uint32_t accelerator_concurrent_build_limit = 0;
+        uint32_t accelerator_concurrent_search_limit = 0;
+        uint32_t accelerator_active_builds = 0;
+        uint32_t accelerator_active_searches = 0;
+        uint64_t accelerator_memory_budget_bytes = 0;
+        uint64_t accelerator_pinned_residency_target_bytes = 0;
+        uint64_t accelerator_reserved_memory_bytes = 0;
+        uint64_t accelerator_forced_fallbacks = 0;
         bool class_enabled = false;
         bool policy_enabled = false;
         bool binding_enabled = false;
@@ -210,6 +259,10 @@ private:
     {
         uint32_t active_queries = 0;
         uint32_t queued_queries = 0;
+        uint32_t active_accelerator_searches = 0;
+        uint32_t active_accelerator_builds = 0;
+        uint64_t active_accelerator_reserved_memory_bytes = 0;
+        uint64_t forced_fallbacks = 0;
     };
 
     struct MatchState
@@ -239,7 +292,12 @@ private:
                                    const std::vector<uint32_t>& active_proc_ids,
                                    uint32_t current_proc_id,
                                    bool current_session_known) const -> uint32_t;
-    void releaseLease(uint32_t proc_id, const ID& policy_id, const ID& class_id);
+    void releaseLease(uint32_t proc_id,
+                      const ID& policy_id,
+                      const ID& class_id,
+                      uint64_t accelerator_reserved_memory_bytes,
+                      bool accelerator_search_active,
+                      bool accelerator_build_active);
 
     Database* db_ = nullptr;
     mutable std::mutex mutex_;

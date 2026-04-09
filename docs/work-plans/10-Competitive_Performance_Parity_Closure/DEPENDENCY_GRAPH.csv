@@ -1,0 +1,33 @@
+source_ticket,target_ticket,dependency_reason
+PP-10-001,PP-10-002,target freeze must exist before runner pinning rules are judged complete
+PP-10-001,PP-10-003,write recovery must use frozen benchmark and target vocabulary
+PP-10-002,PP-10-003,write recovery evidence must run on pinned binaries
+PP-10-003,PP-10-004,INSERT SELECT sink fusion depends on ordinary bulk insert reuse
+PP-10-003,PP-10-005,page reservation and preallocation must apply to the admitted batch path
+PP-10-001,PP-10-006,update elision work depends on frozen workload scope and targets
+PP-10-003,PP-10-007,batched maintenance depends on batch write entry surface
+PP-10-004,PP-10-007,set-sourced maintenance batching depends on INSERT SELECT sink fusion
+PP-10-005,PP-10-007,maintenance batching must align with heap and preallocation batching
+PP-10-006,PP-10-007,unchanged-key elision and maintenance batching interact on updates
+PP-10-001,PP-10-008,prepared-query work depends on frozen performance vocabulary
+PP-10-002,PP-10-008,prepared-query evidence must run on pinned binaries
+PP-10-001,PP-10-009,secondary-read parity depends on frozen benchmark scope
+PP-10-002,PP-10-009,secondary-read evidence must run on pinned binaries
+PP-10-008,PP-10-010,memoize and prepared-query reuse must align for parameterized join work
+PP-10-009,PP-10-010,BKA and indexed join closure depend on secondary-read locality closure
+PP-10-001,PP-10-011,spill and sort closure depends on frozen benchmark scope
+PP-10-002,PP-10-011,spill and sort evidence must run on pinned binaries
+PP-10-010,PP-10-012,upper-stage specialization depends on join-family specialization inputs
+PP-10-011,PP-10-012,vectorized aggregate and window work depends on spill and sort substrate
+PP-10-009,PP-10-013,parallel scan and ordered-exact work depends on access-family locality closure
+PP-10-010,PP-10-013,parallel join work depends on specialized join families
+PP-10-011,PP-10-013,parallel work must consume spill-safe operator substrate
+PP-10-012,PP-10-013,parallel upper-stage work depends on specialized aggregate and window pipelines
+PP-10-002,PP-10-014,final parity reruns must use pinned benchmark artifacts
+PP-10-007,PP-10-014,final reruns must wait for write-path closure
+PP-10-008,PP-10-014,final reruns must include prepared-query and cache closure
+PP-10-009,PP-10-014,final reruns must include secondary-read parity closure
+PP-10-010,PP-10-014,final reruns must include indexed-join parity closure
+PP-10-011,PP-10-014,final reruns must include spill and sort closure
+PP-10-012,PP-10-014,final reruns must include upper-stage specialization closure
+PP-10-013,PP-10-014,final reruns must include parallel and locality closure

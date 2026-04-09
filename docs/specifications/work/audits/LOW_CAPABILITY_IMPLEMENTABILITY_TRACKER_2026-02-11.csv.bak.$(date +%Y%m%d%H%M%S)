@@ -1,0 +1,457 @@
+file_path,section,status,open_questions_non_none,placeholder_markers,dead_refs,ambiguous_terms,notes
+docs/specifications/00_Governance_and_Invarients/DECISION_RECORD.md,docs/specifications/00_Governance_and_Invarients,ready,0,0,0,0,section-00 manual pass complete
+docs/specifications/00_Governance_and_Invarients/DEPENDENCIES.md,docs/specifications/00_Governance_and_Invarients,ready,0,0,0,0,section-00 manual pass complete
+docs/specifications/00_Governance_and_Invarients/README.md,docs/specifications/00_Governance_and_Invarients,ready,0,0,0,0,section-00 manual pass complete
+docs/specifications/00_Governance_and_Invarients/SPEC_OUTLINE.md,docs/specifications/00_Governance_and_Invarients,ready,0,0,0,0,section-00 manual pass complete
+docs/specifications/00_Governance_and_Invarients/SYSTEM_OBJECT_NAMING.md,docs/specifications/00_Governance_and_Invarients,ready,0,0,0,0,section-00 manual pass complete
+docs/specifications/00_Governance_and_Invarients/TEST_CONTRACT.md,docs/specifications/00_Governance_and_Invarients,ready,0,0,0,1,section-00 manual pass complete
+docs/specifications/01_Configuration_Subsystem/CONFIG_CATALOG_AND_BOOTSTRAP.md,docs/specifications/01_Configuration_Subsystem,ready,0,0,0,0,section-01 manual pass complete
+docs/specifications/01_Configuration_Subsystem/CONFIG_DEFAULTS.md,docs/specifications/01_Configuration_Subsystem,ready,0,0,0,1,section-01 manual pass complete
+docs/specifications/01_Configuration_Subsystem/CONFIG_MODELS_WORKGROUP_AND_CLUSTER.md,docs/specifications/01_Configuration_Subsystem,ready,0,0,0,0,section-01 manual pass complete
+docs/specifications/01_Configuration_Subsystem/CONFIG_SQL_SURFACE.md,docs/specifications/01_Configuration_Subsystem,ready,0,0,0,0,section-01 manual pass complete
+docs/specifications/01_Configuration_Subsystem/DECISION_RECORD.md,docs/specifications/01_Configuration_Subsystem,ready,0,0,0,0,section-01 manual pass complete
+docs/specifications/01_Configuration_Subsystem/DEPENDENCIES.md,docs/specifications/01_Configuration_Subsystem,ready,0,0,0,0,section-01 manual pass complete
+docs/specifications/01_Configuration_Subsystem/README.md,docs/specifications/01_Configuration_Subsystem,ready,0,0,0,0,section-01 manual pass complete
+docs/specifications/01_Configuration_Subsystem/SPEC_OUTLINE.md,docs/specifications/01_Configuration_Subsystem,ready,0,0,0,2,section-01 manual pass complete
+docs/specifications/01_Configuration_Subsystem/TEST_CONTRACT.md,docs/specifications/01_Configuration_Subsystem,ready,0,0,0,0,section-01 manual pass complete
+docs/specifications/02_Filespace_Lifecycle/DECISION_RECORD.md,docs/specifications/02_Filespace_Lifecycle,ready,0,0,0,0,section-02 manual pass complete
+docs/specifications/02_Filespace_Lifecycle/DEPENDENCIES.md,docs/specifications/02_Filespace_Lifecycle,ready,0,0,0,0,section-02 manual pass complete
+docs/specifications/02_Filespace_Lifecycle/FILESPACE_FILE_LAYOUT.md,docs/specifications/02_Filespace_Lifecycle,ready,0,0,0,2,section-02 manual pass complete
+docs/specifications/02_Filespace_Lifecycle/FILESPACE_OPERATIONS.md,docs/specifications/02_Filespace_Lifecycle,ready,0,0,0,0,section-02 manual pass complete
+docs/specifications/02_Filespace_Lifecycle/PARTITION_BOUNDARY_SPLIT_AND_OBJECT_RELOCATION.md,docs/specifications/02_Filespace_Lifecycle,ready,0,0,0,1,section-02 manual pass complete
+docs/specifications/02_Filespace_Lifecycle/README.md,docs/specifications/02_Filespace_Lifecycle,ready,0,0,0,0,section-02 manual pass complete
+docs/specifications/02_Filespace_Lifecycle/SPEC_OUTLINE.md,docs/specifications/02_Filespace_Lifecycle,ready,0,0,0,0,section-02 manual pass complete
+docs/specifications/02_Filespace_Lifecycle/TEST_CONTRACT.md,docs/specifications/02_Filespace_Lifecycle,ready,0,0,0,0,section-02 manual pass complete
+docs/specifications/03_Disk_Allocator_and_Free_Space/ALLOCATION_ALGORITHMS.md,docs/specifications/03_Disk_Allocator_and_Free_Space,ready,0,0,0,0,section-03 manual pass complete
+docs/specifications/03_Disk_Allocator_and_Free_Space/BUFFER_POOL_AND_FLUSH.md,docs/specifications/03_Disk_Allocator_and_Free_Space,ready,0,0,0,2,section-03 manual pass complete
+docs/specifications/03_Disk_Allocator_and_Free_Space/DECISION_RECORD.md,docs/specifications/03_Disk_Allocator_and_Free_Space,ready,0,0,0,0,section-03 manual pass complete
+docs/specifications/03_Disk_Allocator_and_Free_Space/DEPENDENCIES.md,docs/specifications/03_Disk_Allocator_and_Free_Space,ready,0,0,0,0,section-03 manual pass complete
+docs/specifications/03_Disk_Allocator_and_Free_Space/EXTENT_AND_FSM_LAYOUT.md,docs/specifications/03_Disk_Allocator_and_Free_Space,ready,0,0,0,0,section-03 manual pass complete
+docs/specifications/03_Disk_Allocator_and_Free_Space/README.md,docs/specifications/03_Disk_Allocator_and_Free_Space,ready,0,0,0,0,section-03 manual pass complete
+docs/specifications/03_Disk_Allocator_and_Free_Space/SPEC_OUTLINE.md,docs/specifications/03_Disk_Allocator_and_Free_Space,ready,0,0,0,0,section-03 manual pass complete
+docs/specifications/03_Disk_Allocator_and_Free_Space/TEST_CONTRACT.md,docs/specifications/03_Disk_Allocator_and_Free_Space,ready,0,0,0,0,section-03 manual pass complete
+docs/specifications/04_Page_Size_Policy/DECISION_RECORD.md,docs/specifications/04_Page_Size_Policy,ready,0,0,0,0,section-04 manual pass complete
+docs/specifications/04_Page_Size_Policy/DEPENDENCIES.md,docs/specifications/04_Page_Size_Policy,ready,0,0,0,0,section-04 manual pass complete
+docs/specifications/04_Page_Size_Policy/README.md,docs/specifications/04_Page_Size_Policy,ready,0,0,0,0,section-04 manual pass complete
+docs/specifications/04_Page_Size_Policy/SPEC_OUTLINE.md,docs/specifications/04_Page_Size_Policy,ready,0,0,0,0,section-04 manual pass complete
+docs/specifications/04_Page_Size_Policy/TEST_CONTRACT.md,docs/specifications/04_Page_Size_Policy,ready,0,0,0,0,section-04 manual pass complete
+docs/specifications/05_Page_Taxonomy_and_Binary_Layouts/CHECKSUM_AND_INTEGRITY.md,docs/specifications/05_Page_Taxonomy_and_Binary_Layouts,ready,0,0,0,1,section-05 manual pass complete
+docs/specifications/05_Page_Taxonomy_and_Binary_Layouts/COMPRESSION_AND_ENCRYPTION.md,docs/specifications/05_Page_Taxonomy_and_Binary_Layouts,ready,0,0,0,0,section-05 manual pass complete
+docs/specifications/05_Page_Taxonomy_and_Binary_Layouts/DECISION_RECORD.md,docs/specifications/05_Page_Taxonomy_and_Binary_Layouts,ready,0,0,0,0,section-05 manual pass complete
+docs/specifications/05_Page_Taxonomy_and_Binary_Layouts/DEPENDENCIES.md,docs/specifications/05_Page_Taxonomy_and_Binary_Layouts,ready,0,0,0,0,section-05 manual pass complete
+docs/specifications/05_Page_Taxonomy_and_Binary_Layouts/EMULATION_STORAGE_PAGE_TYPES.md,docs/specifications/05_Page_Taxonomy_and_Binary_Layouts,ready,0,0,0,0,section-05 manual pass complete
+docs/specifications/05_Page_Taxonomy_and_Binary_Layouts/HEAP_PAGE_LAYOUT.md,docs/specifications/05_Page_Taxonomy_and_Binary_Layouts,ready,0,0,0,0,section-05 manual pass complete
+docs/specifications/05_Page_Taxonomy_and_Binary_Layouts/INDEX_PAGE_BASE_LAYOUT.md,docs/specifications/05_Page_Taxonomy_and_Binary_Layouts,ready,0,0,0,0,section-05 manual pass complete
+docs/specifications/05_Page_Taxonomy_and_Binary_Layouts/PAGE_HEADER_LAYOUT.md,docs/specifications/05_Page_Taxonomy_and_Binary_Layouts,ready,0,0,0,0,section-05 manual pass complete
+docs/specifications/05_Page_Taxonomy_and_Binary_Layouts/PAGE_TYPE_ENUMS.md,docs/specifications/05_Page_Taxonomy_and_Binary_Layouts,ready,0,0,0,0,section-05 manual pass complete
+docs/specifications/05_Page_Taxonomy_and_Binary_Layouts/README.md,docs/specifications/05_Page_Taxonomy_and_Binary_Layouts,ready,0,0,0,0,section-05 manual pass complete
+docs/specifications/05_Page_Taxonomy_and_Binary_Layouts/SPEC_OUTLINE.md,docs/specifications/05_Page_Taxonomy_and_Binary_Layouts,ready,0,0,0,2,section-05 manual pass complete
+docs/specifications/05_Page_Taxonomy_and_Binary_Layouts/TEST_CONTRACT.md,docs/specifications/05_Page_Taxonomy_and_Binary_Layouts,ready,0,0,0,0,section-05 manual pass complete
+docs/specifications/06_Fixed_Bootstrap_Page_Map/BOOTSTRAP_PAGE_LAYOUTS.md,docs/specifications/06_Fixed_Bootstrap_Page_Map,ready,0,0,0,0,section-06 manual pass complete
+docs/specifications/06_Fixed_Bootstrap_Page_Map/DECISION_RECORD.md,docs/specifications/06_Fixed_Bootstrap_Page_Map,ready,0,0,0,0,section-06 manual pass complete
+docs/specifications/06_Fixed_Bootstrap_Page_Map/DEPENDENCIES.md,docs/specifications/06_Fixed_Bootstrap_Page_Map,ready,0,0,0,0,section-06 manual pass complete
+docs/specifications/06_Fixed_Bootstrap_Page_Map/README.md,docs/specifications/06_Fixed_Bootstrap_Page_Map,ready,0,0,0,0,section-06 manual pass complete
+docs/specifications/06_Fixed_Bootstrap_Page_Map/SPEC_OUTLINE.md,docs/specifications/06_Fixed_Bootstrap_Page_Map,ready,0,0,0,0,section-06 manual pass complete
+docs/specifications/06_Fixed_Bootstrap_Page_Map/TEST_CONTRACT.md,docs/specifications/06_Fixed_Bootstrap_Page_Map,ready,0,0,0,0,section-06 manual pass complete
+docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/CATALOG_BOOTSTRAP_LAYOUT.md,docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping,ready,0,0,0,1,section-07 manual pass complete
+docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/DECISION_RECORD.md,docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping,ready,0,0,0,0,section-07 manual pass complete
+docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/DEPENDENCIES.md,docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping,ready,0,0,0,0,section-07 manual pass complete
+docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/NAME_REGISTRY_LAYOUT.md,docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping,ready,0,0,0,1,section-07 manual pass complete
+docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/README.md,docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping,ready,0,0,0,0,section-07 manual pass complete
+docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/SPEC_OUTLINE.md,docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping,ready,0,0,0,0,section-07 manual pass complete
+docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/TEST_CONTRACT.md,docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping,ready,0,0,0,0,section-07 manual pass complete
+docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/UUID_IDENTITY_AND_COLLISION_RULES.md,docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping,ready,0,0,0,0,section-07 manual pass complete
+docs/specifications/08_Transaction_Core/DECISION_RECORD.md,docs/specifications/08_Transaction_Core,ready,0,0,0,0,section-08 manual pass complete
+docs/specifications/08_Transaction_Core/DEPENDENCIES.md,docs/specifications/08_Transaction_Core,ready,0,0,0,0,section-08 manual pass complete
+docs/specifications/08_Transaction_Core/README.md,docs/specifications/08_Transaction_Core,ready,0,0,0,0,section-08 manual pass complete
+docs/specifications/08_Transaction_Core/RECORD_VISIBILITY_RULES.md,docs/specifications/08_Transaction_Core,ready,0,0,0,0,section-08 manual pass complete
+docs/specifications/08_Transaction_Core/SPEC_OUTLINE.md,docs/specifications/08_Transaction_Core,ready,0,0,0,0,section-08 manual pass complete
+docs/specifications/08_Transaction_Core/STARTUP_RECOVERY.md,docs/specifications/08_Transaction_Core,ready,0,0,0,0,section-08 manual pass complete
+docs/specifications/08_Transaction_Core/TEST_CONTRACT.md,docs/specifications/08_Transaction_Core,ready,0,0,0,0,section-08 manual pass complete
+docs/specifications/08_Transaction_Core/TRANSACTION_CONTEXT_MAPPING.md,docs/specifications/08_Transaction_Core,ready,0,0,0,5,section-08 manual pass complete
+docs/specifications/08_Transaction_Core/TRANSACTION_LIFECYCLE.md,docs/specifications/08_Transaction_Core,ready,0,0,0,0,section-08 manual pass complete
+docs/specifications/08_Transaction_Core/TRANSACTION_MAP_LAYOUT.md,docs/specifications/08_Transaction_Core,ready,0,0,0,0,section-08 manual pass complete
+docs/specifications/09_Lock_Manager_Core/DECISION_RECORD.md,docs/specifications/09_Lock_Manager_Core,ready,0,0,0,0,section-09 manual pass complete
+docs/specifications/09_Lock_Manager_Core/DEPENDENCIES.md,docs/specifications/09_Lock_Manager_Core,ready,0,0,0,0,section-09 manual pass complete
+docs/specifications/09_Lock_Manager_Core/README.md,docs/specifications/09_Lock_Manager_Core,ready,0,0,0,0,section-09 manual pass complete
+docs/specifications/09_Lock_Manager_Core/SPEC_OUTLINE.md,docs/specifications/09_Lock_Manager_Core,ready,0,0,0,0,section-09 manual pass complete
+docs/specifications/09_Lock_Manager_Core/TEST_CONTRACT.md,docs/specifications/09_Lock_Manager_Core,ready,0,0,0,0,section-09 manual pass complete
+docs/specifications/10_GC_and_Sweep/DECISION_RECORD.md,docs/specifications/10_GC_and_Sweep,ready,0,0,0,0,section-10 manual pass complete
+docs/specifications/10_GC_and_Sweep/DEPENDENCIES.md,docs/specifications/10_GC_and_Sweep,ready,0,0,0,0,section-10 manual pass complete
+docs/specifications/10_GC_and_Sweep/GC_SWEEP_ALGORITHM.md,docs/specifications/10_GC_and_Sweep,ready,0,0,0,0,section-10 manual pass complete
+docs/specifications/10_GC_and_Sweep/README.md,docs/specifications/10_GC_and_Sweep,ready,0,0,0,0,section-10 manual pass complete
+docs/specifications/10_GC_and_Sweep/SPEC_OUTLINE.md,docs/specifications/10_GC_and_Sweep,ready,0,0,0,0,section-10 manual pass complete
+docs/specifications/10_GC_and_Sweep/TEST_CONTRACT.md,docs/specifications/10_GC_and_Sweep,ready,0,0,0,0,section-10 manual pass complete
+docs/specifications/11_TOAST_and_LOB_Storage/DECISION_RECORD.md,docs/specifications/11_TOAST_and_LOB_Storage,ready,0,0,0,0,section-11 manual pass complete
+docs/specifications/11_TOAST_and_LOB_Storage/DEPENDENCIES.md,docs/specifications/11_TOAST_and_LOB_Storage,ready,0,0,0,0,section-11 manual pass complete
+docs/specifications/11_TOAST_and_LOB_Storage/LOB_FILESPACE_RELOCATION.md,docs/specifications/11_TOAST_and_LOB_Storage,ready,0,0,0,0,section-11 manual pass complete
+docs/specifications/11_TOAST_and_LOB_Storage/LOB_IO_SEMANTICS.md,docs/specifications/11_TOAST_and_LOB_Storage,ready,0,0,0,0,section-11 manual pass complete
+docs/specifications/11_TOAST_and_LOB_Storage/LOB_PAGE_LAYOUTS.md,docs/specifications/11_TOAST_and_LOB_Storage,ready,0,0,0,0,section-11 manual pass complete
+docs/specifications/11_TOAST_and_LOB_Storage/README.md,docs/specifications/11_TOAST_and_LOB_Storage,ready,0,0,0,0,section-11 manual pass complete
+docs/specifications/11_TOAST_and_LOB_Storage/SPEC_OUTLINE.md,docs/specifications/11_TOAST_and_LOB_Storage,ready,0,0,0,0,section-11 manual pass complete
+docs/specifications/11_TOAST_and_LOB_Storage/TEST_CONTRACT.md,docs/specifications/11_TOAST_and_LOB_Storage,ready,0,0,0,0,section-11 manual pass complete
+docs/specifications/11_TOAST_and_LOB_Storage/TOAST_POINTER_FORMAT.md,docs/specifications/11_TOAST_and_LOB_Storage,ready,0,0,0,0,section-11 manual pass complete
+docs/specifications/12_Temporary_Tables/DECISION_RECORD.md,docs/specifications/12_Temporary_Tables,ready,0,0,0,0,section-12 manual pass complete
+docs/specifications/12_Temporary_Tables/DEPENDENCIES.md,docs/specifications/12_Temporary_Tables,ready,0,0,0,0,section-12 manual pass complete
+docs/specifications/12_Temporary_Tables/README.md,docs/specifications/12_Temporary_Tables,ready,0,0,0,0,section-12 manual pass complete
+docs/specifications/12_Temporary_Tables/SPEC_OUTLINE.md,docs/specifications/12_Temporary_Tables,ready,0,0,0,0,section-12 manual pass complete
+docs/specifications/12_Temporary_Tables/TEST_CONTRACT.md,docs/specifications/12_Temporary_Tables,ready,0,0,0,0,section-12 manual pass complete
+docs/specifications/13_Operator_Model_and_Coercion/CAST_MATRIX.md,docs/specifications/13_Operator_Model_and_Coercion,ready,0,0,0,3,section-13 manual pass complete
+docs/specifications/13_Operator_Model_and_Coercion/DECISION_RECORD.md,docs/specifications/13_Operator_Model_and_Coercion,ready,0,0,0,0,section-13 manual pass complete
+docs/specifications/13_Operator_Model_and_Coercion/DEPENDENCIES.md,docs/specifications/13_Operator_Model_and_Coercion,ready,0,0,0,0,section-13 manual pass complete
+docs/specifications/13_Operator_Model_and_Coercion/IMPLICIT_COERCION_RULES.md,docs/specifications/13_Operator_Model_and_Coercion,ready,0,0,0,1,section-13 manual pass complete
+docs/specifications/13_Operator_Model_and_Coercion/README.md,docs/specifications/13_Operator_Model_and_Coercion,ready,0,0,0,0,section-13 manual pass complete
+docs/specifications/13_Operator_Model_and_Coercion/SPEC_OUTLINE.md,docs/specifications/13_Operator_Model_and_Coercion,ready,0,0,0,0,section-13 manual pass complete
+docs/specifications/13_Operator_Model_and_Coercion/TEST_CONTRACT.md,docs/specifications/13_Operator_Model_and_Coercion,ready,0,0,0,0,section-13 manual pass complete
+docs/specifications/14_Base_Scalar_Types/DECISION_RECORD.md,docs/specifications/14_Base_Scalar_Types,ready,0,0,0,0,section-14 manual pass complete
+docs/specifications/14_Base_Scalar_Types/DEPENDENCIES.md,docs/specifications/14_Base_Scalar_Types,ready,0,0,0,0,section-14 manual pass complete
+docs/specifications/14_Base_Scalar_Types/EMBEDDED_FIELD_ACCESSORS.md,docs/specifications/14_Base_Scalar_Types,ready,0,0,0,1,section-14 manual pass complete
+docs/specifications/14_Base_Scalar_Types/EMULATED_SCALAR_TYPE_MATRIX.md,docs/specifications/14_Base_Scalar_Types,ready,0,0,0,0,section-14 manual pass complete
+docs/specifications/14_Base_Scalar_Types/README.md,docs/specifications/14_Base_Scalar_Types,ready,0,0,0,0,section-14 manual pass complete
+docs/specifications/14_Base_Scalar_Types/SCALAR_STORAGE_FORMAT.md,docs/specifications/14_Base_Scalar_Types,ready,0,0,0,1,section-14 manual pass complete
+docs/specifications/14_Base_Scalar_Types/SPEC_OUTLINE.md,docs/specifications/14_Base_Scalar_Types,ready,0,0,0,1,section-14 manual pass complete
+docs/specifications/14_Base_Scalar_Types/TEST_CONTRACT.md,docs/specifications/14_Base_Scalar_Types,ready,0,0,0,0,section-14 manual pass complete
+docs/specifications/14_Base_Scalar_Types/TYPE_IO_AND_ERROR_SEMANTICS.md,docs/specifications/14_Base_Scalar_Types,ready,0,0,0,1,section-14 manual pass complete
+docs/specifications/15_Complex_Types/COMPLEX_STORAGE_FORMAT.md,docs/specifications/15_Complex_Types,ready,0,0,0,0,section-15 manual pass complete
+docs/specifications/15_Complex_Types/DECISION_RECORD.md,docs/specifications/15_Complex_Types,ready,0,0,0,0,section-15 manual pass complete
+docs/specifications/15_Complex_Types/DEPENDENCIES.md,docs/specifications/15_Complex_Types,ready,0,0,0,0,section-15 manual pass complete
+docs/specifications/15_Complex_Types/DOMAIN_DDL_AND_CATALOG.md,docs/specifications/15_Complex_Types,ready,0,0,0,1,section-15 manual pass complete
+docs/specifications/15_Complex_Types/DOMAIN_EMULATION_PARAMETERS.md,docs/specifications/15_Complex_Types,ready,0,0,0,0,section-15 manual pass complete
+docs/specifications/15_Complex_Types/EMULATED_COMPLEX_TYPE_MATRIX.md,docs/specifications/15_Complex_Types,ready,0,0,0,0,section-15 manual pass complete
+docs/specifications/15_Complex_Types/README.md,docs/specifications/15_Complex_Types,ready,0,0,0,0,section-15 manual pass complete
+docs/specifications/15_Complex_Types/SPEC_OUTLINE.md,docs/specifications/15_Complex_Types,ready,0,0,0,1,section-15 manual pass complete
+docs/specifications/15_Complex_Types/SYSTEM_DOMAIN_UUID_REGISTRY.md,docs/specifications/15_Complex_Types,ready,0,0,0,0,section-15 manual pass complete
+docs/specifications/15_Complex_Types/TEST_CONTRACT.md,docs/specifications/15_Complex_Types,ready,0,0,0,0,section-15 manual pass complete
+docs/specifications/15_Complex_Types/TYPE_IO_AND_ERROR_SEMANTICS.md,docs/specifications/15_Complex_Types,ready,0,0,0,0,section-15 manual pass complete
+docs/specifications/16_Context_Variables/DECISION_RECORD.md,docs/specifications/16_Context_Variables,ready,0,0,0,1,section-16 manual pass complete
+docs/specifications/16_Context_Variables/DEPENDENCIES.md,docs/specifications/16_Context_Variables,ready,0,0,0,0,section-16 manual pass complete
+docs/specifications/16_Context_Variables/README.md,docs/specifications/16_Context_Variables,ready,0,0,0,0,section-16 manual pass complete
+docs/specifications/16_Context_Variables/SPEC_OUTLINE.md,docs/specifications/16_Context_Variables,ready,0,0,0,0,section-16 manual pass complete
+docs/specifications/16_Context_Variables/TEST_CONTRACT.md,docs/specifications/16_Context_Variables,ready,0,0,0,0,section-16 manual pass complete
+docs/specifications/17_Functions_and_Procedures/BLOB_FILTER_RUNTIME_AND_UDR_CONTRACT.md,docs/specifications/17_Functions_and_Procedures,ready,0,0,0,0,section-17 manual pass complete
+docs/specifications/17_Functions_and_Procedures/DECISION_RECORD.md,docs/specifications/17_Functions_and_Procedures,ready,0,0,0,1,section-17 manual pass complete
+docs/specifications/17_Functions_and_Procedures/DEPENDENCIES.md,docs/specifications/17_Functions_and_Procedures,ready,0,0,0,0,section-17 manual pass complete
+docs/specifications/17_Functions_and_Procedures/NORMATIVE_UDR_REMOTE_ENGINE_CONNECTOR_CHECKLIST.md,docs/specifications/17_Functions_and_Procedures,ready,0,0,0,0,section-17 manual pass complete
+docs/specifications/17_Functions_and_Procedures/NORMATIVE_UDR_SB_CLUSTER_FABRIC_CHECKLIST.md,docs/specifications/17_Functions_and_Procedures,ready,0,0,0,1,section-17 manual pass complete
+docs/specifications/17_Functions_and_Procedures/README.md,docs/specifications/17_Functions_and_Procedures,ready,0,0,0,0,section-17 manual pass complete
+docs/specifications/17_Functions_and_Procedures/SPEC_OUTLINE.md,docs/specifications/17_Functions_and_Procedures,ready,0,0,0,1,section-17 manual pass complete
+docs/specifications/17_Functions_and_Procedures/TEST_CONTRACT.md,docs/specifications/17_Functions_and_Procedures,ready,0,0,0,0,section-17 manual pass complete
+docs/specifications/18_Index_Framework/ANNOY_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/ART_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/BITMAP_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/BLOOM_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/BRIN_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/BTREE_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/CASSANDRA_SAI_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/CASSANDRA_SASI_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/COLUMNSTORE_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/DECISION_RECORD.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/DEPENDENCIES.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/DIALECT_COMPATIBILITY_MATRIX.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/DISKANN_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/FULLTEXT_PG_STOPWORDS_DATA.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/FULLTEXT_PG_TSCONFIG.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/FULLTEXT_RANKING_MODES.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/FULLTEXT_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/GIN_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/GIST_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/GPU_CAGRA_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/HASH_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/HNSW_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/INDEX_ARCHITECTURE.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/INDEX_BUILD_AND_MAINTENANCE.md,docs/specifications/18_Index_Framework,ready,0,0,0,1,section-18 manual pass complete
+docs/specifications/18_Index_Framework/INDEX_CATALOG_AND_METADATA.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/INDEX_CONCURRENCY_AND_VISIBILITY.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/INDEX_DDL_AND_SEMANTICS.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/INDEX_KEY_ENCODING.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/INDEX_MANAGEMENT_SQL.md,docs/specifications/18_Index_Framework,ready,0,0,0,1,section-18 manual pass complete
+docs/specifications/18_Index_Framework/INDEX_METRICS_AND_COSTING.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/INVERTED_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/IVF_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/IVF_VARIANTS_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/LSM_TREE_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/MINHASH_LSH_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/MONGODB_2DSPHERE_BUCKET_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/MONGODB_2DSPHERE_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/MONGODB_2D_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/MONGODB_ENCRYPTED_RANGE_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/MONGODB_GEO_HAYSTACK_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/MONGODB_WILDCARD_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/NEO4J_LOOKUP_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/NEO4J_POINT_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/NEO4J_RANGE_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/NEO4J_TEXT_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/NEO4J_VECTOR_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/NGRAM_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/NSG_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/OPCLASS_DEFINITIONS.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/README.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/REDIS_DATA_STRUCTURES_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/SCANN_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/SPARSE_INVERTED_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/SPARSE_WAND_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/SPATIAL_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/SPEC_OUTLINE.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/SPGIST_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/STL_SORT_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/TEST_CONTRACT.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/TRIE_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/18_Index_Framework/VECTOR_FLAT_SPEC.md,docs/specifications/18_Index_Framework,ready,0,0,0,0,section-18 manual pass complete
+docs/specifications/19_Security_Model/CLUSTER_BOOTSTRAP_AND_PRE_DECRYPTION_DATA.md,docs/specifications/19_Security_Model,ready,0,0,0,0,section-19 manual pass complete
+docs/specifications/19_Security_Model/DECISION_RECORD.md,docs/specifications/19_Security_Model,ready,0,0,0,0,section-19 manual pass complete
+docs/specifications/19_Security_Model/DEPENDENCIES.md,docs/specifications/19_Security_Model,ready,0,0,0,0,section-19 manual pass complete
+docs/specifications/19_Security_Model/ENCRYPTION_AND_KEY_MANAGEMENT.md,docs/specifications/19_Security_Model,ready,0,0,0,1,section-19 manual pass complete
+docs/specifications/19_Security_Model/KEY_STORAGE_AND_CERTIFICATES.md,docs/specifications/19_Security_Model,ready,0,0,0,0,section-19 manual pass complete
+docs/specifications/19_Security_Model/PKI_LIFECYCLE_CLUSTER_CHANNELS.md,docs/specifications/19_Security_Model,ready,0,0,0,1,section-19 manual pass complete
+docs/specifications/19_Security_Model/README.md,docs/specifications/19_Security_Model,ready,0,0,0,0,section-19 manual pass complete
+docs/specifications/19_Security_Model/SECURITY_BOOTSTRAP_SEQUENCE.md,docs/specifications/19_Security_Model,ready,0,0,0,0,section-19 manual pass complete
+docs/specifications/19_Security_Model/SPEC_OUTLINE.md,docs/specifications/19_Security_Model,ready,0,0,0,1,section-19 manual pass complete
+docs/specifications/19_Security_Model/TEST_CONTRACT.md,docs/specifications/19_Security_Model,ready,0,0,0,0,section-19 manual pass complete
+docs/specifications/20_Diagnostics_Audit_and_Observability/DECISION_RECORD.md,docs/specifications/20_Diagnostics_Audit_and_Observability,ready,0,0,0,0,section-20 manual pass complete
+docs/specifications/20_Diagnostics_Audit_and_Observability/DEPENDENCIES.md,docs/specifications/20_Diagnostics_Audit_and_Observability,ready,0,0,0,0,section-20 manual pass complete
+docs/specifications/20_Diagnostics_Audit_and_Observability/PAGE_WALKER_AND_REPAIR.md,docs/specifications/20_Diagnostics_Audit_and_Observability,ready,0,0,0,1,section-20 manual pass complete
+docs/specifications/20_Diagnostics_Audit_and_Observability/README.md,docs/specifications/20_Diagnostics_Audit_and_Observability,ready,0,0,0,0,section-20 manual pass complete
+docs/specifications/20_Diagnostics_Audit_and_Observability/SPEC_OUTLINE.md,docs/specifications/20_Diagnostics_Audit_and_Observability,ready,0,0,0,1,section-20 manual pass complete
+docs/specifications/20_Diagnostics_Audit_and_Observability/STORAGE_METRICS.md,docs/specifications/20_Diagnostics_Audit_and_Observability,ready,0,0,0,0,section-20 manual pass complete
+docs/specifications/20_Diagnostics_Audit_and_Observability/TEST_CONTRACT.md,docs/specifications/20_Diagnostics_Audit_and_Observability,ready,0,0,0,0,section-20 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/DECISION_RECORD.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/DEPENDENCIES.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/NATIVE_ADMIN_LANGUAGE_DEFINITION.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/NATIVE_CLUSTER_FABRIC_SQL.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/NATIVE_DDL_LANGUAGE_DEFINITION.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/NATIVE_DIAGNOSTICS_SQL.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/NATIVE_INFRASTRUCTURE_SQL.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/NATIVE_LISTENER_CONTROL_SQL.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,2,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,3,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,2,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/NATIVE_SQL_SURFACE.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/NATIVE_STORAGE_AND_BLOB_FILTER_SQL.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/NATIVE_SUPERSET_COMPATIBILITY_MATRIX.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,1,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/NATIVE_UDR_REMOTE_CONNECTOR_SQL.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/OBJECT_NAMING_AND_QUOTING.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,2,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/README.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/RESERVED_WORDS_AND_KEYWORDS.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,1,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/SPEC_OUTLINE.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/SYSTEM_COLUMNS.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/21_V3_Dialect_Surface/TEST_CONTRACT.md,docs/specifications/21_V3_Dialect_Surface,ready,0,0,0,0,section-21 manual pass complete
+docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/AST_TO_SBLR_EMISSION_RULES.md,docs/specifications/22_SBLR_Canonical_Model_and_Opcodes,ready,0,0,0,1,section-22 manual pass complete
+docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/DECISION_RECORD.md,docs/specifications/22_SBLR_Canonical_Model_and_Opcodes,ready,0,0,0,1,section-22 manual pass complete
+docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/DEPENDENCIES.md,docs/specifications/22_SBLR_Canonical_Model_and_Opcodes,ready,0,0,0,0,section-22 manual pass complete
+docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/PARSER_NORMALIZATION_TO_SBLR_VALIDATION_MATRIX.md,docs/specifications/22_SBLR_Canonical_Model_and_Opcodes,ready,0,0,0,0,section-22 manual pass complete
+docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/README.md,docs/specifications/22_SBLR_Canonical_Model_and_Opcodes,ready,0,0,0,0,section-22 manual pass complete
+docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/SBLR_CANONICAL_SERIALIZATION_AND_CONTAINER.md,docs/specifications/22_SBLR_Canonical_Model_and_Opcodes,ready,0,0,0,1,section-22 manual pass complete
+docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/SBLR_DOMAIN_PAYLOADS_V3.md,docs/specifications/22_SBLR_Canonical_Model_and_Opcodes,ready,0,0,0,0,section-22 manual pass complete
+docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/SBLR_EXPRESSION_OPERATOR_AND_TYPE_MAPPING.md,docs/specifications/22_SBLR_Canonical_Model_and_Opcodes,ready,0,0,0,1,section-22 manual pass complete
+docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/SBLR_FEATURE_TO_OPCODE_MATRIX.md,docs/specifications/22_SBLR_Canonical_Model_and_Opcodes,ready,0,0,0,0,section-22 manual pass complete
+docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/SBLR_OPCODE_FAMILIES_AND_SYMBOLS.md,docs/specifications/22_SBLR_Canonical_Model_and_Opcodes,ready,0,0,0,0,section-22 manual pass complete
+docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/SBLR_STATEMENT_PAYLOAD_SCHEMAS.md,docs/specifications/22_SBLR_Canonical_Model_and_Opcodes,ready,0,0,0,0,section-22 manual pass complete
+docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/SBLR_VERIFIER_AND_VALIDATION_RULES.md,docs/specifications/22_SBLR_Canonical_Model_and_Opcodes,ready,0,0,0,2,section-22 manual pass complete
+docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/SPEC_OUTLINE.md,docs/specifications/22_SBLR_Canonical_Model_and_Opcodes,ready,0,0,0,0,section-22 manual pass complete
+docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/TEST_CONTRACT.md,docs/specifications/22_SBLR_Canonical_Model_and_Opcodes,ready,0,0,0,0,section-22 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/BYTECODE_LOAD_VERIFY_AND_BIND_PIPELINE.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/CATALOG_REQUIREMENTS_FOR_EXECUTION_ARTIFACTS.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/DECISION_RECORD.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/DEPENDENCIES.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/EXECUTION_CACHE_AND_INVALIDATION.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/EXECUTION_ERROR_MODEL_AND_DIAGNOSTICS.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/EXECUTOR_LOCK_GC_CONSTRAINT_INTERACTION.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,1,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/NATIVE_COMPILATION_AND_ARTIFACT_LIFECYCLE.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/NORMALIZATION_EVIDENCE_GATE_AND_DIAGNOSTICS.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/NORMATIVE_ENGINE_PLAN_AND_EXECUTION_CHECKLIST.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,1,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/NORMATIVE_P0_PLAN_AND_EXECUTION_OPTIMIZATION_CHECKLIST.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/NORMATIVE_P1_DISTRIBUTED_READ_CACHE_AND_TELEMETRY_CHECKLIST.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/NORMATIVE_P2_COST_AWARE_SCHEDULER_AND_TIEBREAK_CHECKLIST.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/OPTIMIZER_PASS_PIPELINE.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/README.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/SPEC_OUTLINE.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/T23_I_FIXTURE_AND_EVIDENCE_MANIFEST.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/TEST_CONTRACT.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,0,section-23 manual pass complete
+docs/specifications/23_SBLR_VM_Compiler_and_Executor/VM_EXECUTION_ARCHITECTURE.md,docs/specifications/23_SBLR_VM_Compiler_and_Executor,ready,0,0,0,1,section-23 manual pass complete
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_DOMAIN_AND_RESERVED_WORDS.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,2,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_EMULATION_PROFILE.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_ENUMS.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_I18N_TIMEZONE_RESOURCE_BOOTSTRAP_AND_UPDATE.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_OBJECT_PARENTAGE_AND_NAME_UNIQUENESS.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,1,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_OBJECT_SCHEMA_BRANCH_ASSIGNMENT.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,2,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_STORAGE_METRICS.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_SYSTEM_DOMAINS.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_AND_COLUMN_SCHEMA.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,1,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_INVENTORY.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_ADMIN_MISC.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_CLOCK_SLO_AND_AUTOSCALE.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_CODE_AND_INTEGRATION.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_CORE_OBJECTS.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_ENGINE_SPECIFIC.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_EXTENSIONS_AND_REPLICATION.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_LIVE_MIGRATION_AND_PASSTHROUGH.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_LOB.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_PARSER_CAPABILITIES.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,1,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_PARTITIONING.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_REMOTE_ENGINE_CONNECTOR.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_REPLICATION_RUNTIME_AND_CONFLICT_RESOLUTION.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_RULES.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_RUNTIME_CONTEXT.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,1,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_SBLR_EXECUTION_ARTIFACTS.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_SB_CLUSTER_FABRIC.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,1,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_SECURITY.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TABLE_SCHEMA_TEXT_SEARCH.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_TYPE_SCHEMA.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CLUSTER_OPERATIONS_CATALOG_SCHEMA.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CONFIGURATION_CATALOG_SCHEMA.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/DECISION_RECORD.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/DEPENDENCIES.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/EMULATED_CATALOG_ANALYSIS_CASSANDRA.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/EMULATED_CATALOG_ANALYSIS_FIREBIRD.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/EMULATED_CATALOG_ANALYSIS_MILVUS.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/EMULATED_CATALOG_ANALYSIS_MONGODB.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/EMULATED_CATALOG_ANALYSIS_MYSQL.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/EMULATED_CATALOG_ANALYSIS_NEO4J.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/EMULATED_CATALOG_ANALYSIS_POSTGRESQL.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/EMULATED_CATALOG_ANALYSIS_REDIS.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/EMULATED_CATALOG_DATA_REQUIREMENTS.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/EMULATED_CATALOG_GAP_CONSOLIDATION.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/EMULATED_STATS_MAPPING.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/FIREBIRD_CATALOG_ONDISK_OBJECTS.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/OLAP_CUBE_CATALOG_SCHEMA.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/README.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,1,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/SCHEMA_HOME_AND_SEARCH_PATH_SEMANTICS.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,4,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/SCHEMA_TREE_CANONICAL.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,3,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/SHARDING_CATALOG_SCHEMA.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/SPEC_OUTLINE.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/SYSTEM_OBJECT_VISIBILITY_AND_INSTALLATION.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/24_Catalog_Model_and_Virtual_Overlays/TEST_CONTRACT.md,docs/specifications/24_Catalog_Model_and_Virtual_Overlays,pending,0,0,0,0,
+docs/specifications/25_Runtime_Modes/CLUSTER_CLOCK_DISCIPLINE_AND_SKEW_POLICY.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,1,
+docs/specifications/25_Runtime_Modes/CLUSTER_OLTP_NODE_LIFECYCLE.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,1,
+docs/specifications/25_Runtime_Modes/CLUSTER_ROUTING_AND_ADMISSION.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,1,
+docs/specifications/25_Runtime_Modes/CLUSTER_SCHEDULER_AND_MAINTENANCE.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,2,
+docs/specifications/25_Runtime_Modes/CLUSTER_SEGMENTATION_ALERTING_HEALING.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,2,
+docs/specifications/25_Runtime_Modes/CLUSTER_UDR_FABRIC_RUNTIME_MODEL.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,2,
+docs/specifications/25_Runtime_Modes/DECISION_RECORD.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,0,
+docs/specifications/25_Runtime_Modes/DEPENDENCIES.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,0,
+docs/specifications/25_Runtime_Modes/NODE_ROLE_SLO_AND_ERROR_BUDGET_POLICY.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,1,
+docs/specifications/25_Runtime_Modes/NORMATIVE_LAYERED_RUNTIME_STACK.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,3,
+docs/specifications/25_Runtime_Modes/NORMATIVE_P1_CLUSTER_READ_CONSISTENCY_AND_REPAIR_CHECKLIST.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,0,
+docs/specifications/25_Runtime_Modes/NORMATIVE_P2_CLUSTER_COST_AWARE_PLACEMENT_AND_SCHEDULING_CHECKLIST.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,0,
+docs/specifications/25_Runtime_Modes/NORMATIVE_STARTUP_BOOTSTRAP_AND_INSTALL_GATES.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,2,
+docs/specifications/25_Runtime_Modes/OLAP_NODE_AND_CUBE_SUPPORT.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,1,
+docs/specifications/25_Runtime_Modes/README.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,0,
+docs/specifications/25_Runtime_Modes/SPECIALIZED_CLUSTER_NODES.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,2,
+docs/specifications/25_Runtime_Modes/SPEC_OUTLINE.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,2,
+docs/specifications/25_Runtime_Modes/TEST_CONTRACT.md,docs/specifications/25_Runtime_Modes,pending,0,0,0,1,
+docs/specifications/26_Native_Wire_Protocol/CLUSTER_UDR_FABRIC_CHANNEL_SPEC.md,docs/specifications/26_Native_Wire_Protocol,pending,0,0,0,1,
+docs/specifications/26_Native_Wire_Protocol/DECISION_RECORD.md,docs/specifications/26_Native_Wire_Protocol,pending,0,0,0,0,
+docs/specifications/26_Native_Wire_Protocol/DEPENDENCIES.md,docs/specifications/26_Native_Wire_Protocol,pending,0,0,0,0,
+docs/specifications/26_Native_Wire_Protocol/IPC_SBWP_FRAME_SPEC.md,docs/specifications/26_Native_Wire_Protocol,pending,0,0,0,2,
+docs/specifications/26_Native_Wire_Protocol/MESSAGE_CATALOG_AND_SCHEMAS.md,docs/specifications/26_Native_Wire_Protocol,pending,0,0,0,2,
+docs/specifications/26_Native_Wire_Protocol/NORMATIVE_P1_WIRE_DISTRIBUTED_READ_AND_TELEMETRY_CHECKLIST.md,docs/specifications/26_Native_Wire_Protocol,pending,0,0,0,0,
+docs/specifications/26_Native_Wire_Protocol/PROTOCOL_STATE_MACHINES.md,docs/specifications/26_Native_Wire_Protocol,pending,0,0,0,0,
+docs/specifications/26_Native_Wire_Protocol/README.md,docs/specifications/26_Native_Wire_Protocol,pending,0,0,0,0,
+docs/specifications/26_Native_Wire_Protocol/RESULT_SHAPES_AND_ERROR_FRAMES.md,docs/specifications/26_Native_Wire_Protocol,pending,0,0,0,0,
+docs/specifications/26_Native_Wire_Protocol/SERVICE_CHANNELS_AND_STREAMING.md,docs/specifications/26_Native_Wire_Protocol,pending,0,0,0,0,
+docs/specifications/26_Native_Wire_Protocol/SPEC_OUTLINE.md,docs/specifications/26_Native_Wire_Protocol,pending,0,0,0,0,
+docs/specifications/26_Native_Wire_Protocol/TEST_CONTRACT.md,docs/specifications/26_Native_Wire_Protocol,pending,0,0,0,0,
+docs/specifications/27_Native_Handshake/AUTH_NEGOTIATION_AND_POLICY.md,docs/specifications/27_Native_Handshake,pending,0,0,0,1,
+docs/specifications/27_Native_Handshake/DECISION_RECORD.md,docs/specifications/27_Native_Handshake,pending,0,0,0,0,
+docs/specifications/27_Native_Handshake/DEPENDENCIES.md,docs/specifications/27_Native_Handshake,pending,0,0,0,0,
+docs/specifications/27_Native_Handshake/HANDSHAKE_MESSAGE_SCHEMAS.md,docs/specifications/27_Native_Handshake,pending,0,0,0,6,
+docs/specifications/27_Native_Handshake/HANDSHAKE_STATE_MACHINE_AND_FAILURE_MATRIX.md,docs/specifications/27_Native_Handshake,pending,0,0,0,1,
+docs/specifications/27_Native_Handshake/README.md,docs/specifications/27_Native_Handshake,pending,0,0,0,0,
+docs/specifications/27_Native_Handshake/REGISTRY_EXCHANGE_AND_VISIBILITY.md,docs/specifications/27_Native_Handshake,pending,0,0,0,0,
+docs/specifications/27_Native_Handshake/SPEC_OUTLINE.md,docs/specifications/27_Native_Handshake,pending,0,0,0,1,
+docs/specifications/27_Native_Handshake/TEST_CONTRACT.md,docs/specifications/27_Native_Handshake,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/CAPABILITY_PROFILE_BUILD_ALGORITHM.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/CAPABILITY_PROFILE_DECISION_TABLE.csv,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/CAPABILITY_PROFILE_ENTRIES_CANONICAL.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,2,
+docs/specifications/28_Parser_Implementations/CAPABILITY_PROFILE_ROW_SERIALIZATION_EXAMPLES.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/DECISION_RECORD.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/DEPENDENCIES.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/DIALECT_PROFILE_MATRIX.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/ERROR_MAPPING_AND_DIAGNOSTICS.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/K_SUITE_FIXTURE_AND_EVIDENCE_MANIFEST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/LEGACY_V3_GAP_MIGRATION_MAP.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_EMULATED_PARSER_LAYER_BASELINE.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,1,
+docs/specifications/28_Parser_Implementations/NORMATIVE_EMULATED_PARSER_LAYER_CASSANDRA.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_EMULATED_PARSER_LAYER_FIREBIRD.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_EMULATED_PARSER_LAYER_MILVUS.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_EMULATED_PARSER_LAYER_MONGODB.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_EMULATED_PARSER_LAYER_MYSQL.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_EMULATED_PARSER_LAYER_NEO4J.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_EMULATED_PARSER_LAYER_POSTGRESQL.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_EMULATED_PARSER_LAYER_REDIS.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_P0_PARSER_NORMALIZATION_GATE_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_P1_PARSER_DISTRIBUTED_POLICY_AND_TELEMETRY_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_P2_PARSER_PLAN_STABILITY_AND_HINTS_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_PARSER_CLUSTER_FABRIC_CONTROL_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_PARSER_PASSTHROUGH_AND_LIVE_MIGRATION_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,1,
+docs/specifications/28_Parser_Implementations/NORMATIVE_PARSER_QUERY_TO_SBLR_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_PARSER_REMOTE_ENGINE_CONNECTOR_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_PARSER_REPLICATION_CONTROL_AND_ROUTING_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_WIRE_PROTOCOL_CASSANDRA_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_WIRE_PROTOCOL_FIREBIRD_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_WIRE_PROTOCOL_MILVUS_GRPC_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_WIRE_PROTOCOL_MONGODB_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_WIRE_PROTOCOL_MYSQL_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,1,
+docs/specifications/28_Parser_Implementations/NORMATIVE_WIRE_PROTOCOL_NEO4J_BOLT_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_WIRE_PROTOCOL_POSTGRESQL_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/NORMATIVE_WIRE_PROTOCOL_REDIS_RESP_CHECKLIST.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,1,
+docs/specifications/28_Parser_Implementations/PARSER_CONFORMANCE_CORPUS_INDEX.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/PARSER_IMPLEMENTATION_CANONICAL_SPEC.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/README.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/SBLR_TRANSLATION_PIPELINE.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/SCHEMA_VISIBILITY_AND_TRANSLATION_MATRIX.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,2,
+docs/specifications/28_Parser_Implementations/SPEC_OUTLINE.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/28_Parser_Implementations/TEST_CONTRACT.md,docs/specifications/28_Parser_Implementations,pending,0,0,0,0,
+docs/specifications/29_Listener_and_Server_Orchestration/CONNECTION_AND_SESSION_LIFECYCLE.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,2,
+docs/specifications/29_Listener_and_Server_Orchestration/DECISION_RECORD.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,0,
+docs/specifications/29_Listener_and_Server_Orchestration/DEPENDENCIES.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,0,
+docs/specifications/29_Listener_and_Server_Orchestration/FAILURE_RECOVERY_AND_FALLBACK.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,2,
+docs/specifications/29_Listener_and_Server_Orchestration/LISTENER_CONFIGURATION_PROFILE_SCHEMA.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,0,
+docs/specifications/29_Listener_and_Server_Orchestration/LISTENER_MANAGEMENT_IPC_CHANNEL.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,0,
+docs/specifications/29_Listener_and_Server_Orchestration/LISTENER_OBSERVABILITY_AND_AUDIT_CONTRACT.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,0,
+docs/specifications/29_Listener_and_Server_Orchestration/LISTENER_PARSER_HANDOFF_PROTOCOL.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,0,
+docs/specifications/29_Listener_and_Server_Orchestration/NORMATIVE_LISTENER_IMPLEMENTATION_CHECKLIST.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,0,
+docs/specifications/29_Listener_and_Server_Orchestration/NORMATIVE_LISTENER_ONE_WAY_AND_BIDIRECTIONAL_REPLICATION_CHECKLIST.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,0,
+docs/specifications/29_Listener_and_Server_Orchestration/NORMATIVE_LISTENER_PASSTHROUGH_AND_LIVE_MIGRATION_CHECKLIST.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,0,
+docs/specifications/29_Listener_and_Server_Orchestration/NORMATIVE_SERVER_CLUSTER_UDR_FABRIC_CHECKLIST.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,0,
+docs/specifications/29_Listener_and_Server_Orchestration/PARSER_POOL_ASSIGNMENT_AND_SCALING.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,0,
+docs/specifications/29_Listener_and_Server_Orchestration/PROCESS_MODEL_AND_DEPENDENCY_GRAPH.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,1,
+docs/specifications/29_Listener_and_Server_Orchestration/README.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,0,
+docs/specifications/29_Listener_and_Server_Orchestration/SPEC_OUTLINE.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,0,
+docs/specifications/29_Listener_and_Server_Orchestration/TEST_CONTRACT.md,docs/specifications/29_Listener_and_Server_Orchestration,pending,0,0,0,0,
+docs/specifications/30_Client_Tooling/CLIENT_ERROR_AND_RESULT_MODEL.md,docs/specifications/30_Client_Tooling,pending,0,0,0,0,
+docs/specifications/30_Client_Tooling/CONNECTIVITY_PROFILES_AND_TOOL_RUNTIME.md,docs/specifications/30_Client_Tooling,pending,0,0,0,1,
+docs/specifications/30_Client_Tooling/DECISION_RECORD.md,docs/specifications/30_Client_Tooling,pending,0,0,0,0,
+docs/specifications/30_Client_Tooling/DEPENDENCIES.md,docs/specifications/30_Client_Tooling,pending,0,0,0,0,
+docs/specifications/30_Client_Tooling/EMBEDDED_AND_LINKED_LIBRARY_API.md,docs/specifications/30_Client_Tooling,pending,0,0,0,0,
+docs/specifications/30_Client_Tooling/INSTALLER_PROFILES_AND_ARTIFACTS.md,docs/specifications/30_Client_Tooling,pending,0,0,0,1,
+docs/specifications/30_Client_Tooling/NATIVE_MIGRATION_AND_PASSTHROUGH_SQL_CONTROL_CONTRACT.md,docs/specifications/30_Client_Tooling,pending,0,0,0,0,
+docs/specifications/30_Client_Tooling/NATIVE_REPLICATION_SQL_CONTROL_CONTRACT.md,docs/specifications/30_Client_Tooling,pending,0,0,0,0,
+docs/specifications/30_Client_Tooling/README.md,docs/specifications/30_Client_Tooling,pending,0,0,0,0,
+docs/specifications/30_Client_Tooling/SPEC_OUTLINE.md,docs/specifications/30_Client_Tooling,pending,0,0,0,0,
+docs/specifications/30_Client_Tooling/TEST_CONTRACT.md,docs/specifications/30_Client_Tooling,pending,0,0,0,0,
+docs/specifications/30_Client_Tooling/TOOL_COMMAND_SURFACE_CONTRACTS.md,docs/specifications/30_Client_Tooling,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/CLIENT_API_AND_TOOLING_GATES.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/CLUSTER_GAMEDAY_AND_OPERATOR_RUNBOOK_GATES.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/DECISION_RECORD.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/DEPENDENCIES.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/EVIDENCE_ARTIFACTS_AND_REPLAY_REQUIREMENTS.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/GATE_EVIDENCE_ARTIFACT_MATRIX.csv,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/GATE_EVIDENCE_ARTIFACT_MATRIX.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/GATE_FRAMEWORK_AND_STAGE_POLICY.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/P1_P2_OPTIMIZATION_GATE_PROFILE.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/PERFORMANCE_SLO_AND_BENCHMARK_METHOD.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,1,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/PHASE_GATE_DEPENDENCY_MATRIX.csv,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/PHASE_GATE_DEPENDENCY_MATRIX.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/PROTOCOL_HANDSHAKE_ORCHESTRATION_GATES.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/README.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/RELIABILITY_CHAOS_AND_RECOVERY_GATES.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/REPLICATION_ONE_WAY_AND_BIDIRECTIONAL_GATES.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/SBLR_VM_COMPILER_EXECUTOR_GATES.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/SPEC_OUTLINE.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/31_Conformance_Performance_and_Reliability_Gates/TEST_CONTRACT.md,docs/specifications/31_Conformance_Performance_and_Reliability_Gates,pending,0,0,0,0,
+docs/specifications/09_Lock_Manager_Core/LOCK_MANAGER_NORMATIVE_IMPLEMENTATION.md,docs/specifications/09_Lock_Manager_Core,ready,0,0,0,0,section-09 manual pass complete
+docs/specifications/12_Temporary_Tables/TEMP_TABLES_NORMATIVE_IMPLEMENTATION.md,docs/specifications/12_Temporary_Tables,ready,0,0,0,1,section-12 manual pass complete
+docs/specifications/16_Context_Variables/CONTEXT_VARIABLES_NORMATIVE_IMPLEMENTATION.md,docs/specifications/16_Context_Variables,ready,0,0,0,1,section-16 manual pass complete

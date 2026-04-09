@@ -398,6 +398,43 @@ TEST_F(WorkloadGovernanceTest, CompilesAndExecutesClusterGovernanceSql)
                                 {{1, "wl_oltp"}, {2, "ap_ingress"}, {3, "REJECT"}}));
 }
 
+TEST_F(WorkloadGovernanceTest, CompilesAndExecutesAcceleratorGovernanceSql)
+{
+    auto class_result = compileAndExecute(
+        "CREATE CLUSTER WORKLOAD CLASS wl_vector 'MATCH=QUERY_TYPE:select;PRIORITY=9'");
+    ASSERT_TRUE(class_result.success()) << class_result.error();
+
+    auto policy_result = compileAndExecute(
+        "CREATE CLUSTER ADMISSION POLICY ap_vector "
+        "'MAX_CONCURRENT_SESSIONS=8;MAX_CONCURRENT_QUERIES=4;MAX_QUEUE_DEPTH=0;"
+        "QUEUE_TIMEOUT_MS=0;REJECT_MODE=REJECT;ACCELERATOR_PROFILE=ACCELERATOR_REQUIRED;"
+        "ACCELERATOR_MEMORY_BUDGET_BYTES=1048576;"
+        "ACCELERATOR_PINNED_RESIDENCY_TARGET_BYTES=262144;"
+        "ACCELERATOR_CONCURRENT_BUILD_LIMIT=1;"
+        "ACCELERATOR_CONCURRENT_SEARCH_LIMIT=2;"
+        "ACCELERATOR_PREWARM_POLICY=ON_FIRST_USE;"
+        "ACCELERATOR_FALLBACK_POLICY=ALLOW_CPU;"
+        "ACCELERATOR_DEGRADED_STATE_OVERRIDE=DEGRADED_ACCEPT'");
+    ASSERT_TRUE(policy_result.success()) << policy_result.error();
+
+    auto binding_result = compileAndExecute(
+        "CREATE CLUSTER ADMISSION BINDING ab_vector "
+        "'POLICY=ap_vector;CLASS=wl_vector;PRIORITY=1;"
+        "ACCELERATOR_DEVICE_CLASS=GPU;ACCELERATOR_DEVICE_ID=gpu0'");
+    ASSERT_TRUE(binding_result.success()) << binding_result.error();
+
+    auto admission_result = compileAndExecute("SHOW CLUSTER ADMISSION STATUS");
+    ASSERT_TRUE(admission_result.success()) << admission_result.error();
+    ASSERT_TRUE(admission_result.hasResultSet());
+    ASSERT_NE(admission_result.resultSet(), nullptr);
+    EXPECT_TRUE(resultSetHasRow(admission_result.resultSet(),
+                                {{1, "wl_vector"},
+                                 {2, "ap_vector"},
+                                 {13, "ACCELERATOR_REQUIRED"},
+                                 {14, "GPU"},
+                                 {15, "gpu0"}}));
+}
+
 TEST_F(WorkloadGovernanceTest, RejectsSecondConcurrentQueryAtConfiguredLimit)
 {
     auto class_result = compileAndExecute(
@@ -452,6 +489,95 @@ TEST_F(WorkloadGovernanceTest, RejectsSecondConcurrentQueryAtConfiguredLimit)
     row_it = admissionStatusRowForPolicy(rows, "ap_limit");
     ASSERT_NE(row_it, rows.end());
     EXPECT_EQ(row_it->active_queries, 0u);
+}
+
+TEST_F(WorkloadGovernanceTest, AcceleratorAdmissionUsesLimitsAndTracksFallbacks)
+{
+    auto class_result = compileAndExecute(
+        "CREATE CLUSTER WORKLOAD CLASS wl_vector_runtime 'MATCH=QUERY_TYPE:select;PRIORITY=7'");
+    ASSERT_TRUE(class_result.success()) << class_result.error();
+
+    ErrorContext ctx;
+    std::vector<CatalogManager::WorkloadClassCatalogInfo> class_rows;
+    ASSERT_EQ(db_.catalog_manager()->listWorkloadClassCatalogEntries(class_rows, &ctx), Status::OK)
+        << ctx.message;
+    auto class_it = std::find_if(class_rows.begin(), class_rows.end(), [](const auto& row) {
+        return row.class_name == "wl_vector_runtime";
+    });
+    ASSERT_NE(class_it, class_rows.end());
+
+    CatalogManager::AdmissionPolicyCatalogInfo policy{};
+    policy.policy_id = generateUuidV7();
+    policy.policy_name = "ap_vector_runtime";
+    policy.max_concurrent_sessions = 8;
+    policy.max_concurrent_queries = 8;
+    policy.max_queue_depth = 0;
+    policy.reject_mode = CatalogManager::AdmissionRejectMode::REJECT;
+    policy.queue_timeout_ms = 0;
+    policy.cpu_reject_pct = 80;
+    policy.mem_reject_pct = 80;
+    policy.io_reject_pct = 80;
+    policy.accelerator_profile_name = "ACCELERATOR_REQUIRED";
+    policy.accelerator_memory_budget_bytes = 1024;
+    policy.accelerator_concurrent_search_limit = 1;
+    policy.accelerator_prewarm_policy = "ON_FIRST_USE";
+    policy.accelerator_fallback_policy = "ALLOW_CPU";
+    ASSERT_EQ(db_.catalog_manager()->upsertAdmissionPolicyCatalogEntry(policy, &ctx), Status::OK)
+        << ctx.message;
+
+    CatalogManager::AdmissionBindingCatalogInfo binding{};
+    binding.binding_id = generateUuidV7();
+    binding.policy_id = policy.policy_id;
+    binding.target_kind = CatalogManager::AdmissionTargetKind::WORKLOAD_CLASS;
+    binding.class_id = class_it->class_id;
+    binding.priority = 1;
+    binding.accelerator_device_class = "GPU";
+    binding.accelerator_device_id = "gpu0";
+    ASSERT_EQ(db_.catalog_manager()->upsertAdmissionBindingCatalogEntry(binding, &ctx), Status::OK)
+        << ctx.message;
+
+    WorkloadGovernance::QueryDescriptor required = makeDescriptor(conn_.get(), "SELECT 1");
+    required.accelerator_posture = WorkloadGovernance::AcceleratorPosture::ACCELERATOR_REQUIRED;
+    required.accelerator_operation = WorkloadGovernance::AcceleratorOperation::SEARCH;
+    required.accelerator_profile_name = "ACCELERATOR_REQUIRED";
+    required.accelerator_device_class = "GPU";
+    required.accelerator_memory_request_bytes = 1024;
+
+    WorkloadGovernance::AdmissionLease required_lease;
+    auto first = db_.workload_governance()->acquire(required, required_lease, &ctx);
+    ASSERT_TRUE(first.admitted) << first.detail;
+    EXPECT_TRUE(first.accelerator_requested);
+    EXPECT_TRUE(first.accelerator_admitted);
+    EXPECT_FALSE(first.accelerator_fallback_used);
+
+    WorkloadGovernance::QueryDescriptor preferred = required;
+    preferred.accelerator_posture =
+        WorkloadGovernance::AcceleratorPosture::ACCELERATOR_PREFERRED;
+
+    WorkloadGovernance::AdmissionLease preferred_lease;
+    auto second = db_.workload_governance()->acquire(preferred, preferred_lease, &ctx);
+    ASSERT_TRUE(second.admitted) << second.detail;
+    EXPECT_TRUE(second.accelerator_requested);
+    EXPECT_FALSE(second.accelerator_admitted);
+    EXPECT_TRUE(second.accelerator_fallback_used);
+
+    WorkloadGovernance::AdmissionLease rejected_lease;
+    auto third = db_.workload_governance()->acquire(required, rejected_lease, &ctx);
+    ASSERT_FALSE(third.admitted);
+    EXPECT_EQ(third.code, "GOV_1506");
+    EXPECT_NE(third.detail.find("Accelerator concurrent search limit reached"), std::string::npos)
+        << third.detail;
+
+    std::vector<WorkloadGovernance::AdmissionStatusRow> rows;
+    ASSERT_EQ(db_.workload_governance()->snapshotAdmissionStatus(rows, &ctx), Status::OK)
+        << ctx.message;
+    auto row_it = admissionStatusRowForPolicy(rows, "ap_vector_runtime");
+    ASSERT_NE(row_it, rows.end());
+    EXPECT_EQ(row_it->accelerator_profile_name, "ACCELERATOR_REQUIRED");
+    EXPECT_EQ(row_it->accelerator_device_class, "GPU");
+    EXPECT_EQ(row_it->accelerator_active_searches, 1u);
+    EXPECT_EQ(row_it->accelerator_reserved_memory_bytes, 1024ULL);
+    EXPECT_EQ(row_it->accelerator_forced_fallbacks, 1ULL);
 }
 
 TEST_F(WorkloadGovernanceTest, RejectsQueuedAdmissionPolicyWithoutPositiveQueueControls)
@@ -704,7 +830,7 @@ TEST_F(WorkloadGovernanceTest, AltersAndDropsGovernanceObjectsThroughSqlSurface)
     ASSERT_TRUE(admission_result.success()) << admission_result.error();
     ASSERT_TRUE(admission_result.hasResultSet());
     EXPECT_TRUE(resultSetHasRow(admission_result.resultSet(),
-                                {{1, "wl_manage"}, {2, "ap_manage"}, {3, "QUEUE"}, {4, "4"}, {15, "false"}}));
+                                {{1, "wl_manage"}, {2, "ap_manage"}, {3, "QUEUE"}, {4, "4"}, {30, "false"}}));
 
     ASSERT_TRUE(compileAndExecute("DROP CLUSTER ADMISSION BINDING ab_manage").success());
     ASSERT_TRUE(compileAndExecute("DROP CLUSTER ADMISSION POLICY ap_manage").success());

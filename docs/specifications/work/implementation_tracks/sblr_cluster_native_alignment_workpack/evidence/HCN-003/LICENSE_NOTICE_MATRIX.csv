@@ -1,0 +1,5 @@
+component,license,required_notice_file,source_path,packaging_target,status,notes
+ScratchBird core,IDPL-1.0,LICENSE,/home/dcalford/CliWork/ScratchBird/LICENSE,/licenses,ready_with_action,Placeholder metadata in LICENSE must be finalized before external release
+LLVM toolchain,Apache-2.0 WITH LLVM-exception,LICENSE.TXT,/home/dcalford/CliWork/llvm-project/LICENSE.TXT,/licenses/third_party,ready,Bundle Apache 2.0 text and LLVM exceptions
+IDPL full text,IDPL-1.0,IDPL_1_0_FULL_TEXT.txt,/home/dcalford/CliWork/local_work/library/technical_specs/firebird/licenses/IDPL_1_0_FULL_TEXT.txt,/licenses,ready,Installer and release package must include full IDPL text
+Compliance review evidence,N/A,LICENSE_COMPATIBILITY_LLVM_IDPL_REVIEW_2026-02-23.md,docs/specifications/work/findings/LICENSE_COMPATIBILITY_LLVM_IDPL_REVIEW_2026-02-23.md,/compliance,ready,Engineering compatibility position documented with proof anchors

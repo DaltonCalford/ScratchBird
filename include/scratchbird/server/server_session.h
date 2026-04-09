@@ -112,7 +112,12 @@ public:
      */
     ServerSession(IPCConnection* connection,
                   core::Database* database,
+                  const std::string& local_endpoint,
                   const uint8_t session_id[16]);
+    ServerSession(IPCConnection* connection,
+                  core::Database* database,
+                  const uint8_t session_id[16])
+        : ServerSession(connection, database, std::string(), session_id) {}
 
     ~ServerSession();
 
@@ -176,6 +181,7 @@ public:
      * Get client address/info
      */
     const std::string& clientInfo() const { return client_info_; }
+    const std::string& localEndpoint() const { return local_endpoint_; }
 
 
 private:
@@ -235,6 +241,11 @@ private:
     /**
      * Execute an SBLR bytecode program and send results
      */
+    core::Status executeBytecode(const std::vector<uint8_t>& bytecode,
+                                 const std::string& sql,
+                                 const std::vector<std::string>* parameter_values,
+                                 const std::vector<bool>* parameter_nulls,
+                                 core::ErrorContext* ctx);
     core::Status executeBytecode(const std::vector<uint8_t>& bytecode,
                                  const std::string& sql,
                                  core::ErrorContext* ctx);
@@ -302,6 +313,7 @@ private:
 
     std::string username_;                          // Authenticated username
     std::string client_info_;                       // Client connection info
+    std::string local_endpoint_;                    // Server-side local endpoint identity
     std::string client_name_;                       // CONNECT_REQUEST client identifier
     uint16_t client_connect_flags_ = 0;            // CONNECT_REQUEST capability flags
     std::string auth_database_context_;             // CONNECT database for auth tuple scoping
@@ -403,7 +415,9 @@ public:
      * @param database The database instance
      * @return Pointer to the new session, or nullptr on failure
      */
-    ServerSession* createSession(IPCConnection* connection, core::Database* database);
+    ServerSession* createSession(IPCConnection* connection,
+                                 core::Database* database,
+                                 const std::string& local_endpoint);
 
     /**
      * Remove a session

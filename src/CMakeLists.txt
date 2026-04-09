@@ -272,7 +272,9 @@ set(SCRATCHBIRD_SBLR_PARSER_SUPPORT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sblr/ast_sblr_lowerer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sblr/extract_element_catalog.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sblr/v3_codec.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/sblr/v3_canonical_feature_map.generated.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sblr/v3_container.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/sblr/v3_opcode_identity.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sblr/v3_opcodes.generated.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sblr/v3_payload_map.generated.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sblr/v3_payloads.cpp

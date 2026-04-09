@@ -1,0 +1,4 @@
+spec_clause,implementation,evidence,status
+Header validation enforces page type and page-size contracts,include/scratchbird/core/ondisk.h (validatePageHeaderContract),PAGE_VALIDATION_AUDIT.csv,pass
+Header validation enforces database/object UUID matching,include/scratchbird/core/ondisk.h (validatePageHeaderContract),PAGE_VALIDATION_AUDIT.csv,pass
+Header validation enforces lower/upper/special boundary invariants,include/scratchbird/core/ondisk.h (validatePageHeaderContract),PAGE_VALIDATION_AUDIT.csv,pass

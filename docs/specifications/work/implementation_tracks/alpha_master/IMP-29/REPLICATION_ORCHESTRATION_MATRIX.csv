@@ -1,0 +1,11 @@
+case_id,suite,required_check,expected_result,error_code
+T29-I01,I,one_way_channel_state_machine_and_forbidden_transition_rejects,pass,
+T29-I02,I,bidirectional_requires_fenced_recovery_before_streaming,pass,
+T29-I03,I,cursor_frame_sequence_validation_rejects_malformed,pass,
+T29-I04,I,apply_order_ascending_source_commit_seq_atomic_batch,pass,
+T29-I05,I,loop_prevention_skips_already_applied_origin_sequences,pass,
+T29-I06,I,retry_backoff_deadletter_policy_deterministic,pass,
+T29-I07,I,ddl_policy_enforced_per_channel_settings,pass,
+T29-I08,I,split_brain_detection_fence_and_block_until_clear,pass,
+T29-I09,I,lag_threshold_degraded_and_guarded_recovery,pass,
+T29-I10,I,conflict_policy_persisted_before_terminal_apply_status,pass,

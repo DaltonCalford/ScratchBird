@@ -1,0 +1,15 @@
+{
+  "ticket_id": "HCN-031",
+  "title": "Implement follower apply and replication watermark tracking",
+  "phase": "PH3",
+  "owner": "codex",
+  "started_utc": "2026-02-23T00:00:00Z",
+  "completed_utc": "2026-02-26T19:04:24Z",
+  "source_commit": "9e789eaad9b8e377f42f96f2ea8fec0193970f40",
+  "commands": [
+    "cmake --build build --target scratchbird_tests -j\14",
+    "./build/tests/scratchbird_tests --gtest_filter='FollowerApplyPipelineTest.*'",
+    "./build/tests/scratchbird_tests --gtest_filter='ShardCommitLogPipelineTest.*'"
+  ],
+  "notes": "Follower apply path now enforces ordered application, idempotent replay behavior, and per-shard replication watermark progression."
+}

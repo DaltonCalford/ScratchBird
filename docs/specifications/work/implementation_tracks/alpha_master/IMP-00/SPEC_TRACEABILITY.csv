@@ -1,0 +1,4 @@
+spec_file,requirement_id,implementation_path,test_id,status,notes
+docs/specifications/00_Governance_and_Invarients/DECISION_RECORD.md,IMP-00-INV-ENGINE-BOUNDARY,docs/specifications/00_Governance_and_Invarients/DECISION_RECORD.md,T00-INV-01,pass,Engine/SBLR/UUID/MGA invariants present
+docs/specifications/00_Governance_and_Invarients/TEST_CONTRACT.md,IMP-00-GATE-CONTRACT,docs/specifications/00_Governance_and_Invarients/TEST_CONTRACT.md,T00-GATE-01,pass,Required governance tests defined and referenced
+docs/specifications/skills/spec-refactor-guardrails/scripts/sync_section_readmes.sh,IMP-00-GUARDRAIL-SYNC,docs/specifications/skills/spec-refactor-guardrails/scripts/sync_section_readmes.sh,T00-GUARDRAIL-01,pass,README sync enforcement script present and executable

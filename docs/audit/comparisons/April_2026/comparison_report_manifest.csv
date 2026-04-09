@@ -1,0 +1,26 @@
+donor,rank,phase,role,report_family_version,current_verdict,target_verdict,feature_rows,report_file
+FirebirdSQL,1,Beta 1,Core MGA semantic donor,april_2026_v6,PARTIAL_WITH_GAPS,FEASIBLE_WITH_MAPPING,48,firebirdsql_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+PostgreSQL,2,Beta 1 + Beta 2,Core relational maturity donor,april_2026_v6,PARTIAL_WITH_GAPS,PARTIAL_WITH_GAPS,48,postgresql_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+SQLite,7,Beta 1,Pager / invariant donor,april_2026_v6,PARTIAL_WITH_GAPS,FEASIBLE_WITH_MAPPING,48,sqlite_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+Dolt,9,Beta 1,Git/database donor,april_2026_v6,PARTIAL_WITH_GAPS,PARTIAL_WITH_GAPS,48,dolt_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+DuckDB,10,Beta 1,Analytical execution donor,april_2026_v6,PARTIAL_WITH_GAPS,FEASIBLE_WITH_MAPPING,48,duckdb_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+FoundationDB,11,Beta 1 + Beta 2,Transactional discipline and simulation donor,april_2026_v6,PARTIAL_WITH_GAPS,PARTIAL_WITH_GAPS,48,foundationdb_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+MySQL,12,Beta 1 + Beta 2,Protocol / compatibility donor,april_2026_v6,PARTIAL_WITH_GAPS,PARTIAL_WITH_GAPS,48,mysql_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+MariaDB,13,Beta 1 + Beta 2,Alternate MySQL-family donor,april_2026_v6,NOT_CURRENTLY_FEASIBLE,PARTIAL_WITH_GAPS,48,mariadb_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+Milvus,19,Beta 1 + Beta 2,Vector / ANN donor,april_2026_v6,NOT_CURRENTLY_FEASIBLE,PARTIAL_WITH_GAPS,48,milvus_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+ClickHouse,20,Beta 1 + Beta 2,Columnar analytical donor,april_2026_v6,PARTIAL_WITH_GAPS,PARTIAL_WITH_GAPS,48,clickhouse_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+etcd,21,Beta 2,Control-plane donor,april_2026_v6,PARTIAL_WITH_GAPS,PARTIAL_WITH_GAPS,48,etcd_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+TiKV,22,Beta 2,Data-plane placement donor,april_2026_v6,PARTIAL_WITH_GAPS,PARTIAL_WITH_GAPS,48,tikv_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+immudb,27,Beta 1,Audit / security donor,april_2026_v6,PARTIAL_WITH_GAPS,PARTIAL_WITH_GAPS,48,immudb_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+XTDB,28,Beta 1,Temporal donor,april_2026_v6,PARTIAL_WITH_GAPS,PARTIAL_WITH_GAPS,48,xtdb_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+Redis,30,Beta 1 + Beta 2,Protocol and low-latency donor,april_2026_v6,NOT_CURRENTLY_FEASIBLE,PARTIAL_WITH_GAPS,48,redis_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+MongoDB,31,Beta 1 + Beta 2,Document donor,april_2026_v6,NOT_CURRENTLY_FEASIBLE,PARTIAL_WITH_GAPS,48,mongodb_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+OpenSearch,32,Beta 1 + Beta 2,Search / segment donor,april_2026_v6,PARTIAL_WITH_GAPS,PARTIAL_WITH_GAPS,48,opensearch_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+Cassandra,33,Beta 1 + Beta 2,Distributed storage foil,april_2026_v6,NOT_CURRENTLY_FEASIBLE,PARTIAL_WITH_GAPS,48,cassandra_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+InfluxDB,34,Beta 1 + Beta 2,Time-series donor,april_2026_v6,PARTIAL_WITH_GAPS,PARTIAL_WITH_GAPS,48,influxdb_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+Neo4j,35,Beta 1 + Beta 2,Graph donor,april_2026_v6,NOT_CURRENTLY_FEASIBLE,PARTIAL_WITH_GAPS,48,neo4j_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+TiDB,36,Beta 2,Distributed SQL donor,april_2026_v6,NOT_CURRENTLY_FEASIBLE,PARTIAL_WITH_GAPS,48,tidb_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+CockroachDB,37,Beta 2,Distributed SQL donor,april_2026_v6,NOT_CURRENTLY_FEASIBLE,PARTIAL_WITH_GAPS,48,cockroachdb_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+YugabyteDB,38,Beta 2,Distributed SQL donor,april_2026_v6,NOT_CURRENTLY_FEASIBLE,PARTIAL_WITH_GAPS,48,yugabytedb_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+Citus,39,Beta 2,Distributed Postgres donor,april_2026_v6,NOT_CURRENTLY_FEASIBLE,PARTIAL_WITH_GAPS,48,citus_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md
+Apache Ignite,40,Beta 2,Data-grid donor,april_2026_v6,PARTIAL_WITH_GAPS,PARTIAL_WITH_GAPS,48,apache_ignite_vs_scratchbird_cross_engine_feature_comparison_2026-04-01.md

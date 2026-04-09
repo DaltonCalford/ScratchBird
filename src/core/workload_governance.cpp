@@ -171,6 +171,45 @@ auto rejectModeToString(CatalogManager::AdmissionRejectMode mode) -> std::string
     return "UNKNOWN";
 }
 
+auto acceleratorRequested(WorkloadGovernance::AcceleratorPosture posture,
+                          WorkloadGovernance::AcceleratorOperation operation) -> bool
+{
+    return posture != WorkloadGovernance::AcceleratorPosture::NONE &&
+           posture != WorkloadGovernance::AcceleratorPosture::CPU_ONLY &&
+           operation != WorkloadGovernance::AcceleratorOperation::NONE;
+}
+
+auto acceleratorFallbackAllowed(const CatalogManager::AdmissionPolicyCatalogInfo& policy) -> bool
+{
+    const std::string fallback = toUpperAscii(trimAsciiCopy(policy.accelerator_fallback_policy));
+    if (fallback.empty())
+    {
+        return true;
+    }
+    return fallback == "ALLOW_CPU" ||
+           fallback == "CPU_FALLBACK" ||
+           fallback == "PREFER_CPU_FALLBACK" ||
+           fallback == "PERMIT_CPU";
+}
+
+auto acceleratorPostureToProfile(WorkloadGovernance::AcceleratorPosture posture) -> std::string
+{
+    switch (posture)
+    {
+        case WorkloadGovernance::AcceleratorPosture::CPU_ONLY:
+            return "CPU_ONLY";
+        case WorkloadGovernance::AcceleratorPosture::CPU_PREFERRED:
+            return "CPU_PREFERRED";
+        case WorkloadGovernance::AcceleratorPosture::ACCELERATOR_PREFERRED:
+            return "ACCELERATOR_PREFERRED";
+        case WorkloadGovernance::AcceleratorPosture::ACCELERATOR_REQUIRED:
+            return "ACCELERATOR_REQUIRED";
+        case WorkloadGovernance::AcceleratorPosture::NONE:
+            break;
+    }
+    return {};
+}
+
 auto routeTargetKindToString(CatalogManager::RouteTargetKind kind) -> std::string
 {
     switch (kind)
@@ -455,7 +494,12 @@ void WorkloadGovernance::AdmissionLease::release()
 {
     if (owner_ != nullptr && active_)
     {
-        owner_->releaseLease(proc_id_, policy_id_, class_id_);
+        owner_->releaseLease(proc_id_,
+                             policy_id_,
+                             class_id_,
+                             accelerator_reserved_memory_bytes_,
+                             accelerator_search_active_,
+                             accelerator_build_active_);
     }
     owner_ = nullptr;
     proc_id_ = UINT32_MAX;
@@ -463,6 +507,9 @@ void WorkloadGovernance::AdmissionLease::release()
     policy_id_ = ID{};
     class_name_.clear();
     policy_name_.clear();
+    accelerator_reserved_memory_bytes_ = 0;
+    accelerator_search_active_ = false;
+    accelerator_build_active_ = false;
     active_ = false;
 }
 
@@ -474,12 +521,18 @@ void WorkloadGovernance::AdmissionLease::moveFrom(AdmissionLease&& other) noexce
     policy_id_ = other.policy_id_;
     class_name_ = std::move(other.class_name_);
     policy_name_ = std::move(other.policy_name_);
+    accelerator_reserved_memory_bytes_ = other.accelerator_reserved_memory_bytes_;
+    accelerator_search_active_ = other.accelerator_search_active_;
+    accelerator_build_active_ = other.accelerator_build_active_;
     active_ = other.active_;
 
     other.owner_ = nullptr;
     other.proc_id_ = UINT32_MAX;
     other.class_id_ = ID{};
     other.policy_id_ = ID{};
+    other.accelerator_reserved_memory_bytes_ = 0;
+    other.accelerator_search_active_ = false;
+    other.accelerator_build_active_ = false;
     other.active_ = false;
 }
 
@@ -1906,9 +1959,137 @@ auto WorkloadGovernance::acquire(const QueryDescriptor& descriptor,
     }
 
     CounterState& counter = policy_counters_[binding.policy.policy_id];
+
+    struct AcceleratorRuntimeDecision
+    {
+        bool requested = false;
+        bool admitted = false;
+        bool fallback_used = false;
+        bool search_slot_required = false;
+        bool build_slot_required = false;
+        uint64_t reserved_memory_bytes = 0;
+        std::string detail;
+        std::string profile_name;
+        std::string device_class;
+        std::string device_id;
+        std::string device_pool_id;
+    };
+
+    AcceleratorRuntimeDecision accelerator{};
+    accelerator.requested = acceleratorRequested(
+        descriptor.accelerator_posture,
+        descriptor.accelerator_operation);
+    accelerator.profile_name = !binding.policy.accelerator_profile_name.empty()
+        ? binding.policy.accelerator_profile_name
+        : descriptor.accelerator_profile_name;
+    accelerator.device_class = !binding.binding.accelerator_device_class.empty()
+        ? binding.binding.accelerator_device_class
+        : descriptor.accelerator_device_class;
+    accelerator.device_id = !binding.binding.accelerator_device_id.empty()
+        ? binding.binding.accelerator_device_id
+        : descriptor.accelerator_device_id;
+    accelerator.device_pool_id = !binding.binding.accelerator_device_pool_id.empty()
+        ? binding.binding.accelerator_device_pool_id
+        : descriptor.accelerator_device_pool_id;
+    accelerator.reserved_memory_bytes = std::max(descriptor.accelerator_memory_request_bytes,
+                                                 descriptor.accelerator_pinned_residency_bytes);
+
+    const auto accelerator_available_now = [&]() {
+        if (!accelerator.requested)
+        {
+            return true;
+        }
+
+        if (binding.policy.accelerator_profile_name.empty())
+        {
+            accelerator.detail = "Admission policy has no accelerator profile";
+            return false;
+        }
+
+        if (!descriptor.accelerator_profile_name.empty() &&
+            toUpperAscii(descriptor.accelerator_profile_name) !=
+                toUpperAscii(binding.policy.accelerator_profile_name))
+        {
+            accelerator.detail = "Admission policy accelerator profile does not satisfy request";
+            return false;
+        }
+
+        if (!descriptor.accelerator_device_class.empty() &&
+            !binding.binding.accelerator_device_class.empty() &&
+            toUpperAscii(descriptor.accelerator_device_class) !=
+                toUpperAscii(binding.binding.accelerator_device_class))
+        {
+            accelerator.detail = "Admission binding device class does not satisfy request";
+            return false;
+        }
+
+        if (!descriptor.accelerator_device_id.empty() &&
+            !binding.binding.accelerator_device_id.empty() &&
+            descriptor.accelerator_device_id != binding.binding.accelerator_device_id)
+        {
+            accelerator.detail = "Admission binding device id does not satisfy request";
+            return false;
+        }
+
+        if (!descriptor.accelerator_device_pool_id.empty() &&
+            !binding.binding.accelerator_device_pool_id.empty() &&
+            descriptor.accelerator_device_pool_id != binding.binding.accelerator_device_pool_id)
+        {
+            accelerator.detail = "Admission binding device pool id does not satisfy request";
+            return false;
+        }
+
+        accelerator.search_slot_required =
+            descriptor.accelerator_operation == AcceleratorOperation::SEARCH;
+        accelerator.build_slot_required =
+            descriptor.accelerator_operation == AcceleratorOperation::BUILD;
+
+        if (accelerator.search_slot_required &&
+            binding.policy.accelerator_concurrent_search_limit > 0 &&
+            counter.active_accelerator_searches >=
+                binding.policy.accelerator_concurrent_search_limit)
+        {
+            accelerator.detail = "Accelerator concurrent search limit reached";
+            return false;
+        }
+
+        if (accelerator.build_slot_required &&
+            binding.policy.accelerator_concurrent_build_limit > 0 &&
+            counter.active_accelerator_builds >=
+                binding.policy.accelerator_concurrent_build_limit)
+        {
+            accelerator.detail = "Accelerator concurrent build limit reached";
+            return false;
+        }
+
+        if (binding.policy.accelerator_memory_budget_bytes > 0 &&
+            accelerator.reserved_memory_bytes > 0 &&
+            counter.active_accelerator_reserved_memory_bytes + accelerator.reserved_memory_bytes >
+                binding.policy.accelerator_memory_budget_bytes)
+        {
+            accelerator.detail = "Accelerator memory budget exceeded";
+            return false;
+        }
+
+        accelerator.detail.clear();
+        return true;
+    };
+
+    const auto accelerator_fallback_now = [&]() {
+        return accelerator.requested &&
+               descriptor.accelerator_posture == AcceleratorPosture::ACCELERATOR_PREFERRED &&
+               acceleratorFallbackAllowed(binding.policy);
+    };
+
     auto can_run_now = [&]() {
-        return binding.policy.max_concurrent_queries == 0 ||
-               counter.active_queries < binding.policy.max_concurrent_queries;
+        const bool query_capacity_ok =
+            binding.policy.max_concurrent_queries == 0 ||
+            counter.active_queries < binding.policy.max_concurrent_queries;
+        if (!query_capacity_ok)
+        {
+            return false;
+        }
+        return accelerator_available_now() || accelerator_fallback_now();
     };
 
     if (!can_run_now())
@@ -1924,6 +2105,19 @@ auto WorkloadGovernance::acquire(const QueryDescriptor& descriptor,
             SET_ERROR_CONTEXT(ctx, reject_status, detail);
             return rejected;
         };
+
+        const bool accelerator_blocked = accelerator.requested &&
+                                         !accelerator_available_now() &&
+                                         !accelerator_fallback_now();
+
+        if (accelerator_blocked)
+        {
+            return reject_now(Status::CONFIGURATION_LIMIT_EXCEEDED,
+                              "GOV_1506",
+                              accelerator.detail.empty()
+                                  ? "Accelerator admission rejected"
+                                  : accelerator.detail.c_str());
+        }
 
         if (binding.policy.reject_mode == CatalogManager::AdmissionRejectMode::REJECT)
         {
@@ -1972,11 +2166,55 @@ auto WorkloadGovernance::acquire(const QueryDescriptor& descriptor,
         decision.queued = true;
     }
 
+    if (accelerator.requested)
+    {
+        if (accelerator_available_now())
+        {
+            accelerator.admitted = true;
+        }
+        else if (accelerator_fallback_now())
+        {
+            accelerator.fallback_used = true;
+            ++counter.forced_fallbacks;
+        }
+        else
+        {
+            decision.admitted = false;
+            decision.status = Status::CONFIGURATION_LIMIT_EXCEEDED;
+            decision.code = "GOV_1506";
+            decision.detail = accelerator.detail.empty()
+                ? "Accelerator admission rejected"
+                : accelerator.detail;
+            SET_ERROR_CONTEXT(ctx, decision.status, decision.detail.c_str());
+            return decision;
+        }
+    }
+
     ++counter.active_queries;
+    if (accelerator.admitted)
+    {
+        if (accelerator.search_slot_required)
+        {
+            ++counter.active_accelerator_searches;
+        }
+        if (accelerator.build_slot_required)
+        {
+            ++counter.active_accelerator_builds;
+        }
+        counter.active_accelerator_reserved_memory_bytes += accelerator.reserved_memory_bytes;
+    }
     if (proc_id != UINT32_MAX)
     {
         session_policy_map_[proc_id] = binding.policy.policy_id;
     }
+
+    decision.accelerator_requested = accelerator.requested;
+    decision.accelerator_admitted = accelerator.admitted;
+    decision.accelerator_fallback_used = accelerator.fallback_used;
+    decision.accelerator_profile_name = accelerator.profile_name;
+    decision.accelerator_device_class = accelerator.device_class;
+    decision.accelerator_device_id = accelerator.device_id;
+    decision.accelerator_device_pool_id = accelerator.device_pool_id;
 
     lease_out.owner_ = this;
     lease_out.proc_id_ = proc_id;
@@ -1984,6 +2222,10 @@ auto WorkloadGovernance::acquire(const QueryDescriptor& descriptor,
     lease_out.policy_id_ = binding.policy.policy_id;
     lease_out.class_name_ = match.matched ? match.klass.class_name : std::string();
     lease_out.policy_name_ = binding.policy.policy_name;
+    lease_out.accelerator_reserved_memory_bytes_ =
+        accelerator.admitted ? accelerator.reserved_memory_bytes : 0;
+    lease_out.accelerator_search_active_ = accelerator.admitted && accelerator.search_slot_required;
+    lease_out.accelerator_build_active_ = accelerator.admitted && accelerator.build_slot_required;
     lease_out.active_ = true;
     return decision;
 }
@@ -2051,6 +2293,22 @@ auto WorkloadGovernance::snapshotAdmissionStatus(std::vector<AdmissionStatusRow>
             row.max_concurrent_queries = policy.max_concurrent_queries;
             row.max_queue_depth = policy.max_queue_depth;
             row.queue_timeout_ms = policy.queue_timeout_ms;
+            row.accelerator_profile_name = policy.accelerator_profile_name;
+            row.accelerator_device_class = binding.accelerator_device_class;
+            row.accelerator_device_id = binding.accelerator_device_id;
+            row.accelerator_device_pool_id = binding.accelerator_device_pool_id;
+            row.accelerator_prewarm_policy = policy.accelerator_prewarm_policy;
+            row.accelerator_fallback_policy = policy.accelerator_fallback_policy;
+            row.accelerator_degraded_state_override =
+                policy.accelerator_degraded_state_override;
+            row.accelerator_concurrent_build_limit =
+                policy.accelerator_concurrent_build_limit;
+            row.accelerator_concurrent_search_limit =
+                policy.accelerator_concurrent_search_limit;
+            row.accelerator_memory_budget_bytes =
+                policy.accelerator_memory_budget_bytes;
+            row.accelerator_pinned_residency_target_bytes =
+                policy.accelerator_pinned_residency_target_bytes;
             row.policy_enabled = policy.is_enabled;
             row.binding_enabled = binding.is_enabled;
 
@@ -2079,6 +2337,14 @@ auto WorkloadGovernance::snapshotAdmissionStatus(std::vector<AdmissionStatusRow>
             {
                 row.active_queries = it_counter->second.active_queries;
                 row.queued_queries = it_counter->second.queued_queries;
+                row.accelerator_active_builds =
+                    it_counter->second.active_accelerator_builds;
+                row.accelerator_active_searches =
+                    it_counter->second.active_accelerator_searches;
+                row.accelerator_reserved_memory_bytes =
+                    it_counter->second.active_accelerator_reserved_memory_bytes;
+                row.accelerator_forced_fallbacks =
+                    it_counter->second.forced_fallbacks;
             }
             BindingState binding_state;
             binding_state.matched = true;
@@ -2197,7 +2463,10 @@ auto WorkloadGovernance::snapshotRoutingPlan(std::vector<RoutingPlanRow>& rows_o
 
 void WorkloadGovernance::releaseLease(uint32_t proc_id,
                                       const ID& policy_id,
-                                      const ID& class_id)
+                                      const ID& class_id,
+                                      uint64_t accelerator_reserved_memory_bytes,
+                                      bool accelerator_search_active,
+                                      bool accelerator_build_active)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = policy_counters_.find(policy_id);
@@ -2207,7 +2476,29 @@ void WorkloadGovernance::releaseLease(uint32_t proc_id,
         {
             --it->second.active_queries;
         }
-        if (it->second.active_queries == 0 && it->second.queued_queries == 0)
+        if (accelerator_search_active && it->second.active_accelerator_searches > 0)
+        {
+            --it->second.active_accelerator_searches;
+        }
+        if (accelerator_build_active && it->second.active_accelerator_builds > 0)
+        {
+            --it->second.active_accelerator_builds;
+        }
+        if (accelerator_reserved_memory_bytes > 0)
+        {
+            it->second.active_accelerator_reserved_memory_bytes =
+                accelerator_reserved_memory_bytes >=
+                        it->second.active_accelerator_reserved_memory_bytes
+                    ? 0
+                    : it->second.active_accelerator_reserved_memory_bytes -
+                          accelerator_reserved_memory_bytes;
+        }
+        if (it->second.active_queries == 0 &&
+            it->second.queued_queries == 0 &&
+            it->second.active_accelerator_searches == 0 &&
+            it->second.active_accelerator_builds == 0 &&
+            it->second.active_accelerator_reserved_memory_bytes == 0 &&
+            it->second.forced_fallbacks == 0)
         {
             policy_counters_.erase(it);
         }

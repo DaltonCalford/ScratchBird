@@ -1,0 +1,11 @@
+{
+  "gate_id": "P-PAGE-GATE-05",
+  "status": "pass",
+  "timestamp_utc": "2026-02-13T19:36:23Z",
+  "required_gates": ["P-PAGE-GATE-01", "P-PAGE-GATE-02", "P-PAGE-GATE-03", "P-PAGE-GATE-04"],
+  "summary": {
+    "stages_completed": ["S1", "S2", "S3", "S4"],
+    "all_gates_passed": true,
+    "contract_slice": "75/75 pass"
+  }
+}

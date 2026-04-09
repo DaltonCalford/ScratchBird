@@ -1,0 +1,7 @@
+case_id,initial_mode,requested_mode,compatibility,fairness_gate,expected_result,error_code
+LCE-001,S,X,compatible_now,pass,convert_immediate,NONE
+LCE-002,S,X,incompatible_now,queue_wait,convert_after_wait,NONE
+LCE-003,S,X,incompatible_now,NOWAIT,convert_fail,LOCK_CONVERT_NOWAIT_FAILED
+LCE-004,row_lock_count_above_threshold,table_SIX_or_X_request,grant_possible,escalate_success,NONE
+LCE-005,row_lock_count_above_threshold,table_lock_request,grant_not_possible,keep_fine_grained,NONE
+LCE-006,system_catalog_table,escalation_request,forbidden_without_admin_mode,reject_escalation,LOCK_TIMEOUT

@@ -1,0 +1,4 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+SB-CLUSTER-SWS-MGA-01.md,domain-identity-invariant,"include/scratchbird/core/cluster_write_safety.h;src/core/cluster_write_safety.cpp","DOMAIN_HASH_CONSISTENCY_MATRIX.csv;TEST_RESULTS.md",pass,"Domain UUID/hash consistency checks are enforced with deterministic mismatch reasons"
+SB-CLUSTER-SWS-MGA-01.md,control-plane-domain-replication,"src/core/cluster_write_safety.cpp::DomainControlPlaneReplicaCatalog::appendEvent","DOMAIN_EVENT_LOG_SCHEMA.md;TEST_RESULTS.md",pass,"CREATE/ALTER/DROP control-plane events are persisted in in-memory event log and reflected in manifest projection"
+SB-CLUSTER-SWS-MGA-01.md,join-validation-contract,"src/core/cluster_write_safety.cpp::DomainControlPlaneReplicaCatalog::validateJoinManifest","JOIN_REPAIR_MODE_TEST_RESULTS.md;DOMAIN_HASH_CONSISTENCY_MATRIX.csv",pass,"Join validation identifies missing/unexpected/duplicate/zero-id/hash-mismatch conditions"

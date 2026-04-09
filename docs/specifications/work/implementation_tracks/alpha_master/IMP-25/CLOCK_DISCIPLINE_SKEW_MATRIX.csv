@@ -1,0 +1,7 @@
+case_id,required_check,expected_result,error_code
+T25-CLOCK-01,offset_jitter_computation_reference_vectors,pass,
+T25-CLOCK-02,state_threshold_transitions_deterministic,pass,
+T25-CLOCK-03,hard_skew_write_fencing_and_lease_restrictions,pass,
+T25-CLOCK-04,recovery_requires_two_consecutive_healthy_samples,pass,
+T25-CLOCK-05,routing_admission_excludes_hard_skew_nodes_for_write,pass,
+T25-CLOCK-06,control_channel_monotonic_tuple_check_rejects_non_monotonic,pass,

@@ -1,0 +1,26 @@
+{
+  "ticket_id": "IMP-09",
+  "section": "09_Lock_Manager_Core",
+  "wave": "W1",
+  "status": "done",
+  "started_at_utc": "2026-02-12T00:21:24Z",
+  "completed_at_utc": "2026-02-12T00:21:24Z",
+  "gate_contract": "docs/specifications/09_Lock_Manager_Core/TEST_CONTRACT.md",
+  "artifacts": [
+    "IMPLEMENTATION_CHECKLIST.md",
+    "IMPLEMENTATION_NOTES.md",
+    "LOCK_COMPATIBILITY_MATRIX.csv",
+    "LOCK_ACQUIRE_QUEUE_FAIRNESS_MATRIX.csv",
+    "DEADLOCK_VICTIM_SELECTION_MATRIX.csv",
+    "LOCK_CONVERSION_ESCALATION_MATRIX.csv",
+    "LOCK_ERROR_SEMANTICS_MATRIX.csv",
+    "TEST_RESULTS.md",
+    "CHECKSUMS.sha256",
+    "RUN_MANIFEST.json",
+    "SPEC_TRACEABILITY.csv",
+    "TEST_EVIDENCE_INDEX.md",
+    "GATE_RESULT.json",
+    "CHANGESET_LOG.md"
+  ],
+  "mode": "specification_contract_validation"
+}

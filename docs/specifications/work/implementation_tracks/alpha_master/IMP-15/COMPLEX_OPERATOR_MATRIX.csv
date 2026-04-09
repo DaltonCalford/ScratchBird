@@ -1,0 +1,11 @@
+case_id,type_name,operation,input,expected_result,error_code
+T15-OP-001,array,index_access,arr[2],element_returned,
+T15-OP-002,array,slice_access,arr[2:4],subarray_returned,
+T15-OP-003,composite,field_access,row.f1,field_value,
+T15-OP-004,json,path_extract,json->'a',value_or_null,
+T15-OP-005,xml,xpath_extract,xpath('/root/a',xml),node_set,
+T15-OP-006,geometry,distance,dist(g1,g2),distance_value,
+T15-OP-007,range,contains,range @> value,boolean,
+T15-OP-008,enum,comparison,e1<e2,ordered_boolean,
+T15-OP-009,set,contains,set_has(label),boolean,
+T15-OP-010,bson,path_extract,bson_get(doc,'a'),value_or_null,

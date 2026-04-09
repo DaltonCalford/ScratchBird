@@ -1,0 +1,6 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+21_V3_Dialect_Surface/OBJECT_NAMING_AND_QUOTING.md,21_V3_Dialect_Surface,LEX-IDENT-SYNTAX,LD-001/TOKEN_RULES_AUDIT.csv,PASS,Regex and quoting rules captured as LEX-001..LEX-004
+21_V3_Dialect_Surface/OBJECT_NAMING_AND_QUOTING.md,21_V3_Dialect_Surface,LEX-CASE-COLLISION,LD-001/TOKEN_RULES_AUDIT.csv,PASS,Case and normalized-name collision rules captured as LEX-005..LEX-008
+21_V3_Dialect_Surface/RESERVED_WORDS_AND_KEYWORDS.md,21_V3_Dialect_Surface,LEX-RESERVED-CATALOG,LD-001/TOKEN_RULES_AUDIT.csv,PASS,Catalog fields and reserved-word bypass captured as LEX-010..LEX-012
+21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md,21_V3_Dialect_Surface,LEX-TOKEN-CLASSES,LD-001/TOKEN_RULES_AUDIT.csv,PASS,Token class and reinterpretation invariants captured as LEX-013..LEX-014
+21_V3_Dialect_Surface/NORMATIVE_ADMIN_DDL_DML_PSQL_TSQL_IMPLEMENTATION_CHECKLIST.md,21_V3_Dialect_Surface,LEX-ORDER,LD-001/TOKEN_RULES_AUDIT.csv,PASS,Execution ordering requirement captured as LEX-015

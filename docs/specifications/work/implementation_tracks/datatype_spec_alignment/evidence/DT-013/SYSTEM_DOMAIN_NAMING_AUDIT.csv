@@ -1,0 +1,6 @@
+rule_id,requirement,implementation_location,status,notes
+SDN-001,System domain names MUST use bracketed [sb_*] prefix,src/core/domain_manager.cpp:isSystemDomainName,PASS,Reserved namespace check uses prefix [SB_]
+SDN-002,User domain create MUST reject reserved system names unless explicit system bypass,src/core/domain_manager.cpp:validateDomainCreateName,PASS,allow_system_reserved_name required
+SDN-003,System bootstrap MUST use reserved-name bypass path,src/core/domain_manager.cpp:ensureSystemDomains,PASS,system install path sets allow_system_reserved_name=true
+SDN-004,System-name rename targets MUST be rejected,src/core/domain_manager.cpp:renameDomain,PASS,Rename rejects new_name with [SB_] prefix
+SDN-005,System-domain visibility logic MUST classify [sb_*] entries as system,src/core/domain_manager.cpp:listDomainsVisible,PASS,System-domain branch uses isSystemDomainName

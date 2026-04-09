@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-030",
+  "phase": "PH3",
+  "title": "Implement TLS everywhere and certificate rotation controls",
+  "status": "pending",
+  "owner": "security-platform",
+  "estimate_days": 6,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

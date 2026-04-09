@@ -1,0 +1,18 @@
+{
+  "gate_id": "DTYPE-GATE-04",
+  "status": "pass",
+  "updated_at": "2026-02-13T23:22:49Z",
+  "criteria": {
+    "system_domain_name_format": "pass",
+    "legacy_name_residue_removed": "pass",
+    "fixed_uuid_registry_enforcement": "pass",
+    "visibility_profile_gates": "pass"
+  },
+  "blocking_items": [],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-013/SYSTEM_DOMAIN_NAMING_AUDIT.csv",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-014/LEGACY_DOMAIN_NAME_REMOVAL_AUDIT.csv",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-015/SYSTEM_DOMAIN_UUID_REGISTRY_DIFF.csv",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-016/DOMAIN_VISIBILITY_POLICY_TEST_RESULTS.md"
+  ]
+}

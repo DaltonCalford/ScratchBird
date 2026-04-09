@@ -20,6 +20,7 @@
 #include "scratchbird/client/sql_helpers.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/firebird_datetime.h"
 #include "scratchbird/core/lsm_compression.h"
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/telemetry.h"
@@ -41,6 +42,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <streambuf>
@@ -64,6 +66,8 @@ constexpr uint16_t kTxnFlagHasWaitMode = 0x0008;
 constexpr uint16_t kTxnFlagHasLockTimeout = 0x0010;
 constexpr uint16_t kTxnFlagHasAutocommit = 0x0020;
 constexpr uint16_t kTxnFlagHasReadCommittedMode = 0x0100;
+constexpr size_t kResultFlushRowBatch = 256;
+constexpr uint64_t kResultFlushByteBatch = 256 * 1024;
 
 uint64_t estimateRowBytes(const std::vector<ProtocolCodec::ColumnValue>& values) {
     uint64_t total = 0;
@@ -78,6 +82,23 @@ uint64_t estimateRowBytes(const std::vector<ProtocolCodec::ColumnValue>& values)
         }
     }
     return total;
+}
+
+bool hasLiveSocket(const network::Connection* conn) {
+    return conn != nullptr && conn->getSocket() != nullptr;
+}
+
+bool shouldFlushResultBatch(const network::Connection* conn,
+                            size_t rows_since_flush,
+                            uint64_t bytes_since_flush) {
+    if (!hasLiveSocket(conn) || rows_since_flush == 0) {
+        return false;
+    }
+    if (rows_since_flush >= kResultFlushRowBatch ||
+        bytes_since_flush >= kResultFlushByteBatch) {
+        return true;
+    }
+    return conn->getWriteBuffer().size() >= kResultFlushByteBatch;
 }
 
 uint64_t nowMicros() {
@@ -1568,6 +1589,7 @@ void NativeAdapter::onConnectionClosed(network::Connection* conn,
     }
     subscribed_channels_.clear();
     native_prepared_statements_.clear();
+    prepared_statement_bytecode_.clear();
     prepared_statement_param_types_.clear();
     portals_.clear();
     remote_password_.clear();
@@ -1880,22 +1902,10 @@ core::Status NativeAdapter::sendQueryResult(network::Connection* conn,
     }
 
     if (!result.columns.empty()) {
-        // Send row description
         sendRowDescription(conn, result.columns);
-        auto flush_status = flushWriteBuffer(conn);
-        if (flush_status != core::Status::OK) {
-            return flush_status;
-        }
-        pollCancel(conn);
-        if (cancel_requested_ &&
-            (cancel_target_sequence_ == 0 || cancel_target_sequence_ == current_sequence_)) {
-            cancel_requested_ = false;
-            cancel_target_sequence_ = 0;
-            sendQueryError(conn, static_cast<uint32_t>(core::Status::QUERY_CANCELED),
-                           "57014", "Query canceled");
-            sendReady(conn);
-            return core::Status::OK;
-        }
+
+        size_t rows_since_flush = 0;
+        uint64_t bytes_since_flush = 0;
 
         for (const auto& row : result.rows) {
             if (cancel_requested_ &&
@@ -1908,9 +1918,15 @@ core::Status NativeAdapter::sendQueryResult(network::Connection* conn,
                 return core::Status::OK;
             }
             sendRowData(conn, row);
-            flush_status = flushWriteBuffer(conn);
-            if (flush_status != core::Status::OK) {
-                return flush_status;
+            ++rows_since_flush;
+            bytes_since_flush += estimateRowBytes(row) + 32u;
+            if (shouldFlushResultBatch(conn, rows_since_flush, bytes_since_flush)) {
+                auto flush_status = flushWriteBuffer(conn);
+                if (flush_status != core::Status::OK) {
+                    return flush_status;
+                }
+                rows_since_flush = 0;
+                bytes_since_flush = 0;
             }
             pollCancel(conn);
             if (cancel_requested_ &&
@@ -2345,7 +2361,7 @@ core::Status NativeAdapter::handleQuery(network::Connection* conn) {
         const std::vector<uint8_t>* bytecode = query_request.has_bytecode
             ? &query_request.bytecode
             : nullptr;
-        auto exec_status = executeRemoteQuery(query_request.sql, bytecode, result);
+        auto exec_status = executeRemoteQuery(query_request.sql, bytecode, nullptr, nullptr, result);
         if (exec_status != core::Status::OK) {
             native_state_ = NativeProtocolState::READY;
             auto send_status = sendQueryResult(conn, result);
@@ -2500,7 +2516,34 @@ core::Status NativeAdapter::handlePrepare(network::Connection* conn) {
     }
 
     std::vector<int32_t> prepared_param_types;
-    auto status = prepareStatement(stmt_name, query, prepared_param_types);
+    core::Status status = core::Status::OK;
+    if (!config_.engine_endpoint.empty()) {
+        std::vector<uint8_t> prepared_bytecode;
+        std::string compile_error;
+        const core::ID current_schema_id = connection_ctx_
+            ? connection_ctx_->getCurrentSchemaId()
+            : core::ID{};
+        status = compileNativeSqlToSblr(engineDatabase(),
+                                        connection_ctx_.get(),
+                                        current_schema_id,
+                                        query,
+                                        prepared_bytecode,
+                                        compile_error);
+        if (status != core::Status::OK) {
+            sendQueryError(conn,
+                           static_cast<uint32_t>(status),
+                           "42000",
+                           compile_error.empty()
+                               ? "Failed to prepare statement"
+                               : compile_error);
+            return sendBuffer(conn);
+        }
+        prepared_statements_[stmt_name] = query;
+        prepared_statement_bytecode_[stmt_name] = std::move(prepared_bytecode);
+        prepared_param_types.assign(countParameterPlaceholders(query), 0);
+    } else {
+        status = prepareStatement(stmt_name, query, prepared_param_types);
+    }
     if (status != core::Status::OK) {
         sendQueryError(conn, static_cast<uint32_t>(status),
                       "42000", "Failed to prepare statement");
@@ -2586,7 +2629,13 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
-    size_t expected = countParameterPlaceholders(it->second);
+    size_t expected = 0;
+    auto type_it = prepared_statement_param_types_.find(stmt_name);
+    if (type_it != prepared_statement_param_types_.end()) {
+        expected = type_it->second.size();
+    } else {
+        expected = countParameterPlaceholders(it->second);
+    }
     if (expected != param_count) {
         sendQueryError(conn, static_cast<uint32_t>(core::Status::INVALID_ARGUMENT),
                       "07001", "Parameter count mismatch");
@@ -2594,7 +2643,7 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
     }
 
     std::vector<uint32_t> param_type_oids(param_count, 0);
-    auto type_it = prepared_statement_param_types_.find(stmt_name);
+    type_it = prepared_statement_param_types_.find(stmt_name);
     if (type_it != prepared_statement_param_types_.end()) {
         param_type_oids = type_it->second;
         if (param_type_oids.size() < param_count) {
@@ -2606,15 +2655,103 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
 
     std::vector<std::string> param_values;
     std::vector<bool> param_nulls;
+    const bool requires_remote_bound_values = !config_.engine_endpoint.empty();
     std::vector<ProtocolCodec::ColumnValue> bound_param_values;
     std::vector<uint16_t> bound_param_formats;
     param_values.reserve(param_count);
     param_nulls.reserve(param_count);
-    bound_param_values.reserve(param_count);
-    bound_param_formats.reserve(param_count);
+    if (requires_remote_bound_values) {
+        bound_param_values.reserve(param_count);
+        bound_param_formats.reserve(param_count);
+    }
 
     auto decode_param = [&](const uint8_t* data, size_t len, uint16_t format, uint32_t oid)
         -> std::string {
+        auto format_date_days = [](int32_t days_since_2000) -> std::string {
+            const int32_t base_mjd = core::FirebirdDateTime::dateToMJD(2000, 1, 1);
+            return core::FirebirdDateTime::formatDate(base_mjd + days_since_2000);
+        };
+
+        auto format_time_micros = [](int64_t micros_since_midnight,
+                                     bool include_offset,
+                                     int32_t offset_seconds) -> std::string {
+            constexpr int64_t micros_per_second = 1000000LL;
+            constexpr int64_t micros_per_day = 86400LL * micros_per_second;
+            micros_since_midnight %= micros_per_day;
+            if (micros_since_midnight < 0) {
+                micros_since_midnight += micros_per_day;
+            }
+
+            const int64_t total_seconds = micros_since_midnight / micros_per_second;
+            const int64_t micros = micros_since_midnight % micros_per_second;
+            const int64_t hours = total_seconds / 3600;
+            const int64_t minutes = (total_seconds % 3600) / 60;
+            const int64_t seconds = total_seconds % 60;
+
+            std::ostringstream out;
+            out << std::setfill('0')
+                << std::setw(2) << hours << ':'
+                << std::setw(2) << minutes << ':'
+                << std::setw(2) << seconds;
+            if (micros != 0) {
+                out << '.' << std::setw(6) << micros;
+            }
+            if (include_offset) {
+                const int32_t absolute_offset = std::abs(offset_seconds);
+                const char sign = offset_seconds >= 0 ? '+' : '-';
+                const int32_t offset_hours = absolute_offset / 3600;
+                const int32_t offset_minutes = (absolute_offset % 3600) / 60;
+                out << sign
+                    << std::setw(2) << offset_hours
+                    << ':'
+                    << std::setw(2) << offset_minutes;
+            }
+            return out.str();
+        };
+
+        auto floor_div = [](int64_t value, int64_t divisor) -> int64_t {
+            int64_t quotient = value / divisor;
+            const int64_t remainder = value % divisor;
+            if (remainder != 0 && ((remainder > 0) != (divisor > 0))) {
+                --quotient;
+            }
+            return quotient;
+        };
+
+        auto format_timestamp_micros = [&](int64_t micros_since_2000_utc,
+                                           bool include_offset,
+                                           int32_t offset_seconds) -> std::string {
+            constexpr int64_t micros_per_second = 1000000LL;
+            constexpr int64_t micros_per_day = 86400LL * micros_per_second;
+            const int64_t local_micros =
+                micros_since_2000_utc + static_cast<int64_t>(offset_seconds) * micros_per_second;
+            const int64_t days_since_2000 = floor_div(local_micros, micros_per_day);
+            const int64_t time_micros = local_micros - days_since_2000 * micros_per_day;
+            const int32_t base_mjd = core::FirebirdDateTime::dateToMJD(2000, 1, 1);
+            const int32_t mjd = base_mjd + static_cast<int32_t>(days_since_2000);
+
+            std::ostringstream out;
+            out << core::FirebirdDateTime::formatDate(mjd) << ' '
+                << format_time_micros(time_micros, include_offset, offset_seconds);
+            return out.str();
+        };
+
+        auto format_uuid = [](const uint8_t* bytes, size_t size) -> std::string {
+            if (size < 16) {
+                return std::string(reinterpret_cast<const char*>(bytes), size);
+            }
+
+            std::ostringstream out;
+            out << std::hex << std::setfill('0');
+            for (size_t i = 0; i < 16; ++i) {
+                out << std::setw(2) << static_cast<unsigned>(bytes[i]);
+                if (i == 3 || i == 5 || i == 7 || i == 9) {
+                    out << '-';
+                }
+            }
+            return out.str();
+        };
+
         if (format == sbwp::kFormatBinary) {
             const WireType wire_type = mapOidToWireTypeForNativeAdapter(oid);
             switch (wire_type) {
@@ -2661,6 +2798,36 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
                         return out.str();
                     }
                     break;
+                case WireType::DATE:
+                    if (len >= sizeof(int32_t)) {
+                        int32_t v = 0;
+                        std::memcpy(&v, data, sizeof(int32_t));
+                        return format_date_days(v);
+                    }
+                    break;
+                case WireType::TIME:
+                    if (len >= sizeof(int64_t)) {
+                        int64_t v = 0;
+                        std::memcpy(&v, data, sizeof(int64_t));
+                        return format_time_micros(v, false, 0);
+                    }
+                    break;
+                case WireType::TIMESTAMPTZ:
+                    if (len >= sizeof(int64_t)) {
+                        int64_t v = 0;
+                        std::memcpy(&v, data, sizeof(int64_t));
+                        return format_timestamp_micros(v, true, 0);
+                    }
+                    break;
+                case WireType::TIMESTAMP:
+                    if (len >= sizeof(int64_t)) {
+                        int64_t v = 0;
+                        std::memcpy(&v, data, sizeof(int64_t));
+                        return format_timestamp_micros(v, false, 0);
+                    }
+                    break;
+                case WireType::UUID:
+                    return format_uuid(data, len);
                 case WireType::VARCHAR:
                 case WireType::CHAR:
                 case WireType::XML:
@@ -2702,8 +2869,10 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
         if (len == 0xFFFFFFFFu) {
             param_values.emplace_back();
             param_nulls.push_back(true);
-            bound_param_values.push_back(makeBoundColumnValue(nullptr, 0, true));
-            bound_param_formats.push_back(sbwp::kFormatText);
+            if (requires_remote_bound_values) {
+                bound_param_values.push_back(makeBoundColumnValue(nullptr, 0, true));
+                bound_param_formats.push_back(sbwp::kFormatText);
+            }
             continue;
         }
         if (offset + len > payload.size()) {
@@ -2718,8 +2887,10 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
         const uint32_t oid = i < param_type_oids.size() ? param_type_oids[i] : 0u;
         param_values.push_back(decode_param(payload.data() + offset, len, format, oid));
         param_nulls.push_back(false);
-        bound_param_values.push_back(makeBoundColumnValue(payload.data() + offset, len, false));
-        bound_param_formats.push_back(format);
+        if (requires_remote_bound_values) {
+            bound_param_values.push_back(makeBoundColumnValue(payload.data() + offset, len, false));
+            bound_param_formats.push_back(format);
+        }
         offset += len;
     }
 
@@ -2737,23 +2908,27 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
-    for (size_t i = 0; i < bound_param_values.size(); ++i) {
-        const uint32_t oid = i < param_type_oids.size() ? param_type_oids[i] : 0u;
-        const uint16_t format =
-            i < bound_param_formats.size() ? bound_param_formats[i] : sbwp::kFormatText;
-        bound_param_values[i] = coerceBoundParameterValue(param_values[i],
-                                                          oid,
-                                                          format,
-                                                          bound_param_values[i]);
+    if (requires_remote_bound_values) {
+        for (size_t i = 0; i < bound_param_values.size(); ++i) {
+            const uint32_t oid = i < param_type_oids.size() ? param_type_oids[i] : 0u;
+            const uint16_t format =
+                i < bound_param_formats.size() ? bound_param_formats[i] : sbwp::kFormatText;
+            bound_param_values[i] = coerceBoundParameterValue(param_values[i],
+                                                              oid,
+                                                              format,
+                                                              bound_param_values[i]);
+        }
     }
 
     PortalState portal;
     portal.statement_name = stmt_name;
     portal.param_values = std::move(param_values);
     portal.param_nulls = std::move(param_nulls);
-    portal.bound_param_values = std::move(bound_param_values);
-    portal.bound_param_formats = std::move(bound_param_formats);
-    portal.bound_param_type_oids = std::move(param_type_oids);
+    if (requires_remote_bound_values) {
+        portal.bound_param_values = std::move(bound_param_values);
+        portal.bound_param_formats = std::move(bound_param_formats);
+        portal.bound_param_type_oids = std::move(param_type_oids);
+    }
     portal.bound = true;
     portals_[portal_name] = std::move(portal);
 
@@ -2832,31 +3007,35 @@ core::Status NativeAdapter::handleExecute(network::Connection* conn) {
             for (uint32_t type_oid : portal.bound_param_type_oids) {
                 param_types.push_back(mapOidToWireTypeForNativeAdapter(type_oid));
             }
-            std::vector<ProtocolCodec::ColumnValue> execution_param_values =
+            const std::vector<ProtocolCodec::ColumnValue>& execution_param_values =
                 portal.bound_param_values;
-            for (size_t i = 0; i < execution_param_values.size(); ++i) {
-                const uint32_t oid =
-                    i < portal.bound_param_type_oids.size() ? portal.bound_param_type_oids[i] : 0u;
-                const uint16_t format =
-                    i < portal.bound_param_formats.size()
-                        ? portal.bound_param_formats[i]
-                        : sbwp::kFormatText;
-                execution_param_values[i] = coerceBoundParameterValue(
-                    i < portal.param_values.size() ? portal.param_values[i] : std::string(),
-                    oid,
-                    format,
-                    execution_param_values[i]);
-            }
-            std::string exec_query =
-                client::substituteParameters(ctx.query, execution_param_values, param_types);
-            auto exec_status = executeRemoteQuery(exec_query, nullptr, result);
-            if (exec_status != core::Status::OK) {
-                native_state_ = NativeProtocolState::READY;
-                auto send_status = sendQueryResult(conn, result);
-                if (send_status != core::Status::OK) {
-                    return send_status;
+            auto bytecode_it = prepared_statement_bytecode_.find(portal.statement_name);
+            if (bytecode_it != prepared_statement_bytecode_.end()) {
+                auto exec_status = executeRemoteQuery(ctx.query,
+                                                      &bytecode_it->second,
+                                                      &portal.param_values,
+                                                      &portal.param_nulls,
+                                                      result);
+                if (exec_status != core::Status::OK) {
+                    native_state_ = NativeProtocolState::READY;
+                    auto send_status = sendQueryResult(conn, result);
+                    if (send_status != core::Status::OK) {
+                        return send_status;
+                    }
+                    return sendBuffer(conn);
                 }
-                return sendBuffer(conn);
+            } else {
+                std::string exec_query =
+                    client::substituteParameters(ctx.query, execution_param_values, param_types);
+                auto exec_status = executeRemoteQuery(exec_query, nullptr, nullptr, nullptr, result);
+                if (exec_status != core::Status::OK) {
+                    native_state_ = NativeProtocolState::READY;
+                    auto send_status = sendQueryResult(conn, result);
+                    if (send_status != core::Status::OK) {
+                        return send_status;
+                    }
+                    return sendBuffer(conn);
+                }
             }
         } else {
             auto exec_status = executePrepared(ctx.statement_name, ctx, result);
@@ -2906,6 +3085,7 @@ core::Status NativeAdapter::handleCloseStatement(network::Connection* conn) {
 
     if (close_type == 'S') {
         prepared_statements_.erase(name);
+        prepared_statement_bytecode_.erase(name);
         prepared_statement_param_types_.erase(name);
         closePrepared(name);
         for (auto it = portals_.begin(); it != portals_.end();) {
@@ -3364,6 +3544,7 @@ core::Status NativeAdapter::handleAttachDetach(network::Connection* conn) {
     }
 
     native_prepared_statements_.clear();
+    prepared_statement_bytecode_.clear();
     prepared_statement_param_types_.clear();
     prepared_statements_.clear();
     portals_.clear();
@@ -3775,23 +3956,6 @@ core::Status NativeAdapter::sendPortalResults(network::Connection* conn,
                                               bool send_ready) {
     if (!portal.columns.empty() && portal.fetch_pos == 0) {
         sendRowDescription(conn, portal.columns);
-        auto flush_status = flushWriteBuffer(conn);
-        if (flush_status != core::Status::OK) {
-            return flush_status;
-        }
-        pollCancel(conn);
-        if (cancel_requested_ &&
-            (cancel_target_sequence_ == 0 || cancel_target_sequence_ == current_sequence_)) {
-            cancel_requested_ = false;
-            cancel_target_sequence_ = 0;
-            sendQueryError(conn, static_cast<uint32_t>(core::Status::QUERY_CANCELED),
-                           "57014", "Query canceled");
-            if (send_ready) {
-                sendReady(conn);
-            }
-            portal.completed = true;
-            return core::Status::OK;
-        }
     }
     size_t start = portal.fetch_pos;
     size_t end = portal.rows.size();
@@ -3799,12 +3963,20 @@ core::Status NativeAdapter::sendPortalResults(network::Connection* conn,
         end = std::min(end, start + static_cast<size_t>(max_rows));
     }
 
+    size_t rows_since_flush = 0;
+    uint64_t bytes_since_flush = 0;
     for (size_t i = start; i < end; ++i) {
         const auto& row = portal.rows[i];
         sendRowData(conn, row);
-        auto flush_status = flushWriteBuffer(conn);
-        if (flush_status != core::Status::OK) {
-            return flush_status;
+        ++rows_since_flush;
+        bytes_since_flush += estimateRowBytes(row) + 32u;
+        if (shouldFlushResultBatch(conn, rows_since_flush, bytes_since_flush)) {
+            auto flush_status = flushWriteBuffer(conn);
+            if (flush_status != core::Status::OK) {
+                return flush_status;
+            }
+            rows_since_flush = 0;
+            bytes_since_flush = 0;
         }
         pollCancel(conn);
         if (cancel_requested_ &&
@@ -3932,8 +4104,11 @@ core::Status NativeAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
                                                         client_config_.ipc_method);
     }
     client_config_.connect_timeout_ms = config_.read_timeout_ms;
-    client_config_.read_timeout_ms = config_.read_timeout_ms;
-    client_config_.write_timeout_ms = config_.write_timeout_ms;
+    // The listener-to-engine hop is local IPC. Long-running local statements
+    // can stay quiet for minutes, so inheriting the outer client socket timeout
+    // causes false protocol failures on valid bulk DML/DDL work.
+    client_config_.read_timeout_ms = 0;
+    client_config_.write_timeout_ms = 0;
     // The native front door exposes explicit transaction lifecycle to clients,
     // so the engine-side client must keep statements inside a real transaction
     // until the adapter forwards COMMIT/ROLLBACK.
@@ -4019,6 +4194,8 @@ core::Status NativeAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
 
 core::Status NativeAdapter::executeRemoteQuery(const std::string& sql,
                                                const std::vector<uint8_t>* bytecode,
+                                               const std::vector<std::string>* parameter_values,
+                                               const std::vector<bool>* parameter_nulls,
                                                ResultContext& result) {
     core::ErrorContext ctx;
     auto status = ensureRemoteClient(&ctx);
@@ -4059,7 +4236,14 @@ core::Status NativeAdapter::executeRemoteQuery(const std::string& sql,
     traceNativeBytecode("before_send", sql, *bytecode_to_execute);
     traceNativeTxn("execute_remote_before_send", client_.get(), core::Status::OK, &ctx);
 
-    status = client_->executeBytecode(*bytecode_to_execute, sql, &rs, &ctx);
+    status = (parameter_values != nullptr && parameter_nulls != nullptr)
+        ? client_->executeBytecode(*bytecode_to_execute,
+                                   sql,
+                                   *parameter_values,
+                                   *parameter_nulls,
+                                   &rs,
+                                   &ctx)
+        : client_->executeBytecode(*bytecode_to_execute, sql, &rs, &ctx);
     traceNativeTxn("execute_remote_after_send", client_.get(), status, &ctx);
 
     if (status != core::Status::OK) {
@@ -4139,7 +4323,7 @@ core::Status NativeAdapter::handleCopyQuery(network::Connection* conn, const Que
         // Execute the COPY query and stream results
         ResultContext result;
         if (!config_.engine_endpoint.empty()) {
-            status = executeRemoteQuery(ctx.query, nullptr, result);
+            status = executeRemoteQuery(ctx.query, nullptr, nullptr, nullptr, result);
         } else {
             QueryContext query_ctx = ctx;
             executeQuery(query_ctx, result);
@@ -4279,7 +4463,7 @@ core::Status NativeAdapter::handleCopyDone(network::Connection* conn) {
         // For now we execute the statement through the regular remote bytecode path.
         ResultContext copy_result;
         std::string copy_sql = copy_table_name_;
-        auto exec_status = executeRemoteQuery(copy_sql, nullptr, copy_result);
+        auto exec_status = executeRemoteQuery(copy_sql, nullptr, nullptr, nullptr, copy_result);
         if (exec_status != core::Status::OK) {
             recordCopyMetrics("in", copy_rows_processed_, copy_bytes_processed_, true, copy_start_time_);
             sendQueryError(conn, static_cast<uint32_t>(exec_status), "58000",

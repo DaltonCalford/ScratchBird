@@ -1,0 +1,5 @@
+case_id,suite,required_check,expected_result,error_code
+T23-F01,F,lock_acquire_release_by_statement_class,pass,
+T23-F02,F,deadlock_timeout_mapping_deterministic,pass,
+T23-F03,F,constraint_enforcement_order_failure_semantics,pass,
+T23-F04,F,cooperative_gc_interactions_preserve_visibility,pass,

@@ -1,0 +1,19 @@
+ticket_id,order,title,status,owner,primary_specs,required_outputs
+PP-001,1,Canonical PageType Enum Rewrite,done,codex,05_Page_Taxonomy_and_Binary_Layouts/PAGE_TYPE_ENUMS.md,PAGE_TYPE_ENUM_DIFF.csv;TEST_RESULTS.md
+PP-002,2,Canonical Page Header Fields and Flags,done,codex,05_Page_Taxonomy_and_Binary_Layouts/PAGE_HEADER_LAYOUT.md,PAGE_HEADER_FIELD_MATRIX.csv;TEST_RESULTS.md
+PP-003,3,Checksum Flag and Generation Semantics,done,codex,05_Page_Taxonomy_and_Binary_Layouts/CHECKSUM_AND_INTEGRITY.md;05_Page_Taxonomy_and_Binary_Layouts/PAGE_HEADER_LAYOUT.md,CHECKSUM_FLAG_BEHAVIOR_MATRIX.csv;TEST_RESULTS.md
+PP-004,4,Page Validation and Object UUID Integration,done,codex,05_Page_Taxonomy_and_Binary_Layouts/PAGE_HEADER_LAYOUT.md;05_Page_Taxonomy_and_Binary_Layouts/PAGE_TYPE_ENUMS.md,PAGE_VALIDATION_AUDIT.csv;TEST_RESULTS.md
+PP-005,5,Bootstrap Page Map 0-5 Creation Contract,done,codex,06_Fixed_Bootstrap_Page_Map/BOOTSTRAP_PAGE_LAYOUTS.md,BOOTSTRAP_PAGE_CREATE_MATRIX.csv;TEST_RESULTS.md
+PP-006,6,Bootstrap Structure Layout Alignment,done,codex,06_Fixed_Bootstrap_Page_Map/BOOTSTRAP_PAGE_LAYOUTS.md;05_Page_Taxonomy_and_Binary_Layouts/PAGE_HEADER_LAYOUT.md,BOOTSTRAP_STRUCT_LAYOUT_AUDIT.csv;TEST_RESULTS.md
+PP-007,7,Bootstrap Allocation and Reservation Rewrite,done,codex,06_Fixed_Bootstrap_Page_Map/BOOTSTRAP_PAGE_LAYOUTS.md,BOOTSTRAP_ALLOCATION_AUDIT.csv;TEST_RESULTS.md
+PP-008,8,Bootstrap Startup Validation Contract,done,codex,06_Fixed_Bootstrap_Page_Map/BOOTSTRAP_PAGE_LAYOUTS.md,BOOTSTRAP_STARTUP_VALIDATION_RESULTS.md;TEST_RESULTS.md
+PP-009,9,Heap Record Layout Canonical Rewrite,done,codex,05_Page_Taxonomy_and_Binary_Layouts/HEAP_PAGE_LAYOUT.md,HEAP_RECORD_LAYOUT_AUDIT.csv;TEST_RESULTS.md
+PP-010,10,Row UUID and System Column Mapping,done,codex,05_Page_Taxonomy_and_Binary_Layouts/HEAP_PAGE_LAYOUT.md,ROW_UUID_SYSTEM_COLUMN_AUDIT.csv;TEST_RESULTS.md
+PP-011,11,TOAST Pointer Binary Contract Rewrite,done,codex,11_TOAST_and_LOB_Storage/TOAST_POINTER_FORMAT.md,TOAST_POINTER_BINARY_AUDIT.csv;TEST_RESULTS.md
+PP-012,12,TOAST and LOB Page Type Split,done,codex,11_TOAST_and_LOB_Storage/LOB_PAGE_LAYOUTS.md;05_Page_Taxonomy_and_Binary_Layouts/PAGE_TYPE_ENUMS.md,TOAST_LOB_PAGE_TYPE_MATRIX.csv;TEST_RESULTS.md
+PP-013,13,TOAST and LOB Visibility and GC Contract,done,codex,11_TOAST_and_LOB_Storage/LOB_IO_SEMANTICS.md;11_TOAST_and_LOB_Storage/TEST_CONTRACT.md,TOAST_LOB_GC_VISIBILITY_MATRIX.csv;TEST_RESULTS.md
+PP-014,14,Heap and LOB Diagnostic Page Walker,done,codex,11_TOAST_and_LOB_Storage/TEST_CONTRACT.md;20_Diagnostics_Audit_and_Observability/TEST_CONTRACT.md,HEAP_TOAST_LOB_PAGE_WALK_RESULTS.md;TEST_RESULTS.md
+PP-015,15,Index Special Area Base Header Implementation,done,codex,05_Page_Taxonomy_and_Binary_Layouts/INDEX_PAGE_BASE_LAYOUT.md,INDEX_BASE_HEADER_LAYOUT_AUDIT.csv;TEST_RESULTS.md
+PP-016,16,Index PageType and Sibling Contract Alignment,done,codex,05_Page_Taxonomy_and_Binary_Layouts/INDEX_PAGE_BASE_LAYOUT.md;05_Page_Taxonomy_and_Binary_Layouts/PAGE_TYPE_ENUMS.md,INDEX_PAGE_TYPE_AND_SIBLING_MATRIX.csv;TEST_RESULTS.md
+PP-017,17,Index Page Validation and Corruption Errors,done,codex,05_Page_Taxonomy_and_Binary_Layouts/INDEX_PAGE_BASE_LAYOUT.md;05_Page_Taxonomy_and_Binary_Layouts/CHECKSUM_AND_INTEGRITY.md,INDEX_CORRUPTION_ERROR_MATRIX.csv;TEST_RESULTS.md
+PP-018,18,Index Page Walker Conformance,done,codex,18_Index_Framework/TEST_CONTRACT.md;20_Diagnostics_Audit_and_Observability/TEST_CONTRACT.md,INDEX_PAGE_WALK_CONFORMANCE_RESULTS.md;TEST_RESULTS.md

@@ -1,0 +1,3 @@
+scenario,expected_epoch,actual_plan_epoch,decision_reason,status
+matching_epoch,7,7,NONE,accepted
+stale_epoch,11,12,STALE_ROUTING_EPOCH,rejected

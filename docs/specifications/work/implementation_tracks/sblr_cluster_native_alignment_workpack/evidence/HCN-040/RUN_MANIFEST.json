@@ -1,0 +1,15 @@
+{
+  "ticket_id": "HCN-040",
+  "title": "Align metric namespace and cardinality policy to SB-OBS",
+  "phase": "PH4",
+  "owner": "codex",
+  "started_utc": "2026-02-23T00:00:00Z",
+  "completed_utc": "2026-02-26T19:24:48Z",
+  "source_commit": "9e789eaad9b8e377f42f96f2ea8fec0193970f40",
+  "commands": [
+    "cmake --build /home/dcalford/CliWork/ScratchBird/build --target scratchbird_tests -j8",
+    "/home/dcalford/CliWork/ScratchBird/build/tests/scratchbird_tests --gtest_filter='MetricContractPolicyTest.*'",
+    "/home/dcalford/CliWork/ScratchBird/build/tests/scratchbird_tests --gtest_filter='TelemetryReportingContractTest.*'"
+  ],
+  "notes": "Canonical sb_* observability policy is enforced through MetricContractPolicy audit and baseline registration integrated into telemetry initialization."
+}

@@ -272,6 +272,13 @@ TEST_F(CatalogIndexMetricsExtensionContractTest, StorageAndHealthContracts)
     health.diagnostic_error_count = 2;
     health.pages_scanned = 2048;
     health.bytes_scanned = 65536;
+    health.cleanup_backlog_count = 9;
+    health.cleanup_backlog_pages = 3;
+    health.cleanup_backlog_bytes = 768;
+    health.cleanup_sweep_generation = 14;
+    health.cleanup_checkpoint_generation = 7;
+    health.cleanup_last_published_time = 123456789u;
+    health.cleanup_repair_required = true;
     ASSERT_EQ(catalog_->upsertIndexHealthCatalogEntry(health, &ctx), Status::OK) << ctx.message;
 
     CatalogManager::IndexHealthCatalogInfo loaded_health{};
@@ -280,6 +287,13 @@ TEST_F(CatalogIndexMetricsExtensionContractTest, StorageAndHealthContracts)
     EXPECT_EQ(loaded_health.light_status, CatalogManager::IndexHealthStatus::WARNING);
     EXPECT_EQ(loaded_health.diagnostic_status, CatalogManager::IndexHealthStatus::CORRUPT);
     EXPECT_EQ(loaded_health.pages_scanned, 2048u);
+    EXPECT_EQ(loaded_health.cleanup_backlog_count, 9u);
+    EXPECT_EQ(loaded_health.cleanup_backlog_pages, 3u);
+    EXPECT_EQ(loaded_health.cleanup_backlog_bytes, 768u);
+    EXPECT_EQ(loaded_health.cleanup_sweep_generation, 14u);
+    EXPECT_EQ(loaded_health.cleanup_checkpoint_generation, 7u);
+    EXPECT_EQ(loaded_health.cleanup_last_published_time, 123456789u);
+    EXPECT_TRUE(loaded_health.cleanup_repair_required);
 
     std::vector<CatalogManager::IndexStorageCatalogInfo> storage_rows;
     ASSERT_EQ(catalog_->listIndexStorageCatalogEntries(storage_rows, &ctx), Status::OK) << ctx.message;

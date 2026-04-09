@@ -1,0 +1,17 @@
+audit_id,statement_family,canonical_sql_form,feature_key,result_shape,source_spec,status,notes
+DML-RS-001,select,SELECT ... FROM ... [WHERE ...],F_DML_SELECT,RS_ROWSET,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,verified,Canonical rowset query shape
+DML-RS-002,insert,INSERT INTO ... VALUES (...) ,F_DML_INSERT,RS_MUTATION_SUMMARY,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,verified,Mutation summary when RETURNING absent
+DML-RS-003,insert_returning,INSERT INTO ... VALUES (...) RETURNING ...,F_DML_RETURNING,RS_ROWSET,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,verified,RETURNING upgrades to rowset
+DML-RS-004,update,UPDATE ... SET ... WHERE ...,F_DML_UPDATE,RS_MUTATION_SUMMARY,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,verified,Mutation summary when RETURNING absent
+DML-RS-005,update_returning,UPDATE ... SET ... RETURNING ...,F_DML_RETURNING,RS_ROWSET,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,verified,RETURNING upgrades to rowset
+DML-RS-006,delete,DELETE FROM ... WHERE ...,F_DML_DELETE,RS_MUTATION_SUMMARY,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,verified,Mutation summary when RETURNING absent
+DML-RS-007,delete_returning,DELETE FROM ... RETURNING ...,F_DML_RETURNING,RS_ROWSET,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,verified,RETURNING upgrades to rowset
+DML-RS-008,merge,MERGE INTO ... USING ... ON ... WHEN ... THEN ...,F_DML_MERGE,RS_MUTATION_SUMMARY,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,verified,Mutation summary when RETURNING absent
+DML-RS-009,merge_returning,MERGE ... RETURNING ...,F_DML_RETURNING,RS_ROWSET,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,verified,RETURNING upgrades to rowset
+DML-RS-010,copy,COPY <table_or_query> FROM|TO ... [WITH (...)],F_DML_COPY_BULK,RS_STREAM_STATUS,21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md,verified,Stream status contract
+DML-RS-011,prepare,PREPARE <stmt_name> ... AS <dml_statement>,F_PREPARE_STATEMENT,RS_COMMAND_STATUS,21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md,verified,Prepared-control path is command status
+DML-RS-012,execute_prepared,EXECUTE <stmt_name> [USING ...],F_EXECUTE_PREPARED,RS_COMMAND_STATUS,21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md,verified,Execution dispatch status path
+DML-RS-013,deallocate_prepared,DEALLOCATE <stmt_name>,F_DEALLOCATE_PREPARED,RS_COMMAND_STATUS,21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md,verified,Prepared teardown status path
+DML-RS-014,notify,NOTIFY <channel> [, payload],F_NOTIFY_PUBLISH,RS_COMMAND_STATUS,21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md,verified,Notification publish status
+DML-RS-015,listen,LISTEN <channel>,F_NOTIFY_SUBSCRIBE,RS_COMMAND_STATUS,21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md,verified,Notification subscribe status
+DML-RS-016,unlisten,UNLISTEN <channel>|*,F_NOTIFY_UNSUBSCRIBE,RS_COMMAND_STATUS,21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md,verified,Notification unsubscribe status

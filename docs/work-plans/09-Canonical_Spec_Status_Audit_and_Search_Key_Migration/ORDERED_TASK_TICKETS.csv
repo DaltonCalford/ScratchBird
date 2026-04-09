@@ -1,0 +1,9 @@
+order,ticket,title,phase,status
+1,SV-09-001,Scope and verification vocabulary closure,scope_freeze,active
+2,SV-09-002,Full authoritative spec census and audit matrix bootstrap,census,queued
+3,SV-09-003,Search-key anchor migration and line-number eradication,anchor_migration,queued
+4,SV-09-004,Root canon and sections 00-13 verification,section_a,queued
+5,SV-09-005,Sections 14-23 verification,section_b,queued
+6,SV-09-006,Sections 24-31 verification,section_c,queued
+7,SV-09-007,Sections 32-42 and sibling-root verification,section_d,queued
+8,SV-09-008,Final finished partial outstanding rollups and closeout,closeout,queued

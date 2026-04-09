@@ -1,0 +1,4 @@
+requirement_id,requirement_surface,authority_file,evidence_or_gate,status
+DU-01,forced_write_publication_order,CHECKPOINT_AND_DIRTY_STATE_MODEL.md,TEST_CONTRACT.md,canonicalized
+DU-02,restart_reconciliation,STARTUP_RECOVERY_FLOW.md,TEST_CONTRACT.md,canonicalized
+DU-03,mga_durability_truth,DURABILITY_MODEL_AND_CORRECTNESS_BOUNDARY.md,TEST_CONTRACT.md,canonicalized

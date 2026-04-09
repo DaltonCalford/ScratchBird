@@ -1,0 +1,30 @@
+row_kind,current_value,canonical_value,status,action,notes,spec_ref
+enum,SYSTEM,SYSTEM_FIXED,partial,rename,Legacy enum is close but lacks explicit fixed-vs-dynamic distinction,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_TREE_CANONICAL.md
+enum,,SYSTEM_DYNAMIC,missing,add,Required canonical enum not present in legacy model,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_TREE_CANONICAL.md
+enum,USER_HOME,USER,partial,rename,Legacy USER_HOME narrows meaning; canonical USER covers user schemas broadly,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_TREE_CANONICAL.md
+enum,REMOTE_EMULATED,EMULATION_ROOT,partial,split,Legacy value must split root marker and dynamic emulation descendants,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_TREE_CANONICAL.md
+enum,,EMULATION_DYNAMIC,missing,add,Required canonical enum not present in legacy model,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_TREE_CANONICAL.md
+enum,REMOTE_NATIVE,REMOTE_LINK,partial,rename,Legacy REMOTE_NATIVE maps to remote link semantics under canonical tree,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_TREE_CANONICAL.md
+enum,,LOCAL_LINK,missing,add,Required canonical enum for local link branch not present in legacy model,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_TREE_CANONICAL.md
+enum,,NOSQL,missing,add,Required canonical enum for nosql branch not present in legacy model,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_TREE_CANONICAL.md
+enum,PUBLIC,USER,incompatible,remove,Canonical model handles public as a schema node not enum class,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_TREE_CANONICAL.md
+enum,APPLICATION,SYSTEM_DYNAMIC;USER,incompatible,remove_or_split,Legacy APPLICATION mixes system-dynamic and user-created semantics,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_TREE_CANONICAL.md
+branch,root.app,none,incompatible,remove,Legacy app root branch is not canonical and must be removed from bootstrap,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,root.sys.sec,root.sys.security,incompatible,rename,Legacy short token sec must be canonical security,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,root.sys.mon,root.sys.monitor,incompatible,rename,Legacy short token mon must be canonical monitor,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,root.sys.agents,root.sys.jobs,incompatible,rename_or_rehome,Legacy agents branch replaced by canonical jobs/config/system subtree layout,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_TREE_CANONICAL.md
+branch,root.remote.emulation.mssql,none,incompatible,remove,Canonical supported emulation set excludes mssql for current alpha scope,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,,root.local,missing,add,Canonical fixed branch required at level-1 under root,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,,root.nosql,missing,add,Canonical fixed branch required at level-1 under root,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,,root.sys.information,missing,add,Canonical fixed branch required under root.sys,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,,root.sys.system,missing,add,Canonical fixed branch required under root.sys,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,,root.sys.config,missing,add,Canonical fixed branch required under root.sys,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,,root.remote.fdw,missing,add,Canonical fixed branch required under root.remote,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,,root.remote.links,missing,add,Canonical fixed branch required under root.remote,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,,root.local.instances,missing,add,Canonical fixed branch required under root.local,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,,root.local.links,missing,add,Canonical fixed branch required under root.local,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,,root.nosql.cassandra,missing,add,Canonical fixed branch required under root.nosql,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,,root.nosql.mongodb,missing,add,Canonical fixed branch required under root.nosql,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,,root.nosql.neo4j,missing,add,Canonical fixed branch required under root.nosql,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,,root.nosql.redis,missing,add,Canonical fixed branch required under root.nosql,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md
+branch,,root.nosql.milvus,missing,add,Canonical fixed branch required under root.nosql,24_Catalog_Model_and_Virtual_Overlays/SCHEMA_BOOTSTRAP_ORDER_AND_INVARIANTS.md

@@ -575,6 +575,9 @@ SourceSpan Parser::makeSpan(SourceLocation start) const {
 
 ParseResult Parser::parseStatement() {
     ParseResult result;
+    next_anonymous_parameter_index_ = 1;
+    saw_anonymous_parameters_ = false;
+    saw_explicit_parameters_ = false;
 
     Statement* stmt = parseStatementInternal();
     result.setStatement(stmt);
@@ -590,6 +593,9 @@ ParseResult Parser::parseStatement() {
 ParseResult Parser::parsePsqlBody() {
     ParseModeGuard guard(state_, ParseMode::PSQL);
     ParseResult result;
+    next_anonymous_parameter_index_ = 1;
+    saw_anonymous_parameters_ = false;
+    saw_explicit_parameters_ = false;
 
     auto* block = arena_.create<ExecuteBlockStmt>();
 
@@ -843,9 +849,14 @@ Statement* Parser::parseStatementInternal() {
 
     // Session statements
     if (match(TokenType::KW_SET))       return parseSet();
+    if (matchContextual("CONFIG"))      return parseConfigCommand();
     if (check(TokenType::KW_SHOW)) {
         Token lookahead = state_.lexer().peekToken();
         if (lookahead.type != TokenType::END_OF_FILE) {
+            if (caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "MANAGEMENT")) {
+                match(TokenType::KW_SHOW);
+                return parseShowManagementControlSurface();
+            }
             if (caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "CLUSTER")) {
                 match(TokenType::KW_SHOW);
                 return parseShowClusterControlSurface();
@@ -8418,8 +8429,22 @@ AlterSystemStmt* Parser::parseAlterSystem() {
     SourceLocation start = currentLocation();
     auto* stmt = arena_.create<AlterSystemStmt>();
 
-    if (!(match(TokenType::KW_SET) || matchContextual("SET"))) {
-        error("Expected SET after ALTER SYSTEM");
+    if (match(TokenType::KW_SET) || matchContextual("SET")) {
+        stmt->action = AlterSystemStmt::Action::SET;
+    } else if (matchContextual("RESET")) {
+        stmt->action = AlterSystemStmt::Action::RESET;
+    } else if (matchContextual("ASSESS")) {
+        stmt->action = AlterSystemStmt::Action::ASSESS_REMOTE_SET;
+    } else if (matchContextual("APPLY")) {
+        stmt->action = AlterSystemStmt::Action::APPLY_INSTRUCTION;
+    } else if (matchContextual("CANCEL")) {
+        stmt->action = AlterSystemStmt::Action::CANCEL_INSTRUCTION;
+    } else if (matchContextual("QUARANTINE")) {
+        stmt->action = AlterSystemStmt::Action::QUARANTINE_INSTRUCTION;
+    } else if (matchContextual("ACKNOWLEDGE")) {
+        stmt->action = AlterSystemStmt::Action::ACKNOWLEDGE_INSTRUCTION;
+    } else {
+        error("Expected SET, RESET, ASSESS, APPLY, CANCEL, QUARANTINE, or ACKNOWLEDGE after ALTER SYSTEM");
     }
 
     auto parseConfigKey = [&]() -> StringPool::StringId {
@@ -8448,9 +8473,62 @@ AlterSystemStmt* Parser::parseAlterSystem() {
         return stringPool().intern(name);
     };
 
+    auto parseUuidToken = [&](const char* message) -> StringPool::StringId {
+        if (check(TokenType::STRING_LITERAL) || isIdentifier()) {
+            auto id = current().value.string_id;
+            advance();
+            return id;
+        }
+        error(message);
+        return StringPool::INVALID_ID;
+    };
+
+    if (stmt->action == AlterSystemStmt::Action::ASSESS_REMOTE_SET) {
+        expectContextual("REMOTE", "Expected REMOTE after ALTER SYSTEM ASSESS");
+        if (!(match(TokenType::KW_SET) || matchContextual("SET"))) {
+            error("Expected SET after ALTER SYSTEM ASSESS REMOTE");
+        }
+        stmt->name = parseConfigKey();
+        expect(TokenType::EQUAL, "Expected '=' after configuration key");
+        stmt->value = parseExpression();
+        expect(TokenType::KW_ON, "Expected ON after ALTER SYSTEM ASSESS REMOTE SET");
+        expectContextual("SERVER", "Expected SERVER after ON");
+        stmt->target_name = parseUuidToken("Expected target server UUID");
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (stmt->action == AlterSystemStmt::Action::APPLY_INSTRUCTION ||
+        stmt->action == AlterSystemStmt::Action::CANCEL_INSTRUCTION ||
+        stmt->action == AlterSystemStmt::Action::QUARANTINE_INSTRUCTION ||
+        stmt->action == AlterSystemStmt::Action::ACKNOWLEDGE_INSTRUCTION) {
+        expectContextual("INSTRUCTION", "Expected INSTRUCTION after ALTER SYSTEM action");
+        stmt->name = parseUuidToken("Expected instruction UUID");
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
     stmt->name = parseConfigKey();
-    expect(TokenType::EQUAL, "Expected '=' after configuration key");
-    stmt->value = parseExpression();
+    if (stmt->action == AlterSystemStmt::Action::SET) {
+        expect(TokenType::EQUAL, "Expected '=' after configuration key");
+        stmt->value = parseExpression();
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+AlterSystemStmt* Parser::parseConfigCommand() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    if (matchContextual("HISTORY")) {
+        stmt->action = AlterSystemStmt::Action::HISTORY;
+    } else if (matchContextual("RELOAD")) {
+        stmt->action = AlterSystemStmt::Action::RELOAD;
+    } else {
+        error("Expected HISTORY or RELOAD after CONFIG");
+    }
 
     stmt->span = makeSpan(start);
     return stmt;
@@ -11760,6 +11838,14 @@ CopyStmt* Parser::parseCopy() {
                 stmt->options.batch_size = current().value.int_value;
                 stmt->options.batch_size_set = true;
                 advance();
+            } else if (matchContextual("SHADOW_LOAD")) {
+                stmt->options.shadow_load = true;
+                stmt->options.shadow_load_set = true;
+                if (match(TokenType::KW_TRUE) || match(TokenType::KW_ON) || matchContextual("ON")) {
+                    stmt->options.shadow_load = true;
+                } else if (match(TokenType::KW_FALSE) || matchContextual("OFF")) {
+                    stmt->options.shadow_load = false;
+                }
             } else if (matchContextual("MAX_ERRORS")) {
                 if (!check(TokenType::INTEGER_LITERAL)) {
                     error("Expected integer literal for COPY MAX_ERRORS");
@@ -13311,7 +13397,12 @@ Expression* Parser::parsePrimaryExpr() {
     if (!expr && check(TokenType::PARAMETER)) {
         auto* param = arena_.create<ParameterExpr>();
         std::string_view text = state_.getTokenText(current());
-        if (!text.empty() && text.front() == ':') {
+        const bool is_named = !text.empty() && text.front() == ':';
+        if (saw_anonymous_parameters_) {
+            error("Cannot mix '?' placeholders with named or numbered parameters in the same statement");
+        }
+        saw_explicit_parameters_ = true;
+        if (is_named) {
             param->is_named = true;
             if (current().value.string_id != StringPool::INVALID_ID) {
                 param->name = current().value.string_id;
@@ -13320,7 +13411,21 @@ Expression* Parser::parsePrimaryExpr() {
             }
         } else {
             param->index = current().value.param_index;
+            next_anonymous_parameter_index_ =
+                std::max(next_anonymous_parameter_index_, param->index + 1);
         }
+        advance();
+        expr = param;
+    }
+
+    if (!expr && check(TokenType::QUESTION_MARK)) {
+        if (saw_explicit_parameters_) {
+            error("Cannot mix '?' placeholders with named or numbered parameters in the same statement");
+        }
+        auto* param = arena_.create<ParameterExpr>();
+        param->is_named = false;
+        param->index = next_anonymous_parameter_index_++;
+        saw_anonymous_parameters_ = true;
         advance();
         expr = param;
     }
@@ -16916,6 +17021,27 @@ Statement* Parser::parseShowClusterControlSurface() {
     if (!payload.empty()) {
         stmt->value = make_payload_literal(payload);
     }
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseShowManagementControlSurface() {
+    SourceLocation start = previous().span.start;
+    auto* stmt = arena_.create<AlterSystemStmt>();
+    stmt->action = AlterSystemStmt::Action::SET;
+
+    expectContextual("MANAGEMENT", "Expected MANAGEMENT after SHOW");
+    if (matchContextual("SERVERS")) {
+        stmt->name = stringPool().intern("management.show_servers");
+    } else if (matchContextual("INSTRUCTIONS")) {
+        stmt->name = stringPool().intern("management.show_instructions");
+    } else if (matchContextual("DRIFT")) {
+        stmt->name = stringPool().intern("management.show_drift");
+    } else {
+        errorCode("PRS_0505",
+                  "Expected SERVERS, INSTRUCTIONS, or DRIFT after SHOW MANAGEMENT");
+    }
+
     stmt->span = makeSpan(start);
     return stmt;
 }

@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-010",
+  "phase": "PH1",
+  "title": "Define backup catalog and policy model",
+  "status": "pending",
+  "owner": "recovery-platform",
+  "estimate_days": 5,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

@@ -1,0 +1,12 @@
+{
+  "source_run_id": "20260401-181833",
+  "source_summary_json": "/home/dcalford/CliWork/ScratchBird-Benchmarks/results/matrix-20260401T161737Z/matrix-summary.json",
+  "source_output_root": "/home/dcalford/CliWork/ScratchBird-Benchmarks/results/matrix-20260401T161737Z",
+  "suite_runs_imported": 16,
+  "suite_families_imported": [
+    "acid",
+    "engine-differential",
+    "index-comparison",
+    "stress"
+  ]
+}

@@ -1,0 +1,6 @@
+case_id,version_state,oit_oat_relation,sweep_action,expected_result,error_code
+T11-GC-001,committed_old,below_oat,eligible_for_reclaim,obsolete_chunks_reclaimed,
+T11-GC-002,committed_new,at_or_above_oat,not_eligible,no_reclaim,
+T11-GC-003,rolled_back,any,eligible_for_reclaim,rollback_chunks_reclaimed,
+T11-GC-004,active_owner_txn,any,not_eligible,no_reclaim,
+T11-GC-005,missing_chunk_ref,any,diagnostic_flag_only,row_marked_needs_repair,E_LOB_CHUNK_MISSING

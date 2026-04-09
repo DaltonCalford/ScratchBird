@@ -1,0 +1,3 @@
+spec_clause,implementation,evidence,status
+PageHeader is fixed-size with canonical field offsets,include/scratchbird/core/ondisk.h (PageHeader + static_assert),PAGE_HEADER_FIELD_MATRIX.csv,pass
+Page header offset contract is enforced by tests,tests/unit/test_page_contract_stage_s1.cpp:PageHeaderLayoutOffsetsAreCanonical,PAGE_HEADER_FIELD_MATRIX.csv,pass

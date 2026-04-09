@@ -1,0 +1,21 @@
+{
+  "ticket_id": "LD-002",
+  "status": "completed",
+  "started_at": "2026-02-11T23:04:00Z",
+  "completed_at": "2026-02-11T23:18:00Z",
+  "spec_inputs": [
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_ADMIN_LANGUAGE_DEFINITION.md",
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_DDL_LANGUAGE_DEFINITION.md",
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md",
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md",
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md"
+  ],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-002/GRAMMAR_PRODUCTION_INDEX.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-002/SPEC_TRACEABILITY.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-002/TEST_RESULTS.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-002/IMPLEMENTATION_NOTES.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-002/CHECKSUMS.sha256"
+  ],
+  "notes": "Grammar production index registered from canonical feature-key inventory for admin/DDL/DML/PSQL/TSQL definitions."
+}

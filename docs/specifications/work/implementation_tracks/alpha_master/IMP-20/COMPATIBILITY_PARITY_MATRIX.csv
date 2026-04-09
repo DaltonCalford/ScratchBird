@@ -1,0 +1,6 @@
+case_id,emulated_engine,diagnostic_surface,expected_behavior
+T20-CP-001,firebird_5,monitoring_events,parser_maps_to_sb_audit_and_metrics
+T20-CP-002,postgresql_18,pg_stat_family,overlay_maps_to_sb_metric_registry
+T20-CP-003,mysql_8,performance_schema_views,overlay_maps_to_sb_metrics
+T20-CP-004,cassandra_5,nodetool_like_health,parser_maps_to_page_walker_and_metrics
+T20-CP-005,mongodb_8,profiled_ops,parser_maps_to_trace_and_audit_events

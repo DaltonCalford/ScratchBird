@@ -1,0 +1,25 @@
+ticket_id,title,stage,priority,depends_on,spec_inputs,code_targets,gate,evidence_dir,status
+DT-001,Add missing canonical datatypes to enum,S1,P0,,13/14/15,include/scratchbird/core/types.h,DTYPE-GATE-01,evidence/DT-001,Completed
+DT-002,Align type-family mapping table,S1,P0,DT-001,13/14/15,src/core/type_system.cpp,DTYPE-GATE-01,evidence/DT-002,Completed
+DT-003,Type-tag serialization audit and closure,S1,P1,DT-001,14/15,include/scratchbird/core/type_serialization.h|src/core/type_serialization.cpp,DTYPE-GATE-01,evidence/DT-003,Completed
+DT-004,Type identity conformance tests,S1,P0,DT-001;DT-002;DT-003,13/14/15,tests/unit/*type*,DTYPE-GATE-01,evidence/DT-004,Completed
+DT-005,Implement DECIMAL precision=0 variable path,S2,P0,DT-004,14/15,src/core/typed_value.cpp|src/core/type_serialization.cpp,DTYPE-GATE-02,evidence/DT-005,Completed
+DT-006,Replace hardcoded MONEY scale with config policy,S2,P1,DT-004,14,src/core/typed_value.cpp|src/core/type_system.cpp,DTYPE-GATE-02,evidence/DT-006,Completed
+DT-007,Temporal sentinel and offset alignment,S2,P1,DT-004,14,src/core/typed_value.cpp|src/core/type_system.cpp,DTYPE-GATE-02,evidence/DT-007,Completed
+DT-008,Scalar IO deterministic error-code closure,S2,P0,DT-005;DT-006;DT-007,13/14,src/core/type_system.cpp|src/core/typed_value.cpp,DTYPE-GATE-02,evidence/DT-008,Completed
+DT-009,Matrix-driven explicit cast enforcement,S3,P0,DT-008,13,src/core/type_system.cpp,DTYPE-GATE-03,evidence/DT-009,Completed
+DT-010,Operator-specific implicit coercion rules,S3,P0,DT-009,13,src/core/type_system.cpp|src/core/typed_value.cpp,DTYPE-GATE-03,evidence/DT-010,Completed
+DT-011,Deterministic cast/coercion error codes,S3,P0,DT-009;DT-010,13/14,src/core/type_system.cpp,DTYPE-GATE-03,evidence/DT-011,Completed
+DT-012,Complete conversion matrix test coverage,S3,P0,DT-009;DT-010;DT-011,13/14/15,tests/unit/*type*|tests/v3/*type*,DTYPE-GATE-03,evidence/DT-012,Completed
+DT-013,System domain naming normalization,S4,P0,DT-012,15,src/core/domain_manager.cpp|src/core/domain_validation.cpp,DTYPE-GATE-04,evidence/DT-013,Completed
+DT-014,Remove legacy domain naming residues,S4,P0,DT-013,15,src/core/domain_manager.cpp,DTYPE-GATE-04,evidence/DT-014,Completed
+DT-015,Enforce fixed system-domain UUID registry,S4,P0,DT-013,15,src/core/domain_manager.cpp|include/scratchbird/core/domain_manager.h,DTYPE-GATE-04,evidence/DT-015,Completed
+DT-016,Emulation-profile domain visibility gating,S4,P1,DT-015,15/21,src/core/domain_manager.cpp|src/core/domain_validation.cpp,DTYPE-GATE-04,evidence/DT-016,Completed
+DT-017,Complex type storage path closure,S5,P0,DT-016,15,src/core/typed_value.cpp|src/core/type_serialization.cpp,DTYPE-GATE-05,evidence/DT-017,Completed
+DT-018,Emulated type matrix closure,S5,P0,DT-017,14/15,src/core/type_system.cpp|src/core/domain_manager.cpp,DTYPE-GATE-05,evidence/DT-018,Completed
+DT-019,Frozen and update-restriction enforcement,S5,P1,DT-018,15,src/core/domain_validation.cpp|src/core/type_system.cpp,DTYPE-GATE-05,evidence/DT-019,Completed
+DT-020,Embedded field accessor conformance,S5,P1,DT-018,14/15,src/core/typed_value.cpp|src/core/type_system.cpp,DTYPE-GATE-05,evidence/DT-020,Completed
+DT-021,Datatype payload TOAST routing conformance,S6,P0,DT-020,11/14/15,src/core/toast.cpp|src/core/typed_value.cpp,DTYPE-GATE-06,evidence/DT-021,Completed
+DT-022,Remove residual legacy TOAST semantics,S6,P1,DT-021,11,src/core/toast.cpp|include/scratchbird/core/toast.h,DTYPE-GATE-06,evidence/DT-022,Completed
+DT-023,Datatype TOAST/LOB walker diagnostics,S6,P1,DT-022,11/31,src/core/toast.cpp|tests/unit/*toast*|tests/unit/*lob*,DTYPE-GATE-06,evidence/DT-023,Completed
+DT-024,Full datatype regression and closure report,S6,P0,DT-021;DT-022;DT-023,11/13/14/15/31,tests/unit/*type*|tests/unit/*toast*|tests/v3/*type*,DTYPE-GATE-06,evidence/DT-024,Completed

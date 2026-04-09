@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-064",
+  "phase": "PH6",
+  "title": "Automate compliance packaging and legal notice closure",
+  "status": "pending",
+  "owner": "release-engineering",
+  "estimate_days": 4,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

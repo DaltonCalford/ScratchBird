@@ -1,0 +1,35 @@
+# Changeset Log
+
+- Ticket: IMP-28
+- Section: 28_Parser_Implementations
+- Summary: Completed deterministic implementation contract pack and gate evidence.
+- Files changed:
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/IMPLEMENTATION_CHECKLIST.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/IMPLEMENTATION_NOTES.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/ARCHITECTURE_BOUNDARY_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/DEDICATED_PARSER_SURFACE_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/CAPABILITY_GATE_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/TRANSLATION_DETERMINISM_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/ERROR_MAPPING_DIAGNOSTICS_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/SESSION_NAMING_SURFACE_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/WIRE_IPC_CONTRACT_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/CONFORMANCE_RELIABILITY_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/INFRASTRUCTURE_SQL_SURFACE_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/NORMATIVE_CHECKLIST_K_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/P0_NORMALIZATION_L_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/P1_DISTRIBUTED_POLICY_M_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/P2_PLAN_STABILITY_N_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/MIGRATION_ROUTING_O_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/REPLICATION_ROUTING_P_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/EMULATED_WIRE_Q_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/REMOTE_CONNECTOR_R_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/CLUSTER_FABRIC_S_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/EMULATED_BOOTSTRAP_T_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/NEGATIVE_FUZZ_MATRIX.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/TEST_RESULTS.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/CHECKSUMS.sha256
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/RUN_MANIFEST.json
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/SPEC_TRACEABILITY.csv
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/TEST_EVIDENCE_INDEX.md
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/GATE_RESULT.json
+  - docs/specifications/work/implementation_tracks/alpha_master/IMP-28/CHANGESET_LOG.md

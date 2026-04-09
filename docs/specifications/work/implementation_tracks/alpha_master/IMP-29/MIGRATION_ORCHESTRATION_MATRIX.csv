@@ -1,0 +1,9 @@
+case_id,suite,required_check,expected_result,error_code
+T29-H01,H,listener_arbitration_follows_mode_class_matrix,pass,
+T29-H02,H,mode_transition_cas_mode_version_rejects_stale,reject,LSN-E-MODE-VERSION
+T29-H03,H,dual_write_order_legacy_then_emulated_policy_handling,pass,
+T29-H04,H,mirror_order_emulated_then_legacy_policy_handling,pass,
+T29-H05,H,dual_read_audit_both_targets_return_source_policy,pass,
+T29-H06,H,cutover_guard_blocks_on_lag_mismatch_open_error,reject,LSN-E-CUTOVER-GUARD
+T29-H07,H,retire_guard_blocks_on_active_cursor_backlog,reject,LSN-E-RETIRE-GUARD
+T29-H08,H,listener_metrics_expose_route_counts_mismatch_lag,pass,

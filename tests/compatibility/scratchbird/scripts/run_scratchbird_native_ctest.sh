@@ -15,6 +15,8 @@ if [[ ! -x "${DEFAULT_ISQL}" ]]; then
     DEFAULT_ISQL="${ALT_ISQL}"
   else
     for DRIVER_ISQL in \
+      "${DRIVER_DIR}/build_cli/tracks/p3/drivers/cli/sb_isql" \
+      "${DRIVER_DIR}/build_cli/tracks/alpha/drivers/cli/sb_isql" \
       "${DRIVER_DIR}/build/tracks/p3/drivers/cli/sb_isql" \
       "${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_isql"
     do

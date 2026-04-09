@@ -1,0 +1,6 @@
+rule,expected_behavior,status,test_evidence
+magic must be K_MAGIC_SBRD,non-matching magic rejected as PAGE_CORRUPT,pass,validatePageHeaderContract
+page_size must be allowed Alpha size,invalid size rejected as PAGE_CORRUPT,pass,validatePageHeaderContract
+expected page_type must match,mismatch rejected as PAGE_CORRUPT,pass,test_page_contract_stage_s1.cpp:HeaderValidationEnforcesTypeAndUuidContracts
+expected object_uuid must match,mismatch rejected as PAGE_CORRUPT,pass,test_page_contract_stage_s1.cpp:HeaderValidationEnforcesTypeAndUuidContracts
+lower/upper/special ordering must be valid,invalid boundaries rejected as PAGE_CORRUPT,pass,test_page_contract_stage_s1.cpp:HeaderValidationRejectsInvalidPageBoundaries

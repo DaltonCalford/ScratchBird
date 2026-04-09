@@ -1,0 +1,4 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+23/NATIVE_COMPILATION_AND_ARTIFACT_LIFECYCLE.md,async_jit_queue_non_blocking,"src/sblr/jit/jit_queue.cpp;src/sblr/jit/jit_runtime.cpp::selectPath","JIT_QUEUE_BACKPRESSURE_RESULTS.md;TEST_RESULTS.md",pass,"Hotness-driven queue promotion and saturation behavior validated"
+23/NATIVE_COMPILATION_AND_ARTIFACT_LIFECYCLE.md,hint_suppression_contract,"src/sblr/jit/jit_runtime.cpp::selectPath;tests/unit/test_sblr_jit_policy.cpp","HINT_SUPPRESSION_MATRIX.csv;TEST_RESULTS.md",pass,"DISABLE_COMPILE and DISABLE_EXECUTE semantics enforced"
+23/NATIVE_COMPILATION_AND_ARTIFACT_LIFECYCLE.md,one_off_latency_guard,"tests/benchmark/test_sblr_jit_performance.cpp","ONE_OFF_LATENCY_GUARD_RESULTS.md;TEST_RESULTS.md",pass,"JIT latency envelope remains within guard threshold"

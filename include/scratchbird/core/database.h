@@ -220,6 +220,7 @@ namespace scratchbird
             // Apply runtime scheduler configuration from Config
             Status applySchedulerConfig(ErrorContext *ctx = nullptr);
             Status applyDormantTransactionPolicyConfig(ErrorContext *ctx = nullptr);
+            Status bootstrapConfigurationCatalog(ErrorContext *ctx = nullptr);
 
             // Create a new connection context
             // This registers a backend in ProcArray and creates a ConnectionContext
@@ -1068,6 +1069,11 @@ namespace scratchbird
             // tests/unit/test_transaction_vnext_contract.cpp.
             Status runStartupReconciliation(ErrorContext *ctx);
             void refreshDormantTransactionPolicyFromConfig();
+            Status seedConfigurationCatalogKeys(ErrorContext *ctx);
+            Status seedBootstrapConfigurationValues(uint64_t generation, ErrorContext *ctx);
+            Status seedBootstrapListenerTopology(uint64_t generation, ErrorContext *ctx);
+            Status loadCatalogManagedConfiguration(ErrorContext *ctx);
+            Status applyCatalogManagedConfigurationHooks(ErrorContext *ctx);
             Status resolveFilespaceRoute(uint16_t source_tablespace_id,
                                          int* fd_out,
                                          std::string* path_out,

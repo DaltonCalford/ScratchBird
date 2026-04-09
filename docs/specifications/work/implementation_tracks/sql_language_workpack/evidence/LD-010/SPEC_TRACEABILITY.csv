@@ -1,0 +1,5 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md,21_V3_Dialect_Surface,UUID-BIND-PIPELINE,LD-010/UUID_BIND_AND_FEATURE_KEY_AUDIT.csv,PASS,Family classification, feature key assignment, UUID binding, and result shape are audited in one matrix
+21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md,21_V3_Dialect_Surface,FEATURE-KEY-RESULT-CONTRACT,LD-010/UUID_BIND_AND_FEATURE_KEY_AUDIT.csv,PASS,Each row binds a statement to deterministic family key, feature key, and result shape
+24_Catalog_Model_and_Virtual_Overlays/CATALOG_OBJECT_PARENTAGE_AND_NAME_UNIQUENESS.md,24_Catalog_Model_and_Virtual_Overlays,PARENT-SCOPE-UNIQUENESS,LD-010/UUID_BIND_AND_FEATURE_KEY_AUDIT.csv,PASS,Child object parent scope and duplicate-name behavior covered for index and trigger bindings
+24_Catalog_Model_and_Virtual_Overlays/CATALOG_OBJECT_PARENTAGE_AND_NAME_UNIQUENESS.md,24_Catalog_Model_and_Virtual_Overlays,AMBIGUOUS-CHILD-BIND-REJECT,LD-010/UUID_BIND_AND_FEATURE_KEY_AUDIT.csv,PASS,Ambiguous child-object lookup reject path is captured with UUID bind failure code

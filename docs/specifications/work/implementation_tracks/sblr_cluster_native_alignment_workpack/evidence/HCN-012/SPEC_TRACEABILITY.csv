@@ -1,0 +1,3 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+SB-CLUSTER-IMPLEMENTATION-WORKPLAN .md,SB-CLUSTER-003,"include/scratchbird/core/storage_lock_provider.h;src/core/storage_lock_provider.cpp","LOCK_PROVIDER_API.md",pass,"Introduced platform-independent file-lock abstraction"
+SB-CLUSTER-IMPLEMENTATION-WORKPLAN .md,SB-CLUSTER-003,"src/core/database.cpp;src/server/daemon.cpp","LOCK_FAILURE_TEST_RESULTS.md",pass,"Direct lock calls replaced by provider usage"

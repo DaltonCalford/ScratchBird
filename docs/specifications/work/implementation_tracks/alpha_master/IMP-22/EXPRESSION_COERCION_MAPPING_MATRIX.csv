@@ -1,0 +1,8 @@
+case_id,suite,required_check,expected_result,error_code
+T22-D01,D,operator_precedence_emits_expected_tree,pass,
+T22-D02,D,implicit_coercions_explicitly_emitted,pass,
+T22-D03,D,disallowed_implicit_casts_fail,reject,SBLR-E-0062
+T22-D04,D,explicit_casts_map_to_cast_rule_ids,pass,
+T22-D10,D,text_plus_numeric_native_behavior_numeric,pass,
+T22-D11,D,text_concat_numeric_native_behavior_text,pass,
+T22-D12,D,uuid_text_compare_emits_uuid_coercion_opcode,pass,

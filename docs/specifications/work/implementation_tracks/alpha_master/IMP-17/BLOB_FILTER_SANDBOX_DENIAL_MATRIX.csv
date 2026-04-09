@@ -1,0 +1,5 @@
+case_id,policy_gate,attempt,expected_result,error_code
+T17-BS-001,udr_disabled,invoke_filter,rejected,E_UDR_DISABLED
+T17-BS-002,module_not_allowlisted,load_module,rejected,E_UDR_POLICY_DENIED
+T17-BS-003,sandbox_file_access_denied,module_file_io,rejected,E_UDR_POLICY_DENIED
+T17-BS-004,sandbox_network_access_denied,module_network_io,rejected,E_UDR_POLICY_DENIED

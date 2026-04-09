@@ -5,9 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PG_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 CLIWORK_ROOT="$(cd "${ROOT_DIR}/.." && pwd)"
+REFERENCE_CLONE_ROOT="${ROOT_DIR}/docs/reference/project_clones/local_existing"
 
 DEFAULT_PSQL_BIN=""
 for candidate in \
+  "${REFERENCE_CLONE_ROOT}/postgresql/build_codex/src/bin/psql/psql" \
+  "${REFERENCE_CLONE_ROOT}/postgresql/build_codex2/src/bin/psql/psql" \
+  "${REFERENCE_CLONE_ROOT}/postgresql/build/src/bin/psql/psql" \
+  "${REFERENCE_CLONE_ROOT}/postgresql/build_relwithdebinfo/src/bin/psql/psql" \
+  "${REFERENCE_CLONE_ROOT}/postgresql/build_release/src/bin/psql/psql" \
   "${CLIWORK_ROOT}/postgresql/build_codex/src/bin/psql/psql" \
   "${CLIWORK_ROOT}/postgresql/build_codex2/src/bin/psql/psql" \
   "${CLIWORK_ROOT}/postgresql/build/src/bin/psql/psql" \
@@ -18,6 +24,9 @@ for candidate in \
     break
   fi
 done
+if [[ -z "$DEFAULT_PSQL_BIN" ]]; then
+  DEFAULT_PSQL_BIN="$(command -v psql 2>/dev/null || true)"
+fi
 # Emulated PostgreSQL verification must use donor `psql`. `sb_isql` is native
 # ScratchBird/V3 only and is intentionally not accepted for this lane.
 ISQL_BIN="${SCRATCHBIRD_PG_PSQL_BIN:-${SCRATCHBIRD_PG_ISQL:-$DEFAULT_PSQL_BIN}}"

@@ -1,0 +1,18 @@
+{
+  "ticket_id": "DT-016",
+  "status": "completed",
+  "started_at": "2026-02-13T16:58:00Z",
+  "completed_at": "2026-02-13T17:10:00Z",
+  "spec_inputs": [
+    "docs/specifications/15_Complex_Types/DOMAIN_EMULATION_PARAMETERS.md",
+    "docs/specifications/24_Catalog_Model_and_Virtual_Overlays/CATALOG_EMULATION_PROFILE.md"
+  ],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-016/DOMAIN_VISIBILITY_POLICY_TEST_RESULTS.md",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-016/SPEC_TRACEABILITY.csv",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-016/TEST_RESULTS.md",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-016/IMPLEMENTATION_NOTES.md",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-016/CHECKSUMS.sha256"
+  ],
+  "notes": "Visibility gating implemented and validated with targeted unit suite."
+}

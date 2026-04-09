@@ -1,0 +1,7 @@
+workpack_ticket,spec_section,requirement_scope,implementation_paths,test_evidence,status
+DT-001..DT-004,13/14/15,Type identity and enum coverage,include/scratchbird/core/types.h|src/core/type_system.cpp|src/core/type_serialization.cpp,TypeSystemTest.*|TypeSerializationTest.*,PASS
+DT-005..DT-008,14/15,Scalar storage and IO semantics,src/core/typed_value.cpp|src/core/type_serialization.cpp|src/core/type_system.cpp,TypeConversionTest.*|TypeSerializationTest.*|TimezoneTest.*,PASS
+DT-009..DT-012,13/14,Cast and coercion contract enforcement,src/core/type_system.cpp|src/core/typed_value.cpp|src/sblr/executor.cpp,TypeConversionTest.CastMatrix_*|TypeConversionTest.ScalarError_*|ExecutorTest.ImplicitTextNumeric*,PASS
+DT-013..DT-016,15/21,System domain naming/UUID/visibility policy,src/core/domain_manager.cpp|src/core/domain_validation.cpp,SystemDomainRegistryTest.*|DomainValidationTest.*,PASS
+DT-017..DT-020,14/15,Complex type mapping and accessor determinism,src/core/type_system.cpp|src/core/domain_validation.cpp|src/sblr/extract_element_ops.cpp,TypeSystemTest.ResolveEmulatedType*|DomainValidationFrozenTest.*|ExtractElementTest.*,PASS
+DT-021..DT-024,11/14/15/31,TOAST/LOB routing and diagnostics,include/scratchbird/core/toast.h|src/core/heap_page.cpp|src/core/catalog_manager.cpp,TypeSystemTest.ToastEligibilityTypeContract|HeapToastLobPageWalkerContractTest.*|ToastOperationsTest.*|ToastGCContractTest.*|ToastTIPVisibilityTest.*,PASS

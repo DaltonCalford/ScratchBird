@@ -1,0 +1,4 @@
+requirement_id,requirement_surface,authority_file,evidence_or_gate,status
+SC-01,transaction_scoped_schema_publication,SCHEMA_DDL_STATE_MACHINE.md,TEST_CONTRACT.md,canonicalized
+SC-02,online_schema_change_and_backfill,ONLINE_SCHEMA_CHANGE_AND_BACKFILL_MODEL.md,TEST_CONTRACT.md,canonicalized
+SC-03,metadata_epoch_and_invalidation,METADATA_CACHE_AND_VISIBILITY_BOUNDARY.md,TEST_CONTRACT.md,canonicalized

@@ -1,0 +1,8 @@
+case_id,namespace,var_name,type,scope_mask,read_only,expected_result,error_code
+T16-RG-001,SYSTEM,SYSTEM.version,TEXT,session|transaction|statement|trigger_row,true,registered,
+T16-RG-002,SESSION,SESSION.user_uuid,UUID,session|transaction|statement,true,registered,
+T16-RG-003,SESSION,SESSION.language,TEXT,session|transaction|statement,false,registered,
+T16-RG-004,TRANSACTION,TRANSACTION.txid,UINT64,transaction|statement,true,registered,
+T16-RG-005,ROW,ROW.NEW.*,typed_column,trigger_row,true,registered,
+T16-RG-006,ROW,ROW.OLD.*,typed_column,trigger_row,true,registered,
+T16-RG-007,invalid_registry_entry,null_type,none,none,rejected,E_CONTEXT_REGISTRY_INVALID

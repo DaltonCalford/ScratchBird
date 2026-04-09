@@ -25,6 +25,7 @@
 #include <arpa/inet.h>
 #include "scratchbird/core/posix_compat.h"
 #include <fcntl.h>
+#include <poll.h>
 #include <errno.h>
 #endif
 
@@ -834,14 +835,14 @@ core::Status IPCServer::start(core::ErrorContext* ctx) {
 
 core::Status IPCServer::stop(core::ErrorContext* ctx) {
     (void)ctx;
-    if (!running_) {
+    if (!running_ && !accept_thread_.joinable() && workers_.empty()) {
         return core::Status::OK;
     }
-    
+
     running_ = false;
     shutdown_ = true;
     queue_cv_.notify_all();
-    
+
     // Stop accept thread
     if (accept_thread_.joinable()) {
 #if defined(__linux__) || defined(__APPLE__)
@@ -857,6 +858,7 @@ core::Status IPCServer::stop(core::ErrorContext* ctx) {
     for (auto& worker : workers_) {
         worker->stop();
     }
+    workers_.clear();
     
     // Close all sessions
     {
@@ -865,6 +867,11 @@ core::Status IPCServer::stop(core::ErrorContext* ctx) {
             session->stop(nullptr);
         }
         sessions_.clear();
+    }
+
+    {
+        std::lock_guard<std::mutex> stats_lock(stats_mutex_);
+        stats_.active_sessions = 0;
     }
     
     return core::Status::OK;
@@ -966,6 +973,31 @@ core::Status IPCServer::setupListener(core::ErrorContext* ctx) {
 void IPCServer::acceptLoop() {
     while (running_) {
 #if defined(__linux__) || defined(__APPLE__)
+        struct pollfd pfd;
+        pfd.fd = listen_fd_;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+
+        int poll_result = ::poll(&pfd, 1, 100);
+        if (poll_result == 0) {
+            continue;
+        }
+        if (poll_result < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            if (!running_) {
+                break;
+            }
+            continue;
+        }
+        if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+            if (!running_) {
+                break;
+            }
+            continue;
+        }
+
         auto channel = std::make_unique<UnixSocketIPCChannel>();
         core::ErrorContext ctx;
         if (channel->accept(listen_fd_, &ctx) != core::Status::OK) {

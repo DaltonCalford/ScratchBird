@@ -1,0 +1,13 @@
+case_id,page_type_code,page_type_name,allocation_condition,expected_result,error_code
+PTE-001,0x0000,PAGE_TYPE_DATABASE_HEADER,bootstrap_page0_only,accept,NONE
+PTE-002,0x0002,PAGE_TYPE_CATALOG_ROOT,bootstrap_page2_only,accept,NONE
+PTE-003,0x0004,PAGE_TYPE_FSM_ROOT,bootstrap_page3_only,accept,NONE
+PTE-004,0x0006,PAGE_TYPE_TRANSACTION_MAP,bootstrap_page4_only,accept,NONE
+PTE-005,0x0007,PAGE_TYPE_HEAP,heap_object_pages,accept,NONE
+PTE-006,0x0102,PAGE_TYPE_BTREE_LEAF,index_object_pages,accept,NONE
+PTE-007,0x0201,PAGE_TYPE_COLUMNSTORE_SEGMENT,columnstore_only,accept,NONE
+PTE-008,0x0301,PAGE_TYPE_HNSW_NODE,hnsw_index_only,accept,NONE
+PTE-009,0x0401,PAGE_TYPE_DOC_DATA,mongodb_emulation_enabled,accept,NONE
+PTE-010,0x0452,PAGE_TYPE_REDIS_LIST,redis_emulation_enabled,accept,NONE
+PTE-011,0x0401,PAGE_TYPE_DOC_DATA,mongodb_emulation_disabled,reject,FEATURE_NOT_ENABLED
+PTE-012,0xFFFF,unknown_reserved_extension,not_registered,reject,INVALID_PAGE_TYPE

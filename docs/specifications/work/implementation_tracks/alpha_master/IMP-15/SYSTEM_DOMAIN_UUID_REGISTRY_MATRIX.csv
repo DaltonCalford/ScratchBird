@@ -1,0 +1,6 @@
+case_id,registry_check,expected_rule,expected_result,error_code
+T15-UUID-001,system_domain_uuid_exists,uuid_present_for_required_domain,pass,
+T15-UUID-002,system_domain_uuid_stability,uuid_matches_registry_constant,pass,
+T15-UUID-003,system_domain_uuid_uniqueness,no_duplicate_uuid_across_system_domains,pass,
+T15-UUID-004,user_override_attempt,user_cannot_replace_system_domain_uuid,reject,E_PERMISSION_DENIED
+T15-UUID-005,missing_registry_row,required_system_domain_missing,reject,E_SYSTEM_DOMAIN_UUID_MISSING

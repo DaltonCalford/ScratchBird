@@ -1,0 +1,8 @@
+case_id,suite,required_check,expected_result,error_code
+T29-J01,J,fabric_manager_runs_in_ipc_server_no_listener_data_path_dependency,pass,
+T29-J02,J,one_fabric_link_supports_multi_session_identity_isolation,pass,
+T29-J03,J,per_session_transaction_ownership_cross_session_reuse_rejected,reject,FAB-E-TXN-OWNERSHIP
+T29-J04,J,passthrough_task_rejects_sql_accepts_sblr_only,reject_sql,FAB-E-SBLR-REQUIRED
+T29-J05,J,election_transfer_task_state_transitions_persisted_deterministically,pass,
+T29-J06,J,heartbeat_miss_ready_degraded_disabled_transitions_deterministic,pass,
+T29-J07,J,disabled_link_blocks_new_sessions_tasks_until_recovery,pass,

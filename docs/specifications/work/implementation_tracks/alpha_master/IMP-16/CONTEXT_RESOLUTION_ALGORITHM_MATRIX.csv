@@ -1,0 +1,7 @@
+case_id,input_token,namespace_hint,context_state,expected_result,error_code
+T16-RS-001,SYSTEM.version,SYSTEM,session_active,value_returned,
+T16-RS-002,SESSION.client_host,SESSION,session_active,value_or_null_by_null_allowed,
+T16-RS-003,TRANSACTION.txid,TRANSACTION,no_active_txn,rejected,E_CONTEXT_SCOPE_VIOLATION
+T16-RS-004,statement_alias_for_plan_hash,none,statement_active,resolved_via_alias_map,
+T16-RS-005,unknown_alias,none,session_active,rejected,E_UNKNOWN_CONTEXT_VARIABLE
+T16-RS-006,ROW.NEW.col_a,ROW,not_in_trigger,rejected,E_CONTEXT_SCOPE_VIOLATION

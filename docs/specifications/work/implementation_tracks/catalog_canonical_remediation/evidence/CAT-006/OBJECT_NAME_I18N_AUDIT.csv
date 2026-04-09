@@ -1,0 +1,6 @@
+check_id,contract,source,status,notes
+ONI-001,object_name page allocated and persisted,tests/unit/test_catalog_database_bootstrap.cpp,pass,objectNameTablePage() non-zero on first open and reopen
+ONI-002,default-language row exists for database object,tests/unit/test_catalog_database_bootstrap.cpp,pass,database_default_name_row_count == 1
+ONI-003,default-language row not duplicated across reopen,tests/unit/test_catalog_database_bootstrap.cpp,pass,reopen snapshot keeps database default count at 1
+ONI-004,canonical name persisted for resolver/default row,src/core/catalog_manager.cpp,pass,ensureObjectNameCatalogRecord stores canonical_name_text via normalizeResolverName
+ONI-005,parent scope persisted for name row,src/core/catalog_manager.cpp,pass,sync writes parent_object_id according to resolver/object parent normalization

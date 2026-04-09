@@ -451,9 +451,13 @@ TEST_F(MgaFragmentationPolicyTest, GcPagePublishesExactCleanupCompletionWithProo
     EXPECT_EQ(publication->page_id, rootPageForTable(table_id));
     EXPECT_EQ(publication->heap_reclaim_count, 1u);
     EXPECT_EQ(publication->backlog_count, 0u);
+    EXPECT_EQ(publication->backlog_pages, 0u);
+    EXPECT_EQ(publication->backlog_bytes, 0u);
     EXPECT_EQ(publication->sweep_generation, 7u);
     EXPECT_EQ(publication->checkpoint_generation, 11u);
     EXPECT_EQ(stats.index_backlog_count, 0u);
+    EXPECT_EQ(stats.index_backlog_pages, 0u);
+    EXPECT_EQ(stats.index_backlog_bytes, 0u);
 }
 
 TEST_F(MgaFragmentationPolicyTest, GcPagePublishesSummaryCleanupDebtWithProofContext)
@@ -485,6 +489,8 @@ TEST_F(MgaFragmentationPolicyTest, GcPagePublishesSummaryCleanupDebtWithProofCon
     EXPECT_EQ(publication->sweep_generation, 5u);
     EXPECT_EQ(publication->checkpoint_generation, 9u);
     EXPECT_EQ(stats.index_backlog_count, 1u);
+    EXPECT_EQ(stats.index_backlog_pages, 0u);
+    EXPECT_EQ(stats.index_backlog_bytes, 0u);
 }
 
 TEST_F(MgaFragmentationPolicyTest, GcPagePublishesApproximateCleanupDebtWithProofContext)
@@ -520,4 +526,6 @@ TEST_F(MgaFragmentationPolicyTest, GcPagePublishesApproximateCleanupDebtWithProo
     EXPECT_EQ(publication->sweep_generation, 13u);
     EXPECT_EQ(publication->checkpoint_generation, 17u);
     EXPECT_EQ(stats.index_backlog_count, 1u);
+    EXPECT_EQ(stats.index_backlog_pages, 0u);
+    EXPECT_EQ(stats.index_backlog_bytes, 0u);
 }

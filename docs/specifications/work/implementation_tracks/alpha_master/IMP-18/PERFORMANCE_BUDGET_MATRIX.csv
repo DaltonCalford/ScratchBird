@@ -1,0 +1,6 @@
+metric_id,workload,threshold_type,threshold_value,pass_condition
+T18-PF-001,btree_mixed_insert_lookup,p95_ms,8,measured_p95<=8
+T18-PF-002,gin_fulltext_large_postings,p95_ms,35,measured_p95<=35
+T18-PF-003,brin_ordered_data_pruning,pruning_ratio_pct,85,measured_ratio>=85
+T18-PF-004,vector_knn_recall_latency,recall_at_k_pct,95,measured_recall>=95
+T18-PF-005,online_relocate_concurrent_dml,p95_ms,25,measured_p95<=25

@@ -1,0 +1,4 @@
+case_id,suite,required_check,expected_result,error_code
+T27-D01,D,registry_filtering_by_visibility_policy,pass,
+T27-D02,D,deterministic_order_no_hidden_entry_leakage,pass,
+T27-D03,D,emulation_filtering_behavior_validated,pass,

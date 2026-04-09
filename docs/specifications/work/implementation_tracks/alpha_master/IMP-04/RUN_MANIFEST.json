@@ -1,0 +1,25 @@
+{
+  "ticket_id": "IMP-04",
+  "section": "04_Page_Size_Policy",
+  "wave": "W0",
+  "status": "done",
+  "started_at_utc": "2026-02-12T00:13:39Z",
+  "completed_at_utc": "2026-02-12T00:13:39Z",
+  "gate_contract": "docs/specifications/04_Page_Size_Policy/TEST_CONTRACT.md",
+  "artifacts": [
+    "IMPLEMENTATION_CHECKLIST.md",
+    "IMPLEMENTATION_NOTES.md",
+    "PAGE_SIZE_POLICY_MATRIX.csv",
+    "PAGE_SIZE_DERIVED_CONSTANTS.csv",
+    "PAGE_SIZE_VALIDATION_MATRIX.csv",
+    "PAGE_SIZE_COMPATIBILITY_MATRIX.csv",
+    "TEST_RESULTS.md",
+    "CHECKSUMS.sha256",
+    "RUN_MANIFEST.json",
+    "SPEC_TRACEABILITY.csv",
+    "TEST_EVIDENCE_INDEX.md",
+    "GATE_RESULT.json",
+    "CHANGESET_LOG.md"
+  ],
+  "mode": "specification_contract_validation"
+}

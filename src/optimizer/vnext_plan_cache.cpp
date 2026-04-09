@@ -19,6 +19,36 @@ namespace scratchbird::optimizer
     namespace
     {
         constexpr const char *kCacheViolationCode = "UDR_1511";
+
+        auto matchesFamilyStatisticsBoundaryContext(
+            const sblr::v3::PlanCacheKeyInput &lhs,
+            const sblr::v3::PlanCacheKeyInput &rhs) -> bool
+        {
+            return lhs.profile_id == rhs.profile_id &&
+                   lhs.profile_version == rhs.profile_version &&
+                   lhs.taxonomy_contract_id == rhs.taxonomy_contract_id &&
+                   lhs.payload_format == rhs.payload_format &&
+                   lhs.payload_hash == rhs.payload_hash &&
+                   lhs.session_option_signature == rhs.session_option_signature &&
+                   lhs.role_context_signature == rhs.role_context_signature &&
+                   lhs.canonical_opcode_symbol == rhs.canonical_opcode_symbol &&
+                   lhs.catalog_epoch == rhs.catalog_epoch &&
+                   lhs.security_epoch == rhs.security_epoch &&
+                   lhs.capability_set_hash == rhs.capability_set_hash &&
+                   lhs.module_version == rhs.module_version &&
+                   lhs.translation_rule_version == rhs.translation_rule_version &&
+                   lhs.host_api_abi_version == rhs.host_api_abi_version &&
+                   lhs.target_triples_hash == rhs.target_triples_hash &&
+                   lhs.artifact_preference == rhs.artifact_preference &&
+                   lhs.optimization_level == rhs.optimization_level &&
+                   lhs.normalization_rule_set_id == rhs.normalization_rule_set_id &&
+                   lhs.object_ref_digest == rhs.object_ref_digest &&
+                   lhs.plan_profile_signature == rhs.plan_profile_signature &&
+                   lhs.index_family_signature == rhs.index_family_signature &&
+                   lhs.policy_snapshot_id == rhs.policy_snapshot_id &&
+                   lhs.family_statistics_signature !=
+                       rhs.family_statistics_signature;
+        }
     }
 
     auto VNextPlanCache::validateKey(const sblr::v3::PlanCacheKeyInput &key,
@@ -510,6 +540,21 @@ namespace scratchbird::optimizer
         core::VNextMetricsEventModel::recordOptimizerEvent(
             "plan_cache_invalidate_target_triples", "ok", "NONE", static_cast<double>(removed));
         return removed;
+    }
+
+    auto VNextPlanCache::countFamilyStatisticsBoundarySiblings(
+        const sblr::v3::PlanCacheKeyInput &key) const -> uint64_t
+    {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        uint64_t matches = 0;
+        for (const auto &entry : entries_)
+        {
+            if (matchesFamilyStatisticsBoundaryContext(entry.second.key, key))
+            {
+                ++matches;
+            }
+        }
+        return matches;
     }
 
     auto VNextPlanCache::getStats() const -> VNextPlanCacheStats

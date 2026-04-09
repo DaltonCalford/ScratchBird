@@ -1,0 +1,27 @@
+{
+  "ticket_id": "HCN-002",
+  "title": "Publish executable gap ledger and acceptance mapping",
+  "phase": "PH0",
+  "status": "done",
+  "owner": "codex",
+  "started_utc": "2026-02-23T21:30:00Z",
+  "completed_utc": "2026-02-24T03:05:00Z",
+  "inputs": [
+    "docs/specifications/work/findings/SB_CLUSTER_NATIVE_ALIGNMENT_GAP_ANALYSIS_2026-02-23.md",
+    "docs/specifications/work/implementation_tracks/sblr_cluster_native_alignment_workpack/ORDERED_TASK_TICKETS.csv",
+    "../local_work/docs/planning/SBLR_CLUSTER_NATIVE_ALIGNMENT_WORKTREE/DEPENDENCY_GRAPH.csv"
+  ],
+  "outputs": [
+    "GAP_TO_TICKET_TRACE.csv",
+    "RISK_PRIORITIZATION.csv",
+    "ACCEPTANCE_MAPPING.csv",
+    "SPEC_TRACEABILITY.csv",
+    "RESULT_SUMMARY.md"
+  ],
+  "commands": [
+    "awk table extraction from SB_CLUSTER_NATIVE_ALIGNMENT_GAP_ANALYSIS_2026-02-23.md",
+    "ticket dependency cross-check against ORDERED_TASK_TICKETS.csv",
+    "checksum regeneration"
+  ],
+  "notes": "Critical gaps are now ticketized with deterministic acceptance evidence targets."
+}

@@ -1,0 +1,4 @@
+case_id,suite,required_check,expected_result,error_code
+T23-C01,C,optimizer_pass_order_fixed_and_traceable,pass,
+T23-C02,C,optimized_vs_nonoptimized_semantic_equivalence,pass,
+T23-C03,C,deterministic_join_order_tiebreak,pass,

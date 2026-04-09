@@ -1,0 +1,26 @@
+{
+  "ticket_id": "IMP-03",
+  "section": "03_Disk_Allocator_and_Free_Space",
+  "wave": "W0",
+  "status": "done",
+  "started_at_utc": "2026-02-12T00:14:38Z",
+  "completed_at_utc": "2026-02-12T00:14:38Z",
+  "gate_contract": "docs/specifications/03_Disk_Allocator_and_Free_Space/TEST_CONTRACT.md",
+  "artifacts": [
+    "IMPLEMENTATION_CHECKLIST.md",
+    "IMPLEMENTATION_NOTES.md",
+    "ALLOCATOR_EXTENT_POLICY_MATRIX.csv",
+    "FSM_LAYOUT_AND_CLASS_MATRIX.csv",
+    "ALLOCATION_AND_GROWTH_MATRIX.csv",
+    "BUFFER_FLUSH_DURABILITY_MATRIX.csv",
+    "FSM_REBUILD_TRIGGER_MATRIX.csv",
+    "TEST_RESULTS.md",
+    "CHECKSUMS.sha256",
+    "RUN_MANIFEST.json",
+    "SPEC_TRACEABILITY.csv",
+    "TEST_EVIDENCE_INDEX.md",
+    "GATE_RESULT.json",
+    "CHANGESET_LOG.md"
+  ],
+  "mode": "specification_contract_validation"
+}

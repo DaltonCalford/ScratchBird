@@ -1,0 +1,6 @@
+case_id,operation,required_check,expected_result,error_code
+T18-MR-001,REBALANCE,logical_order_preserved,pass,
+T18-MR-002,COMPACT,logical_order_preserved_and_space_reclaimed,pass,
+T18-MR-003,RELOCATE,root_meta_atomic_swap_and_old_pages_reclaimed_after_oit,pass,
+T18-MR-004,ONLINE_REBALANCE,concurrent_dml_without_missing_rows,pass,
+T18-MR-005,ONLINE_RELOCATE,concurrent_dml_and_target_filespace_migration,pass,

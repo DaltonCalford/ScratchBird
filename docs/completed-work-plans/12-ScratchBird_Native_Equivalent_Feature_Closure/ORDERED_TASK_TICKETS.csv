@@ -1,0 +1,43 @@
+order,ticket,title,phase,status
+1,NEQ-12-001,Scope freeze and reference-layout bootstrap,scope_freeze,completed
+2,NEQ-12-002,Research transactional eventing durable queues and notifications,research_runtime,completed
+3,NEQ-12-003,Draft Beta 2 transactional eventing durable queue and notification canon,spec_runtime,completed
+4,NEQ-12-004,Research scheduled jobs alerting and operator messaging,research_runtime,completed
+5,NEQ-12-005,Draft Beta 2 scheduler alerting and operator messaging canon,spec_runtime,completed
+6,NEQ-12-006,Research managed safe extensibility runtime,research_extensibility,completed
+7,NEQ-12-007,Draft Beta 2 managed WASM/WASI extensibility runtime canon,spec_extensibility,completed
+8,NEQ-12-008,Research native changefeeds and consumer offsets,research_data_motion,completed
+9,NEQ-12-009,Draft Beta 2 native changefeed and consumer offset canon,spec_data_motion,completed
+10,NEQ-12-010,Research relational temporal versioning and history binding,research_temporal,completed
+11,NEQ-12-011,Draft Beta 2 relational temporal versioning canon,spec_temporal,completed
+12,NEQ-12-012,Research tamper-evident ledger and attestation,research_audit,completed
+13,NEQ-12-013,Draft Beta 2 tamper-evident ledger and attestation canon,spec_audit,completed
+14,NEQ-12-014,Research property graph storage and pattern matching,research_catalog,completed
+15,NEQ-12-015,Draft Beta 2 property graph storage and pattern matching canon,spec_catalog,completed
+16,NEQ-12-016,Research federation and remote-data virtualization closure,research_federation,completed
+17,NEQ-12-017,Draft Beta 2 federation implementation-closure canon,spec_federation,completed
+18,NEQ-12-018,Research transactional blob and file-namespace tables,research_storage,completed
+19,NEQ-12-019,Draft Beta 2 transactional blob and file-namespace table canon,spec_storage,completed
+20,NEQ-12-020,Research plan-store baseline and managed-tuning closure,research_planner,completed
+21,NEQ-12-021,Draft Beta 2 plan-store implementation-closure canon,spec_planner,completed
+22,NEQ-12-022,Research service tiers tenant pools and workload governance,research_governance,completed
+23,NEQ-12-023,Draft Beta 2 service tiers tenant pools and governance canon,spec_governance,completed
+24,NEQ-12-024,Research serverless autosuspend autoscale and warm resume,research_runtime,completed
+25,NEQ-12-025,Draft Beta 2 serverless autosuspend autoscale and warm resume canon,spec_runtime,completed
+26,NEQ-12-026,Research distributed atomic coordination and prepared branches,research_failure_model,completed
+27,NEQ-12-027,Draft Beta 2 distributed atomic coordination canon,spec_failure_model,completed
+28,NEQ-12-028,Research replicated topology read scale-out and geo failover,research_runtime,completed
+29,NEQ-12-029,Draft Beta 2 replicated topology read scale-out and geo failover canon,spec_runtime,completed
+30,NEQ-12-030,Research hot-row memory-optimized OLTP lanes and compiled kernels,research_oltp,completed
+31,NEQ-12-031,Draft Beta 2 memory-optimized OLTP lane and compiled-kernel canon,spec_oltp,completed
+32,NEQ-12-032,Research enterprise identity federation and token auth,research_security,completed
+33,NEQ-12-033,Draft Beta 2 enterprise identity federation and token-auth canon,spec_security,completed
+34,NEQ-12-034,Research TDE implementation closure,research_security,completed
+35,NEQ-12-035,Draft Beta 2 TDE implementation-closure canon,spec_security,completed
+36,NEQ-12-036,Research protected-query encryption implementation closure,research_security,completed
+37,NEQ-12-037,Draft Beta 2 protected-query implementation-closure canon,spec_security,completed
+38,NEQ-12-038,Research row security and dynamic masking implementation closure,research_security,completed
+39,NEQ-12-039,Draft Beta 2 RLS and dynamic-masking implementation-closure canon,spec_security,completed
+40,NEQ-12-040,Research analytical columnstore and OLAP acceleration implementation closure,research_olap,completed
+41,NEQ-12-041,Draft Beta 2 columnstore and OLAP implementation-closure canon,spec_olap,completed
+42,NEQ-12-042,Final sync inventory update and closeout,closeout,completed

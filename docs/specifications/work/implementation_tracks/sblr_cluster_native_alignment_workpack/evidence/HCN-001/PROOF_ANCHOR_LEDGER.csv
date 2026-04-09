@@ -1,0 +1,6 @@
+anchor_id,category,file_path,line_ref,description,status
+A-HCN001-001,parser,/home/dcalford/CliWork/ScratchBird/src/parser/parser_v3.cpp,15418,Cluster control parser create entry,locked
+A-HCN001-002,emitter,/home/dcalford/CliWork/ScratchBird/src/parser/v3_emitter.cpp,2801,Cluster control feature-key to opcode mapping,locked
+A-HCN001-003,executor,/home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp,65856,Bridge reject behavior for unresolved runtime closure,locked
+A-HCN001-004,catalog,/home/dcalford/CliWork/ScratchBird/include/scratchbird/core/catalog_manager.h,5582,Cluster catalog structure baseline,locked
+A-HCN001-005,telemetry,/home/dcalford/CliWork/ScratchBird/src/core/telemetry.cpp,903,Metric naming baseline,locked

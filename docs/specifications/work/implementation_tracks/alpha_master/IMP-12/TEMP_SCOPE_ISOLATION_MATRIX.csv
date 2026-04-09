@@ -1,0 +1,6 @@
+case_id,scenario,resolution_order,expected_result,error_code
+T12-SC-001,same_temp_name_two_sessions,session_temp_then_global_then_permanent,sessions_isolated,
+T12-SC-002,temp_shadows_permanent,session_temp_exists,session_temp_selected,
+T12-SC-003,global_temp_row_visibility,rows_tagged_owner_session_uuid,only_owner_rows_visible,
+T12-SC-004,cross_session_read,session_mismatch,rejected,E_TEMP_SCOPE_VIOLATION
+T12-SC-005,cross_session_write,session_mismatch,rejected,E_TEMP_SCOPE_VIOLATION

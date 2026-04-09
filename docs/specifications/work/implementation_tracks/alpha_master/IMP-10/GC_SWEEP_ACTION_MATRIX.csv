@@ -1,0 +1,9 @@
+case_id,phase,input_condition,required_action,expected_result,error_code
+GSA-001,cooperative_gc,reader_encounters_obsolete_backversion,prune_chain_link_when_safe,success,NONE
+GSA-002,background_gc,candidate_page_flagged,process_page_and_reclaim_safe_versions,success,NONE
+GSA-003,sweep,eligible_garbage_version,reclaim_and_update_fsm,success,NONE
+GSA-004,sweep,version_not_gc_eligible,skip_version,success,NONE
+GSA-005,sweep,index_reference_to_reclaimed_version,remove_index_entry_same_pass,success,NONE
+GSA-006,sweep,toast_pointer_of_garbage_row,mark_chunk_for_deferred_delete,success,NONE
+GSA-007,sweep,active_delete_txid,do_not_reclaim,success,NONE
+GSA-008,sweep,index_cleanup_failure,report_and_retry_safe,fail,GC_INDEX_MISMATCH

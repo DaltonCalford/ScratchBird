@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-050",
+  "phase": "PH5",
+  "title": "Define service level objectives and error budget framework",
+  "status": "pending",
+  "owner": "sre-observability",
+  "estimate_days": 5,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

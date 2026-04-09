@@ -1,0 +1,12 @@
+case_id,suite,required_check,expected_result,error_code
+T28-J001,J,config_history_reload_feature_keys_result_shapes_deterministic,pass,
+T28-J002,J,show_system_visibility_filter_and_privilege_enforced,pass,
+T28-J003,J,domain_variant_forms_parse_to_deterministic_ast_variants,pass,
+T28-J004,J,index_management_surface_maps_to_canonical_feature_keys,pass,
+T28-J005,J,text_search_sql_maps_to_feature_keys_and_rejects_invalid,pass,
+T28-J006,J,cluster_routing_admission_sql_maps_deterministically,pass,
+T28-J007,J,alerting_healing_sql_maps_deterministically,pass,
+T28-J008,J,job_sql_parameter_validation_and_error_mapping,pass,
+T28-J009,J,sharding_cube_sql_deterministic_mapping_and_profile_rejects,pass,
+T28-J010,J,encryption_cert_sql_private_key_non_readability_enforced,pass,
+T28-J011,J,listener_lifecycle_config_pool_sql_deterministic_mapping,pass,

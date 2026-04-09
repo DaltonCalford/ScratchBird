@@ -997,6 +997,8 @@ core::Status ProtocolCodec::parseQuery(const Message& msg,
                                        std::string& query,
                                        uint8_t& flags,
                                        std::vector<uint8_t>* bytecode_out,
+                                       std::vector<std::string>* parameter_values_out,
+                                       std::vector<bool>* parameter_nulls_out,
                                        core::ErrorContext* ctx) {
     Message& m = const_cast<Message&>(msg);
     m.resetReadOffset();
@@ -1055,6 +1057,55 @@ core::Status ProtocolCodec::parseQuery(const Message& msg,
         } else {
             query.clear();
         }
+        if (parameter_values_out) {
+            parameter_values_out->clear();
+        }
+        if (parameter_nulls_out) {
+            parameter_nulls_out->clear();
+        }
+        if (flags & static_cast<uint8_t>(QueryFlags::BYTECODE_HAS_PARAMS)) {
+            uint16_t param_count = 0;
+            uint16_t reserved = 0;
+            if (!m.readUInt16(param_count) || !m.readUInt16(reserved)) {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "Truncated QUERY parameter header");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            (void)reserved;
+            if (!parameter_values_out || !parameter_nulls_out) {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "Missing parameter outputs for QUERY");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            parameter_values_out->reserve(param_count);
+            parameter_nulls_out->reserve(param_count);
+            for (uint16_t i = 0; i < param_count; ++i) {
+                uint32_t value_len = 0;
+                if (!m.readUInt32(value_len)) {
+                    SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                      "Truncated QUERY parameter length");
+                    return core::Status::PROTOCOL_VIOLATION;
+                }
+                if (value_len == 0xFFFFFFFFu) {
+                    parameter_values_out->emplace_back();
+                    parameter_nulls_out->push_back(true);
+                    continue;
+                }
+                if (value_len > MAX_QUERY_LENGTH) {
+                    SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                      "QUERY parameter too large");
+                    return core::Status::PROTOCOL_VIOLATION;
+                }
+                std::string value;
+                if (!m.readString(value, value_len)) {
+                    SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                      "Truncated QUERY parameter value");
+                    return core::Status::PROTOCOL_VIOLATION;
+                }
+                parameter_values_out->push_back(std::move(value));
+                parameter_nulls_out->push_back(false);
+            }
+        }
         return core::Status::OK;
     }
 
@@ -1071,8 +1122,48 @@ core::Status ProtocolCodec::parseQuery(const Message& msg,
                                        uint8_t session_id[16],
                                        std::string& query,
                                        uint8_t& flags,
+                                       std::vector<uint8_t>* bytecode_out,
                                        core::ErrorContext* ctx) {
-    return parseQuery(msg, session_id, query, flags, nullptr, ctx);
+    return parseQuery(msg,
+                      session_id,
+                      query,
+                      flags,
+                      bytecode_out,
+                      nullptr,
+                      nullptr,
+                      ctx);
+}
+
+core::Status ProtocolCodec::parseQuery(const Message& msg,
+                                       uint8_t session_id[16],
+                                       std::string& query,
+                                       uint8_t& flags,
+                                       std::vector<std::string>* parameter_values_out,
+                                       std::vector<bool>* parameter_nulls_out,
+                                       core::ErrorContext* ctx) {
+    return parseQuery(msg,
+                      session_id,
+                      query,
+                      flags,
+                      nullptr,
+                      parameter_values_out,
+                      parameter_nulls_out,
+                      ctx);
+}
+
+core::Status ProtocolCodec::parseQuery(const Message& msg,
+                                       uint8_t session_id[16],
+                                       std::string& query,
+                                       uint8_t& flags,
+                                       core::ErrorContext* ctx) {
+    return parseQuery(msg,
+                      session_id,
+                      query,
+                      flags,
+                      nullptr,
+                      nullptr,
+                      nullptr,
+                      ctx);
 }
 
 Message ProtocolCodec::buildQueryBytecode(const uint8_t session_id[16],
@@ -1096,6 +1187,40 @@ Message ProtocolCodec::buildQueryBytecode(const uint8_t session_id[16],
         msg.writeString(sql);
     }
 
+    return msg;
+}
+
+Message ProtocolCodec::buildQueryBytecode(const uint8_t session_id[16],
+                                          const std::vector<uint8_t>& bytecode,
+                                          const std::string& sql,
+                                          const std::vector<std::string>& parameter_values,
+                                          const std::vector<bool>& parameter_nulls,
+                                          uint8_t flags) {
+    Message msg = buildQueryBytecode(session_id, bytecode, sql, flags);
+    if (parameter_values.empty() && parameter_nulls.empty()) {
+        return msg;
+    }
+
+    uint8_t* payload = msg.getPayloadMutable();
+    const size_t flags_offset = 16 + sizeof(uint32_t);
+    payload[flags_offset] = static_cast<uint8_t>(
+        payload[flags_offset] | static_cast<uint8_t>(QueryFlags::BYTECODE_HAS_PARAMS));
+    const size_t count = std::max(parameter_values.size(), parameter_nulls.size());
+    msg.writeUInt16(static_cast<uint16_t>(count));
+    msg.writeUInt16(0);
+    for (size_t i = 0; i < count; ++i) {
+        const bool is_null = i < parameter_nulls.size() && parameter_nulls[i];
+        if (is_null) {
+            msg.writeUInt32(0xFFFFFFFFu);
+            continue;
+        }
+        const std::string& value =
+            i < parameter_values.size() ? parameter_values[i] : std::string();
+        msg.writeUInt32(static_cast<uint32_t>(value.size()));
+        if (!value.empty()) {
+            msg.writeString(value);
+        }
+    }
     return msg;
 }
 
@@ -2505,6 +2630,41 @@ ProtocolSession::ProtocolSession(scratchbird::server::IPCConnection* connection)
 
 ProtocolSession::~ProtocolSession() = default;
 
+namespace {
+constexpr size_t kProtocolSessionRowBatchBytes = 256 * 1024;
+
+bool isBufferedProtocolMessage(MessageType type) {
+    switch (type) {
+        case MessageType::ROW_DATA:
+        case MessageType::STREAM_DATA:
+            return true;
+        default:
+            return false;
+    }
+}
+} // namespace
+
+core::Status ProtocolSession::flushSendBufferLocked(core::ErrorContext* ctx) {
+    if (send_buffer_.empty()) {
+        return core::Status::OK;
+    }
+    if (!connection_ || !connection_->isOpen()) {
+        SET_ERROR_CONTEXT(ctx, core::Status::CONNECTION_FAILURE,
+                          "Connection is closed");
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    auto status = connection_->writeExact(send_buffer_.data(), send_buffer_.size(), ctx);
+    if (status == core::Status::OK) {
+        messages_sent_ += pending_messages_;
+        bytes_sent_ += pending_bytes_;
+        send_buffer_.clear();
+        pending_messages_ = 0;
+        pending_bytes_ = 0;
+    }
+    return status;
+}
+
 core::Status ProtocolSession::sendMessage(const Message& msg, core::ErrorContext* ctx) {
     std::lock_guard<std::mutex> lock(send_mutex_);
     if (!connection_ || !connection_->isOpen()) {
@@ -2519,16 +2679,53 @@ core::Status ProtocolSession::sendMessage(const Message& msg, core::ErrorContext
         return status;
     }
 
-    status = connection_->writeExact(buffer.data(), buffer.size(), ctx);
-    if (status == core::Status::OK) {
-        messages_sent_++;
-        bytes_sent_ += buffer.size();
+    const bool buffered_message = isBufferedProtocolMessage(msg.getType());
+    if (!buffered_message) {
+        if (!send_buffer_.empty()) {
+            status = flushSendBufferLocked(ctx);
+            if (status != core::Status::OK) {
+                return status;
+            }
+        }
+        status = connection_->writeExact(buffer.data(), buffer.size(), ctx);
+        if (status == core::Status::OK) {
+            messages_sent_++;
+            bytes_sent_ += buffer.size();
+        }
+        return status;
     }
 
-    return status;
+    if (!send_buffer_.empty() &&
+        send_buffer_.size() + buffer.size() > kProtocolSessionRowBatchBytes) {
+        status = flushSendBufferLocked(ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+    }
+
+    if (buffer.size() >= kProtocolSessionRowBatchBytes) {
+        status = connection_->writeExact(buffer.data(), buffer.size(), ctx);
+        if (status == core::Status::OK) {
+            messages_sent_++;
+            bytes_sent_ += buffer.size();
+        }
+        return status;
+    }
+
+    send_buffer_.insert(send_buffer_.end(), buffer.begin(), buffer.end());
+    ++pending_messages_;
+    pending_bytes_ += buffer.size();
+    return core::Status::OK;
 }
 
 core::Status ProtocolSession::receiveMessage(Message& msg, core::ErrorContext* ctx) {
+    {
+        std::lock_guard<std::mutex> lock(send_mutex_);
+        auto flush_status = flushSendBufferLocked(ctx);
+        if (flush_status != core::Status::OK) {
+            return flush_status;
+        }
+    }
     if (!connection_ || !connection_->isOpen()) {
         SET_ERROR_CONTEXT(ctx, core::Status::CONNECTION_FAILURE,
                           "Connection is closed");

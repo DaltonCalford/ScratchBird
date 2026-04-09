@@ -1,0 +1,28 @@
+{
+  "ticket_id": "IMP-27",
+  "section": "27_Native_Handshake",
+  "wave": "W3",
+  "status": "done",
+  "started_at_utc": "2026-02-12T00:51:57Z",
+  "completed_at_utc": "2026-02-12T00:51:57Z",
+  "gate_contract": "docs/specifications/27_Native_Handshake/TEST_CONTRACT.md",
+  "artifacts": [
+    "IMPLEMENTATION_CHECKLIST.md",
+    "IMPLEMENTATION_NOTES.md",
+    "HANDSHAKE_TRANSCRIPT_MATRIX.csv",
+    "AUTH_NEGOTIATION_MATRIX.csv",
+    "IDENTITY_STACK_INTEGRITY_MATRIX.csv",
+    "REGISTRY_VISIBILITY_MATRIX.csv",
+    "FAILURE_MATRIX_CONFORMANCE.csv",
+    "NEGATIVE_HANDSHAKE_MATRIX.csv",
+    "FABRIC_CHANNEL_PROFILE_MATRIX.csv",
+    "TEST_RESULTS.md",
+    "CHECKSUMS.sha256",
+    "RUN_MANIFEST.json",
+    "SPEC_TRACEABILITY.csv",
+    "TEST_EVIDENCE_INDEX.md",
+    "GATE_RESULT.json",
+    "CHANGESET_LOG.md"
+  ],
+  "mode": "specification_contract_validation"
+}

@@ -1,0 +1,18 @@
+{
+  "gate_id": "DTYPE-GATE-06",
+  "status": "pass",
+  "updated_at": "2026-02-13T23:22:49Z",
+  "criteria": {
+    "datatype_toast_routing_contract": "pass",
+    "legacy_toast_semantics_removed": "pass",
+    "toast_lob_walker_diagnostics": "pass",
+    "datatype_regression_suite_pass": "pass"
+  },
+  "blocking_items": [],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-021/DATATYPE_TOAST_ROUTING_AUDIT.csv",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-022/TOAST_LEGACY_SEMANTICS_REMOVAL_AUDIT.csv",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-023/TOAST_LOB_WALKER_RESULTS.md",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-024/DATATYPE_FULL_REGRESSION_REPORT.md"
+  ]
+}

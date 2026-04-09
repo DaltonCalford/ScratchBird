@@ -1,0 +1,6 @@
+case_id,engine,index_feature,required_check,expected_result,error_code
+T18-ES-001,MONGODB,2d_and_2dsphere,coverage_and_post_filter_correctness,pass,
+T18-ES-002,MONGODB,wildcard_and_encrypted_range,path_extraction_and_range_post_filter_correctness,pass,
+T18-ES-003,NEO4J,lookup_text_range_point_vector,bitmap_intersection_and_curve_encoding_correctness,pass,
+T18-ES-004,CASSANDRA,sasi_sai,segment_pruning_and_merge_correctness,pass,
+T18-ES-005,REDIS,set_hash_zset_ttl,semantics_and_ttl_policy_correctness,pass,

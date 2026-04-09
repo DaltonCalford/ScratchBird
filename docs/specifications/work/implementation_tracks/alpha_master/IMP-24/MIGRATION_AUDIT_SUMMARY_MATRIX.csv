@@ -1,0 +1,5 @@
+case_id,view_name,input_state,expected_projection
+T24-MS-001,sys.migration_status,open_errors_present,open_error_count_matches_migration_error_is_open_true
+T24-MS-002,sys.migration_status,no_open_errors,open_error_count_zero
+T24-MS-003,sys.migration_audit_summary,apply_and_read_audit_rows_present,counts_and_mismatch_rate_deterministic
+T24-MS-004,sys.migration_audit_summary,no_audit_rows,counts_zero_rate_zero

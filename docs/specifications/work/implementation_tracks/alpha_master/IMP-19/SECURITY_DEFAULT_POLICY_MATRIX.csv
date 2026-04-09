@@ -1,0 +1,6 @@
+case_id,policy_area,scenario,expected_result,error_code
+T19-DEF-01,deny_by_default,no_grant_path_exists,deny,E_PERMISSION_DENIED
+T19-DEF-02,row_level_default,owner_or_explicit_grantee,allow,
+T19-DEF-03,row_level_default,non_grantee,deny,E_PERMISSION_DENIED
+T19-DEF-04,column_level_default,column_not_granted,hidden_not_nullfilled,
+T19-DEF-05,masking_order,row_visible_and_mask_policy,masked_before_serialization,

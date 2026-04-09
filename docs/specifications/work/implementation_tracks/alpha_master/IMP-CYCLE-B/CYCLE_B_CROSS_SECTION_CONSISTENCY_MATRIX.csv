@@ -1,0 +1,7 @@
+case_id,consistency_check,left_artifact,right_artifact,expected_result
+CB-CS-001,sblr_feature_shape_consistency,IMP-22/FEATURE_OPCODE_MAPPING_COMPLETENESS_MATRIX.csv,IMP-26/EXECUTION_TRANSPORT_MATRIX.csv,pass
+CB-CS-002,normalization_rule_enforcement_consistency,IMP-22/PAYLOAD_SCHEMA_VALIDATION_MATRIX.csv,IMP-23/LOAD_VERIFY_BIND_MATRIX.csv,pass
+CB-CS-003,wire_handshake_profile_consistency,IMP-26/CLUSTER_FABRIC_CHANNEL_MATRIX.csv,IMP-27/FABRIC_CHANNEL_PROFILE_MATRIX.csv,pass
+CB-CS-004,parser_wire_contract_consistency,IMP-28/WIRE_IPC_CONTRACT_MATRIX.csv,IMP-26/MESSAGE_CATALOG_SCHEMA_MATRIX.csv,pass
+CB-CS-005,runtime_parser_listener_boundary_consistency,IMP-25/LAYERED_STACK_GATE_MATRIX.csv,IMP-29/PROCESS_BOUNDARY_MATRIX.csv,pass
+CB-CS-006,parser_bootstrap_no_open_database_consistency,IMP-28/EMULATED_BOOTSTRAP_T_MATRIX.csv,IMP-29/PROCESS_BOUNDARY_MATRIX.csv,pass

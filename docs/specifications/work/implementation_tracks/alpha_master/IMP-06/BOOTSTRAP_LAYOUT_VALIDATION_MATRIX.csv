@@ -1,0 +1,11 @@
+case_id,page,layout_rule,expected_result,error_code
+BLV-001,page0,DatabaseHeader mandatory fields present and trailing zero-fill,accept,NONE
+BLV-002,page1,SystemState fields present and reserved ranges valid,accept,NONE
+BLV-003,page2,CatalogRootHeader valid and required table entries present,accept,NONE
+BLV-004,page3,FsmRootHeader and FsmRootEntry list valid,accept,NONE
+BLV-005,page4,TxMapRoot fields valid and pointer/count coherent,accept,NONE
+BLV-006,page5,Reserved bootstrap page zeroed or reserved-compatible,accept,NONE
+BLV-007,page0,page_size inconsistent with config,reject,INVALID_PAGE_SIZE
+BLV-008,page2,duplicate catalog root entry object_uuid,reject,CATALOG_BOOTSTRAP_FAILED
+BLV-009,page3,filespace_id duplicate with conflicting root pointer,reject,INVALID_PAGE_LAYOUT
+BLV-010,page4,next_txid less than latest_completed_txid,reject,INVALID_PAGE_LAYOUT

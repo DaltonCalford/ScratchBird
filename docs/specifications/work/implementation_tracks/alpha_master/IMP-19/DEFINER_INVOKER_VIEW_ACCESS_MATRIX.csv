@@ -1,0 +1,6 @@
+case_id,routine_or_view,security_mode,caller_has_base_priv,owner_has_base_priv,expected_result,error_code
+T19-DI-001,view_v_orders,definer,false,true,allow,
+T19-DI-002,view_v_orders,invoker,false,true,deny,E_PERMISSION_DENIED
+T19-DI-003,procedure_p_maint,definer,false,true,allow,
+T19-DI-004,procedure_p_maint,invoker,false,true,deny,E_PERMISSION_DENIED
+T19-DI-005,function_f_masked,definer,true,true,allow,

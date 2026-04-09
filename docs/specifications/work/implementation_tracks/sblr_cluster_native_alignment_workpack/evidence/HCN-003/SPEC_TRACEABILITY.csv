@@ -1,0 +1,5 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+LICENSE_COMPATIBILITY_LLVM_IDPL_REVIEW_2026-02-23.md,HCN-003-LICENSE-MATRIX,License obligations translated to packaging matrix,LICENSE_NOTICE_MATRIX.csv,done,LLVM and IDPL sources explicitly mapped
+LICENSE_COMPATIBILITY_LLVM_IDPL_REVIEW_2026-02-23.md,HCN-003-NOTICES,Third-party notice bundle prepared,THIRD_PARTY_NOTICE_BUNDLE.txt,done,Release artifact content captured
+ORDERED_TASK_TICKETS.csv,HCN-003-EXIT,Ticket-specific compliance artifacts completed,RELEASE_COMPLIANCE_CHECKLIST.md,done,Exit criteria satisfied with explicit follow-up blockers
+GATE_EVIDENCE_MATRIX.csv,HCN-GATE-00-LICENSE,Gate license matrix synchronized,../gates/HCN-GATE-00/LICENSE_NOTICE_MATRIX.csv,done,Gate input prepared for PH0 closure

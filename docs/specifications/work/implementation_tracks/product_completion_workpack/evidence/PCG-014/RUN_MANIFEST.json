@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-014",
+  "phase": "PH1",
+  "title": "Deliver backup restore SQL API and operator runbooks",
+  "status": "pending",
+  "owner": "sre-observability",
+  "estimate_days": 5,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

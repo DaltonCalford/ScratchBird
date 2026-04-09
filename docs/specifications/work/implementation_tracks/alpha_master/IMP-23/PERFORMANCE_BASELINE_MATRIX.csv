@@ -1,0 +1,4 @@
+case_id,suite,required_check,expected_result,error_code
+T23-H01,H,vm_throughput_baseline_target,pass,
+T23-H02,H,native_artifact_speedup_vs_vm_baseline,pass,
+T23-H03,H,cache_hit_rate_and_latency_targets,pass,

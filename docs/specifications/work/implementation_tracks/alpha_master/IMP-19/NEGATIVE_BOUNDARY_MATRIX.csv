@@ -1,0 +1,6 @@
+case_id,scenario,input,expected_result,error_code
+T19-NG-001,min_password_length,password_too_short,rejected,E_PASSWORD_POLICY
+T19-NG-002,malformed_certificate,invalid_x509,rejected,E_CERT_PARSE_FAILED
+T19-NG-003,null_identity,missing_user_identifier,rejected,E_AUTH_INPUT_INVALID
+T19-NG-004,permission_denied_on_admin_call,non_admin_executes_security_ddl,rejected,E_PERMISSION_DENIED
+T19-NG-005,resource_exhaustion_auth_cache,auth_cache_full,rejected,E_RESOURCE_EXHAUSTED

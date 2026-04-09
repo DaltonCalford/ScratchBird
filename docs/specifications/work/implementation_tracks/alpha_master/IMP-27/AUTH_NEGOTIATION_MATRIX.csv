@@ -1,0 +1,5 @@
+case_id,suite,required_check,expected_result,error_code
+T27-B01,B,method_negotiation_selection_deterministic,pass,
+T27-B02,B,alpha_auth_methods_validated,pass,
+T27-B03,B,mfa_challenge_response_flow_validated,pass,
+T27-B04,B,policy_denied_routes_sources_rejected,reject,HS-AUTH-POLICY

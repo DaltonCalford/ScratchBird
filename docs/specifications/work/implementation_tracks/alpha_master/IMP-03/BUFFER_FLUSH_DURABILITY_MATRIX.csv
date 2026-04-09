@@ -1,0 +1,9 @@
+case_id,phase,required_order,expected_result,error_code
+BUF-DUR-001,commit,flush_dirty_pages_before_fsync,success,NONE
+BUF-DUR-002,commit,fsync_before_txn_map_commit_state,success,NONE
+BUF-DUR-003,commit,txn_map_written_after_data_pages,success,NONE
+BUF-DUR-004,commit,flush_failure,fail,FLUSH_FAILED
+BUF-DUR-005,commit,fsync_failure,fail,FSYNC_FAILED
+BUF-DUR-006,rollback,mark_aborted_then_flush_txn_map,success,NONE
+BUF-DUR-007,group_commit,batch_flush_before_any_commit_mark,success,NONE
+BUF-DUR-008,checkpoint,full_dirty_flush_then_clean_shutdown_flag,success,NONE

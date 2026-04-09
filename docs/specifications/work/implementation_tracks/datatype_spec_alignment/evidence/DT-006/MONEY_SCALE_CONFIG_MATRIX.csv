@@ -1,0 +1,3 @@
+config_key,default,override_supported,status
+types.money_default_scale,4,yes,PASS
+types.money_default_scale clamp,0..9,yes,PASS

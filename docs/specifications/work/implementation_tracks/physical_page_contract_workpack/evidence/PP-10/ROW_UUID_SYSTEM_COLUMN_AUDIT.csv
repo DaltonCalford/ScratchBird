@@ -1,0 +1,7 @@
+area,requirement,implementation_status,notes
+row_uuid,assigned on insert and non-zero,pass,insert path normalizes row_uuid via canonical record contract
+row_uuid,preserved through update chain,pass,update path computes stable_row_uuid and applies to new/back versions
+row_uuid,preserved through overwrite/cross-page update,pass,overwrite path computes stable_row_uuid and reapplies after relocation
+system_column_row_uuid,extractor returns row_uuid without dialect inference,pass,HeapPage::extractSystemColumns copies header row_uuid
+system_column_last_edit_txid_live,live tuple returns create_txid,pass,TupleHeader::getLastEditTxidSystem returns xmin when not tombstone
+system_column_last_edit_txid_tombstone,tombstone returns delete_txid,pass,TupleHeader::getLastEditTxidSystem returns xmax when RHD_DELETED and xmax != 0

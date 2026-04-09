@@ -1,0 +1,9 @@
+{
+  "gate_id": "PCG-GATE-00",
+  "phase": "PH0",
+  "status": "pending",
+  "started_utc": "",
+  "completed_utc": "",
+  "blocking_tickets": ["PCG-001", "PCG-002", "PCG-003"],
+  "notes": "Template scaffold."
+}

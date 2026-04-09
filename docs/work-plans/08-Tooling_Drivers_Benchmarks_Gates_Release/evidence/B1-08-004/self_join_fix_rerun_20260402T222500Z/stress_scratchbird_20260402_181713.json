@@ -1,0 +1,60 @@
+{
+  "metadata": {
+    "engine": "scratchbird",
+    "dialect": "scratchbird",
+    "host": "127.0.0.1",
+    "port": 17092,
+    "database": "main",
+    "timestamp": "20260402_181713"
+  },
+  "data_loading": [
+    {
+      "table_name": "customers",
+      "row_count": 10000,
+      "duration_ms": 7092.801570892334,
+      "rows_per_second": 1409.8801298824317,
+      "status": "success"
+    },
+    {
+      "table_name": "products",
+      "row_count": 5000,
+      "duration_ms": 3802.532434463501,
+      "rows_per_second": 1314.9131759359864,
+      "status": "success"
+    },
+    {
+      "table_name": "orders",
+      "row_count": 50000,
+      "duration_ms": 45376.383781433105,
+      "rows_per_second": 1101.8947706550994,
+      "status": "success"
+    },
+    {
+      "table_name": "order_items",
+      "row_count": 200000,
+      "duration_ms": 321990.6132221222,
+      "rows_per_second": 621.1361194620661,
+      "status": "success"
+    }
+  ],
+  "test_results": [
+    {
+      "test_name": "self_join_same_country",
+      "description": "SELF JOIN to find customer pairs in same country",
+      "status": "passed",
+      "duration_ms": 276232.515335083,
+      "rows_returned": 10000,
+      "rows_affected": 0,
+      "verification_passed": true,
+      "error_message": "",
+      "sql_executed": "\n                SELECT \n                    c1.customer_id as customer1_id, \n                    c1.first_name as customer1_name,\n                    c2.customer_id as customer2_id,\n                 "
+    }
+  ],
+  "summary": {
+    "total_tests": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "total_duration_ms": 276232.515335083
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-055",
+  "phase": "PH5",
+  "title": "Finalize operational runbooks and on call protocol pack",
+  "status": "pending",
+  "owner": "sre-observability",
+  "estimate_days": 4,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

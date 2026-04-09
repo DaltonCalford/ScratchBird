@@ -1,0 +1,16 @@
+{
+  "ticket_id": "DT-009",
+  "status": "completed",
+  "started_at": "2026-02-13T23:21:41Z",
+  "completed_at": "2026-02-13T23:21:41Z",
+  "spec_inputs": [
+    "docs/planning/DATATYPE_SPEC_ALIGNMENT_WORKPACK.md"
+  ],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-009/SPEC_TRACEABILITY.csv",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-009/TEST_RESULTS.md",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-009/IMPLEMENTATION_NOTES.md",
+    "docs/specifications/work/implementation_tracks/datatype_spec_alignment/evidence/DT-009/CHECKSUMS.sha256"
+  ],
+  "notes": "Ticket completed and captured in canonical datatype alignment evidence set."
+}

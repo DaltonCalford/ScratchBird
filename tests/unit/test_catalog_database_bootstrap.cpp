@@ -501,6 +501,7 @@ TEST(CatalogDatabaseBootstrapTest, CreatesCanonicalFixedSchemaTree)
         "sys.information",
         "sys.security",
         "sys.system",
+        "sys.config",
         "sys.schema",
         "sys.cluster",
         "sys.connections",
@@ -546,11 +547,18 @@ TEST(CatalogDatabaseBootstrapTest, CreatesCanonicalFixedSchemaTree)
             << " err=" << ctx.message;
     }
 
+    EXPECT_NE(catalog->configKeyTablePage(), 0u);
+    EXPECT_NE(catalog->configValueTablePage(), 0u);
+    EXPECT_NE(catalog->configChangeLogTablePage(), 0u);
+    EXPECT_NE(catalog->listenerProfileTablePage(), 0u);
+    EXPECT_NE(catalog->listenerBindingTablePage(), 0u);
+    EXPECT_NE(catalog->parserPoolPolicyTablePage(), 0u);
+
     CatalogManager::SchemaInfo legacy;
     EXPECT_EQ(catalog->getSchema("root", legacy, &ctx), Status::INVALID_ARGUMENT);
     EXPECT_EQ(catalog->getSchema("root.app", legacy, &ctx), Status::INVALID_ARGUMENT);
     EXPECT_EQ(catalog->getSchema("root.sys.sec", legacy, &ctx), Status::INVALID_ARGUMENT);
-    EXPECT_EQ(catalog->getSchema("root.sys.config", legacy, &ctx), Status::INVALID_ARGUMENT);
+    EXPECT_EQ(catalog->getSchema("root.sys.config", legacy, &ctx), Status::OK);
     EXPECT_EQ(catalog->getSchema("root.sys.monitor", legacy, &ctx), Status::INVALID_ARGUMENT);
     EXPECT_EQ(catalog->getSchema("root.remote.emulation.mssql", legacy, &ctx), Status::INVALID_ARGUMENT);
 
@@ -1556,6 +1564,7 @@ TEST(CatalogDatabaseBootstrapTest, CreatesIndexMetadataExtensionCatalogFamilyPag
     uint32_t index_maintenance_page_id = 0;
     uint32_t index_maintenance_deltas_page_id = 0;
     uint32_t index_build_deltas_page_id = 0;
+    uint32_t index_page_deltas_page_id = 0;
 
     {
         Database db;
@@ -1571,6 +1580,7 @@ TEST(CatalogDatabaseBootstrapTest, CreatesIndexMetadataExtensionCatalogFamilyPag
         index_maintenance_page_id = catalog->indexMaintenanceTablePage();
         index_maintenance_deltas_page_id = catalog->indexMaintenanceDeltasTablePage();
         index_build_deltas_page_id = catalog->indexBuildDeltasTablePage();
+        index_page_deltas_page_id = catalog->indexPageDeltasTablePage();
 
         ASSERT_NE(index_columns_page_id, 0u);
         ASSERT_NE(index_opclass_page_id, 0u);
@@ -1580,6 +1590,7 @@ TEST(CatalogDatabaseBootstrapTest, CreatesIndexMetadataExtensionCatalogFamilyPag
         ASSERT_NE(index_maintenance_page_id, 0u);
         ASSERT_NE(index_maintenance_deltas_page_id, 0u);
         ASSERT_NE(index_build_deltas_page_id, 0u);
+        ASSERT_NE(index_page_deltas_page_id, 0u);
 
         ASSERT_EQ(assertHeapCatalogPage(db, index_columns_page_id, &ctx), Status::OK) << ctx.message;
         ASSERT_EQ(assertHeapCatalogPage(db, index_opclass_page_id, &ctx), Status::OK) << ctx.message;
@@ -1592,6 +1603,8 @@ TEST(CatalogDatabaseBootstrapTest, CreatesIndexMetadataExtensionCatalogFamilyPag
         ASSERT_EQ(assertHeapCatalogPage(db, index_maintenance_deltas_page_id, &ctx), Status::OK)
             << ctx.message;
         ASSERT_EQ(assertHeapCatalogPage(db, index_build_deltas_page_id, &ctx), Status::OK)
+            << ctx.message;
+        ASSERT_EQ(assertHeapCatalogPage(db, index_page_deltas_page_id, &ctx), Status::OK)
             << ctx.message;
 
         ASSERT_EQ(db.sync(&ctx), Status::OK) << ctx.message;
@@ -1612,6 +1625,7 @@ TEST(CatalogDatabaseBootstrapTest, CreatesIndexMetadataExtensionCatalogFamilyPag
         EXPECT_EQ(catalog->indexMaintenanceTablePage(), index_maintenance_page_id);
         EXPECT_EQ(catalog->indexMaintenanceDeltasTablePage(), index_maintenance_deltas_page_id);
         EXPECT_EQ(catalog->indexBuildDeltasTablePage(), index_build_deltas_page_id);
+        EXPECT_EQ(catalog->indexPageDeltasTablePage(), index_page_deltas_page_id);
 
         ASSERT_EQ(assertHeapCatalogPage(db, catalog->indexColumnsTablePage(), &ctx), Status::OK)
             << ctx.message;
@@ -1628,6 +1642,8 @@ TEST(CatalogDatabaseBootstrapTest, CreatesIndexMetadataExtensionCatalogFamilyPag
         ASSERT_EQ(assertHeapCatalogPage(db, catalog->indexMaintenanceDeltasTablePage(), &ctx), Status::OK)
             << ctx.message;
         ASSERT_EQ(assertHeapCatalogPage(db, catalog->indexBuildDeltasTablePage(), &ctx), Status::OK)
+            << ctx.message;
+        ASSERT_EQ(assertHeapCatalogPage(db, catalog->indexPageDeltasTablePage(), &ctx), Status::OK)
             << ctx.message;
 
         db.close();

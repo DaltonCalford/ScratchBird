@@ -1,0 +1,4 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+SB-CLUSTER-SWS-MGA-01.md,node_membership_workflow,"include/scratchbird/core/catalog_manager.h;src/core/catalog_manager.cpp","NODE_MEMBERSHIP_AUDIT.csv",pass,"Node lifecycle and uniqueness constraints covered by contract tests"
+SB-CLUSTER-SWS-MGA-01.md,shard_metadata_workflow,"tests/unit/test_catalog_sharding_extension_contract.cpp","SHARD_METADATA_VALIDATION.csv",pass,"Shard policy/key/range/replica/migration/zone paths validated"
+SB-CLUSTER-SWS-MGA-01.md,deterministic_join_rejoin,"tests/unit/test_catalog_sharding_extension_contract.cpp;tests/unit/test_catalog_routing_admission_extension_contract.cpp","JOIN_REJOIN_FLOW.md",pass,"Deterministic metadata update/retrieval/delete lifecycle verified"

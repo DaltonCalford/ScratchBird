@@ -1,0 +1,8 @@
+ticket,depends_on,rationale
+B1P-002,B1P-001,ownership cannot be normalized before Beta 1 and Beta 2 or Beta 3 boundaries are frozen
+B1P-003,B1P-002,sequence order depends on the normalized ownership map
+B1P-004,B1P-003,downstream work-plans 01 through 04 require frozen numbering and dependency order
+B1P-005,B1P-003,downstream work-plans 05 through 08 require frozen numbering and dependency order
+B1P-005,B1P-004,later downstream plans should consume the earlier lane definitions and avoid numbering or split-rule drift
+B1P-006,B1P-004,final handoff cannot occur until the early downstream plans exist
+B1P-006,B1P-005,final handoff cannot occur until the full downstream set exists

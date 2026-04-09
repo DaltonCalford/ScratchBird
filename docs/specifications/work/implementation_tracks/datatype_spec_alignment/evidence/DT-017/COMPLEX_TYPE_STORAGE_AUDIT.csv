@@ -1,0 +1,5 @@
+type,storage_path,status
+LIST,typed_value/type_serialization,PASS
+MAP,typed_value/type_serialization,PASS
+BSON,typed_value/type_serialization,PASS
+ARRAY(COMPOSITE),typed_value/type_serialization,PASS

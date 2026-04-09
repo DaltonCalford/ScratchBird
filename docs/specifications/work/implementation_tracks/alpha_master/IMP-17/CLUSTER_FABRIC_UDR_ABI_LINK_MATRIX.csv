@@ -1,0 +1,6 @@
+case_id,check,expected_rule,expected_result,error_code
+T17-FA-001,abi_symbols,all_15_fabric_symbols_present,pass,
+T17-FA-002,link_transitions,REGISTERED_to_AUTHENTICATED_to_READY,pass,
+T17-FA-003,forbidden_transition,REGISTERED_to_READY,reject,E_FABRIC_LINK_STATE_INVALID
+T17-FA-004,degraded_pause_disable,policy_driven_transitions,pass,
+T17-FA-005,disabled_to_ready_without_auth,forbidden,reject,E_FABRIC_AUTH_REQUIRED

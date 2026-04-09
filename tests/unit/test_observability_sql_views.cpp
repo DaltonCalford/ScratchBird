@@ -19,6 +19,7 @@
 #include <gtest/gtest.h>
 
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/btree.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
@@ -31,6 +32,35 @@
 namespace scratchbird::core
 {
 
+    namespace
+    {
+        auto encodeSortableUint64(uint64_t value) -> std::vector<uint8_t>
+        {
+            std::vector<uint8_t> key(sizeof(uint64_t), 0);
+            for (size_t i = 0; i < sizeof(uint64_t); ++i)
+            {
+                const size_t shift = (sizeof(uint64_t) - 1 - i) * 8;
+                key[i] = static_cast<uint8_t>((value >> shift) & 0xFFu);
+            }
+            return key;
+        }
+
+        auto makeWideMonotonicKey(uint64_t value) -> std::vector<uint8_t>
+        {
+            std::vector<uint8_t> key(64, 0);
+            const std::vector<uint8_t> prefix = encodeSortableUint64(value);
+            std::copy(prefix.begin(), prefix.end(), key.begin());
+
+            for (size_t i = prefix.size(); i < key.size(); ++i)
+            {
+                const uint8_t lane = static_cast<uint8_t>((value + (i * 17u)) & 0xFFu);
+                key[i] = lane;
+            }
+
+            return key;
+        }
+    } // namespace
+
     class MgaObservabilityLiveViewsTest : public ::testing::Test
     {
     protected:
@@ -40,6 +70,7 @@ namespace scratchbird::core
         std::unique_ptr<ConnectionContext> conn_;
         ID schema_id_{};
         ID table_id_{};
+        ID index_id_{};
 
         void SetUp() override
         {
@@ -67,6 +98,16 @@ namespace scratchbird::core
             col.nullable = false;
             std::vector<CatalogManager::ColumnInfo> cols{col};
             ASSERT_EQ(catalog_->createTable(schema_id_, "orders", cols, table_id_, 0, &ctx), Status::OK)
+                << ctx.message;
+            ASSERT_EQ(catalog_->createIndex(table_id_,
+                                            "idx_orders_id",
+                                            std::vector<std::string>{"id"},
+                                            index_id_,
+                                            false,
+                                            CatalogManager::IndexType::BTREE,
+                                            0,
+                                            &ctx),
+                      Status::OK)
                 << ctx.message;
         }
 
@@ -501,6 +542,19 @@ namespace scratchbird::core
         advisory.rewrite_recommended = true;
         db_->storage_engine()->publishFragmentationAdvisory(table_id_, advisory.page_id, advisory);
 
+        IndexCleanupPublicationRecord publication{};
+        publication.table_id = table_id_;
+        publication.index_id = index_id_;
+        publication.index_name = "idx_orders_exact";
+        publication.page_id = 12;
+        publication.locality_page_id = 12;
+        publication.family = IndexCleanupFamily::EXACT;
+        publication.state = IndexCleanupPublicationState::DEBT_PUBLISHED;
+        publication.backlog_count = 2;
+        publication.backlog_pages = 2;
+        publication.backlog_bytes = 128;
+        db_->storage_engine()->publishIndexCleanupPublication(publication);
+
         std::vector<SqlMgaActiveTransactionRow> active_rows;
         ASSERT_EQ(SqlObservabilityViewBuilder::buildMgaActiveTransactionRows(
                       *db_, now_us / 1000, active_rows),
@@ -533,7 +587,10 @@ namespace scratchbird::core
                   Status::OK);
         ASSERT_EQ(cleanup_rows.size(), 1u);
         EXPECT_EQ(cleanup_rows[0].relation_name, "orders");
-        EXPECT_EQ(cleanup_rows[0].cleanup_debt_bytes, 512u);
+        EXPECT_EQ(cleanup_rows[0].cleanup_debt_bytes, 640u);
+        EXPECT_EQ(cleanup_rows[0].retained_dead_bytes, 512u);
+        EXPECT_EQ(cleanup_rows[0].index_backlog_pages, 2u);
+        EXPECT_EQ(cleanup_rows[0].index_backlog_bytes, 128u);
         EXPECT_TRUE(cleanup_rows[0].rewrite_recommended);
 
         std::vector<SqlMgaWaitHistoryRow> wait_rows;
@@ -600,6 +657,159 @@ namespace scratchbird::core
                         "\"relation\":\"orders\"");
         ASSERT_NE(index_backlog_metric, runtime_rows.end());
         EXPECT_DOUBLE_EQ(index_backlog_metric->value, 7.0);
+    }
+
+    TEST_F(MgaObservabilityLiveViewsTest, CleanupPublicationUpdatesDurableIndexHealthLedger)
+    {
+        const uint64_t now_us = nowMicros();
+        ErrorContext ctx;
+
+        IndexCleanupPublicationRecord publication{};
+        publication.table_id = table_id_;
+        publication.index_id = index_id_;
+        publication.index_name = "idx_orders_id";
+        publication.page_id = 21;
+        publication.locality_page_id = 21;
+        publication.family = IndexCleanupFamily::EXACT;
+        publication.state = IndexCleanupPublicationState::DEBT_PUBLISHED;
+        publication.backlog_count = 5;
+        publication.backlog_pages = 3;
+        publication.backlog_bytes = 640;
+        publication.repair_required = true;
+        publication.sweep_generation = 9;
+        publication.checkpoint_generation = 4;
+        publication.published_at_us = now_us;
+        db_->storage_engine()->publishIndexCleanupPublication(publication);
+
+        CatalogManager::IndexHealthCatalogInfo health{};
+        ASSERT_EQ(catalog_->getIndexHealthCatalogEntry(index_id_, health, &ctx), Status::OK)
+            << ctx.message;
+        EXPECT_EQ(health.cleanup_backlog_count, 5u);
+        EXPECT_EQ(health.cleanup_backlog_pages, 3u);
+        EXPECT_EQ(health.cleanup_backlog_bytes, 640u);
+        EXPECT_EQ(health.cleanup_sweep_generation, 9u);
+        EXPECT_EQ(health.cleanup_checkpoint_generation, 4u);
+        EXPECT_EQ(health.cleanup_last_published_time, now_us);
+        EXPECT_TRUE(health.cleanup_repair_required);
+
+        publication.state = IndexCleanupPublicationState::COMPLETE;
+        publication.backlog_count = 0;
+        publication.backlog_pages = 0;
+        publication.backlog_bytes = 0;
+        publication.repair_required = false;
+        publication.sweep_generation = 10;
+        publication.checkpoint_generation = 5;
+        publication.published_at_us = now_us + 100;
+        db_->storage_engine()->publishIndexCleanupPublication(publication);
+
+        ASSERT_EQ(catalog_->getIndexHealthCatalogEntry(index_id_, health, &ctx), Status::OK)
+            << ctx.message;
+        EXPECT_EQ(health.cleanup_backlog_count, 0u);
+        EXPECT_EQ(health.cleanup_backlog_pages, 0u);
+        EXPECT_EQ(health.cleanup_backlog_bytes, 0u);
+        EXPECT_EQ(health.cleanup_sweep_generation, 10u);
+        EXPECT_EQ(health.cleanup_checkpoint_generation, 5u);
+        EXPECT_EQ(health.cleanup_last_published_time, now_us + 100);
+        EXPECT_FALSE(health.cleanup_repair_required);
+    }
+
+    TEST_F(MgaObservabilityLiveViewsTest, BuildsMgaCleanupDebtRowsFromDurableIndexHealthLedger)
+    {
+        const uint64_t observed_at_ms = nowMicros() / 1000;
+        MetricsRegistry registry;
+        ErrorContext ctx;
+
+        CatalogManager::IndexHealthCatalogInfo health{};
+        health.index_id = index_id_;
+        health.light_status = CatalogManager::IndexHealthStatus::HEALTHY;
+        health.diagnostic_status = CatalogManager::IndexHealthStatus::HEALTHY;
+        health.cleanup_backlog_count = 4;
+        health.cleanup_backlog_pages = 2;
+        health.cleanup_backlog_bytes = 256;
+        health.cleanup_sweep_generation = 12;
+        health.cleanup_checkpoint_generation = 7;
+        health.cleanup_last_published_time = nowMicros();
+        health.cleanup_repair_required = true;
+        ASSERT_EQ(catalog_->upsertIndexHealthCatalogEntry(health, &ctx), Status::OK)
+            << ctx.message;
+
+        std::vector<SqlMgaCleanupDebtRow> cleanup_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildMgaCleanupDebtRows(
+                      *db_, registry, observed_at_ms, cleanup_rows),
+                  Status::OK);
+        ASSERT_EQ(cleanup_rows.size(), 1u);
+        EXPECT_EQ(cleanup_rows[0].relation_name, "orders");
+        EXPECT_EQ(cleanup_rows[0].cleanup_debt_bytes, 256u);
+        EXPECT_EQ(cleanup_rows[0].retained_dead_bytes, 0u);
+        EXPECT_EQ(cleanup_rows[0].index_backlog_pages, 2u);
+        EXPECT_EQ(cleanup_rows[0].index_backlog_bytes, 256u);
+        EXPECT_FALSE(cleanup_rows[0].rewrite_recommended);
+    }
+
+    TEST_F(MgaObservabilityLiveViewsTest, BuildsRuntimeRowsFromHotRightmostBtreeCounters)
+    {
+        ErrorContext ctx;
+        CatalogManager::IndexType actual_index_type = CatalogManager::IndexType::BTREE;
+        void* index_ptr = catalog_->getIndexPtr(index_id_, &actual_index_type);
+        if (index_ptr == nullptr)
+        {
+            ASSERT_EQ(catalog_->refreshIndexObject(index_id_, &ctx), Status::OK) << ctx.message;
+            index_ptr = catalog_->getIndexPtr(index_id_, &actual_index_type);
+        }
+
+        ASSERT_NE(index_ptr, nullptr);
+        ASSERT_EQ(actual_index_type, CatalogManager::IndexType::BTREE);
+        auto* btree = static_cast<BTree*>(index_ptr);
+
+        const BTree::HotLeafStats hot_leaf_before = btree->getHotLeafStats();
+        bool presplit_triggered = false;
+        for (uint64_t value = 1; value <= 20000; ++value)
+        {
+            const std::vector<uint8_t> key = makeWideMonotonicKey(value);
+            const TID tid(PRIMARY_TABLESPACE_ID, 990000 + value, 1);
+            ASSERT_EQ(btree->insert(key, tid, 1, &ctx), Status::OK)
+                << "insert failed at value=" << value << ": " << ctx.message;
+
+            const BTree::HotLeafStats hot_leaf_after = btree->getHotLeafStats();
+            if (hot_leaf_after.right_edge_presplits > hot_leaf_before.right_edge_presplits)
+            {
+                presplit_triggered = true;
+                break;
+            }
+        }
+        ASSERT_TRUE(presplit_triggered);
+
+        MetricsRegistry registry;
+        std::vector<SqlRuntimeMetricRow> runtime_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildMgaRuntimeRows(
+                      *db_, registry, nowMicros() / 1000, runtime_rows),
+                  Status::OK);
+
+        auto find_metric = [&runtime_rows](const std::string& metric_name,
+                                           const std::string& relation_fragment)
+            -> std::vector<SqlRuntimeMetricRow>::const_iterator {
+            return std::find_if(
+                runtime_rows.begin(), runtime_rows.end(),
+                [&](const SqlRuntimeMetricRow& row) {
+                    return row.metric_name == metric_name &&
+                           row.labels_json.find(relation_fragment) != std::string::npos;
+                });
+        };
+
+        const auto detections_metric = find_metric(
+            "sb_storage_hot_leaf_detections_total", "\"relation\":\"orders\"");
+        ASSERT_NE(detections_metric, runtime_rows.end());
+        EXPECT_GE(detections_metric->value, 1.0);
+
+        const auto presplits_metric = find_metric(
+            "sb_storage_hot_leaf_presplits_total", "\"relation\":\"orders\"");
+        ASSERT_NE(presplits_metric, runtime_rows.end());
+        EXPECT_GE(presplits_metric->value, 1.0);
+
+        const auto split_retries_metric = find_metric(
+            "sb_storage_hot_leaf_split_retries_total", "\"relation\":\"orders\"");
+        ASSERT_NE(split_retries_metric, runtime_rows.end());
+        EXPECT_GE(split_retries_metric->value, 0.0);
     }
 
     TEST_F(MgaObservabilityLiveViewsTest, BuildsDormantPolicyAndDormantTransactionRows)
@@ -738,6 +948,8 @@ namespace scratchbird::core
         sweep.reclaimed_version_count = 12;
         sweep.reclaimed_bytes = 2048;
         sweep.index_backlog_count = 6;
+        sweep.index_backlog_pages = 4;
+        sweep.index_backlog_bytes = 8192;
         sweep.cursor_crc32c = 0x1234u;
         ASSERT_EQ(catalog_->appendSweepCursorStateCatalogEntry(sweep, nullptr), Status::OK);
 
@@ -813,6 +1025,9 @@ namespace scratchbird::core
         ASSERT_EQ(sweep_rows.size(), 1u);
         EXPECT_EQ(sweep_rows.front().sweep_generation, 13u);
         EXPECT_EQ(sweep_rows.front().relation_uuid, table_id_.toString());
+        EXPECT_EQ(sweep_rows.front().index_backlog_count, 6u);
+        EXPECT_EQ(sweep_rows.front().index_backlog_pages, 4u);
+        EXPECT_EQ(sweep_rows.front().index_backlog_bytes, 8192u);
         EXPECT_EQ(sweep_rows.front().resume_outcome, "rewind_required");
 
         std::vector<SqlRuntimeMetricRow> runtime_rows;

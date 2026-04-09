@@ -1,0 +1,31 @@
+{
+  "ticket_id": "HCN-001",
+  "phase": "PH0",
+  "title": "Freeze spec inputs and proof baseline",
+  "status": "done",
+  "run_started_utc": "2026-02-23T19:00:00Z",
+  "run_completed_utc": "2026-02-24T02:45:00Z",
+  "owner": "codex",
+  "branch": "workspace",
+  "commit": "uncommitted",
+  "inputs": [
+    "docs/specifications/SB-CLUSTER-SWS-MGA-01.md",
+    "docs/specifications/SB-CLUSTER-IMPLEMENTATION-WORKPLAN .md",
+    "docs/specifications/SB-CLUSTER-THREAT-MODEL-AND-FAILURE-ANALYSIS.md",
+    "docs/specifications/SB-OBS-METRICS-MONITORING-01.md",
+    "docs/specifications/23_SBLR_VM_Compiler_and_Executor/NATIVE_COMPILATION_AND_ARTIFACT_LIFECYCLE.md"
+  ],
+  "outputs": [
+    "INPUT_SPEC_LOCK.md",
+    "SPEC_SHA256SUMS.txt",
+    "PROOF_ANCHOR_LEDGER.csv",
+    "SPEC_TRACEABILITY.csv",
+    "RESULT_SUMMARY.md"
+  ],
+  "commands": [
+    "sha256sum <locked-inputs>",
+    "nl -ba <proof-anchor-files> | sed -n '<line-window>p'",
+    "sha256sum <bundle-files> > CHECKSUMS.sha256"
+  ],
+  "notes": "Baseline lock completed; downstream PH0 tickets can execute against frozen inputs."
+}

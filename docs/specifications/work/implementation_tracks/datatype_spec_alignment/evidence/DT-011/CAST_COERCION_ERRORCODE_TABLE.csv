@@ -1,0 +1,3 @@
+rule,deny_error,status
+explicit cast deny,DATATYPE_MISMATCH,PASS
+implicit coercion deny,DATATYPE_MISMATCH,PASS

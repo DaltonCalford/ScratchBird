@@ -1,0 +1,5 @@
+spec_file,section,requirement_id,implementation_artifact,status,notes
+21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,PSQL-CONTROLFLOW-CONTRACT,LD-006/PSQL_CONTROLFLOW_CASES.csv,PASS,Controlflow and exception semantics represented
+21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,PSQL-CURSOR-LIFECYCLE,LD-006/PSQL_CURSOR_STATE_MATRIX.csv,PASS,Cursor lifecycle transitions and invalid states captured
+21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md,21_V3_Dialect_Surface,PSQL-CLAUSE-ORDER-REJECTION,LD-006/PSQL_CONTROLFLOW_CASES.csv,PASS,Declaration-order and parse closure rejections bound to deterministic codes
+21_V3_Dialect_Surface/NATIVE_PSQL_TSQL_LANGUAGE_DEFINITION.md,21_V3_Dialect_Surface,TSQL-ALIAS-GATE,LD-006/PSQL_CONTROLFLOW_CASES.csv,PASS,Alias enabled/disabled acceptance and rejection covered

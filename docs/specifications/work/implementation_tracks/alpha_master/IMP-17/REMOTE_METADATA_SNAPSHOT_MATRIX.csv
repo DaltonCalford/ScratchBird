@@ -1,0 +1,5 @@
+case_id,operation,rule,expected_result,error_code
+T17-RM-001,describe_metadata,persist_header_then_objects_then_columns,snapshot_complete,
+T17-RM-002,snapshot_complete_mutation_attempt,immutable_after_complete,reject,E_REMOTE_SNAPSHOT_IMMUTABLE
+T17-RM-003,snapshot_counts_validation,object_and_column_counts_match_header,pass,
+T17-RM-004,snapshot_hash_replay,reproducible_hash_for_same_source,pass,

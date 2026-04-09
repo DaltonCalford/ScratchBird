@@ -1,0 +1,15 @@
+order,ticket,title,phase,status
+1,PP-10-001,Scope target freeze and benchmark discipline bootstrap,phase_0,active
+2,PP-10-002,Reproducible benchmark runner and binary pinning closure,phase_0,queued
+3,PP-10-003,Ordinary multi-row insert and client-batched VALUES bulk reuse,phase_1_write,active
+4,PP-10-004,INSERT SELECT producer and sink fusion,phase_1_write,active
+5,PP-10-005,Heap multi-insert page reservation and filespace preallocation,phase_1_write,active
+6,PP-10-006,HOT-like update and unchanged-key DML elision,phase_1_write,active
+7,PP-10-007,Exact-secondary maintenance batching and deferred merge,phase_1_write,active
+8,PP-10-008,Prepared-query fast-path bundles plan reuse and result-cache coordination,phase_2_prepare_cache,completed
+9,PP-10-009,Ordered-exact secondary-read locality ICP MRR and index-only,phase_3_secondary_read,completed
+10,PP-10-010,Indexed-join parity with BKA memoize runtime filters and adaptive build-side,phase_3_secondary_read,active
+11,PP-10-011,Structured-key hash spill and low-churn sort closure,phase_4_upper_stage,completed
+12,PP-10-012,Incremental sort aggregate distinct and window specialization vectorization,phase_4_upper_stage,active
+13,PP-10-013,Intra-query parallel execution worker grants and locality binding,phase_5_parallel_locality,active
+14,PP-10-014,Final parity reruns residual waiver review and closeout,phase_6_closeout,queued

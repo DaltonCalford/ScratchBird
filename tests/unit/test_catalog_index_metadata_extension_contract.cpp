@@ -347,6 +347,43 @@ TEST_F(CatalogIndexMetadataExtensionContractTest, OptionAndMaintenanceDeltaContr
                   duplicate_build_delta, duplicate_build_delta_id, &ctx),
               Status::CONSTRAINT_VIOLATION);
 
+    CatalogManager::IndexPageDeltaCatalogInfo invalid_page_delta{};
+    invalid_page_delta.index_id = index_id;
+    invalid_page_delta.created_xid = 3001;
+    ID page_delta_id{};
+    EXPECT_EQ(catalog_->upsertIndexPageDeltaCatalogEntry(invalid_page_delta, page_delta_id, &ctx),
+              Status::INVALID_ARGUMENT);
+
+    CatalogManager::IndexPageDeltaCatalogInfo page_delta{};
+    page_delta.index_id = index_id;
+    page_delta.target_locality_key_id = generateUuidV7();
+    page_delta.logical_row_uuid = generateUuidV7();
+    page_delta.delta_op = CatalogManager::IndexPageDeltaOp::UPDATE_KEY_CHANGE;
+    page_delta.has_old_tid = true;
+    page_delta.old_tid_gpid = 77;
+    page_delta.old_tid_slot = 4;
+    page_delta.has_new_tid = true;
+    page_delta.new_tid_gpid = 88;
+    page_delta.new_tid_slot = 5;
+    page_delta.normalized_key_id = generateUuidV7();
+    page_delta.normalized_old_key_id = generateUuidV7();
+    page_delta.created_xid = 3001;
+    page_delta.merge_state = CatalogManager::IndexPageDeltaMergeState::PENDING;
+    ASSERT_EQ(catalog_->upsertIndexPageDeltaCatalogEntry(page_delta, page_delta_id, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    CatalogManager::IndexPageDeltaCatalogInfo loaded_page_delta{};
+    ASSERT_EQ(catalog_->getIndexPageDeltaCatalogEntry(page_delta_id, loaded_page_delta, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(loaded_page_delta.delta_op, CatalogManager::IndexPageDeltaOp::UPDATE_KEY_CHANGE);
+    EXPECT_EQ(loaded_page_delta.merge_state, CatalogManager::IndexPageDeltaMergeState::PENDING);
+    EXPECT_TRUE(loaded_page_delta.has_old_tid);
+    EXPECT_TRUE(loaded_page_delta.has_new_tid);
+    EXPECT_EQ(loaded_page_delta.old_tid_gpid, 77u);
+    EXPECT_EQ(loaded_page_delta.new_tid_gpid, 88u);
+
     std::vector<CatalogManager::IndexMaintenanceCatalogInfo> maintenance_rows;
     ASSERT_EQ(catalog_->listIndexMaintenanceCatalogEntries(index_id, maintenance_rows, &ctx), Status::OK)
         << ctx.message;
@@ -356,4 +393,16 @@ TEST_F(CatalogIndexMetadataExtensionContractTest, OptionAndMaintenanceDeltaContr
     ASSERT_EQ(catalog_->listIndexBuildDeltaCatalogEntries(index_id, build_rows, &ctx), Status::OK)
         << ctx.message;
     ASSERT_EQ(build_rows.size(), 1u);
+
+    std::vector<CatalogManager::IndexPageDeltaCatalogInfo> page_rows;
+    ASSERT_EQ(catalog_->listIndexPageDeltaCatalogEntries(index_id, page_rows, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(page_rows.size(), 1u);
+
+    ASSERT_EQ(catalog_->deleteIndexPageDeltaCatalogEntry(page_delta_id, &ctx), Status::OK)
+        << ctx.message;
+    page_rows.clear();
+    ASSERT_EQ(catalog_->listIndexPageDeltaCatalogEntries(index_id, page_rows, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(page_rows.empty());
 }

@@ -1,0 +1,5 @@
+scenario,shard_id,local_txn_id,result_reason,rwm_before,rwm_after,test_case
+apply_first_entry,generated-per-test,1,NONE,0,1,FollowerApplyPipelineTest.InOrderApplyUpdatesReplicationWatermark
+apply_second_entry,generated-per-test,2,NONE,1,2,FollowerApplyPipelineTest.InOrderApplyUpdatesReplicationWatermark
+replay_existing_entry,generated-per-test,1,ALREADY_APPLIED,1,1,FollowerApplyPipelineTest.ReplayIsIdempotentAndOrderingIsEnforced
+payload_mismatch_reject,generated-per-test,2,PAYLOAD_MISMATCH,1,1,FollowerApplyPipelineTest.ReplayIsIdempotentAndOrderingIsEnforced

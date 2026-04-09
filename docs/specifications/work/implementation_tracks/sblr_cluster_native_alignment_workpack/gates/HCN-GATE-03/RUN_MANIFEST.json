@@ -1,0 +1,11 @@
+{
+  "gate_id": "HCN-GATE-03",
+  "title": "PH3 Replication and Domain Identity Closure Gate",
+  "phase": "PH3",
+  "owner": "codex",
+  "started_utc": "2026-02-23T00:00:00Z",
+  "completed_utc": "2026-02-26T19:15:29Z",
+  "decision": "pass",
+  "source_commit": "9e789eaad9b8e377f42f96f2ea8fec0193970f40",
+  "notes": "HCN-030..034 complete with durable SCL append, ordered follower apply/RWM, snapshot+CWM publication, GC safe horizon enforcement, and domain join hash validation."
+}

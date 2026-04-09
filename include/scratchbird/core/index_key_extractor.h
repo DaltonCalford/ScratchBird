@@ -10,6 +10,7 @@
 #pragma once
 
 #include "scratchbird/core/status.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/toast.h"
 #include <vector>
@@ -81,6 +82,7 @@ public:
         size_t tuple_size,
         const std::vector<size_t>& column_offsets,
         const std::vector<size_t>& column_sizes,
+        const std::vector<CatalogManager::ColumnInfo>& columns,
         const std::vector<uint16_t>& column_indices,
         ToastManager* toast_mgr,
         uint64_t xid,
@@ -117,6 +119,7 @@ public:
         size_t old_tuple_size,
         const std::vector<size_t>& old_column_offsets,
         const std::vector<size_t>& old_column_sizes,
+        const std::vector<CatalogManager::ColumnInfo>& columns,
         const uint8_t* new_tuple_data,
         size_t new_tuple_size,
         const std::vector<size_t>& new_column_offsets,

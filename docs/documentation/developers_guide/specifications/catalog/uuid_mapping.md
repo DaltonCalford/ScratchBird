@@ -122,7 +122,7 @@ The Zero UUID (`00000000-0000-0000-0000-000000000000`) has special semantics:
 
 ### Database UUID
 
-**Source:** `local_work/docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/UUID_IDENTITY_AND_COLLISION_RULES.md`
+**Source:** `docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/UUID_IDENTITY_AND_COLLISION_RULES.md`
 
 On database creation:
 
@@ -157,7 +157,7 @@ Each catalog table is a normal database object with its own `object_uuid`:
 
 Every row inserted into any table is assigned a `row_uuid`:
 
-**Source:** `local_work/docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/UUID_IDENTITY_AND_COLLISION_RULES.md`
+**Source:** `docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/UUID_IDENTITY_AND_COLLISION_RULES.md`
 
 ```cpp
 // Row UUID is stored in record header
@@ -199,7 +199,7 @@ System domains use fixed UUID values:
 | `SBDB$KEY_TIMEZONE` | `0190...` | Timezone references |
 | `SBDB$KEY_COLLATION` | `0191...` | Collation references |
 
-**Source:** `local_work/docs/specifications/15_Complex_Types/SYSTEM_DOMAIN_UUID_REGISTRY.md`
+**Source:** `docs/specifications/15_Complex_Types/SYSTEM_DOMAIN_UUID_REGISTRY.md`
 
 ### UUID Comparison
 
@@ -330,7 +330,7 @@ Output: Collision status
 
 ### References
 
-- `local_work/docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/UUID_IDENTITY_AND_COLLISION_RULES.md`
+- `docs/specifications/07_Catalog_Bootstrap_and_UUID_Mapping/UUID_IDENTITY_AND_COLLISION_RULES.md`
 - RFC 9562: Universally Unique Identifiers (UUIDs)
 
 ### Changelog

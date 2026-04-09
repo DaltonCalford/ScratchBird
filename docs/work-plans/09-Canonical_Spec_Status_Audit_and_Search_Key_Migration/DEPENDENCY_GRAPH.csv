@@ -1,0 +1,11 @@
+ticket,depends_on,rationale
+SV-09-002,SV-09-001,the full census cannot begin until scope and status vocabulary are frozen
+SV-09-003,SV-09-002,anchor migration depends on the row-complete audit matrix and verified target surfaces
+SV-09-004,SV-09-003,section verification must use the post-migration search-key reference model
+SV-09-005,SV-09-003,section verification must use the post-migration search-key reference model
+SV-09-006,SV-09-003,section verification must use the post-migration search-key reference model
+SV-09-007,SV-09-003,section verification must use the post-migration search-key reference model
+SV-09-008,SV-09-004,final rollups need completed section-a verification
+SV-09-008,SV-09-005,final rollups need completed section-b verification
+SV-09-008,SV-09-006,final rollups need completed section-c verification
+SV-09-008,SV-09-007,final rollups need completed section-d verification

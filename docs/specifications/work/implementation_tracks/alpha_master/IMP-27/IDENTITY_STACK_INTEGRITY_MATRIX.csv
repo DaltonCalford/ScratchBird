@@ -1,0 +1,4 @@
+case_id,suite,required_check,expected_result,error_code
+T27-C01,C,connection_metadata_persisted_immutable,pass,
+T27-C02,C,session_role_group_overrides_policy_validated,pass,
+T27-C03,C,transaction_to_session_to_connection_to_principal_integrity,pass,

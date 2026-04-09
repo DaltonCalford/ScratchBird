@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-011",
+  "phase": "PH1",
+  "title": "Implement full and incremental backup execution service",
+  "status": "pending",
+  "owner": "recovery-platform",
+  "estimate_days": 8,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

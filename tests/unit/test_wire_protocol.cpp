@@ -599,6 +599,47 @@ TEST_F(ProtocolCodecTest, Query) {
     EXPECT_EQ(flags, static_cast<uint8_t>(QueryFlags::WANT_ROWCOUNT));
 }
 
+TEST_F(ProtocolCodecTest, QueryBytecodeCarriesBoundParameters) {
+    std::vector<uint8_t> bytecode = {0x10, 0x20, 0x30, 0x40};
+    std::string sql = "INSERT INTO t VALUES (?, ?)";
+    std::vector<std::string> parameter_values = {"alpha", ""};
+    std::vector<bool> parameter_nulls = {false, true};
+
+    Message msg = ProtocolCodec::buildQueryBytecode(session_id_,
+                                                    bytecode,
+                                                    sql,
+                                                    parameter_values,
+                                                    parameter_nulls,
+                                                    0);
+    EXPECT_EQ(msg.getType(), MessageType::QUERY);
+
+    uint8_t parsed_session_id[16]{};
+    std::string parsed_sql;
+    uint8_t flags = 0;
+    std::vector<uint8_t> parsed_bytecode;
+    std::vector<std::string> parsed_parameter_values;
+    std::vector<bool> parsed_parameter_nulls;
+    ErrorContext ctx;
+
+    Status status = ProtocolCodec::parseQuery(msg,
+                                              parsed_session_id,
+                                              parsed_sql,
+                                              flags,
+                                              &parsed_bytecode,
+                                              &parsed_parameter_values,
+                                              &parsed_parameter_nulls,
+                                              &ctx);
+    EXPECT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(std::memcmp(parsed_session_id, session_id_, sizeof(session_id_)), 0);
+    EXPECT_EQ(parsed_sql, sql);
+    EXPECT_EQ(parsed_bytecode, bytecode);
+    EXPECT_EQ(parsed_parameter_values, parameter_values);
+    EXPECT_EQ(parsed_parameter_nulls, parameter_nulls);
+    EXPECT_NE(flags & static_cast<uint8_t>(QueryFlags::BYTECODE), 0);
+    EXPECT_NE(flags & static_cast<uint8_t>(QueryFlags::BYTECODE_HAS_SQL), 0);
+    EXPECT_NE(flags & static_cast<uint8_t>(QueryFlags::BYTECODE_HAS_PARAMS), 0);
+}
+
 TEST_F(ProtocolCodecTest, QueryError) {
     Message msg = ProtocolCodec::buildQueryError(
         static_cast<uint32_t>(Status::UNDEFINED_TABLE),

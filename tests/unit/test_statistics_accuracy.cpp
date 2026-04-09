@@ -44,6 +44,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <unistd.h>
+#include "scratchbird/core/config.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
@@ -58,6 +59,8 @@ protected:
     void SetUp() override {
         test_db_path_ = uniqueTestDbPath("test_statistics_accuracy");
         std::remove(test_db_path_.c_str());
+        Config::getInstance().clear();
+        Config::getInstance().set("memory", "buffer_pool_size", "32");
 
         ErrorContext ctx;
         Status status = Database::create(test_db_path_.c_str(), 8192, &ctx);
@@ -95,6 +98,7 @@ protected:
         if (db_) {
             db_->close();
         }
+        Config::getInstance().clear();
         if (!HasFailure() && std::getenv("SB_STATS_DEBUG_KEEP") == nullptr) {
             std::remove(stats_log_path_.c_str());
         } else if (!stats_log_path_.empty()) {

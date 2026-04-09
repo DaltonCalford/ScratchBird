@@ -1,0 +1,5 @@
+case_id,index_family,required_check,expected_result,error_code
+T18-TS-001,FULLTEXT,tokenization_stopword_tf_idf_and_innodb_commit_updates,pass,
+T18-TS-002,SPATIAL,rtree_insert_overlap_and_refinement_correctness,pass,
+T18-TS-003,FULLTEXT_PG,ts_rank_ts_rank_cd_reference_values_with_tolerance,pass,
+T18-TS-004,FULLTEXT_PG_TSCONFIG,english_hindi_simple_synonym_thesaurus_ispell_hunspell_pipelines,pass,

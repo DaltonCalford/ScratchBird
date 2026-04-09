@@ -1,0 +1,4 @@
+case_id,suite,required_check,expected_result,error_code
+T26-E01,E,legal_state_transitions_accepted,pass,
+T26-E02,E,illegal_transitions_fail_and_close_connection,reject,WP-E-STATE
+T26-E03,E,heartbeat_timeout_handling_deterministic,pass,

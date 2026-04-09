@@ -1,0 +1,14 @@
+{
+  "ticket_id": "HCN-052",
+  "title": "Implement optional async JIT queue with suppression hints",
+  "phase": "PH5",
+  "owner": "codex",
+  "started_utc": "2026-02-23T00:00:00Z",
+  "completed_utc": "2026-02-26T22:10:00Z",
+  "source_commit": "9e789eaad9b8e377f42f96f2ea8fec0193970f40",
+  "commands": [
+    "/home/dcalford/CliWork/ScratchBird/build/tests/scratchbird_tests --gtest_filter='SblrJitFixture.*:LanguageUdrCompileApiMatrixContractTest.*:CatalogSblrArtifactExtensionContractTest.*'",
+    "/home/dcalford/CliWork/ScratchBird/build/tests/scratchbird_tests --gtest_filter='SblrJitFixture.jit_performance_envelope:SblrJitFixture.jit_soak_mixed_policy_no_semantic_divergence:SblrJitFixture.jit_queue_stress_retains_vm_correctness:SblrJitFixture.jit_tiering_hotness_threshold_promotion_queues_compile:SblrJitFixture.jit_tiering_queue_saturation_retains_deterministic_vm_execution:FollowerApplyPipelineTest.*:CommittedWatermarkPublisherTest.*:TelemetryReportingContractTest.*'"
+  ],
+  "notes": "JIT remains opt-in with asynchronous queue promotion, backpressure protection, and suppression-hint enforcement."
+}

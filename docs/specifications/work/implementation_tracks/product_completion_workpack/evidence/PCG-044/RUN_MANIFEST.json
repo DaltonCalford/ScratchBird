@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-044",
+  "phase": "PH4",
+  "title": "Harden migration cutover and rollback orchestration",
+  "status": "pending",
+  "owner": "migration-runtime",
+  "estimate_days": 5,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

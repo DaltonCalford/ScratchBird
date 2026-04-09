@@ -1,0 +1,8 @@
+spec_file,requirement_id,implementation_path,test_id,status,notes
+docs/specifications/08_Transaction_Core/TRANSACTION_LIFECYCLE.md,IMP-08-REQ-LIFECYCLE,docs/specifications/work/implementation_tracks/alpha_master/IMP-08/TRANSACTION_STATE_TIP_MATRIX.csv,T08-TXN-001,pass,Transaction state transitions and TIP encoding mapped
+docs/specifications/08_Transaction_Core/RECORD_VISIBILITY_RULES.md,IMP-08-REQ-VISIBILITY,docs/specifications/work/implementation_tracks/alpha_master/IMP-08/SNAPSHOT_VISIBILITY_MATRIX.csv,T08-TXN-002,pass,MGA visibility outcomes mapped
+docs/specifications/08_Transaction_Core/SPEC_OUTLINE.md,IMP-08-REQ-ISOLATION,docs/specifications/work/implementation_tracks/alpha_master/IMP-08/ISOLATION_MODE_BEHAVIOR_MATRIX.csv,T08-TXN-003,pass,Isolation/read-committed behaviors mapped
+docs/specifications/08_Transaction_Core/TRANSACTION_LIFECYCLE.md,IMP-08-REQ-DURABILITY,docs/specifications/work/implementation_tracks/alpha_master/IMP-08/COMMIT_ROLLBACK_DURABILITY_MATRIX.csv,T08-TXN-004,pass,Commit/rollback ordering mapped
+docs/specifications/08_Transaction_Core/TRANSACTION_CONTEXT_MAPPING.md,IMP-08-REQ-CONTEXT-ATTRIBUTION,docs/specifications/work/implementation_tracks/alpha_master/IMP-08/CONTEXT_ATTRIBUTION_JOIN_MATRIX.csv,T08-TXN-005,pass,Tx/session/connection attribution mapping covered
+docs/specifications/08_Transaction_Core/SPEC_OUTLINE.md,IMP-08-REQ-LIMBO,docs/specifications/work/implementation_tracks/alpha_master/IMP-08/LIMBO_RECOVERY_MATRIX.csv,T08-TXN-006,pass,Limbo startup recovery behavior mapped
+docs/specifications/08_Transaction_Core/TEST_CONTRACT.md,IMP-08-REQ-GATE,docs/specifications/work/implementation_tracks/alpha_master/IMP-08/TEST_RESULTS.md,T08-TXN-GATE,pass,Required test suite represented in deterministic artifacts

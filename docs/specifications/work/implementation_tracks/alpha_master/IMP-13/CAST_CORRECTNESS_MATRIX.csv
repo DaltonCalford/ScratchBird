@@ -1,0 +1,10 @@
+case_id,from_type,to_type,cast_kind,input,expected_output,error_code
+T13-CA-001,int32,int64,implicit,42,42,
+T13-CA-002,int64,int32,explicit,42,42,
+T13-CA-003,int64,int32,explicit,9223372036854775807,reject,E_NUMERIC_VALUE_OUT_OF_RANGE
+T13-CA-004,text,uuid,explicit,550e8400-e29b-41d4-a716-446655440000,uuid_binary,
+T13-CA-005,text,uuid,explicit,invalid_uuid,reject,E_INVALID_TEXT_REPRESENTATION
+T13-CA-006,decimal,float64,explicit,123.45,123.45,
+T13-CA-007,float64,decimal,explicit,123.45,rounded_or_exact_by_scale,
+T13-CA-008,text,boolean,explicit,true,true,
+T13-CA-009,text,boolean,explicit,maybe,reject,E_INVALID_TEXT_REPRESENTATION

@@ -1,0 +1,5 @@
+entity,canonical_page_type,layout_status,validation_status,notes
+TOAST metadata,PAGE_TYPE_TOAST_META,pass,pass,ToastMetaPageLayout size/assertions + contract tests
+TOAST chunk,PAGE_TYPE_TOAST_CHUNK,pass,pass,ToastChunkRecordHeader + payload/index helper checks
+LOB metadata,PAGE_TYPE_LOB_META,pass,pass,LobMetaRecordLayout size/assertions + contract tests
+LOB chunk,PAGE_TYPE_LOB_CHUNK,pass,pass,LobChunkRecordHeader + payload/index helper checks

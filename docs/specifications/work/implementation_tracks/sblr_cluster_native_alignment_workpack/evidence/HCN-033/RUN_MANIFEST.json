@@ -1,0 +1,15 @@
+{
+  "ticket_id": "HCN-033",
+  "title": "Implement GC safe horizon enforcement using OST and RWM",
+  "phase": "PH3",
+  "owner": "codex",
+  "started_utc": "2026-02-23T00:00:00Z",
+  "completed_utc": "2026-02-26T19:09:00Z",
+  "source_commit": "9e789eaad9b8e377f42f96f2ea8fec0193970f40",
+  "commands": [
+    "cmake --build build --target scratchbird_tests -j\14",
+    "./build/tests/scratchbird_tests --gtest_filter='GcSafeHorizonCalculatorTest.*'",
+    "./build/tests/scratchbird_tests --gtest_filter='SnapshotRegistryTest.*:CommittedWatermarkPublisherTest.*:FollowerApplyPipelineTest.*:ShardCommitLogPipelineTest.*'"
+  ],
+  "notes": "GC safe horizon calculator now enforces min(OST, RWM) and only allows reclaim when creator_local_txn_id is strictly below that boundary."
+}

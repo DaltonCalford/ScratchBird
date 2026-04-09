@@ -1,0 +1,7 @@
+catalog_table,physical_page,root_slot,backfill,bootstrap_test,crud_api,constraint_enforcement,status,notes
+type,done,done,done,done,done,done,completed,CAT-010 fully implemented and tested
+type_modifier,done,done,done,done,done,done,completed,CAT-010 fully implemented and tested
+type_io,done,done,done,done,done,done,completed,CAT-010 fully implemented and tested
+type_cast,done,done,done,done,done,done,completed,CAT-010 fully implemented and tested
+type_transform,done,done,done,done,done,done,completed,CAT-010 fully implemented and tested
+encoding_conversion,done,done,done,done,done,done,completed,CAT-010 fully implemented and tested

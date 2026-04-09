@@ -1,0 +1,32 @@
+{
+  "ticket_id": "IMP-25",
+  "section": "25_Runtime_Modes",
+  "wave": "W3",
+  "status": "done",
+  "started_at_utc": "2026-02-12T00:50:22Z",
+  "completed_at_utc": "2026-02-12T00:50:22Z",
+  "gate_contract": "docs/specifications/25_Runtime_Modes/TEST_CONTRACT.md",
+  "artifacts": [
+    "IMPLEMENTATION_CHECKLIST.md",
+    "IMPLEMENTATION_NOTES.md",
+    "RUNTIME_MODE_BOUNDARY_MATRIX.csv",
+    "NODE_LIFECYCLE_CLUSTER_MATRIX.csv",
+    "BOOT_GATE_MATRIX.csv",
+    "P1_DISTRIBUTED_READ_REPAIR_MATRIX.csv",
+    "P2_PLACEMENT_SCHEDULING_MATRIX.csv",
+    "CLOCK_DISCIPLINE_SKEW_MATRIX.csv",
+    "ROLE_SLO_ERROR_BUDGET_MATRIX.csv",
+    "LAYERED_STACK_GATE_MATRIX.csv",
+    "NEGATIVE_BOUNDARY_MATRIX.csv",
+    "PERFORMANCE_BUDGET_MATRIX.csv",
+    "COMPATIBILITY_PARITY_MATRIX.csv",
+    "TEST_RESULTS.md",
+    "CHECKSUMS.sha256",
+    "RUN_MANIFEST.json",
+    "SPEC_TRACEABILITY.csv",
+    "TEST_EVIDENCE_INDEX.md",
+    "GATE_RESULT.json",
+    "CHANGESET_LOG.md"
+  ],
+  "mode": "specification_contract_validation"
+}

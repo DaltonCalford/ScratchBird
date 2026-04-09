@@ -1,0 +1,6 @@
+surface,validation,status,notes
+ClusterCatalogInfo,cluster create/update uniqueness,pass,Duplicate cluster name rejected
+ShardPolicy/Param,shape constraints and lifecycle,pass,Invalid param payload rejected
+ShardKey/Scope/Range,primary keying and range metadata lifecycle,pass,Duplicate active shard key rejected
+ShardReplica/Migration/Zone,replica migration zoning workflows,pass,CRUD/list flows validated
+Routing/Admission/Replication runtime,admission and replication metadata contracts,pass,Constraint validation and retrieval paths pass

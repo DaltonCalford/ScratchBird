@@ -1,0 +1,9 @@
+case_id,suite,required_check,expected_result,error_code
+T28-O001,O,migration_name_resolves_to_single_uuid_pre_route,pass,
+T28-O002,O,route_intent_matches_mode_routing_matrix_by_statement_class,pass,
+T28-O003,O,stale_mode_version_triggers_reload_one_retry,pass,
+T28-O004,O,dual_write_target_order_legacy_then_emulated,pass,
+T28-O005,O,mirror_legacy_target_order_emulated_then_legacy,pass,
+T28-O006,O,dual_read_audit_compare_metadata_complete,pass,
+T28-O007,O,migration_routing_failures_dialect_native_no_internal_leak,pass,
+T28-O008,O,emulated_parsers_preserve_wire_behavior_and_feature_gates,pass,

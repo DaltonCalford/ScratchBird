@@ -1,0 +1,6 @@
+case_id,task_kind,transition_rule,expected_result,error_code
+T17-FT-001,ELECTION_PROPOSE,queued_running_succeeded_persisted,pass,
+T17-FT-002,DATA_TRANSFER,chunk_order_and_checksum_enforced,pass,
+T17-FT-003,VERIFY_OBJECT,verification_result_persisted_before_terminal_state,pass,
+T17-FT-004,PASSTHROUGH_SBLR_EXECUTE,terminal_state_after_chunk_and_evidence_flush,pass,
+T17-FT-005,unsupported_task_kind,rejected,E_FABRIC_TASK_KIND_UNSUPPORTED

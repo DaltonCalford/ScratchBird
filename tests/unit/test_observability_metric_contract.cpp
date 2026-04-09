@@ -104,7 +104,7 @@ namespace scratchbird::core
 
         std::vector<MetricSchemaDefinition> definitions;
         ASSERT_EQ(MgaObservabilityContract::appendMetricDefinitions(definitions), Status::OK);
-        ASSERT_EQ(definitions.size(), 71u);
+        ASSERT_EQ(definitions.size(), 74u);
         EXPECT_EQ(definitions.front().metric_name, "sb_buf_commit_fence_backlog");
         EXPECT_EQ(definitions.back().metric_name, "sb_writeback_incidents_open");
         for (const MetricSchemaDefinition& definition : definitions)

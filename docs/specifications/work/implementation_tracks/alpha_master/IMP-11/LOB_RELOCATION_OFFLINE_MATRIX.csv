@@ -1,0 +1,5 @@
+case_id,precondition,operation,expected_result,error_code
+T11-OFR-001,table_offline;no_active_sessions,copy_chunks_to_target,copy_complete,
+T11-OFR-002,table_offline;copy_complete,swap_pointer_and_commit,swap_complete,
+T11-OFR-003,table_offline;validation_failed,abort_and_retain_source,no_pointer_change,E_RELOCATION_VALIDATION_FAILED
+T11-OFR-004,table_not_offline,start_offline_relocation,rejected,E_RELOCATION_REQUIRES_OFFLINE

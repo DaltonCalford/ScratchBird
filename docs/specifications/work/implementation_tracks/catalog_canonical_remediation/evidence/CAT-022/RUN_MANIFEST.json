@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-022",
+  "status": "completed",
+  "started_at": "2026-02-14T16:05:02Z",
+  "finished_at": "2026-02-14T16:31:22Z",
+  "owner": "codex",
+  "notes": "CAT-022 complete: sharding catalog root/bootstrap/backfill wiring, CRUD contracts for cluster/shard families, and focused gate tests passed after strict referential-check hardening in shard_scope upsert." 
+}

@@ -89,6 +89,13 @@ protected:
     }
 };
 
+struct LeafPageSnapshot
+{
+    uint16_t free_space = 0;
+    uint16_t flags = 0;
+    uint16_t count = 0;
+};
+
 // Test 1: Empty dead_tids vector (no-op)
 TEST_F(BTreeGCTest, EmptyDeadTidsVector)
 {
@@ -275,4 +282,132 @@ TEST_F(BTreeGCTest, DuplicateDeadTids)
     EXPECT_EQ(status, Status::OK);
     EXPECT_EQ(entries_removed, 1);  // Still only 1 entry removed (idempotent)
     EXPECT_GE(pages_modified, 1);
+}
+
+TEST_F(BTreeGCTest, RemoveDeadEntriesCompactsLeafWhenReclaimThresholdExceeded)
+{
+    ErrorContext ctx;
+
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
+
+    GPID root_gpid = allocateRootGpid(&ctx);
+    Status status = BTree::create(db_, index_uuid, table_uuid, column_uuids, root_gpid, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    auto btree = BTree::open(db_, index_uuid, root_gpid, &ctx);
+    ASSERT_NE(btree, nullptr);
+
+    std::vector<std::pair<std::vector<uint8_t>, TID>> entries;
+    entries.reserve(32);
+    for (int i = 0; i < 32; ++i)
+    {
+        std::vector<uint8_t> key(256, 0);
+        for (size_t j = 0; j < key.size(); ++j)
+        {
+            key[j] = static_cast<uint8_t>((i * 19 + static_cast<int>(j)) & 0xFF);
+        }
+
+        TID tid{makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(100 + i)), 1};
+        status = btree->insert(key, tid, 1, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to insert wide key " << i << ": " << ctx.message;
+        entries.push_back({std::move(key), tid});
+    }
+
+    const uint32_t root_page_num = static_cast<uint32_t>(getPageNumber(root_gpid));
+    auto read_root_leaf = [&]() -> LeafPageSnapshot {
+        LeafPageSnapshot snapshot{};
+        void *page_data = nullptr;
+        Status pin_status = db_->buffer_pool()->pinPage(root_page_num, &page_data, &ctx);
+        EXPECT_EQ(pin_status, Status::OK) << ctx.message;
+        if (pin_status == Status::OK)
+        {
+            const auto *page = reinterpret_cast<const SBBTreePage *>(page_data);
+            snapshot.free_space = page->btr_free_space;
+            snapshot.flags = page->btr_flags;
+            snapshot.count = page->btr_count;
+            db_->buffer_pool()->unpinPage(root_page_num, false, &ctx);
+        }
+        return snapshot;
+    };
+
+    const LeafPageSnapshot before = read_root_leaf();
+    ASSERT_TRUE((before.flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0)
+        << "Expected wide-key fixture to remain on a single leaf root page";
+
+    std::vector<TID> dead_tids;
+    dead_tids.reserve(20);
+    for (size_t i = 0; i < 20; ++i)
+    {
+        dead_tids.push_back(entries[i].second);
+    }
+
+    uint64_t entries_removed = 0;
+    uint64_t pages_modified = 0;
+    status = btree->removeDeadEntries(dead_tids, &entries_removed, &pages_modified, &ctx);
+
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(entries_removed, dead_tids.size());
+    EXPECT_GE(pages_modified, 1u);
+
+    const LeafPageSnapshot after = read_root_leaf();
+    EXPECT_GT(after.free_space, before.free_space);
+    EXPECT_LT(after.count, before.count);
+    EXPECT_EQ(after.flags & static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE), 0u);
+
+    for (size_t i = 0; i < dead_tids.size(); ++i)
+    {
+        std::vector<TID> tuple_ids;
+        status = btree->search(entries[i].first, 0, &tuple_ids, &ctx);
+        EXPECT_EQ(status, Status::NOT_FOUND)
+            << "Compacted dead key " << i << " should no longer be visible";
+    }
+
+    for (size_t i = dead_tids.size(); i < entries.size(); ++i)
+    {
+        std::vector<TID> tuple_ids;
+        status = btree->search(entries[i].first, 0, &tuple_ids, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Live key " << i << " should remain searchable";
+        ASSERT_EQ(tuple_ids.size(), 1u);
+        EXPECT_EQ(tuple_ids.front(), entries[i].second);
+    }
+}
+
+TEST_F(BTreeGCTest, RemoveDeadEntriesPublishesResidualCleanupDebtBelowCompactionThreshold)
+{
+    ErrorContext ctx;
+
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
+
+    GPID root_gpid = allocateRootGpid(&ctx);
+    Status status = BTree::create(db_, index_uuid, table_uuid, column_uuids, root_gpid, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    auto btree = BTree::open(db_, index_uuid, root_gpid, &ctx);
+    ASSERT_NE(btree, nullptr);
+
+    const std::vector<uint8_t> key = {0x10, 0x20, 0x30, 0x40};
+    const TID dead_tid{makeGPID(PRIMARY_TABLESPACE_ID, 7), 3};
+
+    status = btree->insert(key, dead_tid, 1, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    uint64_t entries_removed = 0;
+    uint64_t pages_modified = 0;
+    status = btree->removeDeadEntries({dead_tid}, &entries_removed, &pages_modified, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(entries_removed, 1u);
+    EXPECT_EQ(pages_modified, 1u);
+
+    IndexCleanupDebtSnapshot snapshot{};
+    status = btree->getCleanupDebtSnapshot(&snapshot, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(snapshot.backlog_pages, 1u);
+    EXPECT_GT(snapshot.backlog_bytes, 0u);
+    EXPECT_EQ(snapshot.first_locality_page_id,
+              static_cast<uint32_t>(getPageNumber(root_gpid)));
+    EXPECT_FALSE(snapshot.repair_required);
 }

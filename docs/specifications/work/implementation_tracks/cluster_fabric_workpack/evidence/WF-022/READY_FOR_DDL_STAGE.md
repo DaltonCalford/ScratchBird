@@ -1,0 +1,2 @@
+# READY_FOR_DDL_STAGE
+

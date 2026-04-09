@@ -1,0 +1,6 @@
+case_id,suite,required_check,expected_result,error_code
+T28-F001,F,session_variables_exposed_per_profile_only,pass,
+T28-F002,F,hidden_variables_not_visible_in_emulated_metadata,pass,
+T28-F003,F,reserved_word_set_matches_profile_version,pass,
+T28-F004,F,identifier_case_quoting_rules_follow_profile,pass,
+T28-F005,F,name_rendering_uses_session_language_with_default_fallback,pass,

@@ -1,0 +1,7 @@
+case_id,create_tx_state,delete_tx_state,create_txid_relation,delete_txid_relation,expected_gc_eligibility,expected_action,error_code
+GHE-001,committed,committed,both_lt_OIT,both_lt_OIT,eligible,reclaim_version,NONE
+GHE-002,aborted,0,n/a,n/a,eligible,reclaim_version,NONE
+GHE-003,committed,active,create_lt_OIT,delete_ge_OAT,not_eligible,retain_version,NONE
+GHE-004,committed,committed,delete_ge_OAT,delete_ge_OAT,not_eligible,retain_version,NONE
+GHE-005,committed,0,create_lt_OAT,n/a,not_eligible_live_row,retain_version,NONE
+GHE-006,chain_invalid,n/a,n/a,n/a,n/a,fail,GC_PAGE_CORRUPTION

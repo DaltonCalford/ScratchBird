@@ -1,0 +1,4 @@
+case_id,suite,required_check,expected_result,error_code
+T29-E01,E,status_metrics_commands_available_and_validated,pass,
+T29-E02,E,pool_update_drain_commands_validated,pass,
+T29-E03,E,admin_auth_required_for_management_commands,reject_non_admin,LSN-E-AUTH

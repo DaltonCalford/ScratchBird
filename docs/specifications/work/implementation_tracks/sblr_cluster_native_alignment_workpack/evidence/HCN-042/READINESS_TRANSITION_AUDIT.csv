@@ -1,0 +1,5 @@
+scenario,liveness_inputs,readiness_inputs,expected_ready,observed_ready,test_case,status
+initial_not_ready,"process=true,event_loop=true","db=false,catalog=false,epoch=false,listener=false,control_plane=false,leases=false,shard_map=false",false,false,HealthReadinessContractTest.HealthAndReadinessReflectStateTransitions,pass
+fully_ready,"process=true,event_loop=true","db=true,catalog=true,epoch=true,listener=true,control_plane=true,leases=true,shard_map=true",true,true,HealthReadinessContractTest.HealthAndReadinessReflectStateTransitions,pass
+liveness_drop_forces_not_ready,"process=false,event_loop=true","db=true,catalog=true,epoch=true,listener=true,control_plane=true,leases=true,shard_map=true",false,false,HealthReadinessContractTest.HealthAndReadinessReflectStateTransitions,pass
+endpoint_router_health_ready_paths,"process=true,event_loop=true","all_true",true,true,HealthReadinessContractTest.MetricsEndpointRoutesHealthAndReadinessPaths,pass

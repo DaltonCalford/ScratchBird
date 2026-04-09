@@ -1,0 +1,5 @@
+case_id,suite,required_check,expected_result,error_code
+T26-G01,G,bad_magic_protocol_error_and_close,reject,WP-E-MAGIC
+T26-G02,G,payload_length_mismatch_error_and_close,reject,WP-E-LENGTH
+T26-G03,G,unknown_message_type_error_and_close,reject,WP-E-MSGTYPE
+T26-G04,G,malformed_service_payload_service_error_and_stream_close,reject,WP-E-SERVICE

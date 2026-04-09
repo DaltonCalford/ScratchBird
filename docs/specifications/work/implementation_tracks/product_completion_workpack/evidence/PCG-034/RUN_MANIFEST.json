@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-034",
+  "phase": "PH3",
+  "title": "Implement data masking redaction and secure diagnostics policies",
+  "status": "pending",
+  "owner": "governance-security",
+  "estimate_days": 6,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

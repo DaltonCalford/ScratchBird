@@ -1,0 +1,6 @@
+{
+  "gate_id": "CAT-GATE-06",
+  "status": "pass",
+  "checked_at": "2026-02-14T22:58:35Z",
+  "notes": "CAT-026..CAT-034 completed; required C5 evidence artifacts present; regression bundle passed (17/17) including virtual overlay conformance."
+}

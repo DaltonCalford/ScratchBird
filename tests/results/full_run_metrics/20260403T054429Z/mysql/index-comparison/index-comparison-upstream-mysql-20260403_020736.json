@@ -1,0 +1,277 @@
+{
+  "metadata": {
+    "engine": "mysql",
+    "suite": "index-comparison",
+    "timestamp": "20260403_020736",
+    "host": "localhost",
+    "port": 3306,
+    "database": "benchmark",
+    "target": "upstream-mysql",
+    "runtime_service": "mysql",
+    "target_class": "upstream",
+    "docker_first": true,
+    "iterations": 5,
+    "noise_band_pct": 5.0
+  },
+  "results": {
+    "scenarios": {
+      "tests": [
+        {
+          "test_name": "btree_point_lookup",
+          "name": "Selective lookup through a secondary B-tree index.",
+          "status": "pass",
+          "duration_ms": 0.381,
+          "error_message": null,
+          "plan_family": "index_lookup",
+          "plan_expectation_status": "matched",
+          "target": "upstream-mysql"
+        },
+        {
+          "test_name": "btree_range_scan",
+          "name": "Range filter through a single-column B-tree index.",
+          "status": "pass",
+          "duration_ms": 2.029,
+          "error_message": null,
+          "plan_family": "range_scan",
+          "plan_expectation_status": "matched",
+          "target": "upstream-mysql"
+        },
+        {
+          "test_name": "btree_composite_order",
+          "name": "Composite predicate with ordered output satisfied by a composite B-tree index.",
+          "status": "pass",
+          "duration_ms": 0.641,
+          "error_message": null,
+          "plan_family": "range_scan",
+          "plan_expectation_status": "matched",
+          "target": "upstream-mysql"
+        }
+      ]
+    }
+  },
+  "test_results": [
+    {
+      "scenario_id": "btree_point_lookup",
+      "description": "Selective lookup through a secondary B-tree index.",
+      "index_family": "btree",
+      "workload_family": "point_lookup",
+      "benchmark_target": "upstream-mysql",
+      "runtime_service": "mysql",
+      "execution_status": "pass",
+      "comparative_verdict": null,
+      "comparison_score": null,
+      "plan_capture_status": "ok",
+      "actual_plan_family": "index_lookup",
+      "used_index": true,
+      "index_names": [
+        "idx_idxcmp_point_lookup_key"
+      ],
+      "fallback_to_scan": false,
+      "extra_sort": false,
+      "order_satisfied_by_index": true,
+      "expectation_status": "matched",
+      "plan_quality_score": 100,
+      "rows_returned": 1,
+      "iterations": 5,
+      "noise_band_pct": 5.0,
+      "raw_plan": {
+        "query_block": {
+          "select_id": 1,
+          "cost_info": {
+            "query_cost": "0.35"
+          },
+          "table": {
+            "table_name": "idxcmp_point_lookup",
+            "access_type": "ref",
+            "possible_keys": [
+              "idx_idxcmp_point_lookup_key"
+            ],
+            "key": "idx_idxcmp_point_lookup_key",
+            "used_key_parts": [
+              "lookup_key"
+            ],
+            "key_length": "4",
+            "ref": [
+              "const"
+            ],
+            "rows_examined_per_scan": 1,
+            "rows_produced_per_join": 1,
+            "filtered": "100.00",
+            "cost_info": {
+              "read_cost": "0.25",
+              "eval_cost": "0.10",
+              "prefix_cost": "0.35",
+              "data_read_per_join": "528"
+            },
+            "used_columns": [
+              "id",
+              "lookup_key",
+              "payload"
+            ]
+          }
+        }
+      },
+      "error": null,
+      "latency_avg_ms": 0.381,
+      "latency_p95_ms": 0.482,
+      "latency_p99_ms": 0.496,
+      "throughput_qps": 2627.43
+    },
+    {
+      "scenario_id": "btree_range_scan",
+      "description": "Range filter through a single-column B-tree index.",
+      "index_family": "btree",
+      "workload_family": "range_scan",
+      "benchmark_target": "upstream-mysql",
+      "runtime_service": "mysql",
+      "execution_status": "pass",
+      "comparative_verdict": null,
+      "comparison_score": null,
+      "plan_capture_status": "ok",
+      "actual_plan_family": "range_scan",
+      "used_index": true,
+      "index_names": [
+        "idx_idxcmp_range_scan_key"
+      ],
+      "fallback_to_scan": false,
+      "extra_sort": false,
+      "order_satisfied_by_index": true,
+      "expectation_status": "matched",
+      "plan_quality_score": 100,
+      "rows_returned": 301,
+      "iterations": 5,
+      "noise_band_pct": 5.0,
+      "raw_plan": {
+        "query_block": {
+          "select_id": 1,
+          "cost_info": {
+            "query_cost": "61.02"
+          },
+          "table": {
+            "table_name": "idxcmp_range_scan",
+            "access_type": "range",
+            "possible_keys": [
+              "idx_idxcmp_range_scan_key"
+            ],
+            "key": "idx_idxcmp_range_scan_key",
+            "used_key_parts": [
+              "range_key"
+            ],
+            "key_length": "4",
+            "rows_examined_per_scan": 301,
+            "rows_produced_per_join": 301,
+            "filtered": "100.00",
+            "using_index": true,
+            "cost_info": {
+              "read_cost": "30.92",
+              "eval_cost": "30.10",
+              "prefix_cost": "61.02",
+              "data_read_per_join": "79K"
+            },
+            "used_columns": [
+              "id",
+              "range_key"
+            ],
+            "attached_condition": "(`benchmark`.`idxcmp_range_scan`.`range_key` between 300 and 600)"
+          }
+        }
+      },
+      "error": null,
+      "latency_avg_ms": 2.029,
+      "latency_p95_ms": 2.628,
+      "latency_p99_ms": 2.707,
+      "throughput_qps": 492.902
+    },
+    {
+      "scenario_id": "btree_composite_order",
+      "description": "Composite predicate with ordered output satisfied by a composite B-tree index.",
+      "index_family": "btree",
+      "workload_family": "order_preserving_scan",
+      "benchmark_target": "upstream-mysql",
+      "runtime_service": "mysql",
+      "execution_status": "pass",
+      "comparative_verdict": null,
+      "comparison_score": null,
+      "plan_capture_status": "ok",
+      "actual_plan_family": "range_scan",
+      "used_index": true,
+      "index_names": [
+        "idx_idxcmp_composite_sci"
+      ],
+      "fallback_to_scan": false,
+      "extra_sort": false,
+      "order_satisfied_by_index": true,
+      "expectation_status": "matched",
+      "plan_quality_score": 100,
+      "rows_returned": 25,
+      "iterations": 5,
+      "noise_band_pct": 5.0,
+      "raw_plan": {
+        "query_block": {
+          "select_id": 1,
+          "cost_info": {
+            "query_cost": "26.77"
+          },
+          "ordering_operation": {
+            "using_filesort": false,
+            "table": {
+              "table_name": "idxcmp_composite_order",
+              "access_type": "range",
+              "possible_keys": [
+                "idx_idxcmp_composite_sci"
+              ],
+              "key": "idx_idxcmp_composite_sci",
+              "used_key_parts": [
+                "status",
+                "category"
+              ],
+              "key_length": "70",
+              "rows_examined_per_scan": 125,
+              "rows_produced_per_join": 125,
+              "filtered": "100.00",
+              "using_index": true,
+              "cost_info": {
+                "read_cost": "14.27",
+                "eval_cost": "12.50",
+                "prefix_cost": "26.77",
+                "data_read_per_join": "41K"
+              },
+              "used_columns": [
+                "id",
+                "status",
+                "category"
+              ],
+              "attached_condition": "((`benchmark`.`idxcmp_composite_order`.`status` = 'active') and (`benchmark`.`idxcmp_composite_order`.`category` between 5 and 9))"
+            }
+          }
+        }
+      },
+      "error": null,
+      "latency_avg_ms": 0.641,
+      "latency_p95_ms": 0.942,
+      "latency_p99_ms": 0.982,
+      "throughput_qps": 1559.089
+    }
+  ],
+  "summary": {
+    "total_tests": 3,
+    "passed": 3,
+    "failed": 0,
+    "errors": 0,
+    "unsupported": 0,
+    "plan_capture_success": 3,
+    "score": 100.0,
+    "verdict_ready": false,
+    "by_index_family": {
+      "btree": 3
+    },
+    "by_workload_family": {
+      "point_lookup": 1,
+      "range_scan": 1,
+      "order_preserving_scan": 1
+    },
+    "by_expectation_status": {
+      "matched": 3
+    }
+  }
+}

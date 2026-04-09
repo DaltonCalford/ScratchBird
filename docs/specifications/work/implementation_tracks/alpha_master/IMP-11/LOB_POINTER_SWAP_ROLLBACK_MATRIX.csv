@@ -1,0 +1,5 @@
+case_id,failure_point,required_action,persistence_rule,expected_result,error_code
+T11-RB-001,before_swap_commit,rollback_staged_changes,source_pointer_remains_active,rollback_complete,
+T11-RB-002,during_swap_commit,atomic_txn_rollback,source_pointer_remains_active,rollback_complete,E_ATOMIC_SWAP_ABORTED
+T11-RB-003,after_swap_before_ack,verify_commit_record_then_finalize,target_pointer_active,success,
+T11-RB-004,crash_mid_swap,startup_recovery_replays_or_reverts,single_pointer_state_restored,recovered,

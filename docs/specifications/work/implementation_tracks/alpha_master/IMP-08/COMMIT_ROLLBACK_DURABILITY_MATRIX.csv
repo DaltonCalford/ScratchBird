@@ -1,0 +1,9 @@
+case_id,operation,required_order,expected_result,error_code
+DUR-001,commit,flush_dirty_pages_before_fsync,success,NONE
+DUR-002,commit,fsync_all_touched_filespaces_before_tip_commit,success,NONE
+DUR-003,commit,tip_state_committed_then_tip_flush,success,NONE
+DUR-004,commit,flush_failure,fail,COMMIT_FAILED
+DUR-005,commit,fsync_failure,fail,COMMIT_FAILED
+DUR-006,rollback,tip_state_aborted_then_tip_flush,success,NONE
+DUR-007,startup_recovery_unclean,active_to_aborted_tip_transition,success,NONE
+DUR-008,startup_recovery_tip_unreadable,abort_startup_manual_recovery_required,fail,INVALID_TIP_HEADER

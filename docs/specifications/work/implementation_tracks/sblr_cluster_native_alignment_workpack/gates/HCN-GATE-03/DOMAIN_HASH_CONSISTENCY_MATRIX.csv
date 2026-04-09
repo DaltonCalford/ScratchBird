@@ -1,0 +1,4 @@
+scenario,expected_valid,observed_valid,observed_mismatch_count,expected_reason_contract,test_case,status
+manifest_match_after_create_alter_drop,true,true,0,none,DomainControlPlaneReplicaCatalogTest.AppliesEventsAndExportsJoinManifest,pass
+hash_and_membership_drift,false,false,5,"remote_zero_domain_id;remote_duplicate_domain_id:<uuid>;hash_mismatch:<uuid>;missing_remote_domain:<uuid>;unexpected_remote_domain:<uuid>",DomainControlPlaneReplicaCatalogTest.DetectsJoinManifestHashAndMembershipMismatch,pass
+epoch_regression_and_missing_hash_rejected,true,true,0,"append rejects INVALID_TRANSACTION_STATE for epoch regressions and INVALID_ARGUMENT for empty hash on non-drop",DomainControlPlaneReplicaCatalogTest.EnforcesMonotonicEpochsAndHashRequirements,pass

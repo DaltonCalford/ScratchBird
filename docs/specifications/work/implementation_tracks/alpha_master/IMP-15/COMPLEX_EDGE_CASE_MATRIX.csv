@@ -1,0 +1,9 @@
+case_id,type_name,edge_case,input,expected_result,error_code
+T15-EC-001,array,invalid_bounds,{1,2}[5],reject,E_INVALID_PARAMETER_VALUE
+T15-EC-002,composite,field_count_mismatch,ROW(1,2)->type3fields,reject,E_INVALID_PARAMETER_VALUE
+T15-EC-003,json,invalid_json,{bad},reject,E_INVALID_TEXT_REPRESENTATION
+T15-EC-004,xml,invalid_xml,<a><b></a>,reject,E_INVALID_TEXT_REPRESENTATION
+T15-EC-005,geometry,invalid_wkt,POINT(1),reject,E_INVALID_TEXT_REPRESENTATION
+T15-EC-006,range,invalid_bounds,[5,2),reject,E_INVALID_PARAMETER_VALUE
+T15-EC-007,enum,unknown_label,enum('x'),reject,E_INVALID_PARAMETER_VALUE
+T15-EC-008,bson,invalid_binary,bytes_corrupt,reject,E_INVALID_TEXT_REPRESENTATION

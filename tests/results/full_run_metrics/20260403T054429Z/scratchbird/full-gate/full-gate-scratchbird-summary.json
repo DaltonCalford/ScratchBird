@@ -1,0 +1,588 @@
+{
+  "metadata": {
+    "source_run_dir": "/home/dcalford/CliWork/ScratchBird/tests/results/full_gate/20260403T054429Z",
+    "run_status_path": "/home/dcalford/CliWork/ScratchBird/tests/results/full_gate/20260403T054429Z/RUN_STATUS.txt",
+    "configure_log": "/home/dcalford/CliWork/ScratchBird/tests/results/full_gate/20260403T054429Z/configure.log",
+    "build_log": "/home/dcalford/CliWork/ScratchBird/tests/results/full_gate/20260403T054429Z/build.log",
+    "ctest_log": "/home/dcalford/CliWork/ScratchBird/tests/results/full_gate/20260403T054429Z/ctest.log"
+  },
+  "summary": {
+    "configure_exit": 0,
+    "build_exit": 0,
+    "ctest_exit": 8,
+    "total_tests": 4733,
+    "passed": 4722,
+    "failed": 9,
+    "skipped": 2,
+    "total_time_sec": 842.1
+  },
+  "results": {
+    "labels": [
+      {
+        "label": "a55",
+        "sec_proc": 10.9,
+        "tests": 6
+      },
+      {
+        "label": "alter_table",
+        "sec_proc": 6.38,
+        "tests": 1
+      },
+      {
+        "label": "audit",
+        "sec_proc": 4.64,
+        "tests": 1
+      },
+      {
+        "label": "auth_plugin",
+        "sec_proc": 0.51,
+        "tests": 6
+      },
+      {
+        "label": "bitpack",
+        "sec_proc": 13.58,
+        "tests": 1
+      },
+      {
+        "label": "brin",
+        "sec_proc": 22.36,
+        "tests": 3
+      },
+      {
+        "label": "buffer_pool",
+        "sec_proc": 8.17,
+        "tests": 1
+      },
+      {
+        "label": "check",
+        "sec_proc": 0.08,
+        "tests": 1
+      },
+      {
+        "label": "column_permissions",
+        "sec_proc": 17.79,
+        "tests": 1
+      },
+      {
+        "label": "columnstore",
+        "sec_proc": 85.89,
+        "tests": 8
+      },
+      {
+        "label": "comparative",
+        "sec_proc": 0.25,
+        "tests": 1
+      },
+      {
+        "label": "compatibility",
+        "sec_proc": 111.05,
+        "tests": 7
+      },
+      {
+        "label": "compliance",
+        "sec_proc": 0.36,
+        "tests": 2
+      },
+      {
+        "label": "composite",
+        "sec_proc": 0.08,
+        "tests": 1
+      },
+      {
+        "label": "comprehensive",
+        "sec_proc": 9.8,
+        "tests": 2
+      },
+      {
+        "label": "concurrency",
+        "sec_proc": 13.12,
+        "tests": 1
+      },
+      {
+        "label": "conformance",
+        "sec_proc": 340.59,
+        "tests": 9
+      },
+      {
+        "label": "constraints",
+        "sec_proc": 0.23,
+        "tests": 3
+      },
+      {
+        "label": "copy",
+        "sec_proc": 155.99,
+        "tests": 1
+      },
+      {
+        "label": "ddl",
+        "sec_proc": 6.38,
+        "tests": 1
+      },
+      {
+        "label": "derived_table",
+        "sec_proc": 3.37,
+        "tests": 1
+      },
+      {
+        "label": "dictionary",
+        "sec_proc": 16.59,
+        "tests": 1
+      },
+      {
+        "label": "dml",
+        "sec_proc": 20.37,
+        "tests": 4
+      },
+      {
+        "label": "domain",
+        "sec_proc": 35.38,
+        "tests": 6
+      },
+      {
+        "label": "e2e",
+        "sec_proc": 23.95,
+        "tests": 3
+      },
+      {
+        "label": "emulation",
+        "sec_proc": 62.04,
+        "tests": 4
+      },
+      {
+        "label": "encryption",
+        "sec_proc": 1.44,
+        "tests": 1
+      },
+      {
+        "label": "enforcement",
+        "sec_proc": 17.65,
+        "tests": 2
+      },
+      {
+        "label": "engine",
+        "sec_proc": 61.45,
+        "tests": 1
+      },
+      {
+        "label": "enterprise",
+        "sec_proc": 0.13,
+        "tests": 2
+      },
+      {
+        "label": "evidence",
+        "sec_proc": 38.71,
+        "tests": 1
+      },
+      {
+        "label": "example_db",
+        "sec_proc": 48.15,
+        "tests": 2
+      },
+      {
+        "label": "exception",
+        "sec_proc": 13.63,
+        "tests": 1
+      },
+      {
+        "label": "fail_closed",
+        "sec_proc": 0.07,
+        "tests": 1
+      },
+      {
+        "label": "firebird",
+        "sec_proc": 0.41,
+        "tests": 2
+      },
+      {
+        "label": "foreign_key",
+        "sec_proc": 0.15,
+        "tests": 2
+      },
+      {
+        "label": "fulltext",
+        "sec_proc": 6.67,
+        "tests": 1
+      },
+      {
+        "label": "fuzz",
+        "sec_proc": 0.06,
+        "tests": 1
+      },
+      {
+        "label": "gc",
+        "sec_proc": 32.09,
+        "tests": 5
+      },
+      {
+        "label": "gin",
+        "sec_proc": 5.4,
+        "tests": 2
+      },
+      {
+        "label": "gist",
+        "sec_proc": 14.19,
+        "tests": 1
+      },
+      {
+        "label": "governance",
+        "sec_proc": 0.24,
+        "tests": 1
+      },
+      {
+        "label": "hard_gate",
+        "sec_proc": 307.66,
+        "tests": 1
+      },
+      {
+        "label": "harness",
+        "sec_proc": 39.22,
+        "tests": 1
+      },
+      {
+        "label": "hnsw",
+        "sec_proc": 6.61,
+        "tests": 1
+      },
+      {
+        "label": "index",
+        "sec_proc": 73.95,
+        "tests": 11
+      },
+      {
+        "label": "inet",
+        "sec_proc": 21.79,
+        "tests": 1
+      },
+      {
+        "label": "integration",
+        "sec_proc": 1518.38,
+        "tests": 290
+      },
+      {
+        "label": "integrity",
+        "sec_proc": 8.58,
+        "tests": 1
+      },
+      {
+        "label": "ipc",
+        "sec_proc": 256.96,
+        "tests": 4
+      },
+      {
+        "label": "isolated",
+        "sec_proc": 35.42,
+        "tests": 1
+      },
+      {
+        "label": "linux_only",
+        "sec_proc": 440.75,
+        "tests": 10
+      },
+      {
+        "label": "load",
+        "sec_proc": 1.79,
+        "tests": 1
+      },
+      {
+        "label": "masking",
+        "sec_proc": 4.64,
+        "tests": 1
+      },
+      {
+        "label": "matrix",
+        "sec_proc": 0.07,
+        "tests": 1
+      },
+      {
+        "label": "memory",
+        "sec_proc": 199.59,
+        "tests": 3
+      },
+      {
+        "label": "mga",
+        "sec_proc": 14.19,
+        "tests": 1
+      },
+      {
+        "label": "mvcc",
+        "sec_proc": 27.23,
+        "tests": 2
+      },
+      {
+        "label": "mysql",
+        "sec_proc": 3.87,
+        "tests": 2
+      },
+      {
+        "label": "native",
+        "sec_proc": 22.91,
+        "tests": 3
+      },
+      {
+        "label": "negative",
+        "sec_proc": 0.07,
+        "tests": 1
+      },
+      {
+        "label": "network",
+        "sec_proc": 0.08,
+        "tests": 1
+      },
+      {
+        "label": "operability",
+        "sec_proc": 9.99,
+        "tests": 1
+      },
+      {
+        "label": "page",
+        "sec_proc": 13.12,
+        "tests": 1
+      },
+      {
+        "label": "parser",
+        "sec_proc": 25.41,
+        "tests": 3
+      },
+      {
+        "label": "performance",
+        "sec_proc": 697.93,
+        "tests": 61
+      },
+      {
+        "label": "phase1",
+        "sec_proc": 17.11,
+        "tests": 1
+      },
+      {
+        "label": "phase2",
+        "sec_proc": 16.59,
+        "tests": 1
+      },
+      {
+        "label": "phase3",
+        "sec_proc": 48.93,
+        "tests": 3
+      },
+      {
+        "label": "phase4",
+        "sec_proc": 12.6,
+        "tests": 1
+      },
+      {
+        "label": "phase5",
+        "sec_proc": 0.08,
+        "tests": 1
+      },
+      {
+        "label": "phase7",
+        "sec_proc": 13.17,
+        "tests": 3
+      },
+      {
+        "label": "plan01",
+        "sec_proc": 64.66,
+        "tests": 8
+      },
+      {
+        "label": "portability",
+        "sec_proc": 0.13,
+        "tests": 1
+      },
+      {
+        "label": "postgresql",
+        "sec_proc": 19.29,
+        "tests": 2
+      },
+      {
+        "label": "predicate",
+        "sec_proc": 12.6,
+        "tests": 1
+      },
+      {
+        "label": "protocol",
+        "sec_proc": 0.54,
+        "tests": 6
+      },
+      {
+        "label": "public_beta",
+        "sec_proc": 307.66,
+        "tests": 1
+      },
+      {
+        "label": "quality",
+        "sec_proc": 2.99,
+        "tests": 1
+      },
+      {
+        "label": "quarantine",
+        "sec_proc": 31.93,
+        "tests": 11
+      },
+      {
+        "label": "range_operators",
+        "sec_proc": 0.06,
+        "tests": 1
+      },
+      {
+        "label": "range_types",
+        "sec_proc": 0.06,
+        "tests": 1
+      },
+      {
+        "label": "rebuild",
+        "sec_proc": 11.82,
+        "tests": 1
+      },
+      {
+        "label": "referential_integrity",
+        "sec_proc": 0.07,
+        "tests": 1
+      },
+      {
+        "label": "reliability",
+        "sec_proc": 9.99,
+        "tests": 1
+      },
+      {
+        "label": "rle",
+        "sec_proc": 17.11,
+        "tests": 1
+      },
+      {
+        "label": "rls",
+        "sec_proc": 17.56,
+        "tests": 1
+      },
+      {
+        "label": "robustness",
+        "sec_proc": 13.63,
+        "tests": 1
+      },
+      {
+        "label": "rtree",
+        "sec_proc": 6.86,
+        "tests": 1
+      },
+      {
+        "label": "safety",
+        "sec_proc": 13.63,
+        "tests": 1
+      },
+      {
+        "label": "schema_change",
+        "sec_proc": 6.38,
+        "tests": 1
+      },
+      {
+        "label": "scratchbird",
+        "sec_proc": 0.87,
+        "tests": 1
+      },
+      {
+        "label": "security",
+        "sec_proc": 42.02,
+        "tests": 11
+      },
+      {
+        "label": "sequential",
+        "sec_proc": 4.51,
+        "tests": 1
+      },
+      {
+        "label": "server",
+        "sec_proc": 0.46,
+        "tests": 2
+      },
+      {
+        "label": "session",
+        "sec_proc": 61.45,
+        "tests": 1
+      },
+      {
+        "label": "shadow",
+        "sec_proc": 11.82,
+        "tests": 1
+      },
+      {
+        "label": "simple",
+        "sec_proc": 3.41,
+        "tests": 2
+      },
+      {
+        "label": "soak",
+        "sec_proc": 10.08,
+        "tests": 2
+      },
+      {
+        "label": "storage",
+        "sec_proc": 20.74,
+        "tests": 2
+      },
+      {
+        "label": "stress",
+        "sec_proc": 130.02,
+        "tests": 20
+      },
+      {
+        "label": "task14",
+        "sec_proc": 0.08,
+        "tests": 1
+      },
+      {
+        "label": "task15",
+        "sec_proc": 0.2,
+        "tests": 3
+      },
+      {
+        "label": "task16",
+        "sec_proc": 0.08,
+        "tests": 1
+      },
+      {
+        "label": "temporal_range_types",
+        "sec_proc": 0.08,
+        "tests": 1
+      },
+      {
+        "label": "thread",
+        "sec_proc": 13.12,
+        "tests": 1
+      },
+      {
+        "label": "transactions",
+        "sec_proc": 10.51,
+        "tests": 1
+      },
+      {
+        "label": "uniqueness",
+        "sec_proc": 8.58,
+        "tests": 1
+      },
+      {
+        "label": "unit",
+        "sec_proc": 4099.38,
+        "tests": 4107
+      },
+      {
+        "label": "v3",
+        "sec_proc": 25.41,
+        "tests": 3
+      },
+      {
+        "label": "validation",
+        "sec_proc": 5.15,
+        "tests": 1
+      },
+      {
+        "label": "versioning",
+        "sec_proc": 11.82,
+        "tests": 1
+      },
+      {
+        "label": "wire",
+        "sec_proc": 0.15,
+        "tests": 1
+      }
+    ]
+  }
+}

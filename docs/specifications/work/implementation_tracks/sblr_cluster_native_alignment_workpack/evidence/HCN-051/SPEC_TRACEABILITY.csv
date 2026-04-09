@@ -1,0 +1,4 @@
+source_spec,requirement_id,implementation_artifact,evidence_file,status,notes
+23/NATIVE_COMPILATION_AND_ARTIFACT_LIFECYCLE.md,full_artifact_identity_key_match,"src/sblr/jit/jit_artifact_store.cpp::fetchVerifiedArtifact","ARTIFACT_KEY_MATCH_AUDIT.csv;TEST_RESULTS.md",pass,"Selector checks all key components and rejects mismatches deterministically"
+23/NATIVE_COMPILATION_AND_ARTIFACT_LIFECYCLE.md,deterministic_fallback_reason_codes,"include/scratchbird/sblr/jit/jit_reason_codes.h;src/sblr/jit/jit_reason_codes.cpp","FALLBACK_REASON_CODE_MATRIX.csv;TEST_RESULTS.md",pass,"Reason codes extended and verified for mismatch/state/hint/policy paths"
+23/NATIVE_COMPILATION_AND_ARTIFACT_LIFECYCLE.md,require_native_negative_behavior,"src/sblr/jit/jit_runtime.cpp::selectPath;tests/unit/test_sblr_jit_fallback.cpp","REQUIRE_NATIVE_NEGATIVE_RESULTS.md;TEST_RESULTS.md",pass,"REQUIRE_NATIVE produces deterministic error when no usable artifact exists"

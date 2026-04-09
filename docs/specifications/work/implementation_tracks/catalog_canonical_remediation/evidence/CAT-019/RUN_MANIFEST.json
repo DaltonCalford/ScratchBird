@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-019",
+  "status": "completed",
+  "started_at": "2026-02-14T14:33:00Z",
+  "finished_at": "2026-02-14T14:49:21Z",
+  "owner": "codex",
+  "notes": "CAT-019 complete: connection and transaction catalog families wired into root/bootstrap/backfill with deterministic CRUD constraints and targeted CAT-GATE-04 tests passing."
+}

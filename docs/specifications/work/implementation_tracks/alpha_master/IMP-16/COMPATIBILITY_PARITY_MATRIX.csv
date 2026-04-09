@@ -1,0 +1,6 @@
+case_id,emulated_engine,context_surface,expected_behavior
+T16-CP-001,firebird_5,context_variables,alias_map_or_hide_matches_profile
+T16-CP-002,postgresql_18,current_setting_session_user,alias_map_matches_profile
+T16-CP-003,mysql_8,session_global_var_surface,alias_map_and_gating_match_profile
+T16-CP-004,cassandra_5,unsupported_context_var_forms,rejected_deterministically
+T16-CP-005,mongodb_8,session_metadata_vars,alias_map_matches_profile

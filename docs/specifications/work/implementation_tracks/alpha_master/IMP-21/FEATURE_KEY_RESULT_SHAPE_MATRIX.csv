@@ -1,0 +1,8 @@
+case_id,statement_or_surface,required_binding,expected_result,error_code
+T21-FK-001,config_history_reload,deterministic_feature_keys_and_shapes,pass,
+T21-FK-002,show_set_reset_config,dedicated_feature_keys,pass,
+T21-FK-003,resource_bundle_commands,dedicated_feature_keys_and_uuid_validation,pass,
+T21-FK-004,listener_lifecycle_commands,dedicated_feature_keys_and_shapes,pass,
+T21-FK-005,index_maintenance_commands,dedicated_feature_keys,pass,
+T21-FK-006,remote_metadata_show_commands,dedicated_feature_keys_and_shapes,pass,
+T21-FK-007,cluster_show_surfaces,dedicated_feature_keys_and_shapes,pass,

@@ -1,0 +1,4 @@
+audit_item,test,status,notes
+cluster_clock_contracts,CatalogClusterClockExtensionContractTest.ClockCatalogContracts,pass,Clock drift and source constraints persisted.
+cluster_node_contracts,CatalogClusterClockExtensionContractTest.NodeCatalogContracts,pass,Node identity and role metadata persisted.
+cluster_bootstrap_pages,CatalogDatabaseBootstrapTest.CreatesClusterNodeAndClockCatalogFamilyPages,pass,Cluster/node/clock catalog pages allocated and validated.

@@ -1,0 +1,7 @@
+case_id,validation_target,input,expected_result,error_code
+T24-LC-001,sys.config.key_presence,required_listener_keys,all_present,
+T24-LC-002,type_range_validation,pool.min_pool.max_ports,valid_types_ranges,
+T24-LC-003,unique_port_policy,duplicate_enabled_ports,rejected,E_LISTENER_PORT_CONFLICT
+T24-LC-004,pool_bounds,pool.min_gt_pool.max,rejected,E_POOL_BOUNDS_INVALID
+T24-LC-005,hot_reload_restart_required_key,update_attempt,rejected_with_change_log,E_RELOAD_REQUIRES_RESTART
+T24-LC-006,queue_bound_validation,queue_bound_invalid,rejected,E_POOL_QUEUE_BOUND_INVALID

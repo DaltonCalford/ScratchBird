@@ -14,13 +14,21 @@
 #include "scratchbird/core/savepoint_backout.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/tid.h"
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <string>
 #include <memory>
+#include <unordered_set>
 #include <vector>
 #include <unordered_map>
 #include <mutex>
 #include <limits>
+
+namespace scratchbird::sblr
+{
+    class Executor;
+}
 
 namespace scratchbird::core
 {
@@ -53,7 +61,9 @@ namespace scratchbird::core
     {
     public:
         HeapScanIterator(Database *db, StorageEngine *engine, const ID &table_id,
-                         uint32_t start_page, bool ignore_visibility);
+                         uint32_t start_page,
+                         uint32_t end_page_exclusive,
+                         bool ignore_visibility);
         ~HeapScanIterator();
 
         // Move to next tuple
@@ -73,6 +83,7 @@ namespace scratchbird::core
         uint32_t current_page_;
         uint16_t current_item_;
         uint32_t last_page_;
+        uint32_t end_page_exclusive_ = std::numeric_limits<uint32_t>::max();
         size_t current_page_index_ = 0;
         std::vector<GPID> allocated_pages_;
         GPID current_gpid_ = INVALID_GPID;
@@ -134,6 +145,22 @@ namespace scratchbird::core
     class StorageEngine
     {
     public:
+        struct CommitGroupMaintenanceStats
+        {
+            uint64_t batches_applied = 0;
+            uint64_t transactions_applied = 0;
+            uint64_t deltas_applied = 0;
+            uint64_t locality_groups_applied = 0;
+            uint64_t apply_failures = 0;
+        };
+
+        struct DeferredExactSecondaryMergeStats
+        {
+            uint64_t indexes_considered = 0;
+            uint64_t indexes_merged = 0;
+            uint64_t deltas_merged = 0;
+        };
+
         struct FragmentationAdvisory
         {
             uint32_t page_id = 0;
@@ -159,6 +186,135 @@ namespace scratchbird::core
             FragmentationAdvisory advisory{};
         };
 
+        struct UniquePreflightTraceStats
+        {
+            bool metadata_cache_hit = false;
+            uint32_t unique_index_count = 0;
+            double metadata_ms = 0.0;
+            double layout_ms = 0.0;
+            double key_extract_ms = 0.0;
+            double exact_lookup_ms = 0.0;
+            double visibility_ms = 0.0;
+        };
+
+        struct BulkInsertMaintenancePlanState;
+
+        struct BulkInsertHandle
+        {
+            ID table_id{};
+            uint16_t source_tablespace = PRIMARY_TABLESPACE_ID;
+            uint16_t target_tablespace = PRIMARY_TABLESPACE_ID;
+            uint64_t current_xid = 0;
+            ToastManager *toast_mgr = nullptr;
+            GPID pinned_gpid = INVALID_GPID;
+            uint32_t pinned_page_id = 0;
+            void *pinned_page_buffer = nullptr;
+            bool pinned_page_dirty = false;
+            bool migration_in_progress = false;
+            ID migration_id{};
+            bool temp_scope = false;
+            ID temp_session_id{};
+            uint32_t resume_scan_page = 0;
+            bool have_resume_scan_page = false;
+            uint32_t reservation_target_pages = 0;
+            uint32_t reserved_page_budget = 0;
+            uint32_t total_reserved_pages = 0;
+            uint32_t consumed_reserved_pages = 0;
+            uint32_t reservation_events = 0;
+            bool reservation_failed = false;
+            std::shared_ptr<BulkInsertMaintenancePlanState> maintenance_plan_state;
+            uint32_t maintenance_plan_index_count = 0;
+            uint32_t maintenance_plan_exact_index_count = 0;
+            uint32_t maintenance_plan_unique_exact_index_count = 0;
+            uint32_t maintenance_plan_active_maintenance_count = 0;
+            uint32_t maintenance_plan_deferred_exact_index_count = 0;
+            uint32_t maintenance_plan_grouped_exact_index_count = 0;
+            uint32_t maintenance_plan_buffered_empty_unique_index_count = 0;
+            uint64_t unique_preflight_bypass_rows = 0;
+            uint64_t timing_begin_us = 0;
+            uint64_t timing_unique_preflight_us = 0;
+            uint64_t timing_buffered_unique_preflight_us = 0;
+            uint64_t timing_reserve_growth_us = 0;
+            uint64_t timing_find_free_page_us = 0;
+            uint64_t timing_pin_page_us = 0;
+            uint64_t timing_heap_insert_us = 0;
+            uint64_t timing_post_insert_maintenance_us = 0;
+            uint64_t timing_post_insert_track_mutation_us = 0;
+            uint64_t timing_post_insert_migration_dirty_us = 0;
+            uint64_t timing_post_insert_plan_build_us = 0;
+            uint64_t timing_post_insert_layout_us = 0;
+            uint64_t timing_post_insert_index_lookup_us = 0;
+            uint64_t timing_post_insert_preflight_lookup_us = 0;
+            uint64_t timing_post_insert_key_extract_us = 0;
+            uint64_t timing_post_insert_scalar_key_build_us = 0;
+            uint64_t timing_post_insert_buffer_enqueue_us = 0;
+            uint64_t timing_post_insert_defer_check_us = 0;
+            uint64_t timing_post_insert_columnstore_insert_us = 0;
+            uint64_t timing_post_insert_buffered_flush_unique_us = 0;
+            uint64_t timing_post_insert_grouped_flush_us = 0;
+            uint64_t timing_post_insert_deferred_flush_us = 0;
+            uint64_t timing_post_insert_direct_index_insert_us = 0;
+            uint64_t timing_post_insert_online_delta_capture_us = 0;
+            uint64_t timing_post_insert_extractor_clear_us = 0;
+            uint64_t timing_post_insert_table_dml_delta_us = 0;
+            uint64_t timing_end_flush_unique_us = 0;
+            uint64_t timing_end_flush_unique_prepare_entries_us = 0;
+            uint64_t timing_end_flush_unique_bulkload_sort_us = 0;
+            uint64_t timing_end_flush_unique_bulkload_leaf_build_us = 0;
+            uint64_t timing_end_flush_unique_bulkload_internal_build_us = 0;
+            uint64_t timing_end_flush_unique_bulkload_root_finalize_us = 0;
+            uint64_t timing_end_flush_unique_bulkload_total_us = 0;
+            uint64_t timing_end_flush_grouped_us = 0;
+            uint64_t timing_end_flush_deferred_us = 0;
+            uint64_t timing_rows_inserted = 0;
+            uint64_t timing_find_free_page_calls = 0;
+            uint64_t timing_pinned_page_reuse_hits = 0;
+            uint64_t timing_new_page_allocations = 0;
+            uint64_t timing_page_full_retries = 0;
+            uint64_t timing_post_insert_track_mutation_calls = 0;
+            uint64_t timing_post_insert_migration_dirty_calls = 0;
+            uint64_t timing_post_insert_plan_build_calls = 0;
+            uint64_t timing_post_insert_layout_calls = 0;
+            uint64_t timing_post_insert_index_lookup_calls = 0;
+            uint64_t timing_post_insert_preflight_lookup_calls = 0;
+            uint64_t timing_post_insert_key_extract_calls = 0;
+            uint64_t timing_post_insert_scalar_key_build_calls = 0;
+            uint64_t timing_post_insert_buffer_enqueue_rows = 0;
+            uint64_t timing_post_insert_defer_check_calls = 0;
+            uint64_t timing_post_insert_columnstore_insert_calls = 0;
+            uint64_t timing_post_insert_buffered_flush_unique_calls = 0;
+            uint64_t timing_post_insert_grouped_flush_calls = 0;
+            uint64_t timing_post_insert_deferred_flush_calls = 0;
+            uint64_t timing_post_insert_direct_index_insert_calls = 0;
+            uint64_t timing_post_insert_online_delta_capture_calls = 0;
+            uint64_t timing_post_insert_extractor_clear_calls = 0;
+            uint64_t timing_post_insert_table_dml_delta_calls = 0;
+            uint64_t timing_buffered_unique_fast_scalar_rows = 0;
+            bool timing_end_flush_unique_bulkload_input_sorted = false;
+            bool maintenance_plan_built = false;
+            bool initialized = false;
+        };
+
+        struct UnchangedKeyUpdateMaintenanceTarget
+        {
+            ID index_id{};
+            ID maintenance_id{};
+        };
+
+        struct UnchangedKeyUpdatePlan
+        {
+            std::vector<UnchangedKeyUpdateMaintenanceTarget> exact_indexes;
+        };
+
+        struct BulkInsertBufferedUniquePreflightKey
+        {
+            size_t target_index = 0;
+            bool scalar_fast = false;
+            uint64_t scalar_order_key = 0;
+            uint8_t scalar_key_width = 0;
+            std::vector<uint8_t> key;
+        };
+
         explicit StorageEngine(Database *db);
         ~StorageEngine();
 
@@ -167,6 +323,13 @@ namespace scratchbird::core
         auto insertTuple(const ID &table_id, const uint8_t *tuple_data, uint32_t tuple_size,
                          uint32_t *page_id_out, uint16_t *item_id_out, ErrorContext *ctx = nullptr)
             -> Status;
+
+        auto beginBulkInsert(const ID &table_id, BulkInsertHandle *handle,
+                             ErrorContext *ctx = nullptr) -> Status;
+        auto insertTupleWithHandle(BulkInsertHandle *handle, const uint8_t *tuple_data,
+                                   uint32_t tuple_size, uint32_t *page_id_out,
+                                   uint16_t *item_id_out, ErrorContext *ctx = nullptr) -> Status;
+        void endBulkInsert(BulkInsertHandle *handle, ErrorContext *ctx = nullptr);
 
         // Delete all tuples for a session from a temporary table
         auto deleteTuplesForSession(const ID &table_id, const ID &session_id,
@@ -197,10 +360,18 @@ namespace scratchbird::core
         auto updateTuple(const ID &table_id, uint32_t page_id, uint16_t item_id,
                          const uint8_t *new_tuple_data, uint32_t new_tuple_size,
                          uint32_t *new_page_id_out, uint16_t *new_item_id_out,
-                         ErrorContext *ctx = nullptr) -> Status;
+                         ErrorContext *ctx = nullptr,
+                         bool indexed_keys_unchanged = false,
+                         const UnchangedKeyUpdatePlan *unchanged_key_update_plan = nullptr)
+            -> Status;
 
         // Create a sequential scan iterator
         auto createScan(const ID &table_id, ErrorContext *ctx = nullptr)
+            -> std::unique_ptr<HeapScanIterator>;
+        auto createScanRange(const ID &table_id,
+                             uint32_t start_page,
+                             uint32_t end_page_exclusive,
+                             ErrorContext *ctx = nullptr)
             -> std::unique_ptr<HeapScanIterator>;
         auto createScanAll(const ID &table_id, ErrorContext *ctx = nullptr)
             -> std::unique_ptr<HeapScanIterator>;
@@ -240,10 +411,42 @@ namespace scratchbird::core
         void publishIndexCleanupPublication(const IndexCleanupPublicationRecord& publication);
         auto listIndexCleanupPublications(
             std::vector<IndexCleanupPublicationRecord>& publications_out) const -> Status;
+        auto getCommitGroupMaintenanceStats() const -> CommitGroupMaintenanceStats;
+        auto drainDeferredExactSecondaryPageDeltas(
+            size_t max_indexes_per_pass,
+            DeferredExactSecondaryMergeStats* stats_out = nullptr,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto prepareCommitGroupMaintenanceDeltas(const std::vector<uint64_t>& ordered_committed_xids,
+                                                 std::vector<uint64_t>& prepared_xids_out,
+                                                 std::vector<ID>& inserted_delta_ids_out,
+                                                 uint64_t* locality_groups_out,
+                                                 uint64_t* delta_count_out,
+                                                 ErrorContext* ctx) -> Status;
+        void finalizePreparedCommitGroupMaintenanceDeltas(
+            const std::vector<uint64_t>& prepared_xids,
+            uint64_t locality_group_count,
+            uint64_t delta_count);
+        void abortPreparedCommitGroupMaintenanceDeltas(
+            const std::vector<ID>& inserted_delta_ids);
+        void discardPendingCommitGroupMaintenanceDeltas(uint64_t xid);
+        void discardPendingCommitGroupMaintenanceDeltas(
+            const std::vector<uint64_t>& xids);
 
     private:
         friend class IndexScanIterator;
         friend class MgaBackoutEngine;
+        friend class scratchbird::sblr::Executor;
+
+        struct PendingOnlineMaintenanceDelta
+        {
+            ID logical_index_id{};
+            ID maintenance_id{};
+            uint8_t delta_op_value = 0;
+            uint64_t tid_gpid = 0;
+            uint16_t tid_slot = 0;
+            uint64_t commit_txid = 0;
+            uint64_t locality_key = 0;
+        };
 
         Database *db_;
         BufferPool *buffer_pool_;
@@ -253,16 +456,86 @@ namespace scratchbird::core
         // ToastManager cache (per-table)
         std::unordered_map<ID, std::unique_ptr<ToastManager>> toast_managers_;
         std::mutex toast_mutex_; // Protects toast_managers_ map
+        std::unordered_map<ID, std::unordered_map<uint16_t, uint32_t>> relation_write_hints_;
+        mutable std::mutex relation_write_hint_mutex_;
+        struct UniquePreflightIndexPlan;
+        struct UniquePreflightTablePlan;
+        struct UniquePreflightCacheState;
+        std::unique_ptr<UniquePreflightCacheState> unique_preflight_cache_state_;
         std::unordered_map<ID, std::unordered_map<uint32_t, FragmentationAdvisory>>
             fragmentation_advisories_;
         mutable std::mutex fragmentation_advisory_mutex_;
         std::unordered_map<ID, std::unordered_map<uint32_t, IndexCleanupPublicationRecord>>
             cleanup_publications_;
         mutable std::mutex cleanup_publication_mutex_;
+        std::unordered_map<uint64_t, std::vector<PendingOnlineMaintenanceDelta>>
+            pending_commit_group_maintenance_deltas_;
+        mutable std::mutex pending_commit_group_maintenance_delta_mutex_;
+        std::atomic<uint64_t> commit_group_maintenance_batches_applied_{0};
+        std::atomic<uint64_t> commit_group_maintenance_transactions_applied_{0};
+        std::atomic<uint64_t> commit_group_maintenance_deltas_applied_{0};
+        std::atomic<uint64_t> commit_group_maintenance_locality_groups_applied_{0};
+        std::atomic<uint64_t> commit_group_maintenance_apply_failures_{0};
+        std::unordered_set<ID, IDHash> deferred_exact_secondary_indexes_in_merge_;
+        mutable std::mutex deferred_exact_secondary_merge_state_mutex_;
+        mutable std::condition_variable deferred_exact_secondary_merge_cv_;
+        void refreshIndexCleanupDebtLedger(const ID& index_id);
+        auto captureQueuedOrImmediateOnlineMaintenanceDelta(const ID& logical_index_id,
+                                                           const ID& maintenance_id,
+                                                           uint8_t delta_op_value,
+                                                           const TID& tid,
+                                                           uint64_t commit_txid) -> bool;
+        auto captureImmediateOnlineMaintenanceDelta(const ID& logical_index_id,
+                                                   const ID& maintenance_id,
+                                                   uint8_t delta_op_value,
+                                                   const TID& tid,
+                                                   uint64_t commit_txid) -> bool;
+        auto maybeDeferColdExactSecondaryInsert(const ID& index_id,
+                                                GPID root_gpid,
+                                                bool is_unique,
+                                                bool is_expression_index,
+                                                bool is_partial_index,
+                                                uint8_t actual_index_type_value,
+                                                const std::vector<uint8_t>& key,
+                                                const TID& tid,
+                                                uint64_t xid,
+                                                bool* deferred_exact_mode,
+                                                ErrorContext* ctx) -> bool;
+        auto persistDeferredExactSecondaryInsert(const ID& index_id,
+                                                uint8_t actual_index_type_value,
+                                                const std::vector<uint8_t>& key,
+                                                const TID& tid,
+                                                uint64_t xid,
+                                                ErrorContext* ctx) -> Status;
+        void publishDeferredExactCleanupDebtSnapshot(
+            const ID& index_id,
+            IndexCleanupPublicationState preferred_state,
+            uint64_t entries_removed,
+            bool repair_required);
+        auto mergeDeferredExactSecondaryPageDeltas(
+            const ID& index_id,
+            bool is_unique,
+            bool is_expression_index,
+            bool is_partial_index,
+            uint8_t actual_index_type_value,
+            void* index_ptr,
+            uint64_t current_xid,
+            ErrorContext* ctx) -> Status;
 
         // Find a page with free space for a tuple
         auto findFreePage(const ID &table_id, uint32_t tuple_size, uint32_t *page_id_out,
-                          uint16_t tablespace_id, ErrorContext *ctx) -> Status;
+                          uint16_t tablespace_id, ErrorContext *ctx,
+                          uint32_t *pages_scanned_out = nullptr,
+                          uint32_t *heap_pages_examined_out = nullptr,
+                          bool *allocated_new_out = nullptr,
+                          const uint32_t *resume_from_page_hint = nullptr) -> Status;
+        auto reserveBulkInsertGrowthWindow(BulkInsertHandle *handle,
+                                           uint32_t tuple_size,
+                                           ErrorContext *ctx) -> Status;
+        auto buildBulkInsertMaintenancePlan(
+            const ID &table_id,
+            std::shared_ptr<BulkInsertMaintenancePlanState> *plan_out,
+            ErrorContext *ctx) -> Status;
 
         // Find a locality-preserving page for a back version created during MGA update.
         auto findBackVersionPlacementPage(const ID &table_id, uint32_t tuple_size,
@@ -272,6 +545,15 @@ namespace scratchbird::core
         // Allocate a new heap page for a table
         auto allocateHeapPage(const ID &table_id, uint16_t tablespace_id, uint32_t *page_id_out,
                               ErrorContext *ctx) -> Status;
+        [[nodiscard]] auto getRelationWriteHint(const ID &table_id,
+                                                uint16_t tablespace_id,
+                                                uint32_t *page_id_out) const -> bool;
+        void rememberRelationWriteHint(const ID &table_id,
+                                       uint16_t tablespace_id,
+                                       uint32_t page_id);
+        void invalidateRelationWriteHint(const ID &table_id,
+                                         uint16_t tablespace_id,
+                                         uint32_t page_id);
 
         // Get or create ToastManager for a table
         auto getOrCreateToastManager(const ID &table_id, ErrorContext *ctx) -> ToastManager *;
@@ -284,6 +566,11 @@ namespace scratchbird::core
                                          const TID &stable_tid,
                                          Tuple *tuple_out,
                                          ErrorContext *ctx) -> Status;
+        auto getUniquePreflightTablePlan(const ID &table_id,
+                                         UniquePreflightTablePlan *plan_out,
+                                         bool *cache_hit_out,
+                                         ErrorContext *ctx) -> Status;
+        void invalidateUniquePreflightTablePlan(const ID &table_id);
         auto filterIndexCandidatesByVisibleHeap(const ID &table_id,
                                                 const std::vector<ID> &indexed_column_ids,
                                                 bool enforce_key_semantics,
@@ -296,7 +583,15 @@ namespace scratchbird::core
                                    const uint8_t *tuple_data,
                                    uint32_t tuple_size,
                                    uint64_t current_xid,
+                                   UniquePreflightTraceStats *trace_stats,
+                                   const std::unordered_set<ID, IDHash> *skip_unique_index_ids,
+                                   bool *all_unique_indexes_skipped_out,
                                    ErrorContext *ctx) -> Status;
+        auto preflightUniqueInsertWithBulkHandle(BulkInsertHandle *handle,
+                                                 const uint8_t *tuple_data,
+                                                 uint32_t tuple_size,
+                                                 std::vector<BulkInsertBufferedUniquePreflightKey> *buffered_unique_keys_out,
+                                                 ErrorContext *ctx) -> Status;
         auto preflightUniqueUpdate(const ID &table_id,
                                    const uint8_t *old_tuple_data,
                                    uint32_t old_tuple_size,
@@ -304,7 +599,23 @@ namespace scratchbird::core
                                    uint32_t new_tuple_size,
                                    const TID &stable_tid,
                                    uint64_t current_xid,
+                                   UniquePreflightTraceStats *trace_stats,
                                    ErrorContext *ctx) -> Status;
+        auto performPostInsertMaintenance(const ID &table_id,
+                                          uint16_t source_tablespace,
+                                          bool migration_in_progress,
+                                          const ID &migration_id,
+                                          uint16_t target_tablespace,
+                                          const uint8_t *tuple_data,
+                                          uint32_t tuple_size,
+                                          uint32_t page_id,
+                                          uint16_t item_id,
+                                          uint64_t current_xid,
+                                          ToastManager *toast_mgr,
+                                          BulkInsertHandle *timing_handle,
+                                          BulkInsertMaintenancePlanState *maintenance_plan,
+                                          const std::vector<BulkInsertBufferedUniquePreflightKey> *buffered_unique_preflight_keys,
+                                          ErrorContext *ctx) -> Status;
         auto updateStableTidIndexesForMutation(const ID &table_id,
                                                uint16_t tablespace_id,
                                                uint32_t stable_page_id,

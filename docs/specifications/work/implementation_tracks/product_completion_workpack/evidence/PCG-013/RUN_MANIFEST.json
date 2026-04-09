@@ -1,0 +1,11 @@
+{
+  "ticket_id": "PCG-013",
+  "phase": "PH1",
+  "title": "Implement PITR optional extension lane and log retention governance",
+  "status": "pending",
+  "owner": "recovery-platform",
+  "estimate_days": 6,
+  "started_utc": "",
+  "completed_utc": "",
+  "notes": "Template scaffold."
+}

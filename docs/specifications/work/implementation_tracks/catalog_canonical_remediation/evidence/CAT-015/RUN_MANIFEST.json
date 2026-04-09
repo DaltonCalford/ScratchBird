@@ -1,0 +1,8 @@
+{
+  "ticket_id": "CAT-015",
+  "status": "completed",
+  "started_at": "2026-02-14T10:40:00Z",
+  "finished_at": "2026-02-14T11:19:02Z",
+  "owner": "codex",
+  "notes": "CAT-015 complete: relation-extension catalog root wiring/backfill and CRUD/contract enforcement for partitioned_table, partition, table_inheritance, language, event, and package_member with targeted test pass."
+}

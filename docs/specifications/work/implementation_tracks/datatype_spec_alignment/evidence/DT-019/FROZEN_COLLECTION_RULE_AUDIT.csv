@@ -1,0 +1,4 @@
+mutation_kind,frozen_collection_behavior,status
+replace_whole_value,allow,PASS
+element_update,reject with CONSTRAINT_VIOLATION,PASS
+append/remove/slice/merge,reject with CONSTRAINT_VIOLATION,PASS

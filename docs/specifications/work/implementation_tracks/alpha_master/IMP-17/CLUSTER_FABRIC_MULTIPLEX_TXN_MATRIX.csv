@@ -1,0 +1,5 @@
+case_id,scenario,expected_result,error_code
+T17-FM-001,multiple_sessions_one_link,session_identity_isolation_preserved,
+T17-FM-002,per_session_txn_begin_commit,txn_ownership_enforced,
+T17-FM-003,cross_session_txn_handle_reuse,rejected,E_FABRIC_TXN_OWNERSHIP
+T17-FM-004,forced_session_close_with_open_txn,mandatory_rollback_before_close,

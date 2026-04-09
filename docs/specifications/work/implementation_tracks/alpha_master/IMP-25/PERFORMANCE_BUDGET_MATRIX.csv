@@ -1,0 +1,5 @@
+metric_id,workload,threshold_type,threshold_value,pass_condition
+T25-PF-001,listener_assignment_latency,p95_ms,8,measured_p95<=8
+T25-PF-002,parser_warm_pool_replenish_latency,p95_ms,20,measured_p95<=20
+T25-PF-003,cluster_heartbeat_processing,p95_ms,15,measured_p95<=15
+T25-PF-004,runtime_mode_transition_control_latency,p95_ms,25,measured_p95<=25

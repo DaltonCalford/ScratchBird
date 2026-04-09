@@ -1,0 +1,20 @@
+{
+  "ticket_id": "LD-005",
+  "status": "completed",
+  "started_at": "2026-02-11T23:14:47Z",
+  "completed_at": "2026-02-11T23:14:47Z",
+  "spec_inputs": [
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_DML_LANGUAGE_DEFINITION.md",
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_PARSER_NORMALIZATION_AND_REJECTION_MATRIX.md",
+    "docs/specifications/21_V3_Dialect_Surface/NATIVE_PARSER_FEATURE_FAMILIES.md"
+  ],
+  "artifacts": [
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-005/DML_RESULT_SHAPE_AUDIT.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-005/DML_ACCEPT_REJECT_MATRIX.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-005/SPEC_TRACEABILITY.csv",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-005/TEST_RESULTS.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-005/IMPLEMENTATION_NOTES.md",
+    "docs/specifications/work/implementation_tracks/sql_language_workpack/evidence/LD-005/CHECKSUMS.sha256"
+  ],
+  "notes": "DML result-shape and deterministic accept/reject contracts completed from canonical section-21 sources."
+}

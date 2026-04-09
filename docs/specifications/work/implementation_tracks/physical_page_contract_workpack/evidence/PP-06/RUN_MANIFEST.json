@@ -1,0 +1,16 @@
+{
+  "ticket_id": "PP-06",
+  "title": "Bootstrap Structure Layout Alignment",
+  "timestamp_utc": "2026-02-13T18:15:33Z",
+  "implementation_repo": "/home/dcalford/CliWork/ScratchBird",
+  "primary_specs": [
+    "06_Fixed_Bootstrap_Page_Map/BOOTSTRAP_PAGE_LAYOUTS.md",
+    "05_Page_Taxonomy_and_Binary_Layouts/PAGE_HEADER_LAYOUT.md"
+  ],
+  "changed_files": [
+    "include/scratchbird/core/ondisk.h",
+    "src/core/database.cpp",
+    "include/scratchbird/core/database.h"
+  ],
+  "status": "done"
+}

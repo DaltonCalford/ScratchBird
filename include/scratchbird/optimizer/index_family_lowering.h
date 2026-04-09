@@ -110,6 +110,57 @@ namespace scratchbird::optimizer
         const PlannerFamilyLoweringRequest &request,
         const PlannerFamilyLoweringResult &result) -> const char *
     {
+        const bool generalized_or_spatial_family =
+            request.index_type == core::CatalogManager::IndexType::GIST ||
+            request.index_type == core::CatalogManager::IndexType::SPGIST ||
+            request.index_type == core::CatalogManager::IndexType::RTREE ||
+            request.index_type == core::CatalogManager::IndexType::MONGODB_2D ||
+            request.index_type ==
+                core::CatalogManager::IndexType::MONGODB_2DSPHERE ||
+            request.index_type ==
+                core::CatalogManager::IndexType::MONGODB_2DSPHERE_BUCKET ||
+            request.index_type == core::CatalogManager::IndexType::REDIS_GEO;
+        const bool ann_family =
+            request.index_type == core::CatalogManager::IndexType::VECTOR ||
+            request.index_type == core::CatalogManager::IndexType::HNSW ||
+            request.index_type ==
+                core::CatalogManager::IndexType::VECTOR_FLAT ||
+            request.index_type ==
+                core::CatalogManager::IndexType::VECTOR_BIN_FLAT ||
+            request.index_type == core::CatalogManager::IndexType::IVF ||
+            request.index_type ==
+                core::CatalogManager::IndexType::IVF_FLAT ||
+            request.index_type ==
+                core::CatalogManager::IndexType::BIN_IVF_FLAT ||
+            request.index_type == core::CatalogManager::IndexType::IVF_PQ ||
+            request.index_type == core::CatalogManager::IndexType::IVF_SQ8 ||
+            request.index_type ==
+                core::CatalogManager::IndexType::IVF_SQ8_HYBRID ||
+            request.index_type ==
+                core::CatalogManager::IndexType::RHNSW_PQ ||
+            request.index_type ==
+                core::CatalogManager::IndexType::RHNSW_SQ ||
+            request.index_type == core::CatalogManager::IndexType::ANNOY ||
+            request.index_type == core::CatalogManager::IndexType::DISKANN ||
+            request.index_type ==
+                core::CatalogManager::IndexType::NEO4J_VECTOR;
+        const bool text_family =
+            request.index_type == core::CatalogManager::IndexType::FULLTEXT ||
+            request.index_type == core::CatalogManager::IndexType::INVERTED ||
+            request.index_type == core::CatalogManager::IndexType::MINHASH_LSH ||
+            request.index_type ==
+                core::CatalogManager::IndexType::SPARSE_INVERTED ||
+            request.index_type ==
+                core::CatalogManager::IndexType::SPARSE_WAND ||
+            request.index_type == core::CatalogManager::IndexType::TRIE ||
+            request.index_type == core::CatalogManager::IndexType::NGRAM ||
+            request.index_type ==
+                core::CatalogManager::IndexType::MONGODB_WILDCARD ||
+            request.index_type ==
+                core::CatalogManager::IndexType::MONGODB_ENCRYPTED_RANGE ||
+            request.index_type == core::CatalogManager::IndexType::NEO4J_TEXT ||
+            request.index_type == core::CatalogManager::IndexType::CASSANDRA_SASI ||
+            request.index_type == core::CatalogManager::IndexType::CASSANDRA_SAI;
         if (result.queryability_state != AccessPathQueryabilityState::INVALID)
         {
             return "";
@@ -122,19 +173,57 @@ namespace scratchbird::optimizer
         {
             return "P08_SKIP_SCAN_UNAVAILABLE";
         }
-        if (request.nearest_order && !request.ann_metric_compatible)
+        if ((request.index_type == core::CatalogManager::IndexType::HASH ||
+             request.index_type ==
+                 core::CatalogManager::IndexType::REDIS_STRING ||
+             request.index_type ==
+                 core::CatalogManager::IndexType::REDIS_HASH ||
+             request.index_type ==
+                 core::CatalogManager::IndexType::REDIS_SET ||
+             request.index_type ==
+                 core::CatalogManager::IndexType::REDIS_HLL) &&
+            request.predicate_shape != PredicateMatchShape::EQUALITY)
+        {
+            return "P08_HASH_EQ_PREDICATE_REQUIRED";
+        }
+        if (text_family && request.ranking_requested &&
+            !request.corpus_stats_available)
+        {
+            return "P08_TEXT_CORPUS_STATS_REQUIRED";
+        }
+        if (text_family && request.ranking_requested &&
+            request.candidate_budget == 0)
+        {
+            return "P08_TEXT_CANDIDATE_BUDGET_REQUIRED";
+        }
+        if (ann_family && !request.nearest_order)
+        {
+            return "P08_ANN_NEAREST_ORDER_REQUIRED";
+        }
+        if (ann_family && request.nearest_order && !request.ann_metric_compatible)
         {
             return "P08_ANN_METRIC_INCOMPATIBLE";
+        }
+        if (ann_family && request.candidate_budget == 0)
+        {
+            return "P08_ANN_CANDIDATE_BUDGET_REQUIRED";
+        }
+        if (generalized_or_spatial_family && request.nearest_order &&
+            !request.support_distance)
+        {
+            return "P08_DISTANCE_SUPPORT_UNVALIDATED";
         }
         if (request.nearest_order && !request.nearest_lower_bound_validated)
         {
             return "P08_NEAREST_ORDER_UNVALIDATED";
         }
-        if (request.strategy_bound == false &&
-            (request.support_consistent || request.support_distance ||
-             request.nearest_order))
+        if (generalized_or_spatial_family && request.strategy_bound == false)
         {
             return "P08_OPERATOR_STRATEGY_UNBOUND";
+        }
+        if (generalized_or_spatial_family && !request.support_consistent)
+        {
+            return "P08_SUPPORT_FUNCTION_UNVALIDATED";
         }
         return "P08_FAMILY_NOT_QUERYABLE";
     }
@@ -144,6 +233,57 @@ namespace scratchbird::optimizer
         const PlannerFamilyLoweringResult &result) -> std::string
     {
         (void)result;
+        const bool generalized_or_spatial_family =
+            request.index_type == core::CatalogManager::IndexType::GIST ||
+            request.index_type == core::CatalogManager::IndexType::SPGIST ||
+            request.index_type == core::CatalogManager::IndexType::RTREE ||
+            request.index_type == core::CatalogManager::IndexType::MONGODB_2D ||
+            request.index_type ==
+                core::CatalogManager::IndexType::MONGODB_2DSPHERE ||
+            request.index_type ==
+                core::CatalogManager::IndexType::MONGODB_2DSPHERE_BUCKET ||
+            request.index_type == core::CatalogManager::IndexType::REDIS_GEO;
+        const bool ann_family =
+            request.index_type == core::CatalogManager::IndexType::VECTOR ||
+            request.index_type == core::CatalogManager::IndexType::HNSW ||
+            request.index_type ==
+                core::CatalogManager::IndexType::VECTOR_FLAT ||
+            request.index_type ==
+                core::CatalogManager::IndexType::VECTOR_BIN_FLAT ||
+            request.index_type == core::CatalogManager::IndexType::IVF ||
+            request.index_type ==
+                core::CatalogManager::IndexType::IVF_FLAT ||
+            request.index_type ==
+                core::CatalogManager::IndexType::BIN_IVF_FLAT ||
+            request.index_type == core::CatalogManager::IndexType::IVF_PQ ||
+            request.index_type == core::CatalogManager::IndexType::IVF_SQ8 ||
+            request.index_type ==
+                core::CatalogManager::IndexType::IVF_SQ8_HYBRID ||
+            request.index_type ==
+                core::CatalogManager::IndexType::RHNSW_PQ ||
+            request.index_type ==
+                core::CatalogManager::IndexType::RHNSW_SQ ||
+            request.index_type == core::CatalogManager::IndexType::ANNOY ||
+            request.index_type == core::CatalogManager::IndexType::DISKANN ||
+            request.index_type ==
+                core::CatalogManager::IndexType::NEO4J_VECTOR;
+        const bool text_family =
+            request.index_type == core::CatalogManager::IndexType::FULLTEXT ||
+            request.index_type == core::CatalogManager::IndexType::INVERTED ||
+            request.index_type == core::CatalogManager::IndexType::MINHASH_LSH ||
+            request.index_type ==
+                core::CatalogManager::IndexType::SPARSE_INVERTED ||
+            request.index_type ==
+                core::CatalogManager::IndexType::SPARSE_WAND ||
+            request.index_type == core::CatalogManager::IndexType::TRIE ||
+            request.index_type == core::CatalogManager::IndexType::NGRAM ||
+            request.index_type ==
+                core::CatalogManager::IndexType::MONGODB_WILDCARD ||
+            request.index_type ==
+                core::CatalogManager::IndexType::MONGODB_ENCRYPTED_RANGE ||
+            request.index_type == core::CatalogManager::IndexType::NEO4J_TEXT ||
+            request.index_type == core::CatalogManager::IndexType::CASSANDRA_SASI ||
+            request.index_type == core::CatalogManager::IndexType::CASSANDRA_SAI;
         if (request.bitmap_combine)
         {
             return "bitmap composition could not be lowered to a queryable planner family";
@@ -152,19 +292,57 @@ namespace scratchbird::optimizer
         {
             return "skip-scan candidate did not lower to a queryable skip family";
         }
-        if (request.nearest_order && !request.ann_metric_compatible)
+        if ((request.index_type == core::CatalogManager::IndexType::HASH ||
+             request.index_type ==
+                 core::CatalogManager::IndexType::REDIS_STRING ||
+             request.index_type ==
+                 core::CatalogManager::IndexType::REDIS_HASH ||
+             request.index_type ==
+                 core::CatalogManager::IndexType::REDIS_SET ||
+             request.index_type ==
+                 core::CatalogManager::IndexType::REDIS_HLL) &&
+            request.predicate_shape != PredicateMatchShape::EQUALITY)
+        {
+            return "hash-family candidate was rejected because only equality predicates are queryable";
+        }
+        if (text_family && request.ranking_requested &&
+            !request.corpus_stats_available)
+        {
+            return "ranked text candidate was rejected because corpus scoring statistics were not available";
+        }
+        if (text_family && request.ranking_requested &&
+            request.candidate_budget == 0)
+        {
+            return "ranked text candidate was rejected because score candidate budget was not available";
+        }
+        if (ann_family && !request.nearest_order)
+        {
+            return "nearest-order candidate was rejected because ANN families require an explicit nearest-order request";
+        }
+        if (ann_family && request.nearest_order && !request.ann_metric_compatible)
         {
             return "nearest-order candidate was rejected because ANN metric compatibility was not proven";
+        }
+        if (ann_family && request.candidate_budget == 0)
+        {
+            return "nearest-order candidate was rejected because ANN candidate budget was not available";
+        }
+        if (generalized_or_spatial_family && request.nearest_order &&
+            !request.support_distance)
+        {
+            return "nearest candidate was rejected because distance support was not available";
         }
         if (request.nearest_order && !request.nearest_lower_bound_validated)
         {
             return "nearest-order candidate was rejected because lower-bound ordering was not validated";
         }
-        if (request.strategy_bound == false &&
-            (request.support_consistent || request.support_distance ||
-             request.nearest_order))
+        if (generalized_or_spatial_family && request.strategy_bound == false)
         {
             return "generalized or nearest strategy binding was not available for the requested operator";
+        }
+        if (generalized_or_spatial_family && !request.support_consistent)
+        {
+            return "generalized or spatial candidate was rejected because a validated support function was not available";
         }
         return "planner family lowering marked the candidate as invalid for query execution";
     }
