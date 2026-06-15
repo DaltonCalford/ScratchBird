@@ -8,4 +8,6 @@ The new codebase did not have ai playing havoc with it.
 The new codebase will be released as a new GPL 2.0 project.
 This repo and its sibling repos will be renamed to legacy and will have pointers to the new repo once it goes public.
 
+The new full code base it to be found at https://github.com/scratchbird-software-inc/ScratchBird/tree/main
+
 
